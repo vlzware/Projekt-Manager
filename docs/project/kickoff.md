@@ -14,7 +14,20 @@ There is no centralized system to process or store data - tools and processes ar
 
 ## Scope
 The general inclusion of all internal processes in a single, centralized data system, needs to be tailored to the needs of every specific company, or, alternatively be made extremely customizable, with the necessary explosion in complexity. Thus, this project would focus on the main workflow in a small "Handwerker" company:
-	inquiry -> offer -> confirmation -> planning -> execution -> execution artifacts -> acceptance -> invoice -> done.
+
+| State | Type | What happens |
+|---|---|---|
+| **Anfrage** | Action | Customer inquiry received — company must write an offer |
+| **Angebot** | Buffer | Offer sent — waiting for customer confirmation |
+| **Beauftragt** | Action | Customer confirmed — company must plan and schedule |
+| **Geplant** | Buffer | Planned — waiting for its turn on the calendar |
+| **In Arbeit** | Active | Project is being executed (incl. producing artifacts: Aufmaß, photos, etc.) |
+| **Abnahme** | Buffer | Execution complete — waiting for customer acceptance |
+| **Rechnung fällig** | Action | Customer accepted — company must write the invoice |
+| **Abgerechnet** | Buffer | Invoice sent — waiting for payment |
+| **Erledigt** | Done | Payment received — project closed |
+
+Action states are where the company must act. Buffer states are where the project is blocked, waiting for an external event. The Kanban board makes both naturally visible — items accumulating in an action column immediately signal that work is falling behind.
 
 The main goal would be to have a readily available, up-to-date information about the state of all projects across the above workflow. We define only a couple of main groups for simplicity and because of their matching interests - an owner, an office manager, workers and a bookkeeper, then setup an appropriate view of the information of interest to them, including providing ways to process it, within the limits of their user rights.
 
@@ -52,6 +65,7 @@ Reasonable assumptions will be made in regards of all company-specific details. 
 ## Not Doing
 - No feature requests beyond what we define in this document ("System does what the spec says but they want it different")
 - AI features beyond extracting data from emails
+- Extraction of data from the software currently in use
 - No sysadmin work
 - A backup concept and a backup system
 - Disk space management (notifications are planned when reaching a threshold, cleanup is up to the users)

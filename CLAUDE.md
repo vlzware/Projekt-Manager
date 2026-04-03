@@ -9,7 +9,7 @@
 ## Current Iteration
 Current iteration scope and progress are tracked via GitHub Milestones.
 
-**Framework decision (pending ADR)**: Vite + React 19 + TypeScript + Zustand + Tailwind + shadcn/ui + FullCalendar + dnd-kit + Vitest + Playwright.
+**Framework decision**: not yet made. Tech stack will be decided during Iteration 1 through parallel prototyping and formalized as an ADR. TypeScript is mandatory; everything else is open for evaluation.
 
 ## Workflow
 Steps happen in this order. Skipping or reordering must be flagged.
