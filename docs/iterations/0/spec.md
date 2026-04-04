@@ -587,6 +587,10 @@ The walking skeleton is accepted when all of the following are true.
 - AC-25: Linting and formatting pass.
 - AC-26: Tests defined in section 12 pass.
 
+### 11.5 Configurability
+
+- AC-27: App name (header) and footer text are driven by a branding config, not hardcoded in components. Changing the config changes all instances.
+
 ---
 
 ## 12. Test Specification

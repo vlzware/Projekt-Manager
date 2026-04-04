@@ -3,6 +3,7 @@ import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useProjectStore } from '@/state/store';
 import { STATE_CONFIGS } from '@/config/stateConfig';
+import { BRANDING } from '@/config/brandingConfig';
 import { App } from '@/App';
 
 // Reset store before each test
@@ -277,5 +278,22 @@ describe('Date Formatting', () => {
 
     const entryDate = screen.getByTestId('entry-date-p01');
     expect(entryDate.textContent).toMatch(/seit \d{2}\.\d{2}\.\d{4}/);
+  });
+});
+
+describe('Branding', () => {
+  // AC-27: App name and footer text are driven by branding config
+  it('AC-27: header shows app name from branding config', () => {
+    render(<App />);
+
+    const header = document.querySelector('header');
+    expect(header).toHaveTextContent(BRANDING.appName);
+  });
+
+  it('AC-27: footer shows text from branding config', () => {
+    render(<App />);
+
+    const footer = document.querySelector('footer');
+    expect(footer).toHaveTextContent(BRANDING.footerText);
   });
 });
