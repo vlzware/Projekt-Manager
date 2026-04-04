@@ -1,0 +1,81 @@
+.grid {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.headerRow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.headerCell {
+  padding: 6px 4px;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.weekRow {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  min-height: 80px;
+  border-bottom: 1px solid #f1f5f9;
+  position: relative;
+}
+
+.dayCell {
+  padding: 4px;
+  border-right: 1px solid #f8fafc;
+  position: relative;
+  min-height: 80px;
+}
+
+.dayCell:last-child {
+  border-right: none;
+}
+
+.otherMonth {
+  opacity: 0.35;
+}
+
+.today {
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.dayNumber {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #64748b;
+  margin-bottom: 2px;
+}
+
+.todayNumber {
+  background: #3b82f6;
+  color: #ffffff;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.projectBarsContainer {
+  position: relative;
+}

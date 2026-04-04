@@ -1,0 +1,52 @@
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.indicator:hover {
+  opacity: 0.85;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.actionIndicator {
+  background: rgba(249, 115, 22, 0.2);
+  color: #fdba74;
+}
+
+.bufferIndicator {
+  background: rgba(99, 102, 241, 0.2);
+  color: #a5b4fc;
+}
+
+.clearButton {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid #64748b;
+  background: #475569;
+  color: #e2e8f0;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+
+.clearButton:hover {
+  background: #64748b;
+}

@@ -19,3 +19,10 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# Build output
+dist/
+
+# Test output
+test-results/
+playwright-report/
