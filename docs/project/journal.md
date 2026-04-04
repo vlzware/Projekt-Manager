@@ -39,7 +39,7 @@ Prototype worktree branches preserved for reference:
 - Reality check feedback: orgaMAX has no data export; added "no extraction from current software" to kickoff Not Doing
 - Hosting research reframed: production hosting out of scope; only dev/CI/demo hosting matters (issue #6 updated)
 - Evaluated 5 spec proposals from different LLMs against 8 criteria using independent adversarial agents
-- Synthesized final walking skeleton spec (docs/iterations/0/spec.md) from best elements of proposals 2 and 4
+- Synthesized final walking skeleton spec (now docs/spec.md) from best elements of proposals 2 and 4
 - Refined workflow to 9 states with proper Kanban semantics (action/buffer/active/done types)
 - Corrected UX principle: board structure IS the visibility mechanism, not per-card decoration
 - Two rounds of adversarial review (9+10 agents), all issues resolved — spec at 39/50
@@ -49,7 +49,7 @@ Prototype worktree branches preserved for reference:
 - Closed iteration 0
 
 ## 2026-04-02
-- Organized folder structure: docs/project/, docs/adr/, docs/iterations/preparation/
+- Organized folder structure: docs/project/, docs/adr/ (iterations/ later flattened to docs/scope.md)
 - Polished Kickoff.md and Plan.md (grammar/formatting), moved to docs/project/
 - Added core principle to Kickoff: "making inaction visible"
 - Added missing Anfrage state to workflow

@@ -28,7 +28,8 @@ First-time Playwright setup requires `npx playwright install` to download browse
 - [Kickoff](docs/project/kickoff.md) — project definition, scope, goals, and boundaries
 - [Plan](docs/project/plan.md) — development plan and iteration strategy
 - [Architecture Decision Records](docs/adr/index.md) — documented project decisions
-- [Walking Skeleton Spec](docs/iterations/0/spec.md) — what the prototype implements
+- [Product Spec](docs/spec.md) — what the system does (living document)
+- [Current Scope](docs/scope.md) — what the current iteration adds or changes
 - [Contributing conventions](CONTRIBUTING.md) — code style, workflow, branching, issues
 
 ## Project Structure
@@ -36,11 +37,10 @@ First-time Playwright setup requires `npx playwright install` to download browse
 ```
 src/                Source code (React + TypeScript)
 docs/
+  spec.md           Living product spec — current system behavior
+  scope.md          Current iteration scope — delta to the spec
   project/          Foundational project documents (kickoff, plan, journal)
   adr/              Architecture Decision Records
-  iterations/
-    0/              Iteration 0 — setup, research, specifications
-    1/              Iteration 1 — walking skeleton, hosting research
 ```
 
 ## License

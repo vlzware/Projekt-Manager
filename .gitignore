@@ -24,5 +24,6 @@ Thumbs.db
 dist/
 
 # Test output
+coverage/
 test-results/
 playwright-report/

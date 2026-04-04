@@ -41,9 +41,9 @@ Environment setup recurs whenever an iteration introduces new technology (e.g., 
 - [x] empirical evaluation: page weight, LOC, build time, configurability audit
 - [x] tech stack decision formalized as ADR-0002
 - [x] presentation to pilot company[^1] — positive validation of information architecture
-- [ ] chosen implementation (React, Prototype B) promoted to the iteration branch, all tests passing
-- [ ] linter, formatter, test framework, quality gates, branch protection rules
-- [ ] CI pipeline: lint, type-check, test on every push
+- [x] chosen implementation (React, Prototype B) promoted to the iteration branch, all tests passing
+- [x] linter, formatter, test framework, quality gates
+- [x] CI pipeline: lint, type-check, test on every push
 - [ ] retrospection → issues for the backlog
 
 **Artifacts**
