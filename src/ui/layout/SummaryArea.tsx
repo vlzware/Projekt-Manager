@@ -25,12 +25,9 @@ export function SummaryArea() {
       {actionEntries.map(([state, count]) => (
         <button
           key={state}
-          className={`${styles.indicator} ${styles.actionIndicator}`}
+          className={`${styles.indicator} ${activeFilter === state ? styles.activeIndicator : ''}`}
           onClick={() => handleFilterClick(state)}
           data-testid={`summary-action-${state}`}
-          style={{
-            borderColor: activeFilter === state ? STATE_CONFIG_MAP[state].color : undefined,
-          }}
         >
           {count}&times; {STATE_CONFIG_MAP[state].label}
         </button>
@@ -38,12 +35,9 @@ export function SummaryArea() {
       {summary.agedBufferCounts.map(({ state, count, thresholdDays }) => (
         <button
           key={state}
-          className={`${styles.indicator} ${styles.bufferIndicator}`}
+          className={`${styles.indicator} ${styles.agedIndicator} ${activeFilter === state ? styles.activeIndicator : ''}`}
           onClick={() => handleFilterClick(state)}
           data-testid={`summary-buffer-${state}`}
-          style={{
-            borderColor: activeFilter === state ? STATE_CONFIG_MAP[state].color : undefined,
-          }}
         >
           {count} {STATE_CONFIG_MAP[state].label} seit &gt;{thresholdDays} Tagen
         </button>

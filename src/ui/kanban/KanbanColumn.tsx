@@ -32,7 +32,7 @@ export function KanbanColumn({ config, projects, collapsed, onToggleExpand }: Ka
       >
         <div className={styles.collapsedHeader} style={{ borderColor: config.color }}>
           <span className={styles.collapsedLabel}>{config.label}</span>
-          <span className={styles.count} data-testid={`column-count-${config.key}`}>
+          <span className={styles.collapsedCount} data-testid={`column-count-${config.key}`}>
             {projects.length}
           </span>
         </div>
@@ -60,9 +60,8 @@ export function KanbanColumn({ config, projects, collapsed, onToggleExpand }: Ka
             : undefined
         }
       >
-        <span className={styles.label}>{config.label}</span>
-        <span className={styles.count} data-testid={`column-count-${config.key}`}>
-          {projects.length}
+        <span className={styles.label}>
+          {config.label} (<span data-testid={`column-count-${config.key}`}>{projects.length}</span>)
         </span>
       </div>
       <div className={styles.cards}>

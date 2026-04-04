@@ -52,22 +52,24 @@ export function ProjectCard({ project }: ProjectCardProps) {
       </div>
       <div className={styles.title}>{project.title}</div>
       <div className={styles.customer}>{project.customer.name}</div>
-      <div className={dateRange === 'Kein Termin' ? styles.noDates : styles.dates}>{dateRange}</div>
+      <div
+        className={dateRange === 'Kein Termin' ? styles.noDates : styles.dates}
+        data-testid={`card-dates-${project.id}`}
+      >
+        {dateRange}
+      </div>
+      <div
+        className={`${styles.entryDate} ${bold ? styles.entryDateBold : ''}`}
+        data-testid={`entry-date-${project.id}`}
+      >
+        seit {entryDate}
+      </div>
       <div className={styles.bottomRow}>
-        <div>
-          <span
-            className={`${styles.entryDate} ${bold ? styles.entryDateBold : ''}`}
-            data-testid={`entry-date-${project.id}`}
-          >
-            seit {entryDate}
+        {agingText ? (
+          <span className={styles.agingText} data-testid={`aging-text-${project.id}`}>
+            {agingText}
           </span>
-          {agingText && (
-            <span className={styles.agingText} data-testid={`aging-text-${project.id}`}>
-              {' '}
-              ({agingText})
-            </span>
-          )}
-        </div>
+        ) : <span />}
         {showForward && (
           <button
             className={styles.forwardButton}

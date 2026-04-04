@@ -1,19 +1,19 @@
 import { useState, useEffect } from 'react';
 import type { CollapseTier } from '@/config/stateConfig';
 
-const BREAKPOINTS: { maxWidth: number; tier: CollapseTier }[] = [
-  { maxWidth: 900, tier: 1 },
-  { maxWidth: 1100, tier: 2 },
-  { maxWidth: 1400, tier: 3 },
-];
-
-/**
- * Returns the highest collapse tier that should be collapsed at the current viewport width.
- * - Returns 3 when viewport < 1400px (tier 3 columns collapse)
- * - Returns 2 when viewport < 1100px (tier 2 + 3 columns collapse)
- * - Returns 1 when viewport < 900px  (all columns collapse — action columns last)
- * - Returns 0 when viewport >= 1400px (nothing auto-collapses)
+/*
+ * Breakpoints derived from layout dimensions:
+ *   column min-width: 185px, collapsed: 44px, gap: 8px, board padding: 2×12px
+ *   9 expanded:           9×185 + 8×8 + 24 = 1753px → breakpoint 1780
+ *   6 expanded + 3 coll:  6×185 + 3×44 + 8×8 + 24 = 1330px → breakpoint 1350
+ *   3 expanded + 6 coll:  3×185 + 6×44 + 8×8 + 24 =  907px → breakpoint  940
+ *   ~30px buffer biases toward early collapse (free space > horizontal scroll).
  */
+const BREAKPOINTS: { maxWidth: number; tier: CollapseTier }[] = [
+  { maxWidth: 940, tier: 1 },
+  { maxWidth: 1350, tier: 2 },
+  { maxWidth: 1780, tier: 3 },
+];
 export function useCollapseTier(): number {
   const [activeTier, setActiveTier] = useState(() => computeTier());
 
