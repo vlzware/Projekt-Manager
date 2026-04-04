@@ -1,8 +1,39 @@
 import { test, expect } from '@playwright/test';
 
-test('E2E Smoke Test: full interaction path', async ({ page }) => {
-  // Step 1: App loads — Kanban view is displayed with 9 columns
+/**
+ * E2E Smoke Test — Iteration 2
+ *
+ * Single scenario covering the full authenticated end-to-end path.
+ * Maps to spec §16.4 steps 1–17.
+ *
+ * Seed data assumptions:
+ *   - User: inhaber / changeme (Thomas Berger, admin/owner)
+ *   - 19 projects distributed across 9 states
+ *   - 3 projects in rechnung_faellig (p13, p14, p15)
+ *   - 2 projects in geplant (p07, p08)
+ *   - Projects without dates: p01, p02, p05, p06
+ *
+ * This test will fail until the backend and auth are implemented.
+ */
+test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => {
+  // ── Step 1: App loads — login screen is displayed ──
+  // AC-21: Unauthenticated users see only a login screen.
   await page.goto('/');
+  const loginForm = page.getByTestId('login-form');
+  await expect(loginForm).toBeVisible();
+  await expect(page.getByTestId('login-username')).toBeVisible();
+  await expect(page.getByTestId('login-password')).toBeVisible();
+  await expect(page.getByTestId('login-submit')).toBeVisible();
+
+  // No project data should be visible before login
+  await expect(page.getByTestId('kanban-board')).not.toBeVisible();
+
+  // ── Step 2: User enters credentials and logs in — Kanban view with 9 columns ──
+  // AC-22: Valid credentials → Kanban view
+  await page.getByTestId('login-username').fill('inhaber');
+  await page.getByTestId('login-password').fill('changeme');
+  await page.getByTestId('login-submit').click();
+
   await expect(page.getByTestId('kanban-board')).toBeVisible();
 
   const columns = [
@@ -20,67 +51,87 @@ test('E2E Smoke Test: full interaction path', async ({ page }) => {
     await expect(page.getByTestId(col)).toBeVisible();
   }
 
-  // Step 2: Summary area shows "3× Rechnung fällig"
+  // ── Step 3: Header shows user's display name ──
+  // AC-24: User indicator shows display name
+  const userIndicator = page.getByTestId('user-indicator');
+  await expect(userIndicator).toBeVisible();
+  await expect(userIndicator).toContainText('Thomas Berger');
+
+  // ── Step 4: Summary area shows "3× Rechnung fällig" ──
+  // AC-8: Summary area counts for action states
   const summaryArea = page.getByTestId('summary-area');
   await expect(summaryArea).toBeVisible();
   const rechnungIndicator = page.getByTestId('summary-action-rechnung_faellig');
-  await expect(rechnungIndicator).toContainText('3');
-  await expect(rechnungIndicator).toContainText('Rechnung fällig');
+  await expect(rechnungIndicator).toHaveText('3× Rechnung fällig');
 
-  // Step 3: User clicks a summary indicator — view filters to matching projects
+  // ── Step 5: User clicks a summary indicator — view filters to matching projects ──
+  // AC-9: Clicking indicator filters to affected projects
   await rechnungIndicator.click();
 
-  // Only rechnung_faellig column should have cards
   await expect(page.getByTestId('column-count-rechnung_faellig')).toContainText('3');
+  // Filtered: other columns show 0 cards
   await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
 
-  // Step 4: User clicks "Filter aufheben" — full view restored
+  // ── Step 6: User clicks "Filter aufheben" — full view restored ──
   const clearFilter = page.getByTestId('clear-filter');
   await expect(clearFilter).toBeVisible();
   await clearFilter.click();
+  // After clearing, anfrage should show its original count
   await expect(page.getByTestId('column-count-anfrage')).toContainText('2');
 
-  // Step 5: User clicks a card in Geplant — detail panel opens
+  // ── Step 7: User clicks a card in Geplant — detail panel opens ──
+  // AC-4: Clicking a project opens the detail panel
   const geplantCard = page.getByTestId('project-card-p07');
   await geplantCard.click();
   const detailPanel = page.getByTestId('detail-panel');
   await expect(detailPanel).toBeVisible();
   await expect(detailPanel).toContainText('Wohnzimmer renovieren Klein');
 
-  // Step 6: User clicks "Nächster Schritt" — confirmation dialog appears
-  // Step 7: User confirms — card moves to In Arbeit
-  // Finding 17: use page.once instead of page.on + removeAllListeners
-  page.once('dialog', async (dialog) => {
-    expect(dialog.message()).toContain('Geplant → In Arbeit');
-    await dialog.accept();
-  });
-  await page.getByTestId('detail-forward-button').click();
-
-  // Wait for status badge to update
+  // ── Step 8: User clicks "Nächster Schritt" — confirmation dialog appears ──
+  // ── Step 9: User confirms — card moves to In Arbeit ──
+  // AC-5: Forward transition with German confirmation dialog
+  const [forwardDialog] = await Promise.all([
+    page.waitForEvent('dialog'),
+    page.getByTestId('detail-forward-button').click(),
+  ]);
+  expect(forwardDialog.message()).toContain('Geplant → In Arbeit');
+  await forwardDialog.accept();
   await expect(page.getByTestId('detail-status-badge')).toContainText('In Arbeit');
 
-  // Finding 2 (R2): mid-test summary assertion — "throughout" means checking at intermediate points
-  // After step 7: p07 moved from geplant to in_arbeit, so geplant count should decrease
+  // Verify the card is now in the "In Arbeit" column, not just the detail badge
+  await expect(
+    page.getByTestId('kanban-column-in_arbeit').getByTestId('project-card-p07'),
+  ).toBeVisible();
+
+  // Step 14 (intermediate): summary counts reflect the transition
   await expect(page.getByTestId('column-count-geplant')).toContainText('1');
 
-  // Step 8: User clicks "Vorheriger Schritt" — card moves back to Geplant
-  page.once('dialog', async (dialog) => {
-    expect(dialog.message()).toContain('In Arbeit → Geplant');
-    await dialog.accept();
-  });
-  await page.getByTestId('detail-backward-button').click();
+  // ── Step 10: User clicks "Vorheriger Schritt" — card moves back to Geplant ──
+  // AC-6: Backward transition
+  const [backwardDialog] = await Promise.all([
+    page.waitForEvent('dialog'),
+    page.getByTestId('detail-backward-button').click(),
+  ]);
+  expect(backwardDialog.message()).toContain('In Arbeit → Geplant');
+  await backwardDialog.accept();
   await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
 
-  // Finding 2 (R2): after step 8, geplant count should be restored
+  // Verify the card is back in the "Geplant" column
+  await expect(
+    page.getByTestId('kanban-column-geplant').getByTestId('project-card-p07'),
+  ).toBeVisible();
+
+  // Step 14 (intermediate): geplant count restored
   await expect(page.getByTestId('column-count-geplant')).toContainText('2');
 
-  // Step 9: User changes planned end date via date picker in detail panel
-  // Finding 8: use a date within April so the calendar (which defaults to current month) can show it
+  // ── Step 11: User changes planned end date via date picker in detail panel ──
+  // AC-7: Changing a date updates plannedEnd and persists
+  // p07 already has both dates from seed data — only end date is changed
   const endDateInput = page.getByTestId('detail-date-end');
   await endDateInput.fill('2026-04-25');
 
-  // Step 10: User switches to calendar view — the project bar reflects the new date
-  // Close detail panel first
+  // ── Step 12: User switches to calendar view — project bar reflects the new date ──
+  // AC-3: Calendar renders projects with planned dates as colored bars
   await page.getByTestId('detail-close').click();
   await expect(detailPanel).not.toBeVisible();
 
@@ -88,22 +139,71 @@ test('E2E Smoke Test: full interaction path', async ({ page }) => {
   await calendarToggle.click();
   await expect(page.getByTestId('calendar-view')).toBeVisible();
   await expect(page.getByTestId('calendar-grid')).toBeVisible();
-  // Finding 8: assert the project bar for p07 is actually visible in the calendar
-  await expect(page.getByTestId('calendar-bar-p07').first()).toBeVisible();
+  // The project bar for p07 should be visible with the updated date
+  const calendarBarP07 = page.getByTestId('calendar-bar-p07').first();
+  await expect(calendarBarP07).toBeVisible();
+  // Verify the calendar contains the day cell for the new planned end date
+  await expect(page.getByTestId('calendar-day-2026-04-25')).toBeVisible();
 
-  // Step 11: User clicks "X Projekte ohne Termin" — switches to filtered Kanban
-  // Finding 9: spec is ambiguous whether this should filter to dateless projects or just switch views.
-  // Current implementation switches to kanban without filtering. Spec clarification candidate.
+  // ── Step 13: User clicks "X Projekte ohne Termin" — switches to filtered Kanban ──
+  // AC-10: "X Projekte ohne Termin" counter appears below calendar
   const noDatesCounter = page.getByTestId('no-dates-counter');
   await expect(noDatesCounter).toBeVisible();
   await expect(noDatesCounter).toContainText('Projekte ohne Termin');
   await noDatesCounter.click();
 
-  // Should be back on Kanban
+  // Should be back on Kanban filtered to projects without dates.
+  // Dateless projects (p01, p02, p05, p06) are visible; dated ones are not.
   await expect(page.getByTestId('kanban-board')).toBeVisible();
+  await expect(page.getByTestId('project-card-p01')).toBeVisible();
+  await expect(page.getByTestId('project-card-p02')).toBeVisible();
+  await expect(page.getByTestId('project-card-p05')).toBeVisible();
+  await expect(page.getByTestId('project-card-p06')).toBeVisible();
+  // p07 now has dates (set in step 11) — it should NOT appear in the dateless filter
+  await expect(page.getByTestId('project-card-p07')).not.toBeVisible();
 
-  // Step 12: Summary area reflects current state counts throughout
+  // ── Step 14: Summary area reflects current state counts throughout ──
+  // AC-8: Verified at intermediate points above and once more here
   await expect(page.getByTestId('summary-area')).toBeVisible();
-  // Rechnung fällig should still be 3 (we moved p07 back)
+  // Rechnung fällig should still be 3 (p07 was moved back to geplant)
   await expect(page.getByTestId('summary-action-rechnung_faellig')).toContainText('3');
+
+  // ── Step 15: User refreshes the page — changes persist; user remains logged in ──
+  // AC-5/AC-6/AC-7: Changes persist across page reloads
+  await page.reload();
+
+  // User is still authenticated — Kanban loads, not login screen
+  await expect(page.getByTestId('kanban-board')).toBeVisible();
+  await expect(page.getByTestId('login-form')).not.toBeVisible();
+
+  // Display name still in header
+  await expect(page.getByTestId('user-indicator')).toContainText('Thomas Berger');
+
+  // Verify state transition persisted: p07 should still be in "Geplant" column
+  // (step 10 moved it back from "In Arbeit")
+  await expect(
+    page.getByTestId('kanban-column-geplant').getByTestId('project-card-p07'),
+  ).toBeVisible();
+
+  // The date change from step 11 persisted — verify via detail panel
+  const p07CardAfterReload = page.getByTestId('project-card-p07');
+  await p07CardAfterReload.click();
+  await expect(page.getByTestId('detail-panel')).toBeVisible();
+  await expect(page.getByTestId('detail-date-end')).toHaveValue('2026-04-25');
+  await page.getByTestId('detail-close').click();
+
+  // ── Step 16: User clicks "Abmelden" — login screen appears ──
+  // AC-25: Clicking "Abmelden" logs out and shows login screen
+  await page.getByTestId('user-indicator').click();
+  await page.getByTestId('logout-button').click();
+
+  await expect(page.getByTestId('login-form')).toBeVisible();
+  await expect(page.getByTestId('kanban-board')).not.toBeVisible();
+
+  // ── Step 17: Pressing browser back button does not show project data ──
+  // AC-26: After logout, back button must not reveal project data
+  await page.goBack();
+  await expect(page.getByTestId('login-form')).toBeVisible();
+  await expect(page.getByTestId('kanban-board')).not.toBeVisible();
+  await expect(page.getByTestId('project-card-p07')).not.toBeVisible();
 });
