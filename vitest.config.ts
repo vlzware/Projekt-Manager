@@ -14,6 +14,10 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     exclude: ['e2e/**', 'node_modules/**', '.claude/**'],
+    // Server integration tests share a PostgreSQL database and mutate
+    // shared state (user passwords, deactivations, project transitions).
+    // Running them in parallel causes race conditions.
+    fileParallelism: false,
     css: {
       modules: {
         classNameStrategy: 'non-scoped',

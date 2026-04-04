@@ -7,7 +7,7 @@
  * @returns `true` if the session is expired, `false` if still valid
  */
 export function isSessionExpired(
-  _session: { expiresAt: string },
+  session: { expiresAt: string },
 ): boolean {
-  throw new Error('not implemented');
+  return new Date(session.expiresAt).getTime() < Date.now();
 }

@@ -8,23 +8,47 @@
 
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../server/app.js';
+import { createDatabase } from '../server/db/connection.js';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { seed } from '../server/seed.js';
+import {
+  createExpiredSession as createExpiredSessionRepo,
+} from '../server/repositories/session.js';
+import {
+  deactivateUser as deactivateUserRepo,
+} from '../server/repositories/user.js';
+import type { Database } from '../server/db/connection.js';
+import type pg from 'pg';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 let app: FastifyInstance;
+let db: Database;
+let pool: pg.Pool;
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const migrationsFolder = path.resolve(__dirname, '../server/db/migrations');
 
 /**
  * Start the test application. Call in `beforeAll`.
  *
- * The app is shared across all tests in the suite to avoid
- * repeated startup cost. Each test is isolated through database
- * transactions (see TODO below).
+ * Connects to the test database, runs migrations, seeds data,
+ * and boots a Fastify instance. Test files run sequentially
+ * (fileParallelism: false in vitest.config.ts) so each file
+ * gets a fresh seed without race conditions.
  */
 export async function startApp(): Promise<FastifyInstance> {
-  // TODO: test database setup
-  //   - Connect to a dedicated test database (not the dev/prod database)
-  //   - Run migrations to ensure schema is current
-  //   - Seed test data (users + projects)
+  const conn = createDatabase();
+  db = conn.db;
+  pool = conn.pool;
 
-  app = buildApp({ logger: false });
+  // Run migrations (idempotent — drizzle tracks applied migrations)
+  await migrate(db, { migrationsFolder });
+
+  // Seed fresh test data (clears existing data first)
+  await seed(db);
+
+  app = buildApp({ logger: false, db });
   await app.ready();
   return app;
 }
@@ -33,12 +57,11 @@ export async function startApp(): Promise<FastifyInstance> {
  * Shut down the test application. Call in `afterAll`.
  */
 export async function stopApp(): Promise<void> {
-  // TODO: test database teardown
-  //   - Drop test data or roll back transaction
-  //   - Close database connection pool
-
   if (app) {
     await app.close();
+  }
+  if (pool) {
+    await pool.end();
   }
 }
 
@@ -128,13 +151,11 @@ export async function authPatch(
  * The session must be a real database row whose expiresAt is in the past.
  * This lets AT-5 verify that the auth middleware rejects expired sessions
  * with the correct error code — something a fabricated string can never do.
- *
- * TODO: implement once the session table and database test setup exist.
  */
 export async function createExpiredSession(
-  _userId: string,
+  userId: string,
 ): Promise<string> {
-  throw new Error('not implemented');
+  return createExpiredSessionRepo(db, userId);
 }
 
 /**
@@ -143,9 +164,7 @@ export async function createExpiredSession(
  * Used by AT-7 to simulate the "logged-in user gets deactivated" flow:
  * login normally, deactivate the account, then assert the existing token
  * is rejected on the next request.
- *
- * TODO: implement once the user table and database test setup exist.
  */
-export async function deactivateUser(_userId: string): Promise<void> {
-  throw new Error('not implemented');
+export async function deactivateUser(userId: string): Promise<void> {
+  return deactivateUserRepo(db, userId);
 }

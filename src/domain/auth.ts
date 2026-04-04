@@ -1,10 +1,14 @@
+import bcrypt from 'bcryptjs';
+
+const SALT_ROUNDS = 10;
+
 /**
  * Hash a plaintext password.
  *
  * Returns the hashed representation suitable for storage.
  */
-export async function hashPassword(_plain: string): Promise<string> {
-  throw new Error('not implemented');
+export async function hashPassword(plain: string): Promise<string> {
+  return bcrypt.hash(plain, SALT_ROUNDS);
 }
 
 /**
@@ -13,8 +17,8 @@ export async function hashPassword(_plain: string): Promise<string> {
  * Returns `true` when the plaintext matches the hash, `false` otherwise.
  */
 export async function verifyPassword(
-  _plain: string,
-  _hash: string,
+  plain: string,
+  hash: string,
 ): Promise<boolean> {
-  throw new Error('not implemented');
+  return bcrypt.compare(plain, hash);
 }
