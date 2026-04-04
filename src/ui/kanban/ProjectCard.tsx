@@ -69,7 +69,9 @@ export function ProjectCard({ project }: ProjectCardProps) {
           <span className={styles.agingText} data-testid={`aging-text-${project.id}`}>
             {agingText}
           </span>
-        ) : <span />}
+        ) : (
+          <span />
+        )}
         {showForward && (
           <button
             className={styles.forwardButton}
