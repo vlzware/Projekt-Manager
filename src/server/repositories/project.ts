@@ -5,8 +5,8 @@
 import { eq, count } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { projects } from '../db/schema.js';
-import { WORKFLOW_ORDER } from '@/config/stateConfig.js';
-import type { WorkflowState } from '@/config/stateConfig.js';
+import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
+import type { WorkflowState } from '../../config/stateConfig.js';
 
 export type ProjectRow = typeof projects.$inferSelect;
 

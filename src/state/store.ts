@@ -53,10 +53,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   activeView: 'kanban',
   selectedProjectId: null,
 
-  // Auth state — default to a mock user so existing tests (which don't mock
-  // fetch and never set authUser) continue to see the Kanban board.
-  // Auth tests explicitly set authUser: null to exercise the login flow.
-  authUser: { username: 'mock', displayName: 'Mock User' },
+  authUser: null,
   authToken: null,
   authError: null,
   mutationError: null,

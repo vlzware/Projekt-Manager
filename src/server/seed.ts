@@ -7,7 +7,7 @@
  * Dates are relative to today — never hardcoded.
  */
 
-import { hashPassword } from '@/domain/auth.js';
+import { hashPassword } from '../domain/auth.js';
 import type { Database } from './db/connection.js';
 import { users, projects, sessions } from './db/schema.js';
 

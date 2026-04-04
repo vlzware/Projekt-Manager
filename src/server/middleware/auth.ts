@@ -6,7 +6,7 @@
  */
 
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import { isSessionExpired } from '@/domain/session.js';
+import { isSessionExpired } from '../../domain/session.js';
 import { findSession } from '../repositories/session.js';
 import { unauthenticated, sessionExpired } from '../errors.js';
 import type { Database } from '../db/connection.js';

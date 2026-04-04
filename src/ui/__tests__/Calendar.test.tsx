@@ -7,6 +7,7 @@ import { App } from '@/App';
 beforeEach(() => {
   useProjectStore.setState({
     ...useProjectStore.getInitialState(),
+    authUser: { username: 'mock', displayName: 'Mock User' },
   });
 });
 

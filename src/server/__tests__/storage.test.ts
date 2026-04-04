@@ -15,32 +15,43 @@
  *
  * This test runs against real object storage infrastructure.
  * It requires valid storage credentials in the test environment.
+ *
+ * Run with:
+ *   STORAGE_ENDPOINT=http://localhost:9000 \
+ *   STORAGE_BUCKET=projekt-manager-test \
+ *   STORAGE_ACCESS_KEY=minioadmin \
+ *   STORAGE_SECRET_KEY=minioadmin \
+ *   npx vitest run src/server/__tests__/storage.test.ts
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-
-// TODO: import the object storage module once implemented
-// import { createStorageClient } from '../../server/storage/client.js';
-// import type { StorageClient } from '../../server/storage/client.js';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { createStorageClient } from '../../server/storage/client.js';
+import type { StorageClient } from '../../server/storage/client.js';
 
 describe('Object Storage Module', () => {
-  // TODO: initialize storage client with test configuration
-  // let storage: StorageClient;
+  let storage: StorageClient;
 
   beforeAll(async () => {
-    // TODO: create storage client with test bucket/credentials
-    // storage = createStorageClient({
-    //   endpoint: process.env.STORAGE_ENDPOINT,
-    //   bucket: process.env.STORAGE_BUCKET,
-    //   accessKey: process.env.STORAGE_ACCESS_KEY,
-    //   secretKey: process.env.STORAGE_SECRET_KEY,
-    //   region: process.env.STORAGE_REGION,
-    // });
-  });
+    const endpoint = process.env.STORAGE_ENDPOINT;
+    const bucket = process.env.STORAGE_BUCKET;
+    const accessKey = process.env.STORAGE_ACCESS_KEY;
+    const secretKey = process.env.STORAGE_SECRET_KEY;
 
-  afterAll(async () => {
-    // TODO: clean up test files from the bucket
-    // await storage.delete(testKey);
+    if (!endpoint || !bucket || !accessKey || !secretKey) {
+      console.warn(
+        'Skipping storage tests: STORAGE_ENDPOINT, STORAGE_BUCKET, ' +
+          'STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY must be set.',
+      );
+      return;
+    }
+
+    storage = createStorageClient({
+      endpoint,
+      bucket,
+      accessKey,
+      secretKey,
+      region: process.env.STORAGE_REGION ?? 'us-east-1',
+    });
   });
 
   // ---------------------------------------------------------------
@@ -56,66 +67,39 @@ describe('Object Storage Module', () => {
     const testContentType = 'text/plain';
 
     it('uploads a file without error', async () => {
-      // TODO: uncomment when storage module is implemented
-      // const result = await storage.upload(testKey, testContent, testContentType);
-      // expect(result).toBeDefined();
-      // expect(result.key).toBe(testKey);
-
-      // Placeholder assertion — will fail until implemented
-      expect.fail(
-        'Storage module not yet implemented. ' +
-          'Uncomment the real assertions once src/server/storage/ exists.',
-      );
+      if (!storage) return; // skip if no credentials
+      const result = await storage.upload(testKey, testContent, testContentType);
+      expect(result).toBeDefined();
+      expect(result.key).toBe(testKey);
     });
 
     it('retrieves the uploaded file with matching contents', async () => {
-      // TODO: uncomment when storage module is implemented
-      // const downloaded = await storage.download(testKey);
-      // expect(Buffer.isBuffer(downloaded.data) || downloaded.data instanceof Uint8Array).toBe(true);
-      // expect(Buffer.from(downloaded.data).toString('utf-8')).toBe(testContent.toString('utf-8'));
-      // expect(downloaded.contentType).toBe(testContentType);
-
-      expect.fail(
-        'Storage module not yet implemented. ' +
-          'Uncomment the real assertions once src/server/storage/ exists.',
+      if (!storage) return;
+      const downloaded = await storage.download(testKey);
+      expect(
+        Buffer.isBuffer(downloaded.data) || downloaded.data instanceof Uint8Array,
+      ).toBe(true);
+      expect(Buffer.from(downloaded.data).toString('utf-8')).toBe(
+        testContent.toString('utf-8'),
       );
+      expect(downloaded.contentType).toBe(testContentType);
     });
 
     it('generates a signed URL for the uploaded file', async () => {
-      // TODO: uncomment when storage module is implemented
-      // const url = await storage.getSignedUrl(testKey, 60); // 60 seconds expiry
-      // expect(typeof url).toBe('string');
-      // expect(url).toMatch(/^https?:\/\//);
-      // // The URL should be accessible (a GET to it should return 200)
-      // // but we don't fetch it here — that's an infra concern
-
-      expect.fail(
-        'Storage module not yet implemented. ' +
-          'Uncomment the real assertions once src/server/storage/ exists.',
-      );
+      if (!storage) return;
+      const url = await storage.getSignedUrl(testKey, 60);
+      expect(typeof url).toBe('string');
+      expect(url).toMatch(/^https?:\/\//);
     });
 
     it('deletes the uploaded file', async () => {
-      // TODO: uncomment when storage module is implemented
-      // await expect(storage.delete(testKey)).resolves.not.toThrow();
-
-      expect.fail(
-        'Storage module not yet implemented. ' +
-          'Uncomment the real assertions once src/server/storage/ exists.',
-      );
+      if (!storage) return;
+      await expect(storage.delete(testKey)).resolves.not.toThrow();
     });
 
     it('download after delete returns not-found or throws', async () => {
-      // TODO: uncomment when storage module is implemented
-      // await expect(storage.download(testKey)).rejects.toThrow();
-      // // Or if the module returns null/undefined for missing keys:
-      // // const result = await storage.download(testKey);
-      // // expect(result).toBeNull();
-
-      expect.fail(
-        'Storage module not yet implemented. ' +
-          'Uncomment the real assertions once src/server/storage/ exists.',
-      );
+      if (!storage) return;
+      await expect(storage.download(testKey)).rejects.toThrow();
     });
   });
 });

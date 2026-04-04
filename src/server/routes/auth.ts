@@ -3,7 +3,7 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import { hashPassword, verifyPassword } from '@/domain/auth.js';
+import { hashPassword, verifyPassword } from '../../domain/auth.js';
 import { findByUsername } from '../repositories/user.js';
 import {
   createSession,

@@ -12,6 +12,7 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       NODE_ENV: production
       PORT: "3000"
+      SEED: ${SEED:-false}
     depends_on:
       db:
         condition: service_healthy
