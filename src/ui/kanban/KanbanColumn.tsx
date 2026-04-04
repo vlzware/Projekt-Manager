@@ -48,6 +48,7 @@ export function KanbanColumn({ config, projects, collapsed, onToggleExpand }: Ka
       <div
         className={styles.header}
         style={{ borderBottomColor: config.color }}
+        data-testid={`column-header-${config.key}`}
         onClick={onToggleExpand}
         role={onToggleExpand ? 'button' : undefined}
         tabIndex={onToggleExpand ? 0 : undefined}
