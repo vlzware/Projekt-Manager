@@ -1,11 +1,28 @@
+import { useState, useCallback } from 'react';
 import { STATE_CONFIGS } from '@/config/stateConfig';
+import type { WorkflowState } from '@/config/stateConfig';
 import { useProjectStore } from '@/state/store';
+import { useCollapseTier } from './useCollapseTier';
 import { KanbanColumn } from './KanbanColumn';
 import styles from './KanbanBoard.module.css';
 
 export function KanbanBoard() {
   const projects = useProjectStore((s) => s.projects);
   const activeFilter = useProjectStore((s) => s.activeFilter);
+  const activeTier = useCollapseTier();
+  const [expanded, setExpanded] = useState<Set<WorkflowState>>(new Set());
+
+  const toggleExpand = useCallback((key: WorkflowState) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }, []);
 
   const filteredProjects = activeFilter
     ? projects.filter((p) => p.status === activeFilter)
@@ -20,7 +37,18 @@ export function KanbanBoard() {
             (a, b) => new Date(a.statusChangedAt).getTime() - new Date(b.statusChangedAt).getTime(),
           );
 
-        return <KanbanColumn key={config.key} config={config} projects={columnProjects} />;
+        const autoCollapsed = activeTier > 0 && config.collapseTier >= activeTier;
+        const collapsed = autoCollapsed && !expanded.has(config.key);
+
+        return (
+          <KanbanColumn
+            key={config.key}
+            config={config}
+            projects={columnProjects}
+            collapsed={collapsed}
+            onToggleExpand={() => toggleExpand(config.key)}
+          />
+        );
       })}
     </div>
   );

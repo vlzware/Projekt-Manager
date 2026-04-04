@@ -591,6 +591,13 @@ The walking skeleton is accepted when all of the following are true.
 
 - AC-27: App name (header) and footer text are driven by a branding config, not hardcoded in components. Changing the config changes all instances.
 
+### 11.6 Responsive
+
+- AC-28: At viewport widths below 1400px, tier-3 columns (Angebot, Abgerechnet, Erledigt) collapse to slim indicators showing the column header and card count. Cards are hidden.
+- AC-29: At viewport widths below 1100px, tier-2 columns (Geplant, In Arbeit, Abnahme) also collapse.
+- AC-30: At viewport widths below 900px, tier-1 columns (Anfrage, Beauftragt, Rechnung fällig) also collapse. Action columns are always the last to collapse.
+- AC-31: Clicking a collapsed column expands it. Clicking the column header again collapses it.
+
 ---
 
 ## 12. Test Specification

@@ -5,5 +5,5 @@
   overflow-x: auto;
   flex: 1;
   min-height: 0;
-  align-items: flex-start;
+  align-items: stretch;
 }

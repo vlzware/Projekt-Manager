@@ -11,12 +11,15 @@ export type WorkflowState =
 
 export type StateType = 'action' | 'buffer' | 'active' | 'done';
 
+export type CollapseTier = 1 | 2 | 3;
+
 export interface StateConfig {
   key: WorkflowState;
   label: string;
   type: StateType;
   order: number;
   color: string;
+  collapseTier: CollapseTier;
   agingThresholdDays?: number;
   agingBoldDays?: number;
 }
@@ -28,6 +31,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'action',
     order: 1,
     color: '#F97316',
+    collapseTier: 1,
     agingBoldDays: 3,
   },
   {
@@ -36,6 +40,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'buffer',
     order: 2,
     color: '#93C5FD',
+    collapseTier: 3,
     agingThresholdDays: 14,
     agingBoldDays: 14,
   },
@@ -45,6 +50,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'action',
     order: 3,
     color: '#F59E0B',
+    collapseTier: 1,
     agingBoldDays: 5,
   },
   {
@@ -53,6 +59,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'buffer',
     order: 4,
     color: '#3B82F6',
+    collapseTier: 2,
     agingThresholdDays: 21,
     agingBoldDays: 21,
   },
@@ -62,6 +69,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'active',
     order: 5,
     color: '#22C55E',
+    collapseTier: 2,
   },
   {
     key: 'abnahme',
@@ -69,6 +77,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'buffer',
     order: 6,
     color: '#14B8A6',
+    collapseTier: 2,
     agingThresholdDays: 7,
     agingBoldDays: 7,
   },
@@ -78,6 +87,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'action',
     order: 7,
     color: '#EF4444',
+    collapseTier: 1,
     agingBoldDays: 3,
   },
   {
@@ -86,6 +96,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'buffer',
     order: 8,
     color: '#6366F1',
+    collapseTier: 3,
     agingThresholdDays: 30,
     agingBoldDays: 30,
   },
@@ -95,6 +106,7 @@ export const STATE_CONFIGS: StateConfig[] = [
     type: 'done',
     order: 9,
     color: '#9CA3AF',
+    collapseTier: 3,
   },
 ];
 

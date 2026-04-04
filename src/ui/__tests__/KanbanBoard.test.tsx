@@ -6,6 +6,8 @@ import { STATE_CONFIGS } from '@/config/stateConfig';
 import { BRANDING } from '@/config/brandingConfig';
 import { App } from '@/App';
 
+import * as collapseTierHook from '@/ui/kanban/useCollapseTier';
+
 // Reset store before each test
 beforeEach(() => {
   useProjectStore.setState({
@@ -295,5 +297,106 @@ describe('Branding', () => {
 
     const footer = document.querySelector('footer');
     expect(footer).toHaveTextContent(BRANDING.footerText);
+  });
+});
+
+describe('Responsive Column Collapse', () => {
+  // AC-28: Tier-3 columns collapse at narrow viewports
+  it('AC-28: tier-3 columns collapse when viewport triggers tier 3', () => {
+    vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(3);
+    render(<App />);
+
+    // Tier-3 columns (angebot, abgerechnet, erledigt) should be collapsed
+    const angebotCol = screen.getByTestId('kanban-column-angebot');
+    expect(angebotCol).toHaveClass('columnCollapsed');
+    const abgerechnetCol = screen.getByTestId('kanban-column-abgerechnet');
+    expect(abgerechnetCol).toHaveClass('columnCollapsed');
+    const erledigtCol = screen.getByTestId('kanban-column-erledigt');
+    expect(erledigtCol).toHaveClass('columnCollapsed');
+
+    // Tier-2 columns should NOT be collapsed
+    const geplantCol = screen.getByTestId('kanban-column-geplant');
+    expect(geplantCol).not.toHaveClass('columnCollapsed');
+
+    vi.restoreAllMocks();
+  });
+
+  // AC-29: Tier-2 columns also collapse at narrower viewports
+  it('AC-29: tier-2 and tier-3 columns collapse when viewport triggers tier 2', () => {
+    vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(2);
+    render(<App />);
+
+    // Tier-3 columns collapsed
+    expect(screen.getByTestId('kanban-column-angebot')).toHaveClass('columnCollapsed');
+    expect(screen.getByTestId('kanban-column-erledigt')).toHaveClass('columnCollapsed');
+
+    // Tier-2 columns also collapsed
+    expect(screen.getByTestId('kanban-column-geplant')).toHaveClass('columnCollapsed');
+    expect(screen.getByTestId('kanban-column-in_arbeit')).toHaveClass('columnCollapsed');
+    expect(screen.getByTestId('kanban-column-abnahme')).toHaveClass('columnCollapsed');
+
+    vi.restoreAllMocks();
+  });
+
+  // AC-30: Action columns are last to collapse (only at tier 1)
+  it('AC-30: action columns survive tier-2 collapse but collapse at tier 1', () => {
+    // At tier 2, action columns should still be expanded
+    vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(2);
+    const { unmount } = render(<App />);
+
+    expect(screen.getByTestId('kanban-column-anfrage')).not.toHaveClass('columnCollapsed');
+    expect(screen.getByTestId('kanban-column-beauftragt')).not.toHaveClass('columnCollapsed');
+    expect(screen.getByTestId('kanban-column-rechnung_faellig')).not.toHaveClass('columnCollapsed');
+
+    vi.restoreAllMocks();
+    unmount();
+
+    // At tier 1, even action columns collapse
+    vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(1);
+    render(<App />);
+
+    expect(screen.getByTestId('kanban-column-anfrage')).toHaveClass('columnCollapsed');
+    expect(screen.getByTestId('kanban-column-beauftragt')).toHaveClass('columnCollapsed');
+    expect(screen.getByTestId('kanban-column-rechnung_faellig')).toHaveClass('columnCollapsed');
+
+    vi.restoreAllMocks();
+  });
+
+  // AC-31: Click collapsed column to expand, click header to collapse
+  it('AC-31: clicking a collapsed column expands it, clicking header collapses it', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(3);
+    render(<App />);
+
+    // Angebot should be collapsed
+    const angebotCol = screen.getByTestId('kanban-column-angebot');
+    expect(angebotCol).toHaveClass('columnCollapsed');
+
+    // Click to expand
+    await user.click(angebotCol);
+
+    // Should now be expanded — cards visible, no collapsed class
+    const expandedCol = screen.getByTestId('kanban-column-angebot');
+    expect(expandedCol).not.toHaveClass('columnCollapsed');
+
+    // Click the header to collapse again
+    const header = expandedCol.querySelector('[class*="header"]');
+    await user.click(header!);
+
+    const collapsedAgain = screen.getByTestId('kanban-column-angebot');
+    expect(collapsedAgain).toHaveClass('columnCollapsed');
+
+    vi.restoreAllMocks();
+  });
+
+  // Collapsed column still shows card count
+  it('collapsed column shows card count', () => {
+    vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(3);
+    render(<App />);
+
+    const count = screen.getByTestId('column-count-angebot');
+    expect(count).toHaveTextContent('2');
+
+    vi.restoreAllMocks();
   });
 });
