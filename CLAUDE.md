@@ -5,7 +5,7 @@
 - **Project board**: https://github.com/users/vlzware/projects/2
 - **Journal**: [docs/project/journal.md](docs/project/journal.md)
 - **Decisions**: [docs/adr/](docs/adr/index.md)
-- **Spec**: [docs/spec.md](docs/spec.md)
+- **Spec**: [docs/spec/](docs/spec/index.md)
 - **Conventions**: [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Open items**: GitHub Issues, prioritized on the project board
 - **Iteration scope**: GitHub Milestones

@@ -133,8 +133,7 @@ Issues without a milestone stay in the backlog.
 
 | Document | Location | Answers | Contains | Does NOT contain |
 |---|---|---|---|---|
-| **Spec** | `docs/spec.md` | "What does the system do?" | Current user-facing behavior, data model, acceptance criteria, edge cases | Architecture, component structure, implementation details |
-| **Iteration scope** | `docs/scope.md` | "What does this iteration add or change?" | Delta to the spec: new features, revised behavior, new ACs | The full spec repeated |
+| **Spec** | `docs/spec/` | "What does the system do?" | Current user-facing behavior, data model, acceptance criteria, edge cases | Architecture, component structure, implementation details |
 | **Working files** | `docs/wip/` | Scratch space for the current iteration | Design notes, research, reference screenshots — anything ephemeral | Nothing that should outlive the iteration |
 | **Design doc** | optional, per feature | "How do we build it?" | Architecture, APIs, data flow, component breakdown | Business requirements, acceptance criteria |
 | **ADR** | `docs/adr/` | "Why this and not that?" | A single decision with rationale and alternatives | Implementation details, full designs |
@@ -145,7 +144,6 @@ Specs are stack-agnostic. The litmus test: **if swapping the framework wouldn't 
 
 ### Iteration spec lifecycle
 
-1. At the start of an iteration, write `docs/scope.md` — the delta for this iteration.
-2. Implement against that scope.
-3. When the iteration ships, merge the scope delta into `docs/spec.md` and replace `scope.md` with the next iteration's scope.
-4. The spec always reflects the current state of the system. Git history preserves past scopes.
+1. At the start of an iteration, update the spec files in `docs/spec/` to reflect the new scope. Git history preserves previous iterations.
+2. Implement against the spec.
+3. The spec always reflects the current state of the system.

@@ -35,7 +35,7 @@
 
 Environment setup recurs whenever an iteration introduces new technology (e.g., backend, hosting).
 
-## Iteration 1 - Walking Skeleton (in progress)
+## Iteration 1 - Walking Skeleton ✅
 
 - [x] parallel prototyping of 5 tech stacks (React+FullCalendar+shadcn, React+Custom, Svelte 5, Vue 3, PHP)
 - [x] empirical evaluation: page weight, LOC, build time, configurability audit
@@ -44,12 +44,12 @@ Environment setup recurs whenever an iteration introduces new technology (e.g., 
 - [x] chosen implementation (React, Prototype B) promoted to the iteration branch, all tests passing
 - [x] linter, formatter, test framework, quality gates
 - [x] CI pipeline: lint, type-check, test on every push
-- [ ] retrospection → issues for the backlog
+- [x] retrospection → issues for the backlog
 
 **Artifacts**
 - [x] a "walking skeleton" (prototype stage — 5 implementations)
 - [x] presentation[^1]
-- [ ] production-quality walking skeleton on chosen stack
+- [x] production-quality walking skeleton on chosen stack
 
 ## Iteration 2 - Deployment and Data
 
@@ -57,11 +57,12 @@ Environment setup recurs whenever an iteration introduces new technology (e.g., 
 - [ ] a module encapsulating all storage operations (S3 SDK)
 - [ ] user authentication
 - [ ] replace mock data with a persistent data source in a database
-- [ ] deploy to a hosted environments - application and object storage (see [hosting research](../iterations/1/hosting.md))
+- [ ] deploy to a hosted environments - application and object storage (see [hosting research](../wip/hosting.md))
 - [ ] CD pipeline: auto-deploy to hosting on merge to main
+- [ ] retrospection → issues for the backlog
 
 **Artifacts**
-- a live, accessible walking skeleton with persistent data
+- a live, accessible walking skeleton with persistent data and authentication
 - CI/CD pipeline
 - presentation[^1]
 
