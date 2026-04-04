@@ -1,5 +1,16 @@
 # Project Journal
 
+## 2026-04-04 (Iteration 2 — implementation)
+- Full backend implemented: Fastify server, PostgreSQL via Drizzle ORM, session-based auth (login/logout/me/change-password), project routes (list/get/transition/dates)
+- Object storage module (S3-compatible, tested against MinIO)
+- Frontend auth: LoginForm, API-backed store mutations, header user menu with logout, session restoration, optimistic updates with error rollback
+- Infrastructure: multi-stage Dockerfile, docker-compose (app + PostgreSQL + MinIO + Caddy), GitHub Actions CI/CD pipeline
+- Code quality review (3 parallel reviewers), 9 findings fixed
+- Docker smoke test passed: full stack boots, login works, Kanban renders 19 seed projects from PostgreSQL
+- 136 tests passing (31 domain + 58 UI/component + 42 server API + 5 storage)
+- 4 UX polish items created as backlog issues (#26–#29)
+- ADR-0003 (deployment infrastructure) and ADR-0004 (backend stack) recorded
+
 ## 2026-04-03 (continued — Iteration 1)
 - Parallel prototype implementation: 5 stacks built by independent agents in isolated worktrees
 - Showed prototypes to pilot company — reaction: "excited" (validates information architecture)

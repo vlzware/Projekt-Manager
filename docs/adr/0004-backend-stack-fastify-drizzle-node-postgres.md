@@ -77,4 +77,4 @@ Query builder with solid migration support. More control than a full ORM. Ruled 
 - [ADR-0002: Tech Stack — TypeScript, React 19, Vite, Zustand](0002-tech-stack-typescript-react-vite-zustand.md)
 - [ADR-0003: Deployment infrastructure — VPS, Docker Compose, GitHub Actions](0003-deployment-infrastructure-vps-docker-compose-github-actions.md)
 - [Architecture — Responsibility layers](../spec/architecture.md)
-- [Iteration 2 spec — Storage and API layers](../spec/iteration-2-persistence-auth-deployment.md)
+- [Product Spec](../spec/index.md)

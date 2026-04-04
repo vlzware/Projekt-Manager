@@ -81,5 +81,5 @@ Frontend on a static host (Vercel, Netlify), backend on a separate service. Rule
 
 - [ADR-0001: Generalized system with configurable customer specifics](0001-generalized-system-with-configurable-customer-specifics.md)
 - [ADR-0002: Tech Stack — TypeScript, React 19, Vite, Zustand](0002-tech-stack-typescript-react-vite-zustand.md)
-- [Iteration 2 spec — Deployment](../spec/iteration-2-persistence-auth-deployment.md)
+- [Product Spec](../spec/index.md)
 - [Architecture — Responsibility layers](../spec/architecture.md)
