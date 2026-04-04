@@ -40,7 +40,7 @@ export const sessions = pgTable('sessions', {
   userId: uuid('user_id')
     .notNull()
     .references(() => users.id),
-  token: uuid('token').notNull().defaultRandom(),
+  token: uuid('token').notNull().defaultRandom().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
 });

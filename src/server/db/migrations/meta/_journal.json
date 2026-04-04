@@ -8,6 +8,13 @@
       "when": 1775330095585,
       "tag": "0000_shiny_carlie_cooper",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775340396972,
+      "tag": "0001_curious_silk_fever",
+      "breakpoints": true
     }
   ]
 }

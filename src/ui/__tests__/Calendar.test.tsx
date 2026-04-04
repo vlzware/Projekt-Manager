@@ -2,12 +2,14 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useProjectStore } from '@/state/store';
+import { mockProjects } from '@/data/mockProjects';
 import { App } from '@/App';
 
 beforeEach(() => {
   useProjectStore.setState({
     ...useProjectStore.getInitialState(),
     authUser: { username: 'mock', displayName: 'Mock User' },
+    projects: [...mockProjects],
   });
 });
 

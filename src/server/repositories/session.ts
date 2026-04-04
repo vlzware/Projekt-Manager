@@ -17,7 +17,6 @@ export interface SessionWithUser {
     roles: string[];
     email: string | null;
     active: boolean;
-    passwordHash: string;
   };
 }
 
@@ -56,7 +55,6 @@ export async function findSession(
         roles: users.roles,
         email: users.email,
         active: users.active,
-        passwordHash: users.passwordHash,
       },
     })
     .from(sessions)

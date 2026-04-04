@@ -23,12 +23,7 @@ export function App() {
   useEffect(() => {
     if (!authUser && !sessionCheckFired.current) {
       sessionCheckFired.current = true;
-      const timer = setTimeout(() => {
-        if (!useProjectStore.getState().authUser) {
-          checkSession();
-        }
-      }, 100);
-      return () => clearTimeout(timer);
+      checkSession();
     }
   }, [authUser, checkSession]);
 

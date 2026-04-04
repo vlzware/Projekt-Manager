@@ -4,7 +4,6 @@ import type { WorkflowState } from '@/config/stateConfig';
 import type { Project, SummaryData, ViewMode } from '@/domain/types';
 import { getNextState, getPreviousState } from '@/domain/transitions';
 import { computeSummary } from '@/domain/summary';
-import { mockProjects } from '@/data/mockProjects';
 
 interface AuthUser {
   username: string;
@@ -47,14 +46,29 @@ interface ProjectStore {
   isMutationInFlight: (projectId: string) => boolean;
 }
 
-export const useProjectStore = create<ProjectStore>((set, get) => ({
-  projects: [...mockProjects],
+export const useProjectStore = create<ProjectStore>((set, get) => {
+  function handleSessionExpired() {
+    localStorage.removeItem('authToken');
+    set({
+      authUser: null,
+      authToken: null,
+      authError: 'Sitzung abgelaufen. Bitte erneut anmelden.',
+      projects: [],
+      mutationInFlight: {},
+      mutationError: null,
+      activeFilter: null,
+      selectedProjectId: null,
+    });
+  }
+
+  return {
+  projects: [],
   activeFilter: null,
   activeView: 'kanban',
   selectedProjectId: null,
 
   authUser: null,
-  authToken: null,
+  authToken: localStorage.getItem('authToken'),
   authError: null,
   mutationError: null,
   mutationInFlight: {},
@@ -76,11 +90,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       }
 
       const data = await res.json();
+      localStorage.setItem('authToken', data.token);
       set({
         authUser: data.user,
         authToken: data.token,
         authError: null,
       });
+      get().fetchProjects();
     } catch {
       set({ authError: 'Anmeldung fehlgeschlagen' });
     }
@@ -99,6 +115,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     } catch {
       // Logout even if the API call fails
     }
+    localStorage.removeItem('authToken');
     set({
       authUser: null,
       authToken: null,
@@ -114,6 +131,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   checkSession: async () => {
     try {
       const { authToken } = get();
+      if (!authToken) {
+        set({ sessionChecked: true });
+        return;
+      }
       const res = await fetch('/api/auth/me', {
         method: 'GET',
         headers: {
@@ -123,6 +144,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       });
 
       if (!res.ok) {
+        localStorage.removeItem('authToken');
         set({ authUser: null, authToken: null, sessionChecked: true });
         return;
       }
@@ -134,7 +156,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           authUser: data,
           sessionChecked: true,
         });
+        get().fetchProjects();
       } else {
+        localStorage.removeItem('authToken');
         set({ sessionChecked: true });
       }
     } catch {
@@ -188,16 +212,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           const data = await res.json().catch(() => ({}));
 
           if (res.status === 401 && data.code === 'SESSION_EXPIRED') {
-            set({
-              authUser: null,
-              authToken: null,
-              authError: 'Sitzung abgelaufen. Bitte erneut anmelden.',
-              projects: [],
-              mutationInFlight: {},
-              mutationError: null,
-              activeFilter: null,
-              selectedProjectId: null,
-            });
+            handleSessionExpired();
             return;
           }
 
@@ -269,16 +284,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           const data = await res.json().catch(() => ({}));
 
           if (res.status === 401 && data.code === 'SESSION_EXPIRED') {
-            set({
-              authUser: null,
-              authToken: null,
-              authError: 'Sitzung abgelaufen. Bitte erneut anmelden.',
-              projects: [],
-              mutationInFlight: {},
-              mutationError: null,
-              activeFilter: null,
-              selectedProjectId: null,
-            });
+            handleSessionExpired();
             return;
           }
 
@@ -354,16 +360,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
           const data = await res.json().catch(() => ({}));
 
           if (res.status === 401 && data.code === 'SESSION_EXPIRED') {
-            set({
-              authUser: null,
-              authToken: null,
-              authError: 'Sitzung abgelaufen. Bitte erneut anmelden.',
-              projects: [],
-              mutationInFlight: {},
-              mutationError: null,
-              activeFilter: null,
-              selectedProjectId: null,
-            });
+            handleSessionExpired();
             return;
           }
 
@@ -428,4 +425,5 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   isMutationInFlight: (projectId: string) => {
     return !!get().mutationInFlight[projectId];
   },
-}));
+  };
+});

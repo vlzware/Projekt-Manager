@@ -451,8 +451,8 @@ describe('Session Restoration on App Load', () => {
       email: 'max@example.com',
     });
 
-    // No authUser set in store — simulates a page refresh
-    useProjectStore.setState({ authUser: null });
+    // Simulate a page refresh: no user but a persisted token
+    useProjectStore.setState({ authUser: null, authToken: 'stored-token' });
     render(<App />);
 
     // App should call GET /api/auth/me
@@ -484,8 +484,8 @@ describe('Session Restoration on App Load', () => {
       401,
     );
 
-    // No authUser set in store — simulates a page refresh
-    useProjectStore.setState({ authUser: null });
+    // Simulate a page refresh: no user but a persisted token
+    useProjectStore.setState({ authUser: null, authToken: 'stored-token' });
     render(<App />);
 
     // App should call GET /api/auth/me

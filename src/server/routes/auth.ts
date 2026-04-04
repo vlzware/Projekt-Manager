@@ -31,28 +31,17 @@ export function authRoutes(db: Database) {
       };
 
       if (!username || typeof username !== 'string' || !password || typeof password !== 'string') {
-        const err = validationError('Benutzername und Passwort sind erforderlich.');
-        return reply.code(err.statusCode).send(err.toResponse());
+        throw validationError('Benutzername und Passwort sind erforderlich.');
       }
 
       const user = await findByUsername(db, username);
 
       // No information leakage: same error for nonexistent, wrong password, inactive
-      if (!user) {
-        const err = invalidCredentials();
-        return reply.code(err.statusCode).send(err.toResponse());
-      }
-
-      if (!user.active) {
-        const err = invalidCredentials();
-        return reply.code(err.statusCode).send(err.toResponse());
-      }
+      if (!user) throw invalidCredentials();
+      if (!user.active) throw invalidCredentials();
 
       const passwordValid = await verifyPassword(password, user.passwordHash);
-      if (!passwordValid) {
-        const err = invalidCredentials();
-        return reply.code(err.statusCode).send(err.toResponse());
-      }
+      if (!passwordValid) throw invalidCredentials();
 
       // Create session
       const expiresAt = new Date(Date.now() + SESSION_DURATION_MS);
@@ -114,29 +103,21 @@ export function authRoutes(db: Database) {
 
         if (!currentPassword || typeof currentPassword !== 'string' ||
             !newPassword || typeof newPassword !== 'string') {
-          const err = validationError('Aktuelles und neues Passwort sind erforderlich.');
-          return reply.code(err.statusCode).send(err.toResponse());
+          throw validationError('Aktuelles und neues Passwort sind erforderlich.');
         }
 
         const user = await findByUsername(db, request.user!.username);
-        if (!user) {
-          const err = invalidCredentials();
-          return reply.code(err.statusCode).send(err.toResponse());
-        }
+        if (!user) throw invalidCredentials();
 
         // Verify current password
         const valid = await verifyPassword(currentPassword, user.passwordHash);
-        if (!valid) {
-          const err = invalidCredentials();
-          return reply.code(err.statusCode).send(err.toResponse());
-        }
+        if (!valid) throw invalidCredentials();
 
         // Validate new password
         if (!newPassword || newPassword.length < 8) {
-          const err = validationError(
+          throw validationError(
             'Das neue Passwort muss mindestens 8 Zeichen lang sein.',
           );
-          return reply.code(err.statusCode).send(err.toResponse());
         }
 
         // Hash and store

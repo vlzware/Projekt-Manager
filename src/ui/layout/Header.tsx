@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useProjectStore } from '@/state/store';
 import type { ViewMode } from '@/domain/types';
 import { BRANDING } from '@/config/brandingConfig';
@@ -11,6 +11,18 @@ export function Header() {
   const authUser = useProjectStore((s) => s.authUser);
   const logout = useProjectStore((s) => s.logout);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [dropdownOpen]);
 
   const views: { key: ViewMode; label: string }[] = [
     { key: 'kanban', label: 'Kanban' },
@@ -43,9 +55,10 @@ export function Header() {
         <SummaryArea />
       </div>
       {authUser && (
-        <div className={styles.userMenu}>
+        <div className={styles.userMenu} ref={menuRef}>
           <button
             className={styles.userButton}
+            data-testid="user-indicator"
             onClick={() => setDropdownOpen(!dropdownOpen)}
           >
             {authUser.displayName}
@@ -54,6 +67,7 @@ export function Header() {
             <div className={styles.dropdown}>
               <button
                 className={styles.dropdownItem}
+                data-testid="logout-button"
                 onClick={handleLogout}
               >
                 Abmelden

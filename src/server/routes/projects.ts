@@ -44,10 +44,7 @@ export function projectRoutes(db: Database) {
       const { id } = request.params as { id: string };
       const project = await getProject(db, id);
 
-      if (!project) {
-        const err = notFound('Projekt');
-        return reply.code(err.statusCode).send(err.toResponse());
-      }
+      if (!project) throw notFound('Projekt');
 
       return reply.code(200).send(project);
     });
@@ -62,10 +59,7 @@ export function projectRoutes(db: Database) {
         const project = await transitionForward(db, id, request.user!.id);
         return reply.code(200).send(project);
       } catch (err) {
-        if (err instanceof TransitionError) {
-          const appErr = validationError(err.message);
-          return reply.code(appErr.statusCode).send(appErr.toResponse());
-        }
+        if (err instanceof TransitionError) throw validationError(err.message);
         throw err;
       }
     });
@@ -80,10 +74,7 @@ export function projectRoutes(db: Database) {
         const project = await transitionBackward(db, id, request.user!.id);
         return reply.code(200).send(project);
       } catch (err) {
-        if (err instanceof TransitionError) {
-          const appErr = validationError(err.message);
-          return reply.code(appErr.statusCode).send(appErr.toResponse());
-        }
+        if (err instanceof TransitionError) throw validationError(err.message);
         throw err;
       }
     });
@@ -102,10 +93,7 @@ export function projectRoutes(db: Database) {
         const project = await updateDates(db, id, request.user!.id, body);
         return reply.code(200).send(project);
       } catch (err) {
-        if (err instanceof DateValidationError) {
-          const appErr = validationError(err.message);
-          return reply.code(appErr.statusCode).send(appErr.toResponse());
-        }
+        if (err instanceof DateValidationError) throw validationError(err.message);
         throw err;
       }
     });

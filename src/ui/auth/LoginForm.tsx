@@ -5,17 +5,24 @@ import styles from './LoginForm.module.css';
 export function LoginForm() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const login = useProjectStore((s) => s.login);
   const authError = useProjectStore((s) => s.authError);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await login(username, password);
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await login(username, password);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <div className={styles.container}>
-      <form className={styles.form} onSubmit={handleSubmit}>
+      <form data-testid="login-form" className={styles.form} onSubmit={handleSubmit}>
         <h1 className={styles.title}>Anmelden</h1>
 
         {authError && (
@@ -27,6 +34,7 @@ export function LoginForm() {
             Benutzername
           </label>
           <input
+            data-testid="login-username"
             id="login-username"
             type="text"
             className={styles.input}
@@ -40,6 +48,7 @@ export function LoginForm() {
             Passwort
           </label>
           <input
+            data-testid="login-password"
             id="login-password"
             type="password"
             className={styles.input}
@@ -48,7 +57,7 @@ export function LoginForm() {
           />
         </div>
 
-        <button type="submit" className={styles.submitButton}>
+        <button type="submit" className={styles.submitButton} disabled={isSubmitting}>
           Anmelden
         </button>
       </form>

@@ -36,10 +36,15 @@ function toProject(row: ProjectRow) {
 
 export async function listProjects(
   db: Database,
-  _opts: { offset?: number; limit?: number } = {},
+  opts: { offset?: number; limit?: number } = {},
 ): Promise<{ data: ReturnType<typeof toProject>[]; total: number }> {
+  const baseQuery = db.select().from(projects);
+  const paginatedQuery = opts.limit !== undefined
+    ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0)
+    : baseQuery;
+
   const [rows, countResult] = await Promise.all([
-    db.select().from(projects),
+    paginatedQuery,
     db.select({ value: count() }).from(projects),
   ]);
 
