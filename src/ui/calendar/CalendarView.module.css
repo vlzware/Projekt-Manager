@@ -1,0 +1,54 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 12px;
+  min-height: 0;
+}
+
+.navigation {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.navButton {
+  padding: 4px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background 0.15s;
+}
+
+.navButton:hover {
+  background: #e2e8f0;
+}
+
+.monthLabel {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1e293b;
+  min-width: 160px;
+  text-align: center;
+}
+
+.noDatesCounter {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #64748b;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.noDatesCounter:hover {
+  background: #f1f5f9;
+  color: #334155;
+}

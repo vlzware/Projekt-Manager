@@ -1,0 +1,9 @@
+.board {
+  display: flex;
+  gap: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  flex: 1;
+  min-height: 0;
+  align-items: stretch;
+}

@@ -1,9 +1,6 @@
-# Specification: Walking Skeleton (Iteration 1)
+# Product Specification
 
-**Produced:** Iteration 0
-**Status:** Draft
-**Source documents:** [Kickoff](../project/kickoff.md), [Plan](../project/plan.md)
-**Derived from:** Proposals 1–5 (see `spec proposals/`), synthesized with corrections
+**Source documents:** [Kickoff](project/kickoff.md), [Plan](project/plan.md)
 
 ---
 
@@ -388,123 +385,69 @@ The UI must tolerate incomplete project data without crashing:
 
 ---
 
-## 9. Technical Constraints
+## 9. Architectural Constraints
 
-### 9.1 Stack
+### 9.1 Mandatory Constraints
 
-The tech stack is **not decided** in this spec. It will be determined during iteration 1 through parallel prototyping and formalized as an ADR.
-
-**Mandatory constraints** (stack-independent):
 - Language: **TypeScript** (type safety for the data model is non-negotiable)
 - Testing: unit tests + component tests + at least one E2E smoke test
-- Bundle budget: the total application bundle (gzipped) should stay under **150kB**
+- Stack decisions are recorded in [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)
 
-**Candidates for evaluation** (not decisions):
+### 9.2 Responsibility Boundaries
 
-| Concern | Candidates |
+The system is organized into four responsibility layers:
+
+| Layer | Responsibility |
 |---|---|
-| Framework | React, Svelte, Vue |
-| Build | Vite |
-| Styling | Tailwind CSS, CSS Modules, framework-native |
-| State management | Zustand, Pinia, Svelte stores, framework-native |
-| UI components | shadcn/ui, Radix, headless libraries, custom |
-| Calendar | Custom month grid, FullCalendar, lightweight alternatives |
-| Drag & drop | dnd-kit, framework-native, custom |
-| Date math | date-fns, dayjs |
-| Testing | Vitest, Playwright |
+| **Config** | State definitions, thresholds, colors, company assumptions. Imported by other layers, imports nothing. |
+| **Domain** | Pure functions: transition rules, aging calculation, types. Never imports from state or UI. |
+| **State** | Data access layer: holds current state, exposes all mutations. UI components never modify state directly. |
+| **UI** | Presentation only. May import from domain for types. Dispatches actions to the state layer. |
 
-The stack ADR will be based on empirical comparison: implementation speed, bundle size, code clarity, and maintainability — evaluated by building parallel prototypes in isolated worktrees.
+Mock data is loaded once at initialization into the state layer.
 
-### 9.2 Architecture
-
-Regardless of framework choice, a clear separation must exist. The following describes the conceptual module structure — exact file organization may vary by framework:
-
-```
-src/
-├── config/              # state config, thresholds, colors, company assumptions
-├── domain/              # types, enums, aging calculation, transition rules
-├── data/                # mock project data (static file, read once at init)
-├── ui/
-│   ├── layout/          # Header, Footer, SummaryArea
-│   ├── kanban/          # KanbanBoard, KanbanColumn, ProjectCard
-│   ├── calendar/        # CalendarView, ProjectBar
-│   └── detail/          # ProjectDetailPanel
-└── state/               # reactive state management — owns all state and mutations
-```
-
-**Responsibility split**:
-- `data/` contains only the static mock dataset. It is read once at initialization.
-- `state/` is the data access layer — it loads mock data, holds current state, and exposes all mutations. UI components never modify state directly.
-- `domain/` contains pure functions (transition rules, aging calculation) that the state layer calls. It never imports from `state/` or `ui/`.
-- `config/` is imported by `domain/` and `state/`. It does not import from any other module.
-
-**Dependency direction** (enforced by linting):
+**Dependency direction** (no reverse imports):
 
 ```
 config  ←  domain  ←  state  ←  ui
-                       ↑
-                      data (mock data, read once at init)
 ```
 
-No reverse imports. `ui/` may import from `domain/` for types only.
+### 9.3 State Layer Behavioral Contract
 
-### 9.3 State Interface
+The state layer must support at minimum:
 
-The state layer must expose at minimum this behavioral contract. The implementation (Zustand, Svelte stores, Pinia, etc.) is determined by the stack choice.
+**State:** the full project list, an optional active filter (by workflow state), and the active view (Kanban or calendar).
 
-```typescript
-interface SummaryData {
-  actionCounts: Record<WorkflowState, number>;  // projects per action state
-  agedBufferCounts: { state: WorkflowState; count: number; thresholdDays: number }[];
-  projectsWithoutDates: number;
-}
+**Mutations:**
+- Transition a project forward or backward by one state
+- Update a project's planned start/end dates
+- Set or clear a filter by workflow state
+- Switch between views (clears active filter)
 
-// Behavioral contract — not necessarily a single interface in implementation
-interface ProjectStateContract {
-  // State
-  projects: Project[];
-  activeFilter: WorkflowState | null;
-  activeView: 'kanban' | 'kalender';
+**Queries:**
+- Projects grouped by workflow state
+- Summary: count of projects per action state, count of aged buffer items per state with threshold, count of projects without planned dates
 
-  // Actions
-  transitionForward: (projectId: string) => void;
-  transitionBackward: (projectId: string) => void;
-  updateDates: (projectId: string, start?: string, end?: string) => void;
-  setFilter: (state: WorkflowState | null) => void;
-  setView: (view: 'kanban' | 'kalender') => void;  // clears activeFilter on switch
-
-  // Selectors
-  getProjectsByState: (state: WorkflowState) => Project[];
-  getSummary: () => SummaryData;
-}
-```
-
-The key constraint: all mutations go through the state layer, never direct manipulation from UI components.
+All mutations go through the state layer — UI components never modify project data directly. This ensures the state layer can be swapped to a real backend without touching UI components.
 
 **Known debt**: state actions currently mutate silently. Future iterations will need middleware or an event hook for audit trail and notification triggers. For the walking skeleton, direct mutation is acceptable.
 
-### 9.4 Service Boundary
+### 9.4 Extensibility Checklist
 
-All data mutations go through the state layer. UI components dispatch actions; they never modify project data directly. This ensures the walking skeleton can swap to a real backend by replacing state-layer internals without touching UI components.
-
----
-
-### 9.5 Extensibility Checklist
-
-The walking skeleton must not close doors that later iterations need open. During implementation review, verify:
+The system must not close doors that later iterations need open:
 
 | Door | How it stays open | Closed if... |
 |---|---|---|
-| Adding/removing workflow states | States driven by `StateConfig` array, not hardcoded switch/case | Column count or state names are hardcoded in components |
+| Adding/removing workflow states | States driven by configuration array, not hardcoded logic | Column count or state names are hardcoded in components |
 | Adding a backend | All mutations go through state layer | UI components read/write state directly |
 | Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently | Kanban and Calendar are coupled to each other |
-| Adding fields to Project | TypeScript interface with optional fields; UI tolerates missing data | Components crash on undefined fields |
-| Adding file uploads / attachments | Project interface accepts optional `attachments?: Attachment[]`; future `StorageService` abstraction | Data layer assumes all project data fits in a single flat object |
-| Adding authentication / roles | Views don't assume a single user; data access layer can be extended with auth context | User identity is baked into component logic |
-| Adding notifications | State transitions go through a central state layer that can be extended with middleware | Transitions are handled inline in UI event handlers |
-| Multi-language (low priority) | UI strings are not scattered across components — at minimum grouped in identifiable locations | Strings are inline JSX literals spread across dozens of files |
+| Adding fields to Project | Interface with optional fields; UI tolerates missing data | Components crash on undefined fields |
+| Adding file uploads / attachments | Project model accepts optional attachments | Data layer assumes all project data fits in a single flat object |
+| Adding authentication / roles | Views don't assume a single user; state layer can be extended with auth context | User identity is baked into component logic |
+| Adding notifications | State transitions go through a central layer that can be extended with middleware | Transitions are handled inline in UI event handlers |
+| Multi-language (low priority) | UI strings are grouped in identifiable locations, not scattered | Strings are inline literals spread across dozens of files |
 
-This is not a feature list — none of these are built in the walking skeleton. It is a checklist of architectural decisions that must not be made in a way that forecloses them.
+This is not a feature list — it is a checklist of architectural decisions that must not be made in a way that forecloses them.
 
 ---
 
@@ -587,6 +530,17 @@ The walking skeleton is accepted when all of the following are true.
 - AC-25: Linting and formatting pass.
 - AC-26: Tests defined in section 12 pass.
 
+### 11.5 Configurability
+
+- AC-27: App name (header) and footer text are driven by a branding config, not hardcoded in components. Changing the config changes all instances.
+
+### 11.6 Responsive
+
+- AC-28: At viewport widths below 1780px, tier-3 columns (Angebot, Abgerechnet, Erledigt) collapse to slim indicators showing the column header and card count. Cards are hidden.
+- AC-29: At viewport widths below 1350px, tier-2 columns (Geplant, In Arbeit, Abnahme) also collapse.
+- AC-30: At viewport widths below 940px, tier-1 columns (Anfrage, Beauftragt, Rechnung fällig) also collapse. Action columns are always the last to collapse.
+- AC-31: Clicking a collapsed column expands it. Clicking the column header again collapses it.
+
 ---
 
 ## 12. Test Specification
@@ -665,4 +619,4 @@ Items to resolve before or during implementation:
 
 ---
 
-*This specification is a deliverable of Iteration 0. Changes during Iteration 1 implementation are tracked as diffs in the iteration 1 branch.*
+*Living document — updated as each iteration ships. Per-iteration deltas are in `docs/scope.md`; git history preserves past versions.*

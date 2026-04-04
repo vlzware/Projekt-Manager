@@ -4,24 +4,14 @@
 - **Repo**: vlzware/Projekt-Manager (private)
 - **Project board**: https://github.com/users/vlzware/projects/2
 - **Journal**: [docs/project/journal.md](docs/project/journal.md)
+- **Decisions**: [docs/adr/](docs/adr/index.md)
+- **Spec**: [docs/spec.md](docs/spec.md)
+- **Conventions**: [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Open items**: GitHub Issues, prioritized on the project board
-
-## Current Iteration
-Current iteration scope and progress are tracked via GitHub Milestones.
-
-**Framework decision**: not yet made. Tech stack will be decided during Iteration 1 through parallel prototyping and formalized as an ADR. TypeScript is mandatory; everything else is open for evaluation.
+- **Iteration scope**: GitHub Milestones
 
 ## Workflow
-Steps happen in this order. Skipping or reordering must be flagged.
-
-1. Specification (clear, testable)
-2. Tests (failing) — must cover the spec completely
-3. Implementation
-4. Tests passing
-5. Code quality review (separate from correctness)
-6. Documentation update
-7. Commit
-8. Retrospection → issues for the backlog
+Follow [CONTRIBUTING.md § Workflow](CONTRIBUTING.md#workflow). Skipping or reordering steps must be flagged.
 
 Detailed procedures for individual steps (agent orchestration, adversarial review, etc.) are defined in the corresponding skills.
 
