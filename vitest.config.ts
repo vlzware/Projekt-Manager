@@ -19,5 +19,14 @@ export default defineConfig({
         classNameStrategy: 'non-scoped',
       },
     },
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/__tests__/**', 'src/test/**', 'src/main.tsx', 'src/vite-env.d.ts'],
+      thresholds: {
+        'src/domain/**': { statements: 80 },
+        'src/config/**': { statements: 80 },
+      },
+    },
   },
 });

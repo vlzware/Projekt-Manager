@@ -114,7 +114,7 @@ describe('Project Card', () => {
 
     // Finding 4: verify full dialog format, not just state names
     expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('Status ändern: Geplant → In Arbeit?')
+      expect.stringContaining('Status ändern: Geplant → In Arbeit?'),
     );
 
     // Card should now be in 'in_arbeit' column

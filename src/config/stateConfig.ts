@@ -99,9 +99,9 @@ export const STATE_CONFIGS: StateConfig[] = [
 ];
 
 export const STATE_CONFIG_MAP: Record<WorkflowState, StateConfig> = Object.fromEntries(
-  STATE_CONFIGS.map((config) => [config.key, config])
+  STATE_CONFIGS.map((config) => [config.key, config]),
 ) as Record<WorkflowState, StateConfig>;
 
-export const WORKFLOW_ORDER: WorkflowState[] = STATE_CONFIGS
-  .sort((a, b) => a.order - b.order)
-  .map((c) => c.key);
+export const WORKFLOW_ORDER: WorkflowState[] = STATE_CONFIGS.sort((a, b) => a.order - b.order).map(
+  (c) => c.key,
+);

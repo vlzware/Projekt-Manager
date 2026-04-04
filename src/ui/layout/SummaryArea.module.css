@@ -15,7 +15,9 @@
   font-weight: 500;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: opacity 0.15s, border-color 0.15s;
+  transition:
+    opacity 0.15s,
+    border-color 0.15s;
   white-space: nowrap;
 }
 

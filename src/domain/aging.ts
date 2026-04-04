@@ -16,7 +16,11 @@ export function getDaysInState(statusChangedAt: string, now: Date = new Date()):
  * Buffer states: bold after agingBoldDays (same as threshold).
  * Active/Done: never bold.
  */
-export function isAgingBold(state: WorkflowState, statusChangedAt: string, now: Date = new Date()): boolean {
+export function isAgingBold(
+  state: WorkflowState,
+  statusChangedAt: string,
+  now: Date = new Date(),
+): boolean {
   const config = STATE_CONFIG_MAP[state];
   if (config.type === 'active' || config.type === 'done') return false;
   if (config.agingBoldDays === undefined) return false;
@@ -27,7 +31,11 @@ export function isAgingBold(state: WorkflowState, statusChangedAt: string, now: 
 /**
  * Returns "seit X Tagen" text for buffer states exceeding threshold, or null.
  */
-export function getAgingText(state: WorkflowState, statusChangedAt: string, now: Date = new Date()): string | null {
+export function getAgingText(
+  state: WorkflowState,
+  statusChangedAt: string,
+  now: Date = new Date(),
+): string | null {
   const config = STATE_CONFIG_MAP[state];
   if (config.type !== 'buffer') return null;
   if (config.agingThresholdDays === undefined) return null;
@@ -39,7 +47,11 @@ export function getAgingText(state: WorkflowState, statusChangedAt: string, now:
 /**
  * Check if a buffer project has exceeded its aging threshold.
  */
-export function isBufferAged(state: WorkflowState, statusChangedAt: string, now: Date = new Date()): boolean {
+export function isBufferAged(
+  state: WorkflowState,
+  statusChangedAt: string,
+  now: Date = new Date(),
+): boolean {
   const config = STATE_CONFIG_MAP[state];
   if (config.type !== 'buffer') return false;
   if (config.agingThresholdDays === undefined) return false;

@@ -29,9 +29,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
     const next = getNextState(project.status);
     if (!next) return;
     const nextLabel = STATE_CONFIG_MAP[next].label;
-    const confirmed = window.confirm(
-      `Status ändern: ${config.label} → ${nextLabel}?`
-    );
+    const confirmed = window.confirm(`Status ändern: ${config.label} → ${nextLabel}?`);
     if (confirmed) {
       transitionForward(project.id);
     }
@@ -54,9 +52,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
       </div>
       <div className={styles.title}>{project.title}</div>
       <div className={styles.customer}>{project.customer.name}</div>
-      <div className={dateRange === 'Kein Termin' ? styles.noDates : styles.dates}>
-        {dateRange}
-      </div>
+      <div className={dateRange === 'Kein Termin' ? styles.noDates : styles.dates}>{dateRange}</div>
       <div className={styles.bottomRow}>
         <div>
           <span

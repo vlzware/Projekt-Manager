@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { getNextState, getPreviousState, canTransitionForward, canTransitionBackward } from '../transitions';
+import {
+  getNextState,
+  getPreviousState,
+  canTransitionForward,
+  canTransitionBackward,
+} from '../transitions';
 
 describe('state transitions', () => {
   // UT-4: getNextState('geplant') returns 'in_arbeit'

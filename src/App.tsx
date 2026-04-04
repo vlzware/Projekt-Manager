@@ -18,18 +18,11 @@ export function App() {
     <div className={styles.app}>
       <Header />
       <main className={styles.main}>
-        {activeView === 'kanban' ? (
-          <KanbanBoard />
-        ) : (
-          <CalendarView />
-        )}
+        {activeView === 'kanban' ? <KanbanBoard /> : <CalendarView />}
       </main>
       <Footer />
       {selectedProject && (
-        <ProjectDetailPanel
-          project={selectedProject}
-          onClose={() => selectProject(null)}
-        />
+        <ProjectDetailPanel project={selectedProject} onClose={() => selectProject(null)} />
       )}
     </div>
   );

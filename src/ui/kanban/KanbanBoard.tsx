@@ -17,17 +17,10 @@ export function KanbanBoard() {
         const columnProjects = filteredProjects
           .filter((p) => p.status === config.key)
           .sort(
-            (a, b) =>
-              new Date(a.statusChangedAt).getTime() - new Date(b.statusChangedAt).getTime()
+            (a, b) => new Date(a.statusChangedAt).getTime() - new Date(b.statusChangedAt).getTime(),
           );
 
-        return (
-          <KanbanColumn
-            key={config.key}
-            config={config}
-            projects={columnProjects}
-          />
-        );
+        return <KanbanColumn key={config.key} config={config} projects={columnProjects} />;
       })}
     </div>
   );

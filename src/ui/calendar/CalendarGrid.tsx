@@ -29,10 +29,7 @@ export function CalendarGrid({ month, projects }: CalendarGridProps) {
   const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 });
   const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
 
-  const weeks = eachWeekOfInterval(
-    { start: calendarStart, end: calendarEnd },
-    { weekStartsOn: 1 }
-  );
+  const weeks = eachWeekOfInterval({ start: calendarStart, end: calendarEnd }, { weekStartsOn: 1 });
 
   // Build project placement per week
   const getProjectsForWeek = (weekStart: Date) => {
@@ -54,7 +51,7 @@ export function CalendarGrid({ month, projects }: CalendarGridProps) {
           0,
           weekDays.findIndex((d) => isSameDay(d, pStart) || d > pStart) === -1
             ? 0
-            : weekDays.findIndex((d) => isSameDay(d, pStart) || d >= pStart)
+            : weekDays.findIndex((d) => isSameDay(d, pStart) || d >= pStart),
         );
         let endCol = weekDays.findIndex((d) => isSameDay(d, pEnd) || d > pEnd);
         if (endCol === -1) endCol = 6;

@@ -31,9 +31,7 @@ describe('Detail Panel Transitions', () => {
     // Click backward button
     await user.click(backwardBtn);
 
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('Geplant → Beauftragt')
-    );
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Geplant → Beauftragt'));
 
     // Verify the project moved
     const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');
@@ -58,9 +56,7 @@ describe('Detail Panel Transitions', () => {
     const backwardBtn = screen.getByTestId('detail-backward-button');
     await user.click(backwardBtn);
 
-    expect(window.confirm).toHaveBeenCalledWith(
-      expect.stringContaining('Geplant → Beauftragt')
-    );
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Geplant → Beauftragt'));
 
     // Project should remain in geplant
     const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');

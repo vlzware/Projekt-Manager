@@ -4,7 +4,9 @@
   border-radius: 6px;
   padding: 8px 10px;
   cursor: pointer;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition:
+    box-shadow 0.15s,
+    border-color 0.15s;
   position: relative;
 }
 
@@ -90,7 +92,9 @@
   background: #f8fafc;
   color: #475569;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 
 .forwardButton:hover {

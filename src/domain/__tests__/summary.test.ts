@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { computeSummary } from '../summary';
 import type { Project } from '../types';
 
-function makeProject(overrides: Partial<Project> & { id: string; status: Project['status'] }): Project {
+function makeProject(
+  overrides: Partial<Project> & { id: string; status: Project['status'] },
+): Project {
   return {
     number: '2026-001',
     title: 'Test',

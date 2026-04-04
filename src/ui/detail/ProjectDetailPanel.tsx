@@ -1,7 +1,12 @@
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
 import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
-import { canTransitionForward, canTransitionBackward, getNextState, getPreviousState } from '@/domain/transitions';
+import {
+  canTransitionForward,
+  canTransitionBackward,
+  getNextState,
+  getPreviousState,
+} from '@/domain/transitions';
 import { useProjectStore } from '@/state/store';
 import styles from './ProjectDetailPanel.module.css';
 
@@ -26,9 +31,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
     const next = getNextState(currentProject.status);
     if (!next) return;
     const nextLabel = STATE_CONFIG_MAP[next].label;
-    const confirmed = window.confirm(
-      `Status ändern: ${config.label} → ${nextLabel}?`
-    );
+    const confirmed = window.confirm(`Status ändern: ${config.label} → ${nextLabel}?`);
     if (confirmed) {
       transitionForward(currentProject.id);
     }
@@ -38,9 +41,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
     const prev = getPreviousState(currentProject.status);
     if (!prev) return;
     const prevLabel = STATE_CONFIG_MAP[prev].label;
-    const confirmed = window.confirm(
-      `Status ändern: ${config.label} → ${prevLabel}?`
-    );
+    const confirmed = window.confirm(`Status ändern: ${config.label} → ${prevLabel}?`);
     if (confirmed) {
       transitionBackward(currentProject.id);
     }
@@ -58,7 +59,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
 
   const mapsUrl = currentProject.address
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-        `${currentProject.address.street} ${currentProject.address.zip} ${currentProject.address.city}`
+        `${currentProject.address.street} ${currentProject.address.zip} ${currentProject.address.city}`,
       )}`
     : null;
 
@@ -144,12 +145,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                 {currentProject.address.zip} {currentProject.address.city}
               </div>
               {mapsUrl && (
-                <a
-                  className={styles.link}
-                  href={mapsUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <a className={styles.link} href={mapsUrl} target="_blank" rel="noopener noreferrer">
                   In Google Maps öffnen
                 </a>
               )}

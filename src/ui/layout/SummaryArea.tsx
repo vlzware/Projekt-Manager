@@ -17,7 +17,7 @@ export function SummaryArea() {
 
   // Filter out action states with zero projects
   const actionEntries = Object.entries(summary.actionCounts).filter(
-    ([, count]) => (count ?? 0) > 0
+    ([, count]) => (count ?? 0) > 0,
   ) as [WorkflowState, number][];
 
   return (
@@ -28,7 +28,9 @@ export function SummaryArea() {
           className={`${styles.indicator} ${styles.actionIndicator}`}
           onClick={() => handleFilterClick(state)}
           data-testid={`summary-action-${state}`}
-          style={{ borderColor: activeFilter === state ? STATE_CONFIG_MAP[state].color : undefined }}
+          style={{
+            borderColor: activeFilter === state ? STATE_CONFIG_MAP[state].color : undefined,
+          }}
         >
           {count}&times; {STATE_CONFIG_MAP[state].label}
         </button>
@@ -39,7 +41,9 @@ export function SummaryArea() {
           className={`${styles.indicator} ${styles.bufferIndicator}`}
           onClick={() => handleFilterClick(state)}
           data-testid={`summary-buffer-${state}`}
-          style={{ borderColor: activeFilter === state ? STATE_CONFIG_MAP[state].color : undefined }}
+          style={{
+            borderColor: activeFilter === state ? STATE_CONFIG_MAP[state].color : undefined,
+          }}
         >
           {count} {STATE_CONFIG_MAP[state].label} seit &gt;{thresholdDays} Tagen
         </button>
