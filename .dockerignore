@@ -1,0 +1,11 @@
+node_modules
+.git
+docs
+*.md
+.env
+.env.*
+!.env.example
+coverage
+test-results
+playwright-report
+e2e

@@ -9,6 +9,22 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: projekt_manager_test
+          POSTGRES_USER: pm
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pm -d projekt_manager_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -19,17 +35,19 @@ jobs:
 
       - run: npm ci
 
-      - name: Type check
-        run: npx tsc --noEmit
-
       - name: Lint
         run: npm run lint
 
       - name: Format check
         run: npm run format:check
 
+      - name: Type check
+        run: npx tsc --noEmit
+
       - name: Unit and component tests
         run: npm run test:coverage
+        env:
+          DATABASE_URL: postgresql://pm:postgres@localhost:5432/projekt_manager_test
 
       - name: Build
         run: npm run build
