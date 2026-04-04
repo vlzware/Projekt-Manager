@@ -15,20 +15,24 @@ export function Header() {
 
   return (
     <header className={styles.header}>
-      <div className={styles.appName}>{BRANDING.appName}</div>
-      <div className={styles.viewToggle}>
-        {views.map((v) => (
-          <button
-            key={v.key}
-            className={`${styles.viewButton} ${activeView === v.key ? styles.viewButtonActive : ''}`}
-            onClick={() => setView(v.key)}
-            data-testid={`view-toggle-${v.key}`}
-          >
-            {v.label}
-          </button>
-        ))}
+      <div className={styles.navGroup}>
+        <div className={styles.appName}>{BRANDING.appName}</div>
+        <div className={styles.viewToggle}>
+          {views.map((v) => (
+            <button
+              key={v.key}
+              className={`${styles.viewButton} ${activeView === v.key ? styles.viewButtonActive : ''}`}
+              onClick={() => setView(v.key)}
+              data-testid={`view-toggle-${v.key}`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <SummaryArea />
+      <div className={styles.summaryWrapper}>
+        <SummaryArea />
+      </div>
     </header>
   );
 }

@@ -3,6 +3,8 @@
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
+  overflow-x: auto;
 }
 
 .indicator {
