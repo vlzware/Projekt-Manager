@@ -25,10 +25,15 @@ export function authRoutes(db: Database) {
     // POST /api/auth/login
     // ---------------------------------------------------------------
     app.post('/api/auth/login', async (request, reply) => {
-      const { username, password } = request.body as {
-        username: string;
-        password: string;
+      const { username, password } = (request.body ?? {}) as {
+        username?: string;
+        password?: string;
       };
+
+      if (!username || typeof username !== 'string' || !password || typeof password !== 'string') {
+        const err = validationError('Benutzername und Passwort sind erforderlich.');
+        return reply.code(err.statusCode).send(err.toResponse());
+      }
 
       const user = await findByUsername(db, username);
 
@@ -102,10 +107,16 @@ export function authRoutes(db: Database) {
       '/api/auth/change-password',
       { preHandler: authenticate },
       async (request, reply) => {
-        const { currentPassword, newPassword } = request.body as {
-          currentPassword: string;
-          newPassword: string;
+        const { currentPassword, newPassword } = (request.body ?? {}) as {
+          currentPassword?: string;
+          newPassword?: string;
         };
+
+        if (!currentPassword || typeof currentPassword !== 'string' ||
+            !newPassword || typeof newPassword !== 'string') {
+          const err = validationError('Aktuelles und neues Passwort sind erforderlich.');
+          return reply.code(err.statusCode).send(err.toResponse());
+        }
 
         const user = await findByUsername(db, request.user!.username);
         if (!user) {

@@ -36,7 +36,7 @@ function toProject(row: ProjectRow) {
 
 export async function listProjects(
   db: Database,
-  opts: { offset?: number; limit?: number } = {},
+  _opts: { offset?: number; limit?: number } = {},
 ): Promise<{ data: ReturnType<typeof toProject>[]; total: number }> {
   const [rows, countResult] = await Promise.all([
     db.select().from(projects),
@@ -194,15 +194,20 @@ export async function updateDates(
     );
   }
 
-  // If both are provided, end must be >= start
-  if (dates.plannedStart && dates.plannedEnd) {
-    const start = new Date(dates.plannedStart);
-    const end = new Date(dates.plannedEnd);
-    if (end < start) {
-      throw new DateValidationError(
-        'Das Enddatum darf nicht vor dem Startdatum liegen.',
-      );
-    }
+  // Compute effective dates after the update.
+  // When only plannedStart is sent (no plannedEnd key), the update logic
+  // clears plannedEnd — so effective end is null in that case.
+  const effectiveStart = dates.plannedStart !== undefined
+    ? (dates.plannedStart ? new Date(dates.plannedStart) : null)
+    : (project.plannedStart ?? null);
+  const effectiveEnd = 'plannedEnd' in dates
+    ? (dates.plannedEnd ? new Date(dates.plannedEnd) : null)
+    : (dates.plannedStart !== undefined ? null : (project.plannedEnd ?? null));
+
+  if (effectiveEnd && effectiveStart && effectiveEnd < effectiveStart) {
+    throw new DateValidationError(
+      'Das Enddatum darf nicht vor dem Startdatum liegen.',
+    );
   }
 
   const now = new Date();

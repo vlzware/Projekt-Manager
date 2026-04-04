@@ -22,7 +22,6 @@ export interface AuthUser {
 declare module 'fastify' {
   interface FastifyRequest {
     user?: AuthUser;
-    db?: Database;
   }
 }
 

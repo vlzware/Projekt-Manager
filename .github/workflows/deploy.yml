@@ -1,7 +1,9 @@
 name: Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 # Only one deploy at a time; cancel in-progress if a new push arrives.
@@ -12,9 +14,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Only deploy after CI passes on the same commit.
-    needs: []
-    if: github.event_name == 'push'
+    # Only deploy if CI succeeded on main.
+    if: github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Deploy to VPS
