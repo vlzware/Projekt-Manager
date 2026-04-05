@@ -6,6 +6,9 @@
  */
 
 import Fastify from 'fastify';
+import cookie from '@fastify/cookie';
+import helmet from '@fastify/helmet';
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import type { FastifyInstance } from 'fastify';
 import type { Database } from './db/connection.js';
@@ -23,6 +26,7 @@ export interface AppOptions {
 export function buildApp(opts: AppOptions = {}): FastifyInstance {
   const app = Fastify({
     logger: opts.logger ?? false,
+    trustProxy: true,
   });
 
   // Global error handler — catches unhandled exceptions and wraps them
@@ -34,6 +38,41 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     app.log.error(error);
     const err = serverError();
     return reply.code(err.statusCode).send(err.toResponse());
+  });
+
+  // Cookie parsing — registered before all other plugins so
+  // request.cookies is available in every route and hook.
+  app.register(cookie);
+
+  // Security headers — CSP allows only same-origin resources,
+  // HSTS enforces HTTPS, X-Frame-Options blocks framing.
+  app.register(helmet, {
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        imgSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+      },
+    },
+    hsts: {
+      maxAge: 63072000, // 2 years
+      includeSubDomains: true,
+      preload: true,
+    },
+    frameguard: { action: 'deny' },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  });
+
+  // CORS — same-origin SPA served by Fastify, reject all cross-origin
+  // requests. origin:false means no Access-Control-Allow-Origin header
+  // is sent, so browsers block cross-origin fetches.
+  app.register(cors, {
+    origin: false,
   });
 
   // Rate limiting — registered globally so individual routes can apply
