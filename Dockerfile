@@ -17,16 +17,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
-# Copy Vite build output
+# Copy Vite frontend + esbuild server bundle
 COPY --from=build /app/dist ./dist
 
-# Copy server source (executed via tsx at runtime)
-COPY src/server ./src/server
-COPY src/domain ./src/domain
-COPY src/config ./src/config
-COPY src/data ./src/data
-COPY tsconfig.json ./
+# Copy migration SQL files (read at runtime by Drizzle migrator)
+COPY --from=build /app/src/server/db/migrations ./dist/server/db/migrations
 
 EXPOSE 3000
 
-CMD ["node", "--import", "tsx", "src/server/start.ts"]
+CMD ["node", "dist/server/start.js"]
