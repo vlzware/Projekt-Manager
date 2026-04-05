@@ -7,7 +7,9 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:client": "vite",
+    "dev:server": "tsx watch --env-file=.env src/server/start.ts",
     "build": "tsc --noEmit && vite build && npm run build:server",
     "build:server": "esbuild src/server/start.ts --bundle --platform=node --outdir=dist/server --format=esm --packages=external",
     "preview": "vite preview",
@@ -48,6 +50,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "^4.1.2",
+    "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",

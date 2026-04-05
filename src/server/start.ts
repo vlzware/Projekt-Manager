@@ -7,6 +7,7 @@
  * Executed via: node --import tsx src/server/start.ts
  */
 
+import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fastifyStatic from '@fastify/static';
@@ -58,15 +59,17 @@ async function start(): Promise<void> {
   // Run database migrations (idempotent — Drizzle tracks applied migrations)
   await migrate(db, { migrationsFolder });
 
-  // Seed data — never in production
-  if (process.env.SEED === 'true') {
+  // Seed data — never in production.
+  // SEED=true  → seed only if database is empty (safe default for dev)
+  // SEED=force → wipe and re-seed (when seed data structure changes)
+  const seedMode = process.env.SEED;
+  if (seedMode === 'true' || seedMode === 'force') {
     if (IS_PRODUCTION) {
       console.warn(
-        'WARNING: SEED=true is set but NODE_ENV=production — skipping seed to protect production data.',
+        'WARNING: SEED is set but NODE_ENV=production — skipping seed to protect production data.',
       );
     } else {
-      await seed(db);
-      console.log('Database seeded (SEED=true).');
+      await seed(db, { force: seedMode === 'force' });
     }
   }
 
@@ -83,19 +86,30 @@ async function start(): Promise<void> {
     return reply.code(200).send({ status: 'ok' });
   });
 
-  // Serve the Vite-built frontend from dist/
-  await app.register(fastifyStatic, {
-    root: distFolder,
-    wildcard: false,
-  });
+  // Serve the Vite-built frontend from dist/ (production).
+  // In dev, Vite's dev server handles the frontend via proxy.
+  if (existsSync(distFolder)) {
+    await app.register(fastifyStatic, {
+      root: distFolder,
+      wildcard: false,
+    });
 
-  // SPA fallback: serve index.html for non-API routes
-  app.setNotFoundHandler((req, reply) => {
-    if (!req.url.startsWith('/api')) {
-      return reply.sendFile('index.html');
-    }
-    reply.code(404).send({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
-  });
+    // SPA fallback: serve index.html for non-API routes
+    app.setNotFoundHandler((req, reply) => {
+      if (!req.url.startsWith('/api')) {
+        return reply.sendFile('index.html');
+      }
+      reply.code(404).send({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
+    });
+  } else if (IS_PRODUCTION) {
+    throw new Error(
+      `dist/ not found at ${distFolder}. Run 'npm run build' before starting in production.`,
+    );
+  } else {
+    app.setNotFoundHandler((_req, reply) => {
+      reply.code(404).send({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
+    });
+  }
 
   // Graceful shutdown — registered before listen to avoid a window
   // where SIGTERM during startup causes an unclean exit.

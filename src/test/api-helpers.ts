@@ -42,8 +42,8 @@ export async function startApp(): Promise<FastifyInstance> {
   // Run migrations (idempotent — drizzle tracks applied migrations)
   await migrate(db, { migrationsFolder });
 
-  // Seed fresh test data (clears existing data first)
-  await seed(db);
+  // Seed fresh test data (force: wipe and re-seed for clean slate)
+  await seed(db, { force: true });
 
   app = buildApp({ logger: false, db, rateLimit: false });
   await app.ready();

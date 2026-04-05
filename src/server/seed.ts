@@ -20,7 +20,24 @@ function daysFromNow(days: number): Date {
 
 const year = new Date().getFullYear();
 
-export async function seed(db: Database): Promise<void> {
+/**
+ * Seed the database with sample data.
+ *
+ * Behavior depends on the `force` option:
+ * - `force: false` (default) — skip if users already exist, preserving
+ *   manual changes across dev server restarts.
+ * - `force: true` — wipe all data and re-seed. Used by tests for a
+ *   guaranteed clean slate, and via SEED=force when seed data changes.
+ */
+export async function seed(db: Database, opts: { force?: boolean } = {}): Promise<void> {
+  if (!opts.force) {
+    const existing = await db.select({ id: users.id }).from(users).limit(1);
+    if (existing.length > 0) {
+      console.log('Database already seeded — skipping. Set SEED=force to wipe and re-seed.');
+      return;
+    }
+  }
+
   // Clear existing data (order matters: FK constraints)
   await db.delete(sessions);
   await db.delete(projects);
