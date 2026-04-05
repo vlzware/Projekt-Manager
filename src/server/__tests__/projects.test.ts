@@ -104,12 +104,8 @@ describe('Project Operations', () => {
       const body = res.json();
 
       // At least some projects should have addresses, some should not
-      const withAddress = body.data.filter(
-        (p: Record<string, unknown>) => p.address != null,
-      );
-      const withoutAddress = body.data.filter(
-        (p: Record<string, unknown>) => p.address == null,
-      );
+      const withAddress = body.data.filter((p: Record<string, unknown>) => p.address != null);
+      const withoutAddress = body.data.filter((p: Record<string, unknown>) => p.address == null);
       expect(withAddress.length).toBeGreaterThan(0);
       expect(withoutAddress.length).toBeGreaterThan(0);
 
@@ -124,9 +120,7 @@ describe('Project Operations', () => {
       const res = await authGet(token, '/api/projects');
       const body = res.json();
 
-      const states = new Set(
-        body.data.map((p: Record<string, unknown>) => p.status),
-      );
+      const states = new Set(body.data.map((p: Record<string, unknown>) => p.status));
       // Seed data covers all 9 states
       expect(states.size).toBe(9);
     });
@@ -151,18 +145,13 @@ describe('Project Operations', () => {
       // First, find a project in "geplant" state
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      const geplantProject = projects.find(
-        (p: Record<string, unknown>) => p.status === 'geplant',
-      );
+      const geplantProject = projects.find((p: Record<string, unknown>) => p.status === 'geplant');
       expect(geplantProject).toBeDefined();
 
       const originalStatusChangedAt = geplantProject.statusChangedAt;
       const originalUpdatedAt = geplantProject.updatedAt;
 
-      const res = await authPost(
-        token,
-        `/api/projects/${geplantProject.id}/transition/forward`,
-      );
+      const res = await authPost(token, `/api/projects/${geplantProject.id}/transition/forward`);
 
       expect(res.statusCode).toBe(200);
 
@@ -178,15 +167,10 @@ describe('Project Operations', () => {
     it('returns the full updated project object', async () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      const project = projects.find(
-        (p: Record<string, unknown>) => p.status === 'anfrage',
-      );
+      const project = projects.find((p: Record<string, unknown>) => p.status === 'anfrage');
       expect(project).toBeDefined();
 
-      const res = await authPost(
-        token,
-        `/api/projects/${project.id}/transition/forward`,
-      );
+      const res = await authPost(token, `/api/projects/${project.id}/transition/forward`);
 
       expect(res.statusCode).toBe(200);
 
@@ -205,19 +189,14 @@ describe('Project Operations', () => {
     it('sets updatedBy to the authenticated user', async () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      const project = projects.find(
-        (p: Record<string, unknown>) => p.status === 'beauftragt',
-      );
+      const project = projects.find((p: Record<string, unknown>) => p.status === 'beauftragt');
       expect(project).toBeDefined();
 
       // Get the authenticated user's ID
       const meRes = await authGet(token, '/api/auth/me');
       const me = meRes.json();
 
-      const res = await authPost(
-        token,
-        `/api/projects/${project.id}/transition/forward`,
-      );
+      const res = await authPost(token, `/api/projects/${project.id}/transition/forward`);
 
       const updated = res.json();
       expect(updated.updatedBy).toBe(me.id);
@@ -236,10 +215,7 @@ describe('Project Operations', () => {
       );
       expect(erledigtProject).toBeDefined();
 
-      const res = await authPost(
-        token,
-        `/api/projects/${erledigtProject.id}/transition/forward`,
-      );
+      const res = await authPost(token, `/api/projects/${erledigtProject.id}/transition/forward`);
 
       expect(res.statusCode).toBe(422);
 
@@ -257,15 +233,10 @@ describe('Project Operations', () => {
     it('returns a validation error (anfrage is the first state)', async () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      const anfrageProject = projects.find(
-        (p: Record<string, unknown>) => p.status === 'anfrage',
-      );
+      const anfrageProject = projects.find((p: Record<string, unknown>) => p.status === 'anfrage');
       expect(anfrageProject).toBeDefined();
 
-      const res = await authPost(
-        token,
-        `/api/projects/${anfrageProject.id}/transition/backward`,
-      );
+      const res = await authPost(token, `/api/projects/${anfrageProject.id}/transition/backward`);
 
       expect(res.statusCode).toBe(422);
 
@@ -282,10 +253,7 @@ describe('Project Operations', () => {
       );
       expect(erledigtProject).toBeDefined();
 
-      const res = await authPost(
-        token,
-        `/api/projects/${erledigtProject.id}/transition/backward`,
-      );
+      const res = await authPost(token, `/api/projects/${erledigtProject.id}/transition/backward`);
 
       expect(res.statusCode).toBe(422);
 
@@ -304,19 +272,17 @@ describe('Project Operations', () => {
       const projects = listRes.json().data;
       // Pick a project that already has dates
       const project = projects.find(
-        (p: Record<string, unknown>) =>
-          p.plannedStart != null && p.plannedEnd != null,
+        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
       );
       expect(project).toBeDefined();
 
       const newStart = '2026-05-01';
       const newEnd = '2026-05-10';
 
-      const res = await authPatch(
-        token,
-        `/api/projects/${project.id}/dates`,
-        { plannedStart: newStart, plannedEnd: newEnd },
-      );
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: newStart,
+        plannedEnd: newEnd,
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -329,19 +295,17 @@ describe('Project Operations', () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
       const project = projects.find(
-        (p: Record<string, unknown>) =>
-          p.plannedStart != null && p.plannedEnd != null,
+        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
       );
       expect(project).toBeDefined();
 
       const originalStatusChangedAt = project.statusChangedAt;
       const originalUpdatedAt = project.updatedAt;
 
-      const res = await authPatch(
-        token,
-        `/api/projects/${project.id}/dates`,
-        { plannedStart: '2026-06-01', plannedEnd: '2026-06-15' },
-      );
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: '2026-06-01',
+        plannedEnd: '2026-06-15',
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -357,19 +321,17 @@ describe('Project Operations', () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
       const project = projects.find(
-        (p: Record<string, unknown>) =>
-          p.plannedStart != null && p.plannedEnd != null,
+        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
       );
       expect(project).toBeDefined();
 
       const meRes = await authGet(token, '/api/auth/me');
       const me = meRes.json();
 
-      const res = await authPatch(
-        token,
-        `/api/projects/${project.id}/dates`,
-        { plannedStart: '2026-07-01', plannedEnd: '2026-07-05' },
-      );
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: '2026-07-01',
+        plannedEnd: '2026-07-05',
+      });
 
       const updated = res.json();
       expect(updated.updatedBy).toBe(me.id);
@@ -378,16 +340,13 @@ describe('Project Operations', () => {
     it('returns the full updated project', async () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      const project = projects.find(
-        (p: Record<string, unknown>) => p.plannedStart != null,
-      );
+      const project = projects.find((p: Record<string, unknown>) => p.plannedStart != null);
       expect(project).toBeDefined();
 
-      const res = await authPatch(
-        token,
-        `/api/projects/${project.id}/dates`,
-        { plannedStart: '2026-08-01', plannedEnd: '2026-08-20' },
-      );
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: '2026-08-01',
+        plannedEnd: '2026-08-20',
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -407,19 +366,13 @@ describe('Project Operations', () => {
     it('rejects when plannedEnd is before plannedStart', async () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      const project = projects.find(
-        (p: Record<string, unknown>) => p.plannedStart != null,
-      );
+      const project = projects.find((p: Record<string, unknown>) => p.plannedStart != null);
       expect(project).toBeDefined();
 
-      const res = await authPatch(
-        token,
-        `/api/projects/${project.id}/dates`,
-        {
-          plannedStart: '2026-06-15',
-          plannedEnd: '2026-06-01', // end before start
-        },
-      );
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: '2026-06-15',
+        plannedEnd: '2026-06-01', // end before start
+      });
 
       expect(res.statusCode).toBe(422);
 
@@ -435,19 +388,14 @@ describe('Project Operations', () => {
       const projects = listRes.json().data;
       // Find a project without dates to test setting end-only
       const project = projects.find(
-        (p: Record<string, unknown>) =>
-          p.plannedStart == null && p.plannedEnd == null,
+        (p: Record<string, unknown>) => p.plannedStart == null && p.plannedEnd == null,
       );
       expect(project).toBeDefined();
 
-      const res = await authPatch(
-        token,
-        `/api/projects/${project.id}/dates`,
-        {
-          plannedEnd: '2026-06-15',
-          // No plannedStart
-        },
-      );
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedEnd: '2026-06-15',
+        // No plannedStart
+      });
 
       expect(res.statusCode).toBe(422);
 
@@ -459,19 +407,13 @@ describe('Project Operations', () => {
       // data-model.md §6.8: plannedStart alone is valid — renders as a single-day block
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      const project = projects.find(
-        (p: Record<string, unknown>) => p.plannedStart != null,
-      );
+      const project = projects.find((p: Record<string, unknown>) => p.plannedStart != null);
       expect(project).toBeDefined();
 
-      const res = await authPatch(
-        token,
-        `/api/projects/${project.id}/dates`,
-        {
-          plannedStart: '2026-09-01',
-          // No plannedEnd — valid per spec
-        },
-      );
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: '2026-09-01',
+        // No plannedEnd — valid per spec
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -491,14 +433,10 @@ describe('Project Operations', () => {
       // Uses buero to avoid affecting other tests that log in as inhaber.
       const bueroToken = await login('buero', 'changeme');
 
-      const changeRes = await authPost(
-        bueroToken,
-        '/api/auth/change-password',
-        {
-          currentPassword: 'changeme',
-          newPassword: 'neuesPasswort123!',
-        },
-      );
+      const changeRes = await authPost(bueroToken, '/api/auth/change-password', {
+        currentPassword: 'changeme',
+        newPassword: 'neuesPasswort123!',
+      });
 
       expect(changeRes.statusCode).toBe(200);
 
@@ -510,7 +448,10 @@ describe('Project Operations', () => {
       });
 
       expect(loginRes.statusCode).toBe(200);
-      expect(loginRes.json().token).toBeDefined();
+      // Session token is now in the cookie, not the body
+      const setCookie = loginRes.headers['set-cookie'];
+      const cookieStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+      expect(cookieStr).toMatch(/session=[^;]+/);
     });
   });
 
@@ -562,9 +503,7 @@ describe('Project Operations', () => {
       // If none exists, transition one forward first to set up state.
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      let inArbeitProject = projects.find(
-        (p: Record<string, unknown>) => p.status === 'in_arbeit',
-      );
+      let inArbeitProject = projects.find((p: Record<string, unknown>) => p.status === 'in_arbeit');
 
       // Fallback: if no in_arbeit project exists, create one by transitioning forward
       if (!inArbeitProject) {
@@ -585,10 +524,7 @@ describe('Project Operations', () => {
       const originalStatusChangedAt = inArbeitProject.statusChangedAt;
       const originalUpdatedAt = inArbeitProject.updatedAt;
 
-      const res = await authPost(
-        token,
-        `/api/projects/${inArbeitProject.id}/transition/backward`,
-      );
+      const res = await authPost(token, `/api/projects/${inArbeitProject.id}/transition/backward`);
 
       expect(res.statusCode).toBe(200);
 
@@ -606,16 +542,11 @@ describe('Project Operations', () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
       // Find a project that can go forward and then back
-      const angebotProject = projects.find(
-        (p: Record<string, unknown>) => p.status === 'angebot',
-      );
+      const angebotProject = projects.find((p: Record<string, unknown>) => p.status === 'angebot');
       expect(angebotProject).toBeDefined();
 
       // Forward: angebot -> beauftragt
-      const fwdRes = await authPost(
-        token,
-        `/api/projects/${angebotProject.id}/transition/forward`,
-      );
+      const fwdRes = await authPost(token, `/api/projects/${angebotProject.id}/transition/forward`);
       expect(fwdRes.statusCode).toBe(200);
       expect(fwdRes.json().status).toBe('beauftragt');
 
@@ -685,10 +616,7 @@ describe('Project Operations', () => {
     });
 
     it('returns 404 with NOT_FOUND for a nonexistent ID', async () => {
-      const res = await authGet(
-        token,
-        '/api/projects/00000000-0000-0000-0000-000000000000',
-      );
+      const res = await authGet(token, '/api/projects/00000000-0000-0000-0000-000000000000');
 
       expect(res.statusCode).toBe(404);
 

@@ -13,7 +13,13 @@ import * as collapseTierHook from '@/ui/kanban/useCollapseTier';
 beforeEach(() => {
   useProjectStore.setState({
     ...useProjectStore.getInitialState(),
-    authUser: { username: 'mock', displayName: 'Mock User' },
+    authUser: {
+      id: 'u1',
+      username: 'mock',
+      displayName: 'Mock User',
+      roles: ['owner'],
+      email: null,
+    },
     projects: [...mockProjects],
   });
 });

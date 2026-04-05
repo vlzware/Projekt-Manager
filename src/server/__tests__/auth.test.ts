@@ -35,7 +35,7 @@ describe('Authentication & Session Management', () => {
   // AT-1: Login with valid credentials returns a session and user profile
   // ---------------------------------------------------------------
   describe('AT-1: Login with valid credentials', () => {
-    it('returns 200 with token and user profile', async () => {
+    it('returns 200 with session cookie and user profile', async () => {
       const res = await getApp().inject({
         method: 'POST',
         url: '/api/auth/login',
@@ -44,10 +44,17 @@ describe('Authentication & Session Management', () => {
 
       expect(res.statusCode).toBe(200);
 
+      // Session token is in the HttpOnly cookie, not the response body
+      const setCookie = res.headers['set-cookie'];
+      const cookieStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+      expect(cookieStr).toBeDefined();
+      expect(cookieStr).toMatch(/session=[^;]+/);
+      expect(cookieStr).toContain('HttpOnly');
+      expect(cookieStr).toContain('SameSite=Strict');
+
       const body = res.json();
-      expect(body.token).toBeDefined();
-      expect(typeof body.token).toBe('string');
-      expect(body.token.length).toBeGreaterThan(0);
+      // Token must NOT appear in the response body
+      expect(body).not.toHaveProperty('token');
 
       // User profile fields
       expect(body.user).toBeDefined();
@@ -81,8 +88,13 @@ describe('Authentication & Session Management', () => {
 
       expect(res.statusCode).toBe(200);
 
+      // Session cookie is set
+      const setCookie = res.headers['set-cookie'];
+      const cookieStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+      expect(cookieStr).toMatch(/session=[^;]+/);
+
       const body = res.json();
-      expect(body.token).toBeDefined();
+      expect(body).not.toHaveProperty('token');
       expect(body.user.username).toBe('buero');
       expect(body.user.displayName).toBe('Maria Schmidt');
       expect(body.user.roles).toEqual(expect.arrayContaining(['office']));
@@ -240,11 +252,11 @@ describe('Authentication & Session Management', () => {
   // AT-6: A request with no session returns an authentication error
   // ---------------------------------------------------------------
   describe('AT-6: Request with no session', () => {
-    it('GET /api/auth/me without Authorization header returns 401', async () => {
+    it('GET /api/auth/me without session cookie returns 401', async () => {
       const res = await getApp().inject({
         method: 'GET',
         url: '/api/auth/me',
-        // No Authorization header
+        // No cookie header
       });
 
       expect(res.statusCode).toBe(401);
@@ -258,7 +270,7 @@ describe('Authentication & Session Management', () => {
       expect(typeof body.message).toBe('string');
     });
 
-    it('GET /api/projects without Authorization header returns 401', async () => {
+    it('GET /api/projects without session cookie returns 401', async () => {
       const res = await getApp().inject({
         method: 'GET',
         url: '/api/projects',

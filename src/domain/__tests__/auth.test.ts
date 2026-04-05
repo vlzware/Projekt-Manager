@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hashPassword, verifyPassword } from '../auth';
+import { hashPassword, verifyPassword } from '../../server/password';
 
 describe('password hashing', () => {
   // UT-10: a hashed password does not match a different plaintext

@@ -24,9 +24,9 @@ beforeEach(() => {
 
   // Set up fetch mock — default: reject with a clear message so tests that
   // forget to configure it fail loudly instead of silently succeeding.
-  fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(
-    new Error('fetch not configured for this test'),
-  );
+  fetchSpy = vi
+    .spyOn(globalThis, 'fetch')
+    .mockRejectedValue(new Error('fetch not configured for this test'));
 });
 
 afterEach(() => {
@@ -87,9 +87,10 @@ describe('Login Form', () => {
   it('CT-19: submitting valid credentials calls login API and navigates to main view', async () => {
     const user = userEvent.setup();
 
-    // Mock: login API returns success with token and user profile
+    // Mock: checkSession calls GET /api/auth/me first (no cookie → 401)
+    mockFetchError({ code: 'UNAUTHENTICATED', message: 'Not authenticated' }, 401);
+    // Mock: login API returns success with user profile (token is in HttpOnly cookie)
     mockFetchSuccess({
-      token: 'fake-session-token',
       user: {
         id: 'u1',
         username: 'testuser',
@@ -103,8 +104,10 @@ describe('Login Form', () => {
     useProjectStore.setState({ authUser: null });
     render(<App />);
 
-    // Login form should be visible, Kanban board should not
-    expect(screen.getByRole('button', { name: /anmelden/i })).toBeInTheDocument();
+    // Wait for session check to complete (shows "Laden..." while pending)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /anmelden/i })).toBeInTheDocument();
+    });
     expect(screen.queryByTestId('kanban-board')).not.toBeInTheDocument();
 
     // Fill in credentials and submit
@@ -142,14 +145,24 @@ describe('Login Form', () => {
   it('CT-20: invalid credentials show error message without navigating', async () => {
     const user = userEvent.setup();
 
+    // Mock: checkSession calls GET /api/auth/me first (no cookie → 401)
+    mockFetchError({ code: 'UNAUTHENTICATED', message: 'Not authenticated' }, 401);
     // Mock: login API returns 401 with error
-    mockFetchError({
-      code: 'INVALID_CREDENTIALS',
-      message: 'Anmeldung fehlgeschlagen',
-    }, 401);
+    mockFetchError(
+      {
+        code: 'INVALID_CREDENTIALS',
+        message: 'Anmeldung fehlgeschlagen',
+      },
+      401,
+    );
 
     useProjectStore.setState({ authUser: null });
     render(<App />);
+
+    // Wait for session check to complete
+    await waitFor(() => {
+      expect(screen.getByLabelText(/benutzername/i)).toBeInTheDocument();
+    });
 
     // Fill in wrong credentials and submit
     await user.type(screen.getByLabelText(/benutzername/i), 'wronguser');
@@ -188,7 +201,13 @@ describe('Header Auth Indicator', () => {
     const user = userEvent.setup();
 
     useProjectStore.setState({
-      authUser: { username: 'testuser', displayName: 'Max Mustermann' },
+      authUser: {
+        id: 'u1',
+        username: 'testuser',
+        displayName: 'Max Mustermann',
+        roles: ['owner'],
+        email: 'max@example.com',
+      },
     });
     render(<App />);
 
@@ -213,7 +232,13 @@ describe('Header Auth Indicator', () => {
 
     // Start as authenticated user
     useProjectStore.setState({
-      authUser: { username: 'testuser', displayName: 'Max Mustermann' },
+      authUser: {
+        id: 'u1',
+        username: 'testuser',
+        displayName: 'Max Mustermann',
+        roles: ['owner'],
+        email: 'max@example.com',
+      },
     });
     render(<App />);
 
@@ -266,7 +291,13 @@ describe('Mutation Error Handling', () => {
     // Explicitly provide project data — don't rely on mock data from getInitialState()
     // which will be removed when the store switches to API-fetched data.
     useProjectStore.setState({
-      authUser: { username: 'testuser', displayName: 'Max Mustermann' },
+      authUser: {
+        id: 'u1',
+        username: 'testuser',
+        displayName: 'Max Mustermann',
+        roles: ['owner'],
+        email: 'max@example.com',
+      },
       projects: [
         {
           id: 'p07',
@@ -339,7 +370,13 @@ describe('Double-Submit Prevention', () => {
 
     // Explicitly provide project data — don't rely on mock data from getInitialState()
     useProjectStore.setState({
-      authUser: { username: 'testuser', displayName: 'Max Mustermann' },
+      authUser: {
+        id: 'u1',
+        username: 'testuser',
+        displayName: 'Max Mustermann',
+        roles: ['owner'],
+        email: 'max@example.com',
+      },
       projects: [
         {
           id: 'p07',
@@ -388,14 +425,17 @@ describe('Session Expiry Mid-Use', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     // Mock: transition API returns 401 SESSION_EXPIRED
-    mockFetchError(
-      { code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen' },
-      401,
-    );
+    mockFetchError({ code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen' }, 401);
 
     // Start as authenticated user with explicit project data
     useProjectStore.setState({
-      authUser: { username: 'testuser', displayName: 'Max Mustermann' },
+      authUser: {
+        id: 'u1',
+        username: 'testuser',
+        displayName: 'Max Mustermann',
+        roles: ['owner'],
+        email: 'max@example.com',
+      },
       projects: [
         {
           id: 'p07',
@@ -423,9 +463,7 @@ describe('Session Expiry Mid-Use', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /anmelden/i })).toBeInTheDocument();
     });
-    expect(
-      screen.getByText('Sitzung abgelaufen. Bitte erneut anmelden.'),
-    ).toBeInTheDocument();
+    expect(screen.getByText('Sitzung abgelaufen. Bitte erneut anmelden.')).toBeInTheDocument();
 
     // Kanban board is no longer visible
     expect(screen.queryByTestId('kanban-board')).not.toBeInTheDocument();
@@ -441,6 +479,8 @@ describe('Session Expiry Mid-Use', () => {
 describe('Session Restoration on App Load', () => {
   // Spec §9.4 / api.md §14.2.1: On app load, the client checks for an existing
   // valid session (GET /api/auth/me). If valid → load authenticated view.
+  // With HttpOnly cookies the browser sends the session cookie automatically —
+  // checkSession simply calls /api/auth/me and lets the server validate.
   it('restores session when GET /api/auth/me returns a valid user', async () => {
     // Mock: GET /api/auth/me returns a valid user profile
     mockFetchSuccess({
@@ -451,8 +491,8 @@ describe('Session Restoration on App Load', () => {
       email: 'max@example.com',
     });
 
-    // Simulate a page refresh: no user but a persisted token
-    useProjectStore.setState({ authUser: null, authToken: 'stored-token' });
+    // Simulate a page refresh: no user in store, cookie handled by browser
+    useProjectStore.setState({ authUser: null });
     render(<App />);
 
     // App should call GET /api/auth/me
@@ -479,13 +519,10 @@ describe('Session Restoration on App Load', () => {
 
   it('shows login screen when GET /api/auth/me returns 401', async () => {
     // Mock: GET /api/auth/me returns 401 — no valid session
-    mockFetchError(
-      { code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen' },
-      401,
-    );
+    mockFetchError({ code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen' }, 401);
 
-    // Simulate a page refresh: no user but a persisted token
-    useProjectStore.setState({ authUser: null, authToken: 'stored-token' });
+    // Simulate a page refresh: no user in store, no valid cookie
+    useProjectStore.setState({ authUser: null });
     render(<App />);
 
     // App should call GET /api/auth/me

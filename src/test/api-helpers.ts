@@ -11,13 +11,10 @@ import { buildApp } from '../server/app.js';
 import { createDatabase } from '../server/db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../server/seed.js';
-import {
-  createExpiredSession as createExpiredSessionRepo,
-} from '../server/repositories/session.js';
-import {
-  deactivateUser as deactivateUserRepo,
-} from '../server/repositories/user.js';
+import { deactivateUser as deactivateUserRepo } from '../server/repositories/user.js';
+import { randomBytes } from 'node:crypto';
 import type { Database } from '../server/db/connection.js';
+import { sessions } from '../server/db/schema.js';
 import type pg from 'pg';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -79,13 +76,11 @@ export function getApp(): FastifyInstance {
 /**
  * Log in as a user and return the session token.
  *
- * Convenience wrapper around POST /api/auth/login for tests
- * that need an authenticated session but are not testing login itself.
+ * Extracts the token from the `set-cookie` header (HttpOnly session
+ * cookie). Tests pass this token back via `cookie: 'session=<token>'`
+ * in subsequent requests.
  */
-export async function login(
-  username: string,
-  password: string,
-): Promise<string> {
+export async function login(username: string, password: string): Promise<string> {
   const res = await getApp().inject({
     method: 'POST',
     url: '/api/auth/login',
@@ -93,13 +88,16 @@ export async function login(
   });
 
   if (res.statusCode !== 200) {
-    throw new Error(
-      `Login failed for "${username}": ${res.statusCode} ${res.body}`,
-    );
+    throw new Error(`Login failed for "${username}": ${res.statusCode} ${res.body}`);
   }
 
-  const body = res.json<{ token: string }>();
-  return body.token;
+  const setCookie = res.headers['set-cookie'];
+  const cookieStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
+  const match = cookieStr?.match(/session=([^;]+)/);
+  if (!match) {
+    throw new Error(`Login for "${username}" did not return a session cookie`);
+  }
+  return match[1];
 }
 
 /**
@@ -109,22 +107,18 @@ export async function authGet(token: string, url: string) {
   return getApp().inject({
     method: 'GET',
     url,
-    headers: { authorization: `Bearer ${token}` },
+    headers: { cookie: `session=${token}` },
   });
 }
 
 /**
  * Make an authenticated POST request.
  */
-export async function authPost(
-  token: string,
-  url: string,
-  payload?: Record<string, unknown>,
-) {
+export async function authPost(token: string, url: string, payload?: Record<string, unknown>) {
   return getApp().inject({
     method: 'POST',
     url,
-    headers: { authorization: `Bearer ${token}` },
+    headers: { cookie: `session=${token}` },
     payload,
   });
 }
@@ -132,15 +126,11 @@ export async function authPost(
 /**
  * Make an authenticated PATCH request.
  */
-export async function authPatch(
-  token: string,
-  url: string,
-  payload?: Record<string, unknown>,
-) {
+export async function authPatch(token: string, url: string, payload?: Record<string, unknown>) {
   return getApp().inject({
     method: 'PATCH',
     url,
-    headers: { authorization: `Bearer ${token}` },
+    headers: { cookie: `session=${token}` },
     payload,
   });
 }
@@ -151,11 +141,21 @@ export async function authPatch(
  * The session must be a real database row whose expiresAt is in the past.
  * This lets AT-5 verify that the auth middleware rejects expired sessions
  * with the correct error code — something a fabricated string can never do.
+ *
+ * Test-only helper — intentionally NOT in production code.
  */
-export async function createExpiredSession(
-  userId: string,
-): Promise<string> {
-  return createExpiredSessionRepo(db, userId);
+export async function createExpiredSession(userId: string): Promise<string> {
+  const token = randomBytes(32).toString('hex');
+  const expiredAt = new Date(Date.now() - 60_000); // 1 minute in the past
+  const rows = await db
+    .insert(sessions)
+    .values({
+      userId,
+      token,
+      expiresAt: expiredAt,
+    })
+    .returning();
+  return rows[0]!.token;
 }
 
 /**
