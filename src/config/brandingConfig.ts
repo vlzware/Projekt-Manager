@@ -9,5 +9,5 @@ export interface BrandingConfig {
 
 export const BRANDING: BrandingConfig = {
   appName: 'Projekt-Manager',
-  footerText: 'Projekt-Manager \u00B7 Walking Skeleton \u00B7 Mockdaten',
+  footerText: 'Projekt-Manager \u00B7 Iteration 2',
 };

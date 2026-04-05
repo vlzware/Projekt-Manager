@@ -1,0 +1,152 @@
+# Product Specification
+
+**Source documents:** [Kickoff](../project/kickoff.md), [Plan](../project/plan.md)
+
+---
+
+## 1. Goal
+
+Deliver a hosted, authenticated system that demonstrates a consolidated preview of the state of all projects across the main company workflow. The system persists data in a database, authenticates users, serves the front end through a backend API, and stores binary assets in object storage. It provides two complementary views — a **Kanban board** and a **Calendar** — with basic interactivity.
+
+This iteration must answer two questions:
+
+> "Can this system persist and retrieve real project data without losing the interaction model validated in iteration 1?"
+
+> "Can access be restricted to authenticated users in a way that supports later role-based views and permissions without forcing a rewrite?"
+
+### 1.1 Iteration History
+
+| Iteration | Focus | Status |
+|---|---|---|
+| 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
+| 2 | Persistence (database + API), authentication, object storage, deployment | **Current** |
+
+---
+
+## 2. Scope
+
+### 2.1 In Scope
+
+- Kanban board with one column per workflow state
+- Calendar view (month) showing scheduled projects
+- Project detail panel accessible from both views
+- State transitions (forward/backward by one step)
+- Date changes (planned start/end)
+- Summary area with aggregate indicators
+- German UI, English code
+- All company-specific values configurable
+
+**Added in iteration 2:**
+- API layer between front end and data store
+- Persistent data storage in a database, replacing mock data
+- Seed data to replace the mock data set (same coverage as the iteration 1 dataset)
+- User authentication (login/logout, session management)
+- Object storage module encapsulating all binary storage operations (prepared for future file uploads — no upload UI in this iteration)
+- Deployment to a hosted environment (application, database, object storage)
+- Continuous delivery pipeline (auto-deploy on merge to main)
+
+### 2.2 Out of Scope
+
+- Role-based access control beyond basic authenticated/unauthenticated distinction
+- User self-registration
+- Password reset / forgot-password flow
+- SSO / OAuth / external identity providers
+- Project creation or deletion (UI)
+- Field editing beyond status and dates
+- File uploads (storage module is prepared, but no upload UI)
+- Notifications (email, WhatsApp)
+- Worker view, bookkeeper view
+- Mobile optimization
+- Print or export
+- i18n framework (German only, hardcoded strings are fine)
+
+---
+
+## 3. Workflow States
+
+The Kanban board reflects the full company workflow. The number and definition of states are driven by configuration — the system does not hardcode a specific state count or state names.
+
+The current configuration defines 9 states:
+
+| # | State | Type | Description |
+|---|---|---|---|
+| 1 | **Anfrage** | Action | Inquiry received — company must write an offer |
+| 2 | **Angebot** | Buffer | Offer sent — waiting for customer confirmation |
+| 3 | **Beauftragt** | Action | Customer confirmed — company must plan and schedule |
+| 4 | **Geplant** | Buffer | Planned — waiting for its turn on the calendar |
+| 5 | **In Arbeit** | Active | Being executed (incl. Aufmaß, photos, etc.) |
+| 6 | **Abnahme** | Buffer | Execution complete — waiting for customer acceptance |
+| 7 | **Rechnung fällig** | Action | Customer accepted — company must write the invoice |
+| 8 | **Abgerechnet** | Buffer | Invoice sent — waiting for payment |
+| 9 | **Erledigt** | Done | Payment received — project closed |
+
+Three action states, four buffer states, one active, one terminal. The Kanban board makes action states naturally visible — items accumulating in an action column signal that work is falling behind.
+
+**[C]** The state set (names, types, order, count) is configurable per company. Adding or removing states must not require code changes beyond updating the configuration.
+
+---
+
+## 4. Reasonable Assumptions
+
+All assumptions are candidates for later configuration, marked **[C]**.
+
+### 4.1 Company Profile
+
+| Attribute | Assumed Value |
+|---|---|
+| Trade | Maler- und Lackiererbetrieb (painter / coating contractor) **[C]** |
+| Employees | Owner, 1 office manager, 4–6 workers, 1 external bookkeeper **[C]** |
+| Concurrent active projects | 10–30 **[C]** |
+| Typical project duration | 1–10 working days **[C]** |
+| Region | Single metropolitan area (~50 km radius) **[C]** |
+
+### 4.2 Users
+
+The system introduces authenticated access.
+
+The only fully implemented interactive perspective remains the **Owner / Office Manager** operational view. All authenticated users see all projects and can perform the same state and date changes defined in iteration 1. This is a deliberate simplification for the iteration, not a statement about the final authorization model.
+
+**Assumptions [C]:**
+- Initial deployments may start with a very small user set (e.g. 1–5 named users) **[C]**
+- The system must support migration from simple access rules to role-based authorization later without changing the domain model **[C]**
+- Self-registration is not available — users are created by an administrator (or via seed data for this iteration) **[C]**
+
+### 4.3 Scheduling
+
+Each project has at most one planned date range (start/end) representing the main execution slot. Detailed crew or resource planning is deferred.
+
+### 4.4 Data Origin
+
+All data is stored in a persistent database, accessed through an API layer. On first deployment, seed data (see [Data Model — Seed Data](data-model.md#7-seed-data-specification)) is loaded to provide the same realistic starting point as the walking skeleton's mock data.
+
+### 4.5 Authentication
+
+| Attribute | Assumed Value |
+|---|---|
+| Authentication method | Username + password **[C]** |
+| Password policy | Minimum 8 characters **[C]** |
+| Session duration | 24 hours **[C]** |
+| Maximum concurrent sessions per user | Unlimited **[C]** |
+| Default admin account | Created during seed data loading |
+| Self-registration | Not available **[C]** |
+
+The system does not implement a user management UI in this iteration. Initial users are part of the seed data. Adding or modifying users is an administrative operation (direct database or a simple admin endpoint), not a polished UI. A user management interface is planned for a later iteration (see kickoff: "administrator's view").
+
+---
+
+## Spec Structure
+
+This specification is split across multiple files:
+
+| File | Sections | Contents |
+|---|---|---|
+| **[index.md](index.md)** (this file) | 1–4 | Goal, scope, workflow states, assumptions |
+| **[data-model.md](data-model.md)** | 5–7 | Project, User, Session entities; state metadata; persistence principles; seed data |
+| **[ui.md](ui.md)** | 8–10 | Layout, views, interactions, login, async mutation UX |
+| **[architecture.md](architecture.md)** | 11–13 | Responsibility layers, dependencies, extensibility, configuration, NFRs, security |
+| **[api.md](api.md)** | 14 | API design principles, operations, authorization, error handling |
+| **[verification.md](verification.md)** | 15–18 | Acceptance criteria, test specifications, risks, open questions |
+
+---
+
+*Living document — updated as each iteration ships. Git history preserves past versions.*

@@ -1,0 +1,20 @@
+# Development overlay — exposes DB and MinIO ports directly, no Caddy.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up db storage
+
+services:
+  app:
+    ports:
+      - "${PORT:-3000}:3000"
+
+  db:
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+
+  storage:
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO console

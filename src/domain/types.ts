@@ -28,6 +28,8 @@ export interface Project {
 
   createdAt: string;
   updatedAt: string;
+  createdBy?: string;
+  updatedBy?: string;
 }
 
 export interface SummaryData {

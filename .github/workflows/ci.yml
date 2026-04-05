@@ -9,18 +9,46 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: projekt_manager_test
+          POSTGRES_USER: pm
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pm -d projekt_manager_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
 
       - run: npm ci
 
-      - name: Type check
-        run: npx tsc --noEmit
+      - name: Audit dependencies
+        run: |
+          npm audit --audit-level=moderate && exit 0
+          # If audit failed, check if only suppressed advisories remain.
+          # See ADR-0007 for rationale.
+          SUPPRESSED="GHSA-67mh-4wv8-2f99"
+          UNKNOWN=$(npm audit --json | jq --arg s "$SUPPRESSED" \
+            '[.vulnerabilities[].via[] | objects | .url] | map(select(contains($s) | not)) | length')
+          if [ "$UNKNOWN" -gt 0 ]; then
+            echo "::error::New vulnerabilities found beyond suppressed list"
+            npm audit --audit-level=moderate
+            exit 1
+          fi
+          echo "Only suppressed advisories found ($SUPPRESSED) — see ADR-0007"
 
       - name: Lint
         run: npm run lint
@@ -28,8 +56,13 @@ jobs:
       - name: Format check
         run: npm run format:check
 
+      - name: Type check
+        run: npx tsc --noEmit
+
       - name: Unit and component tests
         run: npm run test:coverage
+        env:
+          DATABASE_URL: postgresql://pm:postgres@localhost:5432/projekt_manager_test
 
       - name: Build
         run: npm run build

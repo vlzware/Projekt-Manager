@@ -4,19 +4,24 @@ Conventions for this project. Applies to all contributors (human and AI).
 
 ## Runtime Requirements
 
-- Node.js >= 22 (see `.nvmrc`)
-- npm >= 10
+- Node.js (pinned in `.nvmrc` — use `nvm install`)
+- npm (use the version bundled with that Node release — do not upgrade independently)
 
 ## Tech Stack
 
 | Concern | Choice | Reference |
 |---|---|---|
 | Language | TypeScript (strict) | [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md) |
-| Framework | React 19 | |
+| Framework (frontend) | React 19 | |
 | Build | Vite | |
 | State | Zustand | |
 | Styling | CSS Modules (`.module.css`) | |
 | Date math | date-fns | |
+| Server framework | Fastify | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md) |
+| ORM | Drizzle ORM | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md) |
+| Database | PostgreSQL | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md) |
+| Object storage | S3-compatible (MinIO) | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
+| Deployment | Docker Compose, GitHub Actions | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
 | Unit/Component tests | Vitest + @testing-library/react | |
 | E2E tests | Playwright | |
 
@@ -30,9 +35,10 @@ Steps happen in this order. Skipping or reordering must be flagged.
 4. **Implementation**
 5. **Tests passing**
 6. **Code quality review** — separate from correctness
-7. **Documentation update**
-8. **Commit**
-9. **Retrospection** — issues for the backlog
+7. **Security audit** (conditional) — required when trust boundaries change
+8. **Documentation update**
+9. **Commit**
+10. **Retrospection** — issues for the backlog
 
 ### Test-spec traceability
 
@@ -43,6 +49,21 @@ Each test references the criterion it covers (e.g., `// AC-3: Projects in "Anfra
 3. Flags unmapped criteria as gaps
 
 Gaps block implementation (step 4). The reviewer must be different from the test author.
+
+### Security audit
+
+Required when a change affects trust boundaries. The trigger question: **"Does this change affect how the system authenticates, authorizes, stores data, communicates externally, or exposes itself to the network?"** If yes — audit. If no — skip.
+
+Triggers include:
+- Auth or session logic
+- New or changed API endpoints with authorization
+- Infrastructure changes (Docker, Compose, CI/CD, reverse proxy)
+- External integrations (object storage, database schema)
+- Deployment configuration
+
+Does NOT trigger for: UI styling, refactoring, test changes, documentation, domain logic that doesn't touch boundaries.
+
+The audit uses adversarial framing — reviewers with a security-specific lens, separate from the code quality review in step 6. Automated checks (`npm audit`, dependency scanning) run in CI on every push and complement but do not replace the manual audit.
 
 ## Code Style
 
@@ -133,8 +154,7 @@ Issues without a milestone stay in the backlog.
 
 | Document | Location | Answers | Contains | Does NOT contain |
 |---|---|---|---|---|
-| **Spec** | `docs/spec.md` | "What does the system do?" | Current user-facing behavior, data model, acceptance criteria, edge cases | Architecture, component structure, implementation details |
-| **Iteration scope** | `docs/scope.md` | "What does this iteration add or change?" | Delta to the spec: new features, revised behavior, new ACs | The full spec repeated |
+| **Spec** | `docs/spec/` | "What does the system do?" | Current user-facing behavior, data model, acceptance criteria, edge cases | Architecture, component structure, implementation details |
 | **Working files** | `docs/wip/` | Scratch space for the current iteration | Design notes, research, reference screenshots — anything ephemeral | Nothing that should outlive the iteration |
 | **Design doc** | optional, per feature | "How do we build it?" | Architecture, APIs, data flow, component breakdown | Business requirements, acceptance criteria |
 | **ADR** | `docs/adr/` | "Why this and not that?" | A single decision with rationale and alternatives | Implementation details, full designs |
@@ -145,7 +165,6 @@ Specs are stack-agnostic. The litmus test: **if swapping the framework wouldn't 
 
 ### Iteration spec lifecycle
 
-1. At the start of an iteration, write `docs/scope.md` — the delta for this iteration.
-2. Implement against that scope.
-3. When the iteration ships, merge the scope delta into `docs/spec.md` and replace `scope.md` with the next iteration's scope.
-4. The spec always reflects the current state of the system. Git history preserves past scopes.
+1. At the start of an iteration, update the spec files in `docs/spec/` to reflect the new scope. Git history preserves previous iterations.
+2. Implement against the spec.
+3. The spec always reflects the current state of the system.

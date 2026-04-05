@@ -9,6 +9,38 @@
 .main {
   flex: 1;
   display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
+}
+
+.mutationError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  background: #fef2f2;
+  border-bottom: 1px solid #fecaca;
+  color: #dc2626;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+
+.mutationErrorDismiss {
+  background: none;
+  border: none;
+  color: #dc2626;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 0 0 12px;
+  line-height: 1;
+}
+
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  font-size: 1rem;
+  color: #64748b;
 }

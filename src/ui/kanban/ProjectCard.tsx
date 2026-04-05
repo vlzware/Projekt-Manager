@@ -13,6 +13,7 @@ interface ProjectCardProps {
 export function ProjectCard({ project }: ProjectCardProps) {
   const transitionForward = useProjectStore((s) => s.transitionForward);
   const selectProject = useProjectStore((s) => s.selectProject);
+  const inFlight = useProjectStore((s) => !!s.mutationInFlight[project.id]);
   const config = STATE_CONFIG_MAP[project.status];
   const bold = isAgingBold(project.status, project.statusChangedAt);
   const agingText = getAgingText(project.status, project.statusChangedAt);
@@ -26,6 +27,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
 
   const handleForwardClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (inFlight) return;
     const next = getNextState(project.status);
     if (!next) return;
     const nextLabel = STATE_CONFIG_MAP[next].label;
@@ -78,6 +80,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
             onClick={handleForwardClick}
             data-testid={`forward-button-${project.id}`}
             aria-label={`Status weiter: ${config.label}`}
+            disabled={inFlight}
           >
             &rarr;
           </button>

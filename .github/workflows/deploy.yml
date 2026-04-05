@@ -1,0 +1,34 @@
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# Only one deploy at a time; cancel in-progress if a new push arrives.
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Only deploy if CI succeeded on main.
+    if: github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            cd /opt/projekt-manager
+            git pull
+            docker compose build app
+            docker compose up -d
