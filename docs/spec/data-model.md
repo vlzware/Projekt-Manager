@@ -227,7 +227,7 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 
 ## 7. Seed Data Specification
 
-The seed data replaces the iteration 1 mock data. The dataset is loaded into the database on initial setup and provides the same realistic snapshot.
+The seed dataset is loaded into the database on initial setup and provides a realistic snapshot.
 
 The seed operation must be safe to run on an empty database. Re-seeding an existing database drops and recreates all seed records. This is a development/demo operation, not a production upgrade path.
 

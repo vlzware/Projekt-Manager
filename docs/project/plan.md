@@ -1,6 +1,6 @@
 # Plan
 
-## Iteration 0.A - Discovery ✅
+## Iteration 0.A - Discovery
 
 - [x] project definition
 - [x] preliminary discussions with the target company[^1]
@@ -10,7 +10,7 @@
 **Artifacts**
 - [x] Kickoff document
 
-## Iteration 0.B - Clarification ✅
+## Iteration 0.B - Clarification
 
 - [x] meetings with stakeholders, clarification of details and ambiguities[^1]
 - [x] meeting with owner, clarification of roles and rights[^1]
@@ -35,7 +35,7 @@
 
 Environment setup recurs whenever an iteration introduces new technology (e.g., backend, hosting).
 
-## Iteration 1 - Walking Skeleton ✅
+## Iteration 1 - Walking Skeleton
 
 - [x] parallel prototyping of 5 tech stacks (React+FullCalendar+shadcn, React+Custom, Svelte 5, Vue 3, PHP)
 - [x] empirical evaluation: page weight, LOC, build time, configurability audit

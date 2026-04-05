@@ -185,30 +185,19 @@ One scenario covering the full authenticated end-to-end path:
 | Session management edge cases | User loses work or sees stale data | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose). |
 | Seed data dates become stale over time | Demo loses impact | Dates are relative to deployment date ([data-model.md §7.4](data-model.md#74-date-range)). A re-seed operation refreshes them. |
 | Hosting cost exceeds expectations | Budget | Research free-tier options first. Define cost ceiling before committing. |
-| Backend stack choice limits future features | Architecture | Record the decision as an ADR. Evaluate against the full "done when" list from the [kickoff](../project/kickoff.md), not just iteration 2. |
 
 ---
 
 ## 18. Open Questions
 
-### 18.1 Resolved
+### 18.1 Carried Forward
 
-1. **Custom calendar feasibility** — resolved in iteration 1. Custom implementation chosen (see [ADR-0002](../adr/0002-tech-stack-typescript-react-vite-zustand.md)).
-2. **Kanban drag-and-drop** — deferred. The [→] button is the primary interaction for state transitions.
-3. **Column layout at 1024px** — resolved with the responsive collapse tiers (AC-41 through AC-44, [ui.md §10](ui.md#10-responsive-behavior)).
+1. **`Erledigt` reversal**: currently terminal with no way back. If a payment bounces, should the project be able to return to `Abgerechnet`? Deferred to the iteration that introduces real payment tracking. See also the design note in [ui.md §9.1](ui.md#91-state-transitions).
+2. **Object storage provider**: S3-compatible API is assumed ([ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md)). Evaluate Cloudflare R2 vs Hetzner Object Storage during deployment.
 
-### 18.2 Carried Forward
+### 18.2 Open
 
-4. **`Erledigt` reversal**: currently terminal with no way back. If a payment bounces, should the project be able to return to `Abgerechnet`? Deferred to the iteration that introduces real payment tracking. See also the design note in [ui.md §9.1](ui.md#91-state-transitions).
-
-### 18.3 Open
-
-5. **Backend + database stack decision**: needs an ADR. Key factors: TypeScript compatibility (per [architecture.md §11.1](architecture.md#111-mandatory-constraints)), hosting cost, LLM-assisted development speed (per ADR-0002 precedent), and the full feature roadmap from the [kickoff](../project/kickoff.md).
-6. **Object storage provider**: S3-compatible API is assumed, but the specific provider depends on hosting choice.
-7. **Data refresh strategy**: should the front end poll periodically, or only fetch on user action? Polling keeps multi-user views in sync but adds load. For the current scale (few users, few projects), fetch-on-action may suffice with a manual refresh button. Decide during implementation.
-8. **CORS and same-origin**: will the front end and API be served from the same origin? If not, CORS configuration is needed. Depends on hosting architecture.
-9. **Bundle size budget**: The iteration 1 spec referenced a 150kB page weight budget that was never validated. No budget is enforced in this iteration. Revisit if page weight becomes a concern.
-10. ~~**Spec structure in CONTRIBUTING.md**~~ — resolved. `CONTRIBUTING.md` updated to reference `docs/spec/`.
+3. **Bundle size budget**: no page weight budget is currently enforced. Revisit if page weight becomes a concern.
 
 ---
 

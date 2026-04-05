@@ -28,3 +28,6 @@ dist/
 coverage/
 test-results/
 playwright-report/
+
+# WIP scratch directory (local only)
+docs/wip/

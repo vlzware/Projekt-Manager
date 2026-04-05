@@ -9,7 +9,7 @@
 - Language: **TypeScript** (type safety for the data model is non-negotiable) — applies to both client and server code.
 - Testing: unit tests + component tests + API integration tests + at least one E2E smoke test.
 - All data mutations go through the API. The front end never accesses the database directly.
-- Stack decisions are recorded in ADR documents (see [ADR-0002](../adr/0002-tech-stack-typescript-react-vite-zustand.md) for the front-end stack; an ADR for the backend, database, and hosting stack is expected as part of iteration 2).
+- Stack decisions are recorded in ADR documents (see [ADR-0002](../adr/0002-tech-stack-typescript-react-vite-zustand.md) for the front-end stack, [ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) for deployment infrastructure, [ADR-0004](../adr/0004-backend-stack-fastify-drizzle-node-postgres.md) for the backend stack).
 
 ### 11.2 Responsibility Boundaries
 
@@ -52,7 +52,7 @@ The state layer is a client-side cache delegating to the API.
 - Summary: count of projects per action state, count of aged buffer items per state with threshold, count of projects without planned dates
 - Current authenticated user
 
-**Known debt** (retained from iteration 1): state actions mutate silently. Future iterations need middleware or event hooks for audit trail and notification triggers.
+**Known debt**: state actions mutate silently. Future iterations need middleware or event hooks for audit trail and notification triggers.
 
 ### 11.4 Object Storage Module
 

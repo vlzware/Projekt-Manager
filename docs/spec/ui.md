@@ -193,7 +193,7 @@ Every transition shows a confirmation dialog in German before executing: `"Statu
 
 Enforcement happens both server-side (API rejects invalid transitions) and client-side (buttons hidden as before). Server-side enforcement is authoritative.
 
-Design note: `Erledigt` remains terminal in this iteration. Reversal (e.g., for bounced payments) was identified as an open question in iteration 1 and is deferred to the iteration that introduces real payment tracking.
+Design note: `Erledigt` is terminal — no backward transition. Reversal (e.g., for bounced payments) is deferred to the iteration that introduces real payment tracking.
 
 ### 9.2 Inaction Visibility
 

@@ -102,5 +102,5 @@ Polished calendar out of the box, rich UI primitives via shadcn. Rejected: FullC
 ## References
 
 - [ADR-0001: Generalized system with configurable customer specifics](0001-generalized-system-with-configurable-customer-specifics.md)
-- Prototype comparison: `docs/project/journal.md` (2026-04-03 entry)
+- Prototype comparison: detailed in the Context section above; prototyping process described in `docs/project/journal.md` (2026-04-03 entry)
 - Product spec: `docs/spec/index.md`

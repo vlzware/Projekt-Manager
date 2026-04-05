@@ -19,7 +19,8 @@ This iteration must answer two questions:
 | Iteration | Focus | Status |
 |---|---|---|
 | 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
-| 2 | Persistence (database + API), authentication, object storage, deployment | **Current** |
+| 2 | Persistence (database + API), authentication, object storage | Accepted |
+| 3 | Deployment, integration testing, monitoring | **Current** |
 
 ---
 
@@ -35,11 +36,9 @@ This iteration must answer two questions:
 - Summary area with aggregate indicators
 - German UI, English code
 - All company-specific values configurable
-
-**Added in iteration 2:**
 - API layer between front end and data store
-- Persistent data storage in a database, replacing mock data
-- Seed data to replace the mock data set (same coverage as the iteration 1 dataset)
+- Persistent data storage in a database
+- Seed data providing a realistic starting snapshot
 - User authentication (login/logout, session management)
 - Object storage module encapsulating all binary storage operations (prepared for future file uploads — no upload UI in this iteration)
 - Deployment to a hosted environment (application, database, object storage)
@@ -104,7 +103,7 @@ All assumptions are candidates for later configuration, marked **[C]**.
 
 The system introduces authenticated access.
 
-The only fully implemented interactive perspective remains the **Owner / Office Manager** operational view. All authenticated users see all projects and can perform the same state and date changes defined in iteration 1. This is a deliberate simplification for the iteration, not a statement about the final authorization model.
+The only fully implemented interactive perspective is the **Owner / Office Manager** operational view. All authenticated users see all projects and can perform the same state and date changes. This is a deliberate simplification, not a statement about the final authorization model.
 
 **Assumptions [C]:**
 - Initial deployments may start with a very small user set (e.g. 1–5 named users) **[C]**
