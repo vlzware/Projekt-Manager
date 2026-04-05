@@ -9,11 +9,12 @@ import { test, expect } from '@playwright/test';
  * Seed data assumptions:
  *   - User: inhaber / changeme (Thomas Berger, admin/owner)
  *   - 19 projects distributed across 9 states
- *   - 3 projects in rechnung_faellig (p13, p14, p15)
- *   - 2 projects in geplant (p07, p08)
- *   - Projects without dates: p01, p02, p05, p06
+ *   - 3 projects in rechnung_faellig
+ *   - 2 projects in geplant (both with planned dates)
+ *   - 4+ projects without dates
  *
- * This test will fail until the backend and auth are implemented.
+ * Project IDs are auto-generated UUIDs — the test discovers them
+ * dynamically from the page rather than hardcoding.
  */
 test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => {
   // ── Step 1: App loads — login screen is displayed ──
@@ -81,11 +82,17 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
 
   // ── Step 7: User clicks a card in Geplant — detail panel opens ──
   // AC-4: Clicking a project opens the detail panel
-  const geplantCard = page.getByTestId('project-card-p07');
+  // Discover the first project card in the Geplant column dynamically
+  const geplantColumn = page.getByTestId('kanban-column-geplant');
+  const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
   await geplantCard.click();
+
+  // Extract the project ID from the card's data-testid for later assertions
+  const cardTestId = await geplantCard.getAttribute('data-testid');
+  const projectId = cardTestId!.replace('project-card-', '');
+
   const detailPanel = page.getByTestId('detail-panel');
   await expect(detailPanel).toBeVisible();
-  await expect(detailPanel).toContainText('Wohnzimmer renovieren Klein');
 
   // ── Step 8: User clicks "Nächster Schritt" — confirmation dialog appears ──
   // ── Step 9: User confirms — card moves to In Arbeit ──
@@ -98,9 +105,9 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
   await forwardDialog.accept();
   await expect(page.getByTestId('detail-status-badge')).toContainText('In Arbeit');
 
-  // Verify the card is now in the "In Arbeit" column, not just the detail badge
+  // Verify the card is now in the "In Arbeit" column
   await expect(
-    page.getByTestId('kanban-column-in_arbeit').getByTestId('project-card-p07'),
+    page.getByTestId('kanban-column-in_arbeit').getByTestId(`project-card-${projectId}`),
   ).toBeVisible();
 
   // Step 14 (intermediate): summary counts reflect the transition
@@ -118,7 +125,7 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
 
   // Verify the card is back in the "Geplant" column
   await expect(
-    page.getByTestId('kanban-column-geplant').getByTestId('project-card-p07'),
+    page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
   ).toBeVisible();
 
   // Step 14 (intermediate): geplant count restored
@@ -126,7 +133,7 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
 
   // ── Step 11: User changes planned end date via date picker in detail panel ──
   // AC-7: Changing a date updates plannedEnd and persists
-  // p07 already has both dates from seed data — only end date is changed
+  // Both geplant projects have dates from seed data — only end date is changed
   const endDateInput = page.getByTestId('detail-date-end');
   await endDateInput.fill('2026-04-25');
 
@@ -139,9 +146,9 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
   await calendarToggle.click();
   await expect(page.getByTestId('calendar-view')).toBeVisible();
   await expect(page.getByTestId('calendar-grid')).toBeVisible();
-  // The project bar for p07 should be visible with the updated date
-  const calendarBarP07 = page.getByTestId('calendar-bar-p07').first();
-  await expect(calendarBarP07).toBeVisible();
+  // The project bar should be visible with the updated date
+  const calendarBar = page.getByTestId(`calendar-bar-${projectId}`).first();
+  await expect(calendarBar).toBeVisible();
   // Verify the calendar contains the day cell for the new planned end date
   await expect(page.getByTestId('calendar-day-2026-04-25')).toBeVisible();
 
@@ -153,19 +160,18 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
   await noDatesCounter.click();
 
   // Should be back on Kanban filtered to projects without dates.
-  // Dateless projects (p01, p02, p05, p06) are visible; dated ones are not.
+  // Our tested project has dates — it must NOT appear in the dateless filter.
   await expect(page.getByTestId('kanban-board')).toBeVisible();
-  await expect(page.getByTestId('project-card-p01')).toBeVisible();
-  await expect(page.getByTestId('project-card-p02')).toBeVisible();
-  await expect(page.getByTestId('project-card-p05')).toBeVisible();
-  await expect(page.getByTestId('project-card-p06')).toBeVisible();
-  // p07 now has dates (set in step 11) — it should NOT appear in the dateless filter
-  await expect(page.getByTestId('project-card-p07')).not.toBeVisible();
+  await expect(page.getByTestId(`project-card-${projectId}`)).not.toBeVisible();
+  // Verify dateless projects are actually shown
+  const visibleCards = page.locator('[data-testid^="project-card-"]');
+  const cardCount = await visibleCards.count();
+  expect(cardCount).toBeGreaterThan(0);
 
   // ── Step 14: Summary area reflects current state counts throughout ──
   // AC-8: Verified at intermediate points above and once more here
   await expect(page.getByTestId('summary-area')).toBeVisible();
-  // Rechnung fällig should still be 3 (p07 was moved back to geplant)
+  // Rechnung fällig should still be 3 (tested project was moved back to geplant)
   await expect(page.getByTestId('summary-action-rechnung_faellig')).toContainText('3');
 
   // ── Step 15: User refreshes the page — changes persist; user remains logged in ──
@@ -179,15 +185,13 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
   // Display name still in header
   await expect(page.getByTestId('user-indicator')).toContainText('Thomas Berger');
 
-  // Verify state transition persisted: p07 should still be in "Geplant" column
-  // (step 10 moved it back from "In Arbeit")
+  // Verify state transition persisted: project should still be in "Geplant" column
   await expect(
-    page.getByTestId('kanban-column-geplant').getByTestId('project-card-p07'),
+    page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
   ).toBeVisible();
 
   // The date change from step 11 persisted — verify via detail panel
-  const p07CardAfterReload = page.getByTestId('project-card-p07');
-  await p07CardAfterReload.click();
+  await page.getByTestId(`project-card-${projectId}`).click();
   await expect(page.getByTestId('detail-panel')).toBeVisible();
   await expect(page.getByTestId('detail-date-end')).toHaveValue('2026-04-25');
   await page.getByTestId('detail-close').click();
@@ -205,5 +209,5 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
   await page.goBack();
   await expect(page.getByTestId('login-form')).toBeVisible();
   await expect(page.getByTestId('kanban-board')).not.toBeVisible();
-  await expect(page.getByTestId('project-card-p07')).not.toBeVisible();
+  await expect(page.getByTestId(`project-card-${projectId}`)).not.toBeVisible();
 });
