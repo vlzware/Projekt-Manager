@@ -4,6 +4,10 @@
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up db storage
 
 services:
+  app:
+    ports:
+      - "${PORT:-3000}:3000"
+
   db:
     ports:
       - "5432:5432"
