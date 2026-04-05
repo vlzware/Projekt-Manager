@@ -14,8 +14,10 @@ export function App() {
   const getSelectedProject = useProjectStore((s) => s.getSelectedProject);
   const selectProject = useProjectStore((s) => s.selectProject);
   const authUser = useProjectStore((s) => s.authUser);
+  const sessionChecked = useProjectStore((s) => s.sessionChecked);
   const checkSession = useProjectStore((s) => s.checkSession);
   const mutationError = useProjectStore((s) => s.mutationError);
+  const clearMutationError = useProjectStore((s) => s.clearMutationError);
 
   const selectedProject = selectedProjectId ? getSelectedProject() : null;
   const sessionCheckFired = useRef(false);
@@ -33,7 +35,16 @@ export function App() {
         <Header />
         <main className={styles.main}>
           {mutationError && (
-            <div className={styles.mutationError}>{mutationError}</div>
+            <div className={styles.mutationError}>
+              <span>{mutationError}</span>
+              <button
+                className={styles.mutationErrorDismiss}
+                onClick={clearMutationError}
+                aria-label="Fehlermeldung schließen"
+              >
+                &#x2715;
+              </button>
+            </div>
           )}
           {activeView === 'kanban' ? <KanbanBoard /> : <CalendarView />}
         </main>
@@ -42,6 +53,12 @@ export function App() {
           <ProjectDetailPanel project={selectedProject} onClose={() => selectProject(null)} />
         )}
       </div>
+    );
+  }
+
+  if (!sessionChecked) {
+    return (
+      <div className={styles.loading}>Laden...</div>
     );
   }
 

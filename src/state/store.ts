@@ -30,6 +30,7 @@ interface ProjectStore {
   logout: () => Promise<void>;
   checkSession: () => Promise<void>;
   fetchProjects: () => Promise<void>;
+  clearMutationError: () => void;
 
   // Actions
   transitionForward: (projectId: string) => void;
@@ -97,8 +98,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
         authError: null,
       });
       get().fetchProjects();
-    } catch {
-      set({ authError: 'Anmeldung fehlgeschlagen' });
+    } catch (err) {
+      const isNetwork = err instanceof TypeError && /fetch|network/i.test(err.message);
+      set({ authError: isNetwork
+        ? 'Netzwerkfehler. Bitte Verbindung überprüfen.'
+        : 'Anmeldung fehlgeschlagen' });
     }
   },
 
@@ -420,6 +424,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => {
     const { projects, selectedProjectId } = get();
     if (!selectedProjectId) return null;
     return projects.find((p) => p.id === selectedProjectId) ?? null;
+  },
+
+  clearMutationError: () => {
+    set({ mutationError: null });
   },
 
   isMutationInFlight: (projectId: string) => {

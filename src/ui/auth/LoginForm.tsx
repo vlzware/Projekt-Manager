@@ -57,7 +57,7 @@ export function LoginForm() {
           />
         </div>
 
-        <button type="submit" className={styles.submitButton} disabled={isSubmitting}>
+        <button type="submit" className={styles.submitButton} disabled={isSubmitting || !username.trim() || !password.trim()}>
           Anmelden
         </button>
       </form>
