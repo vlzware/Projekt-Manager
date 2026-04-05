@@ -1,14 +1,16 @@
 /**
  * Authentication middleware — Fastify preHandler hook.
  *
- * Reads Bearer token from Authorization header, validates the session,
- * checks that the user is still active, and attaches user info to the request.
+ * Reads session token from the HttpOnly `session` cookie, validates the
+ * session, checks that the user is still active, and attaches user info
+ * to the request.
  */
 
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { isSessionExpired } from '../../domain/session.js';
 import { findSession } from '../repositories/session.js';
-import { unauthenticated, sessionExpired } from '../errors.js';
+import { unauthenticated, sessionExpired, notPermitted } from '../errors.js';
+import { hasPermission, type Permission } from '../config/permissions.js';
 import type { Database } from '../db/connection.js';
 
 export interface AuthUser {
@@ -26,19 +28,14 @@ declare module 'fastify' {
 }
 
 export function createAuthMiddleware(db: Database) {
-  return async function authenticate(
-    request: FastifyRequest,
-    reply: FastifyReply,
-  ): Promise<void> {
-    const authHeader = request.headers.authorization;
+  return async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const token = request.cookies.session;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (!token) {
       const err = unauthenticated();
       reply.code(err.statusCode).send(err.toResponse());
       return;
     }
-
-    const token = authHeader.slice(7);
 
     const result = await findSession(db, token);
 
@@ -70,5 +67,24 @@ export function createAuthMiddleware(db: Database) {
       roles: result.user.roles,
       email: result.user.email,
     };
+  };
+}
+
+export function requirePermission(...permissions: Permission[]) {
+  return async function checkPermission(
+    request: FastifyRequest,
+    reply: FastifyReply,
+  ): Promise<void> {
+    if (!request.user) {
+      const err = unauthenticated();
+      reply.code(err.statusCode).send(err.toResponse());
+      return;
+    }
+    const allowed = permissions.some((p) => hasPermission(request.user!.roles, p));
+    if (!allowed) {
+      const err = notPermitted();
+      reply.code(err.statusCode).send(err.toResponse());
+      return;
+    }
   };
 }

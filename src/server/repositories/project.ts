@@ -39,9 +39,8 @@ export async function listProjects(
   opts: { offset?: number; limit?: number } = {},
 ): Promise<{ data: ReturnType<typeof toProject>[]; total: number }> {
   const baseQuery = db.select().from(projects);
-  const paginatedQuery = opts.limit !== undefined
-    ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0)
-    : baseQuery;
+  const paginatedQuery =
+    opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
 
   const [rows, countResult] = await Promise.all([
     paginatedQuery,
@@ -58,11 +57,7 @@ export async function getProject(
   db: Database,
   id: string,
 ): Promise<ReturnType<typeof toProject> | null> {
-  const rows = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, id))
-    .limit(1);
+  const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
 
   if (rows.length === 0) return null;
   return toProject(rows[0]!);
@@ -78,11 +73,7 @@ export async function transitionForward(
   userId: string,
 ): Promise<ReturnType<typeof toProject>> {
   return db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(projects)
-      .where(eq(projects.id, id))
-      .limit(1);
+    const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
 
     if (rows.length === 0) {
       throw new TransitionError('Projekt nicht gefunden.');
@@ -125,11 +116,7 @@ export async function transitionBackward(
   userId: string,
 ): Promise<ReturnType<typeof toProject>> {
   return db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(projects)
-      .where(eq(projects.id, id))
-      .limit(1);
+    const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
 
     if (rows.length === 0) {
       throw new TransitionError('Projekt nicht gefunden.');
@@ -180,65 +167,67 @@ export async function updateDates(
   userId: string,
   dates: { plannedStart?: string; plannedEnd?: string },
 ): Promise<ReturnType<typeof toProject>> {
-  const rows = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, id))
-    .limit(1);
+  return db.transaction(async (tx) => {
+    const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
 
-  if (rows.length === 0) {
-    throw new TransitionError('Projekt nicht gefunden.');
-  }
+    if (rows.length === 0) {
+      throw new TransitionError('Projekt nicht gefunden.');
+    }
 
-  const project = rows[0]!;
+    const project = rows[0]!;
 
-  // Effective dates after the update.
-  // Precedence: new value > existing value > null.
-  // When only plannedStart is sent (no plannedEnd key), plannedEnd is cleared.
-  const effectiveStart = dates.plannedStart !== undefined
-    ? (dates.plannedStart ? new Date(dates.plannedStart) : null)
-    : (project.plannedStart ?? null);
-  const effectiveEnd = 'plannedEnd' in dates
-    ? (dates.plannedEnd ? new Date(dates.plannedEnd) : null)
-    : (dates.plannedStart !== undefined ? null : (project.plannedEnd ?? null));
+    // Effective dates after the update.
+    // Precedence: new value > existing value > null.
+    // When only plannedStart is sent (no plannedEnd key), plannedEnd is cleared.
+    const effectiveStart =
+      dates.plannedStart !== undefined
+        ? dates.plannedStart
+          ? new Date(dates.plannedStart)
+          : null
+        : (project.plannedStart ?? null);
+    const effectiveEnd =
+      'plannedEnd' in dates
+        ? dates.plannedEnd
+          ? new Date(dates.plannedEnd)
+          : null
+        : dates.plannedStart !== undefined
+          ? null
+          : (project.plannedEnd ?? null);
 
-  if (effectiveEnd && !effectiveStart) {
-    throw new DateValidationError(
-      'Enddatum kann nicht ohne Startdatum gesetzt werden.',
-    );
-  }
+    if (effectiveEnd && !effectiveStart) {
+      throw new DateValidationError('Enddatum kann nicht ohne Startdatum gesetzt werden.');
+    }
 
-  if (effectiveEnd && effectiveStart && effectiveEnd < effectiveStart) {
-    throw new DateValidationError(
-      'Das Enddatum darf nicht vor dem Startdatum liegen.',
-    );
-  }
+    if (effectiveEnd && effectiveStart && effectiveEnd < effectiveStart) {
+      throw new DateValidationError('Das Enddatum darf nicht vor dem Startdatum liegen.');
+    }
 
-  const now = new Date();
+    const now = new Date();
 
-  const updateData: Record<string, unknown> = {
-    updatedAt: now,
-    updatedBy: userId,
-  };
+    const updateData: Record<string, unknown> = {
+      updatedAt: now,
+      updatedBy: userId,
+    };
 
-  if (dates.plannedStart !== undefined) {
-    updateData.plannedStart = effectiveStart;
-  }
+    if (dates.plannedStart !== undefined) {
+      updateData.plannedStart = effectiveStart;
+    }
 
-  if ('plannedEnd' in dates) {
-    updateData.plannedEnd = effectiveEnd;
-  } else if (dates.plannedStart !== undefined) {
-    // Only plannedStart sent without plannedEnd key — clear plannedEnd
-    updateData.plannedEnd = null;
-  }
+    if ('plannedEnd' in dates) {
+      updateData.plannedEnd = effectiveEnd;
+    } else if (dates.plannedStart !== undefined) {
+      // Only plannedStart sent without plannedEnd key — clear plannedEnd
+      updateData.plannedEnd = null;
+    }
 
-  const updated = await db
-    .update(projects)
-    .set(updateData)
-    .where(eq(projects.id, id))
-    .returning();
+    const updated = await tx
+      .update(projects)
+      .set(updateData)
+      .where(eq(projects.id, id))
+      .returning();
 
-  return toProject(updated[0]!);
+    return toProject(updated[0]!);
+  });
 }
 
 /** Thrown when a state transition is invalid. */

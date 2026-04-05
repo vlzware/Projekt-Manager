@@ -3,7 +3,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, lt, ne } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { sessions, users } from '../db/schema.js';
 
@@ -44,10 +44,7 @@ export async function createSession(
 /**
  * Find a session by token, joined with the user to check active status.
  */
-export async function findSession(
-  db: Database,
-  token: string,
-): Promise<SessionWithUser | null> {
+export async function findSession(db: Database, token: string): Promise<SessionWithUser | null> {
   const rows = await db
     .select({
       session: sessions,
@@ -71,30 +68,33 @@ export async function findSession(
 /**
  * Delete a session by token (logout).
  */
-export async function deleteSession(
-  db: Database,
-  token: string,
-): Promise<void> {
+export async function deleteSession(db: Database, token: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.token, token));
 }
 
 /**
- * Create an already-expired session (for testing).
- * Returns the token string.
+ * Delete all sessions for a user, optionally excluding a specific token
+ * (e.g. the current session on password change).
  */
-export async function createExpiredSession(
+export async function deleteSessionsByUserId(
   db: Database,
   userId: string,
-): Promise<string> {
-  const token = randomBytes(32).toString('hex');
-  const expiredAt = new Date(Date.now() - 60_000); // 1 minute in the past
-  const rows = await db
-    .insert(sessions)
-    .values({
-      userId,
-      token,
-      expiresAt: expiredAt,
-    })
-    .returning();
-  return rows[0]!.token;
+  excludeToken?: string,
+): Promise<void> {
+  const condition = excludeToken
+    ? and(eq(sessions.userId, userId), ne(sessions.token, excludeToken))
+    : eq(sessions.userId, userId);
+  await db.delete(sessions).where(condition);
+}
+
+/**
+ * Delete all expired sessions. Intended to be called from a periodic
+ * cleanup job or at startup.
+ */
+export async function deleteExpiredSessions(db: Database): Promise<number> {
+  const deleted = await db
+    .delete(sessions)
+    .where(lt(sessions.expiresAt, new Date()))
+    .returning({ id: sessions.id });
+  return deleted.length;
 }

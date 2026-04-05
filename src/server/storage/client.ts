@@ -34,15 +34,35 @@ export interface DownloadResult {
 }
 
 export interface StorageClient {
-  upload(
-    key: string,
-    data: Buffer | Uint8Array,
-    contentType: string,
-  ): Promise<UploadResult>;
+  upload(key: string, data: Buffer | Uint8Array, contentType: string): Promise<UploadResult>;
   download(key: string): Promise<DownloadResult>;
   delete(key: string): Promise<void>;
   getSignedUrl(key: string, expirySeconds: number): Promise<string>;
 }
+
+const VALID_KEY_PATTERN = /^[a-zA-Z0-9/_.-]{1,1024}$/;
+
+/**
+ * Validates a storage key to prevent path traversal and malformed keys.
+ * Allowed: alphanumeric, `/`, `_`, `.`, `-`, length 1–1024.
+ * Rejected: `..` sequences, leading `/` or `.`.
+ */
+export function validateKey(key: string): void {
+  if (!key || !VALID_KEY_PATTERN.test(key)) {
+    throw new Error(
+      `Invalid storage key: must be 1–1024 characters matching [a-zA-Z0-9/_.-]. Got: "${key}"`,
+    );
+  }
+  if (key.includes('..')) {
+    throw new Error(`Invalid storage key: path traversal ("..") is not allowed. Got: "${key}"`);
+  }
+  if (key.startsWith('/') || key.startsWith('.')) {
+    throw new Error(`Invalid storage key: must not start with "/" or ".". Got: "${key}"`);
+  }
+}
+
+export const MIN_SIGNED_URL_EXPIRY_SECONDS = 1;
+export const MAX_SIGNED_URL_EXPIRY_SECONDS = 3600;
 
 export function createStorageClient(config: StorageConfig): StorageClient {
   const s3 = new S3Client({
@@ -63,6 +83,7 @@ export function createStorageClient(config: StorageConfig): StorageClient {
       data: Buffer | Uint8Array,
       contentType: string,
     ): Promise<UploadResult> {
+      validateKey(key);
       await s3.send(
         new PutObjectCommand({
           Bucket: bucket,
@@ -75,6 +96,7 @@ export function createStorageClient(config: StorageConfig): StorageClient {
     },
 
     async download(key: string): Promise<DownloadResult> {
+      validateKey(key);
       const response = await s3.send(
         new GetObjectCommand({
           Bucket: bucket,
@@ -99,6 +121,7 @@ export function createStorageClient(config: StorageConfig): StorageClient {
     },
 
     async delete(key: string): Promise<void> {
+      validateKey(key);
       // S3 DeleteObject is idempotent — does not throw for missing keys.
       await s3.send(
         new DeleteObjectCommand({
@@ -108,15 +131,19 @@ export function createStorageClient(config: StorageConfig): StorageClient {
       );
     },
 
-    async getSignedUrl(
-      key: string,
-      expirySeconds: number,
-    ): Promise<string> {
+    async getSignedUrl(key: string, expirySeconds: number): Promise<string> {
+      validateKey(key);
+      if (expirySeconds < MIN_SIGNED_URL_EXPIRY_SECONDS) {
+        throw new Error(
+          `expirySeconds must be at least ${MIN_SIGNED_URL_EXPIRY_SECONDS}. Got: ${expirySeconds}`,
+        );
+      }
+      const clamped = Math.min(expirySeconds, MAX_SIGNED_URL_EXPIRY_SECONDS);
       const command = new GetObjectCommand({
         Bucket: bucket,
         Key: key,
       });
-      return getSignedUrl(s3, command, { expiresIn: expirySeconds });
+      return getSignedUrl(s3, command, { expiresIn: clamped });
     },
   };
 }
