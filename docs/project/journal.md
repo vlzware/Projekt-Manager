@@ -1,5 +1,19 @@
 # Project Journal
 
+## 2026-04-05 (Iteration 2 — security hardening and retrospective)
+
+The original scope for iteration 2 was "Deployment and Data." Building the backend, auth, storage, and CI/CD pipeline went fast — one long session on 04-04 got the full stack running with 136 passing tests. Then came the review.
+
+**The review changed the plan.** 5 parallel automated reviewers (auth/sessions, API/injection, Docker/infra, frontend/XSS, storage/dependencies) found 42 security issues — 6 critical, 12 high. The codebase was almost entirely LLM-generated with minimal human validation. The critical findings (container running as root, unpinned GH Action receiving SSH keys, session tokens in localStorage) would have been disastrous in production.
+
+**Key learning: LLM-generated code passes tests and looks professional, but has systematic security blind spots.** The code did everything correctly from a functional standpoint — schema design, state machines, error handling — but made naive choices on boundaries: no input validation, no security headers, no CSRF thinking, hardcoded dev credentials with no production guard. The pattern is consistent: LLMs optimize for "make it work" and underweight "make it safe." A thorough review _before_ any deployment is non-negotiable in this workflow.
+
+**Scope shift:** Deployment deferred. The iteration became "build the secure foundation" instead. This was the right call — deploying the 04-04 codebase would have been deploying an attractive-looking liability.
+
+**Workflow refinement:** The security review → fix cycle worked well with parallel agents (6 agents fixing non-overlapping file groups simultaneously, then a second wave for cross-cutting changes). The adversarial review pattern from iteration 1 scaled to security domain. Two architectural decisions (HttpOnly cookies over localStorage, NIST password policy over complexity rules) were recorded as ADR-0005 and ADR-0006.
+
+**Deployment thinking for iteration 3:** VPN-only access as the baseline. The exposure question (public vs VPN-only) affects dozens of downstream decisions — CSRF complexity, rate limiting aggressiveness, WAF necessity, monitoring depth. Starting VPN-only keeps the attack surface small while the product finds its shape. Hetzner + Cloudflare R2 is the candidate infrastructure.
+
 ## 2026-04-04 (Iteration 2 — implementation)
 - Full backend implemented: Fastify server, PostgreSQL via Drizzle ORM, session-based auth (login/logout/me/change-password), project routes (list/get/transition/dates)
 - Object storage module (S3-compatible, tested against MinIO)
