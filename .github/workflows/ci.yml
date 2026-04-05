@@ -36,7 +36,19 @@ jobs:
       - run: npm ci
 
       - name: Audit dependencies
-        run: npm audit --audit-level=moderate
+        run: |
+          npm audit --audit-level=moderate && exit 0
+          # If audit failed, check if only suppressed advisories remain.
+          # See ADR-0007 for rationale.
+          SUPPRESSED="GHSA-67mh-4wv8-2f99"
+          UNKNOWN=$(npm audit --json | jq --arg s "$SUPPRESSED" \
+            '[.vulnerabilities[].via[] | objects | .url] | map(select(contains($s) | not)) | length')
+          if [ "$UNKNOWN" -gt 0 ]; then
+            echo "::error::New vulnerabilities found beyond suppressed list"
+            npm audit --audit-level=moderate
+            exit 1
+          fi
+          echo "Only suppressed advisories found ($SUPPRESSED) — see ADR-0007"
 
       - name: Lint
         run: npm run lint

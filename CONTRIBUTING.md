@@ -4,8 +4,8 @@ Conventions for this project. Applies to all contributors (human and AI).
 
 ## Runtime Requirements
 
-- Node.js >= 22 (see `.nvmrc`)
-- npm >= 10
+- Node.js (pinned in `.nvmrc` — use `nvm install`)
+- npm (use the version bundled with that Node release — do not upgrade independently)
 
 ## Tech Stack
 

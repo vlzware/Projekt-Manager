@@ -11,8 +11,8 @@ A centralized system for consolidation, control, and viewing of data and process
 - Docker and Docker Compose
 
 For local frontend development additionally:
-- Node.js >= 22 (see `.nvmrc`)
-- npm >= 10
+- Node.js (pinned in `.nvmrc` — use `nvm install`)
+- npm (use the version bundled with that Node release — do not upgrade independently)
 
 ## Quick Start
 
