@@ -27,7 +27,7 @@ export function createDatabase(opts: ConnectionOptions = {}): {
   const connectionString =
     opts.connectionString ??
     process.env.DATABASE_URL ??
-    'postgresql://postgres:postgres@localhost:5432/projekt_manager_test';
+    `postgresql://pm:${process.env.POSTGRES_PASSWORD ?? 'postgres'}@localhost:5432/projekt_manager_test`;
 
   const pool = new Pool({ connectionString });
   const db = drizzle(pool, { schema });

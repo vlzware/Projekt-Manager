@@ -7,6 +7,8 @@ services:
   db:
     ports:
       - "5432:5432"
+    volumes:
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
 
   storage:
     ports:
