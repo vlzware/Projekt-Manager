@@ -1,16 +1,32 @@
 services:
   app:
     build: .
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 1.0
     environment:
       DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD}@db:5432/projekt_manager
       STORAGE_ENDPOINT: http://storage:9000
       STORAGE_BUCKET: projekt-manager
       STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER}
       STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      SESSION_SECRET: ${SESSION_SECRET}
       NODE_ENV: production
-      PORT: "3000"
+      PORT: '3000'
       SEED: ${SEED:-false}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)})",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
@@ -20,6 +36,8 @@ services:
 
   db:
     image: postgres:17-alpine
+    mem_limit: 512m
+    cpus: 1.0
     volumes:
       - pgdata:/var/lib/postgresql/data
     environment:
@@ -27,14 +45,15 @@ services:
       POSTGRES_USER: pm
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pm -d projekt_manager"]
+      test: ['CMD-SHELL', 'pg_isready -U pm -d projekt_manager']
       interval: 5s
       timeout: 3s
       retries: 5
     restart: unless-stopped
 
   storage:
-    image: minio/minio
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    mem_limit: 512m
     command: server /data --console-address ":9001"
     volumes:
       - miniodata:/data
@@ -45,9 +64,10 @@ services:
 
   caddy:
     image: caddy:2-alpine
+    mem_limit: 128m
     ports:
-      - "80:80"
-      - "443:443"
+      - '80:80'
+      - '443:443'
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile
       - caddy_data:/data
