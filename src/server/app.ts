@@ -6,6 +6,7 @@
  */
 
 import Fastify from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import type { FastifyInstance } from 'fastify';
 import type { Database } from './db/connection.js';
 import { authRoutes } from './routes/auth.js';
@@ -15,6 +16,8 @@ import { AppError, serverError } from './errors.js';
 export interface AppOptions {
   logger?: boolean;
   db?: Database;
+  /** Set false to disable rate limiting (useful in tests). Defaults to true. */
+  rateLimit?: boolean;
 }
 
 export function buildApp(opts: AppOptions = {}): FastifyInstance {
@@ -32,6 +35,15 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     const err = serverError();
     return reply.code(err.statusCode).send(err.toResponse());
   });
+
+  // Rate limiting — registered globally so individual routes can apply
+  // overrides via route-level config. Disabled in tests to avoid flaky
+  // failures from rapid sequential requests.
+  if (opts.rateLimit !== false) {
+    app.register(rateLimit, {
+      global: false, // Only routes with explicit config are limited
+    });
+  }
 
   if (opts.db) {
     app.register(authRoutes(opts.db));

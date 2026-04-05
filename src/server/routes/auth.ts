@@ -24,7 +24,14 @@ export function authRoutes(db: Database) {
     // ---------------------------------------------------------------
     // POST /api/auth/login
     // ---------------------------------------------------------------
-    app.post('/api/auth/login', async (request, reply) => {
+    app.post('/api/auth/login', {
+      config: {
+        rateLimit: {
+          max: 5,
+          timeWindow: '1 minute',
+        },
+      },
+    }, async (request, reply) => {
       const { username, password } = (request.body ?? {}) as {
         username?: string;
         password?: string;

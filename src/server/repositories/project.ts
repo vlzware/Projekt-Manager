@@ -77,40 +77,42 @@ export async function transitionForward(
   id: string,
   userId: string,
 ): Promise<ReturnType<typeof toProject>> {
-  const rows = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, id))
-    .limit(1);
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(projects)
+      .where(eq(projects.id, id))
+      .limit(1);
 
-  if (rows.length === 0) {
-    throw new TransitionError('Projekt nicht gefunden.');
-  }
+    if (rows.length === 0) {
+      throw new TransitionError('Projekt nicht gefunden.');
+    }
 
-  const project = rows[0]!;
-  const currentIndex = WORKFLOW_ORDER.indexOf(project.status as WorkflowState);
+    const project = rows[0]!;
+    const currentIndex = WORKFLOW_ORDER.indexOf(project.status as WorkflowState);
 
-  if (currentIndex === -1 || currentIndex === WORKFLOW_ORDER.length - 1) {
-    throw new TransitionError(
-      'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',
-    );
-  }
+    if (currentIndex === -1 || currentIndex === WORKFLOW_ORDER.length - 1) {
+      throw new TransitionError(
+        'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',
+      );
+    }
 
-  const nextStatus = WORKFLOW_ORDER[currentIndex + 1]!;
-  const now = new Date();
+    const nextStatus = WORKFLOW_ORDER[currentIndex + 1]!;
+    const now = new Date();
 
-  const updated = await db
-    .update(projects)
-    .set({
-      status: nextStatus,
-      statusChangedAt: now,
-      updatedAt: now,
-      updatedBy: userId,
-    })
-    .where(eq(projects.id, id))
-    .returning();
+    const updated = await tx
+      .update(projects)
+      .set({
+        status: nextStatus,
+        statusChangedAt: now,
+        updatedAt: now,
+        updatedBy: userId,
+      })
+      .where(eq(projects.id, id))
+      .returning();
 
-  return toProject(updated[0]!);
+    return toProject(updated[0]!);
+  });
 }
 
 /**
@@ -122,47 +124,49 @@ export async function transitionBackward(
   id: string,
   userId: string,
 ): Promise<ReturnType<typeof toProject>> {
-  const rows = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, id))
-    .limit(1);
+  return db.transaction(async (tx) => {
+    const rows = await tx
+      .select()
+      .from(projects)
+      .where(eq(projects.id, id))
+      .limit(1);
 
-  if (rows.length === 0) {
-    throw new TransitionError('Projekt nicht gefunden.');
-  }
+    if (rows.length === 0) {
+      throw new TransitionError('Projekt nicht gefunden.');
+    }
 
-  const project = rows[0]!;
-  const currentIndex = WORKFLOW_ORDER.indexOf(project.status as WorkflowState);
+    const project = rows[0]!;
+    const currentIndex = WORKFLOW_ORDER.indexOf(project.status as WorkflowState);
 
-  if (currentIndex === -1 || currentIndex === 0) {
-    throw new TransitionError(
-      'Projekt kann nicht zurückgestuft werden. Der aktuelle Status ist bereits der erste Status.',
-    );
-  }
+    if (currentIndex === -1 || currentIndex === 0) {
+      throw new TransitionError(
+        'Projekt kann nicht zurückgestuft werden. Der aktuelle Status ist bereits der erste Status.',
+      );
+    }
 
-  // Terminal state also rejects backward
-  if (currentIndex === WORKFLOW_ORDER.length - 1) {
-    throw new TransitionError(
-      'Projekt kann nicht zurückgestuft werden. Der aktuelle Status ist ein Endstatus.',
-    );
-  }
+    // Terminal state also rejects backward
+    if (currentIndex === WORKFLOW_ORDER.length - 1) {
+      throw new TransitionError(
+        'Projekt kann nicht zurückgestuft werden. Der aktuelle Status ist ein Endstatus.',
+      );
+    }
 
-  const prevStatus = WORKFLOW_ORDER[currentIndex - 1]!;
-  const now = new Date();
+    const prevStatus = WORKFLOW_ORDER[currentIndex - 1]!;
+    const now = new Date();
 
-  const updated = await db
-    .update(projects)
-    .set({
-      status: prevStatus,
-      statusChangedAt: now,
-      updatedAt: now,
-      updatedBy: userId,
-    })
-    .where(eq(projects.id, id))
-    .returning();
+    const updated = await tx
+      .update(projects)
+      .set({
+        status: prevStatus,
+        statusChangedAt: now,
+        updatedAt: now,
+        updatedBy: userId,
+      })
+      .where(eq(projects.id, id))
+      .returning();
 
-  return toProject(updated[0]!);
+    return toProject(updated[0]!);
+  });
 }
 
 /**
@@ -188,26 +192,21 @@ export async function updateDates(
 
   const project = rows[0]!;
 
-  // Determine effective start/end considering both new values and existing values
-  const newStart = dates.plannedStart !== undefined ? dates.plannedStart : (project.plannedStart?.toISOString() ?? null);
-  const newEnd = dates.plannedEnd !== undefined ? dates.plannedEnd : undefined;
-
-  // If plannedEnd is provided but plannedStart is not (neither new nor existing)
-  if (newEnd && !newStart && !dates.plannedStart) {
-    throw new DateValidationError(
-      'Enddatum kann nicht ohne Startdatum gesetzt werden.',
-    );
-  }
-
-  // Compute effective dates after the update.
-  // When only plannedStart is sent (no plannedEnd key), the update logic
-  // clears plannedEnd — so effective end is null in that case.
+  // Effective dates after the update.
+  // Precedence: new value > existing value > null.
+  // When only plannedStart is sent (no plannedEnd key), plannedEnd is cleared.
   const effectiveStart = dates.plannedStart !== undefined
     ? (dates.plannedStart ? new Date(dates.plannedStart) : null)
     : (project.plannedStart ?? null);
   const effectiveEnd = 'plannedEnd' in dates
     ? (dates.plannedEnd ? new Date(dates.plannedEnd) : null)
     : (dates.plannedStart !== undefined ? null : (project.plannedEnd ?? null));
+
+  if (effectiveEnd && !effectiveStart) {
+    throw new DateValidationError(
+      'Enddatum kann nicht ohne Startdatum gesetzt werden.',
+    );
+  }
 
   if (effectiveEnd && effectiveStart && effectiveEnd < effectiveStart) {
     throw new DateValidationError(
@@ -223,17 +222,14 @@ export async function updateDates(
   };
 
   if (dates.plannedStart !== undefined) {
-    updateData.plannedStart = dates.plannedStart ? new Date(dates.plannedStart) : null;
+    updateData.plannedStart = effectiveStart;
   }
 
-  // If plannedEnd is explicitly provided (even as undefined key), set it
   if ('plannedEnd' in dates) {
-    updateData.plannedEnd = dates.plannedEnd ? new Date(dates.plannedEnd) : null;
-  } else {
-    // If only plannedStart is provided without plannedEnd, clear plannedEnd
-    if (dates.plannedStart !== undefined) {
-      updateData.plannedEnd = null;
-    }
+    updateData.plannedEnd = effectiveEnd;
+  } else if (dates.plannedStart !== undefined) {
+    // Only plannedStart sent without plannedEnd key — clear plannedEnd
+    updateData.plannedEnd = null;
   }
 
   const updated = await db

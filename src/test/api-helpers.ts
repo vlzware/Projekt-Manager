@@ -48,7 +48,7 @@ export async function startApp(): Promise<FastifyInstance> {
   // Seed fresh test data (clears existing data first)
   await seed(db);
 
-  app = buildApp({ logger: false, db });
+  app = buildApp({ logger: false, db, rateLimit: false });
   await app.ready();
   return app;
 }

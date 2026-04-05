@@ -2,6 +2,7 @@
  * Session repository — database operations for the sessions table.
  */
 
+import { randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { sessions, users } from '../db/schema.js';
@@ -28,10 +29,12 @@ export async function createSession(
   userId: string,
   expiresAt: Date,
 ): Promise<SessionRow> {
+  const token = randomBytes(32).toString('hex');
   const rows = await db
     .insert(sessions)
     .values({
       userId,
+      token,
       expiresAt,
     })
     .returning();
@@ -83,11 +86,13 @@ export async function createExpiredSession(
   db: Database,
   userId: string,
 ): Promise<string> {
+  const token = randomBytes(32).toString('hex');
   const expiredAt = new Date(Date.now() - 60_000); // 1 minute in the past
   const rows = await db
     .insert(sessions)
     .values({
       userId,
+      token,
       expiresAt: expiredAt,
     })
     .returning();
