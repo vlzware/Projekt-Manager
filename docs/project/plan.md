@@ -57,14 +57,15 @@ Environment setup recurs whenever an iteration introduces new technology (e.g., 
 - [x] a module encapsulating all storage operations (S3 SDK)
 - [x] user authentication
 - [x] replace mock data with a persistent data source in a database
-- [x] extensive quality and security reviews - the biggest timesink
-- [ ] retrospection → issues for the backlog
+- [x] extensive quality and security reviews — the biggest timesink
+- [x] retrospection → workflow improvements (security audit step, journal cleanup, memory consolidation)
 
-Deployment to a hosting / object-storage provider defered.
+Deployment deferred to iteration 3 — security review revealed the codebase wasn't ready for exposure.
+Presentation skipped — no visible difference for non-technical users vs the walking skeleton; the massive backend/security work is invisible at the UI level.
 
 **Artifacts**
-- more realistic app with persistent data and authentication
-- presentation[^1]
+- realistic app with persistent data and authentication
+- security-hardened foundation for deployment
 
 ## Iteration 3 - Deployment and integration testing
 

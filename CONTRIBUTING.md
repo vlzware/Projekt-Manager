@@ -35,9 +35,10 @@ Steps happen in this order. Skipping or reordering must be flagged.
 4. **Implementation**
 5. **Tests passing**
 6. **Code quality review** — separate from correctness
-7. **Documentation update**
-8. **Commit**
-9. **Retrospection** — issues for the backlog
+7. **Security audit** (conditional) — required when trust boundaries change
+8. **Documentation update**
+9. **Commit**
+10. **Retrospection** — issues for the backlog
 
 ### Test-spec traceability
 
@@ -48,6 +49,21 @@ Each test references the criterion it covers (e.g., `// AC-3: Projects in "Anfra
 3. Flags unmapped criteria as gaps
 
 Gaps block implementation (step 4). The reviewer must be different from the test author.
+
+### Security audit
+
+Required when a change affects trust boundaries. The trigger question: **"Does this change affect how the system authenticates, authorizes, stores data, communicates externally, or exposes itself to the network?"** If yes — audit. If no — skip.
+
+Triggers include:
+- Auth or session logic
+- New or changed API endpoints with authorization
+- Infrastructure changes (Docker, Compose, CI/CD, reverse proxy)
+- External integrations (object storage, database schema)
+- Deployment configuration
+
+Does NOT trigger for: UI styling, refactoring, test changes, documentation, domain logic that doesn't touch boundaries.
+
+The audit uses adversarial framing — reviewers with a security-specific lens, separate from the code quality review in step 6. Automated checks (`npm audit`, dependency scanning) run in CI on every push and complement but do not replace the manual audit.
 
 ## Code Style
 
