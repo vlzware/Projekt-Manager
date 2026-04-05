@@ -76,12 +76,8 @@ describe('Object Storage Module', () => {
     it('retrieves the uploaded file with matching contents', async () => {
       if (!storage) return;
       const downloaded = await storage.download(testKey);
-      expect(
-        Buffer.isBuffer(downloaded.data) || downloaded.data instanceof Uint8Array,
-      ).toBe(true);
-      expect(Buffer.from(downloaded.data).toString('utf-8')).toBe(
-        testContent.toString('utf-8'),
-      );
+      expect(Buffer.isBuffer(downloaded.data) || downloaded.data instanceof Uint8Array).toBe(true);
+      expect(Buffer.from(downloaded.data).toString('utf-8')).toBe(testContent.toString('utf-8'));
       expect(downloaded.contentType).toBe(testContentType);
     });
 

@@ -57,9 +57,7 @@ export function App() {
   }
 
   if (!sessionChecked) {
-    return (
-      <div className={styles.loading}>Laden...</div>
-    );
+    return <div className={styles.loading}>Laden...</div>;
   }
 
   return <LoginForm />;

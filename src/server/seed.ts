@@ -338,7 +338,6 @@ export async function seed(db: Database): Promise<void> {
 
   await db.insert(projects).values(projectRecords);
 
-  // eslint-disable-next-line no-console
   console.warn(
     '⚠  Seed-Daten geladen. Alle Benutzer haben das Standardpasswort "changeme". ' +
       'Passwörter müssen vor Produktiveinsatz geändert werden.',

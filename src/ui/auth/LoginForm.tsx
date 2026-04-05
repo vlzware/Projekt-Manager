@@ -25,9 +25,7 @@ export function LoginForm() {
       <form data-testid="login-form" className={styles.form} onSubmit={handleSubmit}>
         <h1 className={styles.title}>Anmelden</h1>
 
-        {authError && (
-          <div className={styles.error}>{authError}</div>
-        )}
+        {authError && <div className={styles.error}>{authError}</div>}
 
         <div className={styles.field}>
           <label htmlFor="login-username" className={styles.label}>
@@ -57,7 +55,11 @@ export function LoginForm() {
           />
         </div>
 
-        <button type="submit" className={styles.submitButton} disabled={isSubmitting || !username.trim() || !password.trim()}>
+        <button
+          type="submit"
+          className={styles.submitButton}
+          disabled={isSubmitting || !username.trim() || !password.trim()}
+        >
           Anmelden
         </button>
       </form>
