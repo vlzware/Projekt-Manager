@@ -1,6 +1,6 @@
 # Verification
 
-*Part of the [Product Specification](index.md). Iteration 2.*
+*Iteration 2 — April 2026 | Living document — updated as each iteration ships.*
 
 ---
 

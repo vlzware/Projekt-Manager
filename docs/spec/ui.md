@@ -1,5 +1,7 @@
 # UI Specification
 
+*Iteration 2 — April 2026 | Living document — updated as each iteration ships.*
+
 ## 8. UI Specification
 
 ### 8.1 Layout
@@ -14,14 +16,14 @@ The application has two top-level layout states depending on authentication.
 │                     App Name / Logo                      │
 │                                                          │
 │                    ┌──────────────┐                      │
-│                    │  Benutzername │                      │
+│                    │  Benutzername│                      │
 │                    ├──────────────┤                      │
 │                    │  Passwort    │                      │
 │                    ├──────────────┤                      │
 │                    │  [Anmelden]  │                      │
 │                    └──────────────┘                      │
 │                                                          │
-│                    (error area)                           │
+│                    (error area)                          │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -34,7 +36,7 @@ The login screen is the **only** view available to unauthenticated users. No pro
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Header: App Name  |  [Kanban] [Kalender]  |  Summary   │
+│  Header: App Name  |  [Kanban] [Kalender]  |  Summary    │
 │                                    [Maria Schmidt ▾]     │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
@@ -71,7 +73,7 @@ With 9 columns, horizontal scrolling may be needed on narrower screens. At 1920p
 │ [●] 2026-042                │
 │ Fassadenanstrich Müller     │
 │ Familie Müller              │
-│ 14.04. – 18.04.2026        │
+│ 14.04. – 18.04.2026         │
 │                        [→]  │
 └─────────────────────────────┘
 ```

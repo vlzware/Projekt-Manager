@@ -1,5 +1,7 @@
 # Architecture, Configuration, NFRs and Security
 
+*Iteration 2 — April 2026 | Living document — updated as each iteration ships.*
+
 ---
 
 ## 11. Architectural Constraints
@@ -200,6 +202,18 @@ The UI must tolerate incomplete project data without crashing:
 ### 13.7 Observability
 
 Logging and monitoring requirements are deferred. At minimum, the deployed system should log authentication events and API errors to standard output for basic troubleshooting.
+
+### 13.8 Security Checklist for New Endpoints
+
+Every new API endpoint must satisfy:
+
+1. **Authentication**: valid, active session required (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md), [api.md section 14.3](api.md#143-authorization-rules)).
+2. **Authorization**: role-based permission check via `requirePermission()` (see `src/server/config/permissions.ts`).
+3. **Input validation**: Fastify JSON schema on request body and params (see [api.md section 14.2](api.md#142-operations)).
+4. **Error handling**: use `AppError`, no stack traces or DB field names leaked (see `src/server/errors.ts`).
+5. **Rate limiting**: configure on auth and mutation endpoints (see `app.ts` rate-limit setup).
+6. **CSRF protection**: `SameSite=Strict` cookies + CSP headers (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md)).
+7. **Password handling**: never log or store plaintext (see [ADR-0006](../adr/0006-password-policy-nist-blocklist.md)).
 
 ---
 

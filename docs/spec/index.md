@@ -148,4 +148,47 @@ This specification is split across multiple files:
 
 ---
 
+## Iteration Scope vs. Vision
+
+Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) to their target iteration. Iteration 2 features are marked Done; future features show their earliest target.
+
+| Feature | Status | Iteration |
+|---------|--------|-----------|
+| Kanban view with state columns and basic interactivity | Done | 1 |
+| Calendar overview for planning | Done | 1 |
+| Persistent data storage (database + API) | Done | 2 |
+| User authentication (login/logout, sessions) | Done | 2 |
+| Object storage module (prepared for uploads) | Done | 2 |
+| Deployment to hosted environment | In progress | 3 |
+| Continuous Delivery pipeline | In progress | 3 |
+| End-to-end tests on all integrations (CI) | In progress | 3 |
+| LLM-based customer data extraction from emails | Planned | 4+ |
+| All customer and project data managed in central system | Planned | 4+ |
+| Worker view (relevant projects, calendar, object data, GPS) | Planned | 4+ |
+| Worker uploads (notes, photos, Aufmass) | Planned | 4+ |
+| Binary file optimization and space alerts | Planned | 5+ |
+| Configurable event notifications (email, optional WhatsApp) | Planned | 5+ |
+| Modular architecture with open-standard data exchange | Planned | 4+ |
+| Bookkeeper view (invoices, search, grouping, export) | Planned | 5+ |
+| Administrator view (users, groups, rights) | Planned | 4+ |
+| German user manual ("Handbuch") | Planned | 5+ |
+| Tooltips, hints, and in-app help | Planned | 5+ |
+
+---
+
+## Known Debt
+
+Items marked as "Known debt" across the specification. Each will be resolved or re-assessed when its target iteration begins.
+
+| Item | Location | Target Iteration | Issue |
+|------|----------|-----------------|-------|
+| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 3+ | TBD |
+| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 3+ | TBD |
+| Minimal role set — add fine-grained permissions and per-role view restrictions | [data-model.md §5.3](data-model.md#53-user-entity) | 3+ | TBD |
+| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 3+ | TBD |
+| Password change does not invalidate existing sessions | [data-model.md §5.4](data-model.md#54-session) | 3+ | TBD |
+| State actions mutate silently — need middleware or event hooks for audit trail and notifications | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 3+ | TBD |
+
+---
+
 *Living document — updated as each iteration ships. Git history preserves past versions.*
