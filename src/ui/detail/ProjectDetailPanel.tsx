@@ -1,13 +1,8 @@
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
 import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
-import {
-  canTransitionForward,
-  canTransitionBackward,
-  getNextState,
-  getPreviousState,
-} from '@/domain/transitions';
-import { useProjectStore } from '@/state/store';
+import { useProjectTransition } from '@/hooks/useProjectTransition';
+import { useProjectStore } from '@/state/projectStore';
 import styles from './ProjectDetailPanel.module.css';
 
 interface ProjectDetailPanelProps {
@@ -16,36 +11,13 @@ interface ProjectDetailPanelProps {
 }
 
 export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps) {
-  const transitionForward = useProjectStore((s) => s.transitionForward);
-  const transitionBackward = useProjectStore((s) => s.transitionBackward);
   const updateDates = useProjectStore((s) => s.updateDates);
   const projects = useProjectStore((s) => s.projects);
 
   // Always get fresh project data from store
   const currentProject = projects.find((p) => p.id === project.id) ?? project;
   const config = STATE_CONFIG_MAP[currentProject.status];
-  const showForward = canTransitionForward(currentProject.status);
-  const showBackward = canTransitionBackward(currentProject.status);
-
-  const handleForward = () => {
-    const next = getNextState(currentProject.status);
-    if (!next) return;
-    const nextLabel = STATE_CONFIG_MAP[next].label;
-    const confirmed = window.confirm(`Status ändern: ${config.label} → ${nextLabel}?`);
-    if (confirmed) {
-      transitionForward(currentProject.id);
-    }
-  };
-
-  const handleBackward = () => {
-    const prev = getPreviousState(currentProject.status);
-    if (!prev) return;
-    const prevLabel = STATE_CONFIG_MAP[prev].label;
-    const confirmed = window.confirm(`Status ändern: ${config.label} → ${prevLabel}?`);
-    if (confirmed) {
-      transitionBackward(currentProject.id);
-    }
-  };
+  const { canForward, canBackward, forward, backward } = useProjectTransition(currentProject);
 
   const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -96,21 +68,21 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           </div>
 
           {/* Transitions */}
-          {(showForward || showBackward) && (
+          {(canForward || canBackward) && (
             <div className={styles.transitionButtons}>
-              {showForward && (
+              {canForward && (
                 <button
                   className={styles.forwardBtn}
-                  onClick={handleForward}
+                  onClick={forward}
                   data-testid="detail-forward-button"
                 >
                   Nächster Schritt
                 </button>
               )}
-              {showBackward && (
+              {canBackward && (
                 <button
                   className={styles.backwardBtn}
-                  onClick={handleBackward}
+                  onClick={backward}
                   data-testid="detail-backward-button"
                 >
                   Vorheriger Schritt

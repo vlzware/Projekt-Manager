@@ -1,13 +1,15 @@
 import { useState } from 'react';
-import { useProjectStore } from '@/state/store';
+import { useAuthStore } from '@/state/authStore';
+import { useProjectStore } from '@/state/projectStore';
 import styles from './LoginForm.module.css';
 
 export function LoginForm() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const login = useProjectStore((s) => s.login);
-  const authError = useProjectStore((s) => s.authError);
+  const login = useAuthStore((s) => s.login);
+  const authError = useAuthStore((s) => s.authError);
+  const fetchProjects = useProjectStore((s) => s.fetchProjects);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -15,6 +17,9 @@ export function LoginForm() {
     setIsSubmitting(true);
     try {
       await login(username, password);
+      if (useAuthStore.getState().authUser) {
+        fetchProjects();
+      }
     } finally {
       setIsSubmitting(false);
     }

@@ -1,5 +1,5 @@
 import type { Project } from '@/domain/types';
-import { useProjectStore } from '@/state/store';
+import { useUIStore } from '@/state/uiStore';
 import styles from './ProjectBar.module.css';
 
 interface ProjectBarProps {
@@ -11,7 +11,7 @@ interface ProjectBarProps {
 }
 
 export function ProjectBar({ project, startCol, endCol, color, rowIndex }: ProjectBarProps) {
-  const selectProject = useProjectStore((s) => s.selectProject);
+  const selectProject = useUIStore((s) => s.selectProject);
   const colWidth = 100 / 7;
   const left = `${startCol * colWidth}%`;
   const width = `${(endCol - startCol + 1) * colWidth}%`;

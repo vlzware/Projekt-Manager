@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { addMonths, subMonths, format } from 'date-fns';
 import { de } from 'date-fns/locale';
-import { useProjectStore } from '@/state/store';
+import { useProjectStore } from '@/state/projectStore';
+import { useUIStore } from '@/state/uiStore';
+import { useRouterNav } from '@/hooks/useRouterNav';
 import { CalendarGrid } from './CalendarGrid';
 import styles from './CalendarView.module.css';
 
 export function CalendarView() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const projects = useProjectStore((s) => s.projects);
-  const activeFilter = useProjectStore((s) => s.activeFilter);
-  const setView = useProjectStore((s) => s.setView);
-  const setFilter = useProjectStore((s) => s.setFilter);
+  const activeFilter = useUIStore((s) => s.activeFilter);
+  const setFilter = useUIStore((s) => s.setFilter);
   const getSummary = useProjectStore((s) => s.getSummary);
+  const { navigateTo } = useRouterNav();
 
   const summary = getSummary();
   const monthLabel = format(currentMonth, 'MMMM yyyy', { locale: de });
@@ -26,7 +28,7 @@ export function CalendarView() {
   const handleNoDatesClick = () => {
     // Switch to kanban and filter to show projects without dates
     // Since we can't filter by "no dates" directly, just switch to kanban
-    setView('kanban');
+    navigateTo('/kanban');
     setFilter(null);
   };
 

@@ -2,8 +2,8 @@ import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
 import { formatDateRange, formatDateDE } from '@/domain/dateFormat';
 import { isAgingBold, getAgingText } from '@/domain/aging';
-import { canTransitionForward, getNextState } from '@/domain/transitions';
-import { useProjectStore } from '@/state/store';
+import { useProjectTransition } from '@/hooks/useProjectTransition';
+import { useUIStore } from '@/state/uiStore';
 import styles from './ProjectCard.module.css';
 
 interface ProjectCardProps {
@@ -11,15 +11,13 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project }: ProjectCardProps) {
-  const transitionForward = useProjectStore((s) => s.transitionForward);
-  const selectProject = useProjectStore((s) => s.selectProject);
-  const inFlight = useProjectStore((s) => !!s.mutationInFlight[project.id]);
+  const { canForward, forward, inFlight } = useProjectTransition(project);
+  const selectProject = useUIStore((s) => s.selectProject);
   const config = STATE_CONFIG_MAP[project.status];
   const bold = isAgingBold(project.status, project.statusChangedAt);
   const agingText = getAgingText(project.status, project.statusChangedAt);
   const dateRange = formatDateRange(project.plannedStart, project.plannedEnd);
   const entryDate = formatDateDE(project.statusChangedAt);
-  const showForward = canTransitionForward(project.status);
 
   const handleCardClick = () => {
     selectProject(project.id);
@@ -27,14 +25,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
 
   const handleForwardClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (inFlight) return;
-    const next = getNextState(project.status);
-    if (!next) return;
-    const nextLabel = STATE_CONFIG_MAP[next].label;
-    const confirmed = window.confirm(`Status ändern: ${config.label} → ${nextLabel}?`);
-    if (confirmed) {
-      transitionForward(project.id);
-    }
+    forward();
   };
 
   return (
@@ -74,7 +65,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
         ) : (
           <span />
         )}
-        {showForward && (
+        {canForward && (
           <button
             className={styles.forwardButton}
             onClick={handleForwardClick}

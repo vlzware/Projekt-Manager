@@ -1,12 +1,13 @@
-import { useProjectStore } from '@/state/store';
+import { useProjectStore } from '@/state/projectStore';
+import { useUIStore } from '@/state/uiStore';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import type { WorkflowState } from '@/config/stateConfig';
 import styles from './SummaryArea.module.css';
 
 export function SummaryArea() {
   const projects = useProjectStore((s) => s.projects);
-  const activeFilter = useProjectStore((s) => s.activeFilter);
-  const setFilter = useProjectStore((s) => s.setFilter);
+  const activeFilter = useUIStore((s) => s.activeFilter);
+  const setFilter = useUIStore((s) => s.setFilter);
   const getSummary = useProjectStore((s) => s.getSummary);
 
   const summary = getSummary();
