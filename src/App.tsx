@@ -42,11 +42,9 @@ export function App() {
   const selectProject = useUIStore((s) => s.selectProject);
   const authUser = useAuthStore((s) => s.authUser);
   const sessionChecked = useAuthStore((s) => s.sessionChecked);
-  const checkSession = useAuthStore((s) => s.checkSession);
   const mutationError = useProjectStore((s) => s.mutationError);
   const clearMutationError = useProjectStore((s) => s.clearMutationError);
   const projects = useProjectStore((s) => s.projects);
-  const fetchProjects = useProjectStore((s) => s.fetchProjects);
 
   const selectedProject = selectedProjectId
     ? projects.find((p) => p.id === selectedProjectId) ?? null
@@ -56,13 +54,13 @@ export function App() {
   useEffect(() => {
     if (!authUser && !sessionCheckFired.current) {
       sessionCheckFired.current = true;
-      checkSession().then(() => {
+      useAuthStore.getState().checkSession().then(() => {
         if (useAuthStore.getState().authUser) {
-          fetchProjects();
+          useProjectStore.getState().fetchProjects();
         }
       });
     }
-  }, [authUser, checkSession, fetchProjects]);
+  }, [authUser]);
 
   if (authUser) {
     // View content — either router-managed or store-managed
