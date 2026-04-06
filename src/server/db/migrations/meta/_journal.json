@@ -29,6 +29,13 @@
       "when": 1775387236559,
       "tag": "0003_sloppy_jackpot",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1775467072205,
+      "tag": "0004_flawless_captain_midlands",
+      "breakpoints": true
     }
   ]
 }

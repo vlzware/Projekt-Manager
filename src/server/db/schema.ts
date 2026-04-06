@@ -14,6 +14,7 @@ import {
   timestamp,
   jsonb,
   numeric,
+  index,
 } from 'drizzle-orm/pg-core';
 
 // ---------------------------------------------------------------
@@ -43,7 +44,10 @@ export const sessions = pgTable('sessions', {
   token: varchar('token', { length: 64 }).notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-});
+}, (table) => [
+  index('idx_sessions_expires_at').on(table.expiresAt),
+  index('idx_sessions_user_id').on(table.userId),
+]);
 
 // ---------------------------------------------------------------
 // Projects (data-model.md §5.1)
@@ -79,4 +83,9 @@ export const projects = pgTable('projects', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   createdBy: uuid('created_by'),
   updatedBy: uuid('updated_by'),
-});
+}, (table) => [
+  // Used by future dashboard queries (count by status, filter by status).
+  index('idx_projects_status').on(table.status),
+  // Used by future "recently changed" and aging threshold queries.
+  index('idx_projects_status_changed_at').on(table.statusChangedAt),
+]);
