@@ -7,9 +7,10 @@
  * Dates are relative to today — never hardcoded.
  */
 
+import { sql } from 'drizzle-orm';
 import { hashPassword } from './password.js';
 import type { Database } from './db/connection.js';
-import { users, projects, sessions } from './db/schema.js';
+import { users, projects } from './db/schema.js';
 
 function daysFromNow(days: number): Date {
   const d = new Date();
@@ -38,10 +39,10 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
     }
   }
 
-  // Clear existing data (order matters: FK constraints)
-  await db.delete(sessions);
-  await db.delete(projects);
-  await db.delete(users);
+  // Clear existing data atomically — TRUNCATE CASCADE is faster than
+  // individual DELETEs and prevents race conditions when multiple
+  // test files seed against the same database in sequence.
+  await db.execute(sql`TRUNCATE TABLE sessions, projects, users CASCADE`);
 
   // ---------------------------------------------------------------
   // Users (data-model.md §7.2)
