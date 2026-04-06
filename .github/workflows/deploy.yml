@@ -4,7 +4,7 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [main]
+    branches: [main, 'iteration/**']
 
 # Only one deploy at a time; cancel in-progress if a new push arrives.
 concurrency:
@@ -17,7 +17,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Only deploy if CI succeeded on main.
+    # Only deploy if CI succeeded.
     if: github.event.workflow_run.conclusion == 'success'
 
     steps:
@@ -29,6 +29,27 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
             cd /opt/projekt-manager
-            git pull
+            git fetch origin
+            git checkout ${{ github.event.workflow_run.head_sha }}
             docker compose build app
             docker compose up -d
+
+      - name: Smoke test
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            timeout=60
+            elapsed=0
+            until curl -sf http://localhost/api/health > /dev/null 2>&1; do
+              sleep 2
+              elapsed=$((elapsed + 2))
+              if [ "$elapsed" -ge "$timeout" ]; then
+                echo "Health check failed after ${timeout}s"
+                docker compose -f /opt/projekt-manager/docker-compose.yml logs --tail=50
+                exit 1
+              fi
+            done
+            echo "Deploy verified — healthy at $(git -C /opt/projekt-manager rev-parse --short HEAD)"
