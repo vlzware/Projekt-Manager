@@ -4,7 +4,7 @@ A centralized system for consolidation, control, and viewing of data and process
 
 ## Status
 
-**Iteration 3 — Production**: Full-stack application with service layer, split stores, and centralized API client. Fastify backend, PostgreSQL, MinIO object storage, and Caddy reverse proxy — deployed via Docker Compose. Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
+**Iteration 3 — Stabilization**: Structural refactor and maintainability overhaul. Service layer, split stores, centralized API client, test expansion (136 → 186). Fastify backend, PostgreSQL, MinIO object storage, Caddy reverse proxy — all via Docker Compose. Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
 
 ## Prerequisites
 

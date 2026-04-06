@@ -20,7 +20,8 @@ This iteration must answer two questions:
 |---|---|---|
 | 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
 | 2 | Persistence (database + API), authentication, object storage | Accepted |
-| 3 | Deployment, integration testing, monitoring | **Current** |
+| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | **Current** |
+| 4 | Deployment, integration testing, monitoring | Planned |
 
 ---
 
@@ -159,20 +160,21 @@ Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) t
 | Persistent data storage (database + API) | Done | 2 |
 | User authentication (login/logout, sessions) | Done | 2 |
 | Object storage module (prepared for uploads) | Done | 2 |
-| Deployment to hosted environment | In progress | 3 |
-| Continuous Delivery pipeline | In progress | 3 |
-| End-to-end tests on all integrations (CI) | In progress | 3 |
-| LLM-based customer data extraction from emails | Planned | 4+ |
-| All customer and project data managed in central system | Planned | 4+ |
-| Worker view (relevant projects, calendar, object data, GPS) | Planned | 4+ |
-| Worker uploads (notes, photos, Aufmass) | Planned | 4+ |
-| Binary file optimization and space alerts | Planned | 5+ |
-| Configurable event notifications (email, optional WhatsApp) | Planned | 5+ |
-| Modular architecture with open-standard data exchange | Planned | 4+ |
-| Bookkeeper view (invoices, search, grouping, export) | Planned | 5+ |
-| Administrator view (users, groups, rights) | Planned | 4+ |
-| German user manual ("Handbuch") | Planned | 5+ |
-| Tooltips, hints, and in-app help | Planned | 5+ |
+| Structural refactor and maintainability overhaul | Done | 3 |
+| Deployment to hosted environment | Planned | 4 |
+| Continuous Delivery pipeline | Planned | 4 |
+| End-to-end tests on all integrations (CI) | Planned | 4 |
+| LLM-based customer data extraction from emails | Planned | 5+ |
+| All customer and project data managed in central system | Planned | 5+ |
+| Worker view (relevant projects, calendar, object data, GPS) | Planned | 5+ |
+| Worker uploads (notes, photos, Aufmass) | Planned | 5+ |
+| Binary file optimization and space alerts | Planned | 6+ |
+| Configurable event notifications (email, optional WhatsApp) | Planned | 6+ |
+| Modular architecture with open-standard data exchange | Planned | 5+ |
+| Bookkeeper view (invoices, search, grouping, export) | Planned | 6+ |
+| Administrator view (users, groups, rights) | Planned | 5+ |
+| German user manual ("Handbuch") | Planned | 6+ |
+| Tooltips, hints, and in-app help | Planned | 6+ |
 
 ---
 
@@ -182,12 +184,12 @@ Items marked as "Known debt" across the specification. Each will be resolved or 
 
 | Item | Location | Target Iteration | Issue |
 |------|----------|-----------------|-------|
-| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 3+ | TBD |
-| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 3+ | TBD |
-| Minimal role set — add fine-grained permissions and per-role view restrictions | [data-model.md §5.3](data-model.md#53-user-entity) | 3+ | TBD |
-| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 3+ | TBD |
-| Password change does not invalidate existing sessions | [data-model.md §5.4](data-model.md#54-session) | 3+ | TBD |
-| State actions mutate silently — need middleware or event hooks for audit trail and notifications | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 3+ | TBD |
+| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
+| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
+| Minimal role set — add fine-grained permissions and per-role view restrictions | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
+| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
+| Password change does not invalidate existing sessions | [data-model.md §5.4](data-model.md#54-session) | 4+ | TBD |
+| State actions mutate silently — need middleware or event hooks for audit trail and notifications | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 4+ | TBD |
 
 ---
 
