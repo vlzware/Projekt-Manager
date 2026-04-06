@@ -4,13 +4,11 @@ Concise remarks about: (1) the workflow, (2) readjustments to the workflow, and 
 
 ## 2026-04-06 — Iteration 4: deployment and post-session audit
 
-### Workflow: long sessions need hard quality gates
+### Workflow: agent output needs verification before closing issues
 
-The deployment session ran too long without checkpoints. Issues were closed with zero checklist boxes ticked, docs were written as command dumps, and the app was deployed over HTTP despite requiring HTTPS (Secure cookies, HSTS). Cleaned up in a follow-up session: branch squashed from 22 commits to 4, #42 reopened, docs rewritten, TLS enforcement tracked in #47, CD hardening in #48.
+The deployment session produced working infrastructure but the agent closed issues with zero checklist boxes ticked, wrote docs as command dumps, and deployed over HTTP despite the app requiring HTTPS. Follow-up audit caught it: branch squashed from 22 commits to 4, #42 reopened, docs rewritten, TLS enforcement tracked in #47, CD hardening in #48.
 
-**Readjustment:** end-of-session audit is now mandatory before closing issues. Checklist boxes get ticked individually, not assumed done because "the code is there."
-
-**Why:** output quality degrades silently over long sessions. The earlier structural refactor (same day) was high quality with focused scope. The deployment work drifted into "just ship it." The cost of the cleanup session was higher than pausing earlier would have been.
+**Readjustment:** verify agent output against the issue checklist before closing. Tick boxes individually.
 
 ### Workflow: defense in depth is not negotiable
 
@@ -24,43 +22,31 @@ VPN encryption was treated as sufficient, skipping TLS. This left authentication
 
 ### Workflow: periodic structural audits as a hard gate
 
-Multi-angle analysis (5 parallel agents: spec, backend, frontend, infra, coupling) found the architecture was sound but the implementation took shortcuts — duplicated logic, god objects, hardcoded types that the spec claimed were configurable. Decision: halt features and restructure. 77 files changed, tests 136 to 186.
+Multi-angle analysis (5 parallel agents) found the architecture was sound but the implementation had drifted — duplicated logic, god objects, hardcoded types the spec claimed were configurable. Decision: halt features and restructure.
 
-**Readjustment:** structural audit before each complexity threshold, not after. Compare spec claims against actual code to catch drift early.
+**Readjustment:** structural audit before each complexity threshold. Compare spec claims against actual code to catch drift early.
 
 **Why:** AI-generated code optimizes locally — each feature lands cleanly in isolation, but cross-file coupling degrades silently. Invisible until you trace a change across the full call graph.
 
-### Workflow: parallel agents need file-level isolation
-
-6 agents launched simultaneously. Non-overlapping file groups landed cleanly. Agents touching files the orchestrator was also editing caused overwrites.
-
-**Readjustment:** agents get exclusive file sets. No shared files between parallel agents or between agents and the orchestrator.
-
 ### Workflow: spec extensibility claims need smoke tests
 
-"States driven by configuration" was false — the type was hardcoded. Spec promises without implementation tests are wishful thinking.
+"States driven by configuration" was false — the type was hardcoded.
 
-**Readjustment:** future iterations include "extensibility door" tests that verify the spec's promises compile and run.
+**Readjustment:** include "extensibility door" tests that verify the spec's promises compile and run.
 
 ## 2026-04-05 — Iteration 2: security foundation
 
-### Workflow: security review is a distinct phase, not part of "code quality"
+### Workflow: make security review explicit in the workflow definition
 
-Implementation went fast — full stack in one session, 136 passing tests. Security review found 42 issues (6 critical). Deployment deferred; iteration rescoped to "secure foundation."
+Security reviews were run as soon as there was a baseline to review against. The review found 42 issues (6 critical), deployment deferred, iteration rescoped to "secure foundation." The reviews worked — but security wasn't listed as an explicit step in CONTRIBUTING.md.
 
-**Readjustment:** security review is a separate workflow step, not bundled under code quality. Non-negotiable before any deployment.
+**Readjustment:** add security review as a named workflow step so it's visible and not implicit.
 
-**Why:** AI-generated code systematically underweights security — no input validation, no security headers, hardcoded dev credentials without production guards. Tests pass, code looks professional, but the security posture is absent.
-
-### Workflow: incremental implementation + review, not big-bang
-
-One session built everything, another session reviewed everything. Result: 4 feat commits followed by 12+ fix commits.
-
-**Readjustment:** smaller cycles — implement and review per module, not per iteration.
+**Why:** running reviews at the right time is not enough if the workflow definition doesn't reflect it. New contributors (or agents) following the written workflow would skip it.
 
 ### Workflow: adversarial review scales
 
-Parallel adversarial reviewers (5 domain-specific agents) followed by parallel fixers followed by a cross-cutting second wave. The pattern works but should happen incrementally, not as a final gate.
+Parallel adversarial reviewers (5 domain-specific agents) followed by parallel fixers followed by a cross-cutting second wave. The pattern works. Each iteration improves the codebase measurably — the squashed commit history reflects logical grouping, not big-bang development.
 
 ## 2026-04-03 — Iteration 0/1: bootstrap
 
