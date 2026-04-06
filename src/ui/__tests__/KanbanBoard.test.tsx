@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useProjectStore } from '@/state/store';
+import { useAuthStore } from '@/state/authStore';
+import { useProjectStore } from '@/state/projectStore';
+import { useUIStore } from '@/state/uiStore';
 import { mockProjects } from '@/data/mockProjects';
 import { STATE_CONFIGS } from '@/config/stateConfig';
 import { BRANDING } from '@/config/brandingConfig';
@@ -9,10 +11,10 @@ import { App } from '@/App';
 
 import * as collapseTierHook from '@/ui/kanban/useCollapseTier';
 
-// Reset store before each test
+// Reset stores before each test
 beforeEach(() => {
-  useProjectStore.setState({
-    ...useProjectStore.getInitialState(),
+  useAuthStore.setState({
+    ...useAuthStore.getInitialState(),
     authUser: {
       id: 'u1',
       username: 'mock',
@@ -20,8 +22,12 @@ beforeEach(() => {
       roles: ['owner'],
       email: null,
     },
+  });
+  useProjectStore.setState({
+    ...useProjectStore.getInitialState(),
     projects: [...mockProjects],
   });
+  useUIStore.setState({ ...useUIStore.getInitialState() });
 });
 
 describe('Kanban Board', () => {

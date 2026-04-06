@@ -31,7 +31,7 @@ const migrationsFolder = path.resolve(__dirname, '../server/db/migrations');
  *
  * Connects to the test database, runs migrations, seeds data,
  * and boots a Fastify instance. Test files run sequentially
- * (fileParallelism: false in vitest.config.ts) so each file
+ * (fileParallelism: false in vitest.config.ts integration project) so each file
  * gets a fresh seed without race conditions.
  */
 export async function startApp(): Promise<FastifyInstance> {
@@ -39,11 +39,14 @@ export async function startApp(): Promise<FastifyInstance> {
   db = conn.db;
   pool = conn.pool;
 
+  // Verify the new pool is live and PG has released prior connections
+  await pool.query('SELECT 1');
+
   // Run migrations (idempotent — drizzle tracks applied migrations)
   await migrate(db, { migrationsFolder });
 
-  // Seed fresh test data (clears existing data first)
-  await seed(db);
+  // Seed fresh test data (force: wipe and re-seed for clean slate)
+  await seed(db, { force: true });
 
   app = buildApp({ logger: false, db, rateLimit: false });
   await app.ready();
@@ -52,6 +55,9 @@ export async function startApp(): Promise<FastifyInstance> {
 
 /**
  * Shut down the test application. Call in `afterAll`.
+ *
+ * Closing order matters: Fastify first (stops accepting requests and
+ * waits for in-flight handlers to finish), then drain the pg pool.
  */
 export async function stopApp(): Promise<void> {
   if (app) {

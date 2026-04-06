@@ -15,6 +15,7 @@ import {
   DeleteObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { STORAGE_CONFIG } from '../config/index.js';
 
 export interface StorageConfig {
   endpoint: string;
@@ -40,7 +41,7 @@ export interface StorageClient {
   getSignedUrl(key: string, expirySeconds: number): Promise<string>;
 }
 
-const VALID_KEY_PATTERN = /^[a-zA-Z0-9/_.-]{1,1024}$/;
+const VALID_KEY_PATTERN = STORAGE_CONFIG.validKeyPattern;
 
 /**
  * Validates a storage key to prevent path traversal and malformed keys.
@@ -61,8 +62,8 @@ export function validateKey(key: string): void {
   }
 }
 
-export const MIN_SIGNED_URL_EXPIRY_SECONDS = 1;
-export const MAX_SIGNED_URL_EXPIRY_SECONDS = 3600;
+export const MIN_SIGNED_URL_EXPIRY_SECONDS = STORAGE_CONFIG.minSignedUrlExpirySec;
+export const MAX_SIGNED_URL_EXPIRY_SECONDS = STORAGE_CONFIG.maxSignedUrlExpirySec;
 
 export function createStorageClient(config: StorageConfig): StorageClient {
   const s3 = new S3Client({

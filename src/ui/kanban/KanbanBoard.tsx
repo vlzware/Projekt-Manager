@@ -1,14 +1,15 @@
 import { useState, useCallback } from 'react';
 import { STATE_CONFIGS } from '@/config/stateConfig';
 import type { WorkflowState } from '@/config/stateConfig';
-import { useProjectStore } from '@/state/store';
+import { useProjectStore } from '@/state/projectStore';
+import { useUIStore } from '@/state/uiStore';
 import { useCollapseTier } from './useCollapseTier';
 import { KanbanColumn } from './KanbanColumn';
 import styles from './KanbanBoard.module.css';
 
 export function KanbanBoard() {
   const projects = useProjectStore((s) => s.projects);
-  const activeFilter = useProjectStore((s) => s.activeFilter);
+  const activeFilter = useUIStore((s) => s.activeFilter);
   const activeTier = useCollapseTier();
   const [expanded, setExpanded] = useState<Set<WorkflowState>>(new Set());
 

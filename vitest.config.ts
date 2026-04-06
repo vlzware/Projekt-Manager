@@ -16,14 +16,8 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    environment: 'jsdom',
-    setupFiles: ['./src/test/setup.ts'],
     exclude: ['e2e/**', 'node_modules/**', '.claude/**'],
-    // Server integration tests share a PostgreSQL database and mutate
-    // shared state (user passwords, deactivations, project transitions).
-    // Running them in parallel causes race conditions.
     env,
-    fileParallelism: false,
     css: {
       modules: {
         classNameStrategy: 'non-scoped',
@@ -38,5 +32,33 @@ export default defineConfig({
         'src/config/**': { statements: 80 },
       },
     },
+    projects: [
+      {
+        // Unit + component tests: pure functions, React components, mocked APIs.
+        // No database, no Fastify — safe to run files in parallel.
+        extends: true,
+        test: {
+          name: 'unit',
+          environment: 'jsdom',
+          setupFiles: ['./src/test/setup.ts'],
+          include: [
+            'src/domain/__tests__/**/*.test.ts',
+            'src/ui/__tests__/**/*.test.{ts,tsx}',
+            'src/ui/*/__tests__/**/*.test.ts',
+          ],
+        },
+      },
+      {
+        // Integration tests: shared PostgreSQL database, Fastify server.
+        // Files run sequentially to prevent seed/mutation race conditions.
+        extends: true,
+        test: {
+          name: 'integration',
+          environment: 'node',
+          fileParallelism: false,
+          include: ['src/server/__tests__/**/*.test.ts'],
+        },
+      },
+    ],
   },
 });

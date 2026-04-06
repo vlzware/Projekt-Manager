@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useProjectStore } from '@/state/store';
+import { useAuthStore } from '@/state/authStore';
+import { useProjectStore } from '@/state/projectStore';
+import { useUIStore } from '@/state/uiStore';
 import { App } from '@/App';
 import { LoginForm } from '@/ui/auth/LoginForm';
 
@@ -17,10 +19,10 @@ import { LoginForm } from '@/ui/auth/LoginForm';
 let fetchSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
-  // Reset store to initial state
-  useProjectStore.setState({
-    ...useProjectStore.getInitialState(),
-  });
+  // Reset all stores to initial state
+  useAuthStore.setState({ ...useAuthStore.getInitialState() });
+  useProjectStore.setState({ ...useProjectStore.getInitialState() });
+  useUIStore.setState({ ...useUIStore.getInitialState() });
 
   // Set up fetch mock — default: reject with a clear message so tests that
   // forget to configure it fail loudly instead of silently succeeding.
@@ -101,7 +103,7 @@ describe('Login Form', () => {
     });
 
     // Pre-condition: no authenticated user — App should show login screen
-    useProjectStore.setState({ authUser: null });
+    useAuthStore.setState({ authUser: null });
     render(<App />);
 
     // Wait for session check to complete (shows "Laden..." while pending)
@@ -133,7 +135,7 @@ describe('Login Form', () => {
     expect(screen.queryByRole('button', { name: /anmelden/i })).not.toBeInTheDocument();
 
     // (3) Store should have the authenticated user
-    expect(useProjectStore.getState().authUser).toEqual(
+    expect(useAuthStore.getState().authUser).toEqual(
       expect.objectContaining({
         username: 'testuser',
         displayName: 'Max Mustermann',
@@ -156,7 +158,7 @@ describe('Login Form', () => {
       401,
     );
 
-    useProjectStore.setState({ authUser: null });
+    useAuthStore.setState({ authUser: null });
     render(<App />);
 
     // Wait for session check to complete
@@ -200,7 +202,7 @@ describe('Header Auth Indicator', () => {
   it('CT-21: header shows authenticated user display name with dropdown containing Abmelden', async () => {
     const user = userEvent.setup();
 
-    useProjectStore.setState({
+    useAuthStore.setState({
       authUser: {
         id: 'u1',
         username: 'testuser',
@@ -231,7 +233,7 @@ describe('Header Auth Indicator', () => {
     mockFetchSuccess({}, 200);
 
     // Start as authenticated user
-    useProjectStore.setState({
+    useAuthStore.setState({
       authUser: {
         id: 'u1',
         username: 'testuser',
@@ -271,7 +273,7 @@ describe('Header Auth Indicator', () => {
     expect(screen.queryByText('Max Mustermann')).not.toBeInTheDocument();
 
     // Store should be cleared
-    expect(useProjectStore.getState().authUser).toBeNull();
+    expect(useAuthStore.getState().authUser).toBeNull();
   });
 });
 
@@ -290,7 +292,7 @@ describe('Mutation Error Handling', () => {
 
     // Explicitly provide project data — don't rely on mock data from getInitialState()
     // which will be removed when the store switches to API-fetched data.
-    useProjectStore.setState({
+    useAuthStore.setState({
       authUser: {
         id: 'u1',
         username: 'testuser',
@@ -298,6 +300,8 @@ describe('Mutation Error Handling', () => {
         roles: ['owner'],
         email: 'max@example.com',
       },
+    });
+    useProjectStore.setState({
       projects: [
         {
           id: 'p07',
@@ -369,7 +373,7 @@ describe('Double-Submit Prevention', () => {
     );
 
     // Explicitly provide project data — don't rely on mock data from getInitialState()
-    useProjectStore.setState({
+    useAuthStore.setState({
       authUser: {
         id: 'u1',
         username: 'testuser',
@@ -377,6 +381,8 @@ describe('Double-Submit Prevention', () => {
         roles: ['owner'],
         email: 'max@example.com',
       },
+    });
+    useProjectStore.setState({
       projects: [
         {
           id: 'p07',
@@ -428,7 +434,7 @@ describe('Session Expiry Mid-Use', () => {
     mockFetchError({ code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen' }, 401);
 
     // Start as authenticated user with explicit project data
-    useProjectStore.setState({
+    useAuthStore.setState({
       authUser: {
         id: 'u1',
         username: 'testuser',
@@ -436,6 +442,8 @@ describe('Session Expiry Mid-Use', () => {
         roles: ['owner'],
         email: 'max@example.com',
       },
+    });
+    useProjectStore.setState({
       projects: [
         {
           id: 'p07',
@@ -492,7 +500,7 @@ describe('Session Restoration on App Load', () => {
     });
 
     // Simulate a page refresh: no user in store, cookie handled by browser
-    useProjectStore.setState({ authUser: null });
+    useAuthStore.setState({ authUser: null });
     render(<App />);
 
     // App should call GET /api/auth/me
@@ -509,7 +517,7 @@ describe('Session Restoration on App Load', () => {
     });
 
     // Store has authUser set
-    expect(useProjectStore.getState().authUser).toEqual(
+    expect(useAuthStore.getState().authUser).toEqual(
       expect.objectContaining({
         username: 'testuser',
         displayName: 'Max Mustermann',
@@ -522,7 +530,7 @@ describe('Session Restoration on App Load', () => {
     mockFetchError({ code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen' }, 401);
 
     // Simulate a page refresh: no user in store, no valid cookie
-    useProjectStore.setState({ authUser: null });
+    useAuthStore.setState({ authUser: null });
     render(<App />);
 
     // App should call GET /api/auth/me

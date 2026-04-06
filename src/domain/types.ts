@@ -38,4 +38,8 @@ export interface SummaryData {
   projectsWithoutDates: number;
 }
 
+/**
+ * Available view modes. Extend this union and App.tsx when adding new views
+ * (e.g., 'worker', 'bookkeeper'). See architecture.md §11.5.
+ */
 export type ViewMode = 'kanban' | 'kalender';

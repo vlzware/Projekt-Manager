@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useProjectStore } from '@/state/store';
+import { useAuthStore } from '@/state/authStore';
+import { useProjectStore } from '@/state/projectStore';
+import { useUIStore } from '@/state/uiStore';
 import { mockProjects } from '@/data/mockProjects';
 import { App } from '@/App';
 
 beforeEach(() => {
-  useProjectStore.setState({
-    ...useProjectStore.getInitialState(),
+  useAuthStore.setState({
+    ...useAuthStore.getInitialState(),
     authUser: {
       id: 'u1',
       username: 'mock',
@@ -15,8 +17,12 @@ beforeEach(() => {
       roles: ['owner'],
       email: null,
     },
+  });
+  useProjectStore.setState({
+    ...useProjectStore.getInitialState(),
     projects: [...mockProjects],
   });
+  useUIStore.setState({ ...useUIStore.getInitialState() });
 });
 
 describe('Summary Area', () => {

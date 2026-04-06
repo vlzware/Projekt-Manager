@@ -1,15 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
-import { useProjectStore } from '@/state/store';
+import { useAuthStore } from '@/state/authStore';
+import { useUIStore } from '@/state/uiStore';
+import { clearStoresOnLogout } from '@/state/store';
+import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
 import type { ViewMode } from '@/domain/types';
 import { BRANDING } from '@/config/brandingConfig';
 import { SummaryArea } from './SummaryArea';
 import styles from './Header.module.css';
 
 export function Header() {
-  const activeView = useProjectStore((s) => s.activeView);
-  const setView = useProjectStore((s) => s.setView);
-  const authUser = useProjectStore((s) => s.authUser);
-  const logout = useProjectStore((s) => s.logout);
+  const activeView = useUIStore((s) => s.activeView);
+  const authUser = useAuthStore((s) => s.authUser);
+  const logout = useAuthStore((s) => s.logout);
+  const { navigateTo } = useRouterNav();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +35,7 @@ export function Header() {
   const handleLogout = async () => {
     setDropdownOpen(false);
     await logout();
+    clearStoresOnLogout();
   };
 
   return (
@@ -43,7 +47,7 @@ export function Header() {
             <button
               key={v.key}
               className={`${styles.viewButton} ${activeView === v.key ? styles.viewButtonActive : ''}`}
-              onClick={() => setView(v.key)}
+              onClick={() => navigateTo(pathFromView(v.key))}
               data-testid={`view-toggle-${v.key}`}
             >
               {v.label}

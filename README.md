@@ -4,7 +4,7 @@ A centralized system for consolidation, control, and viewing of data and process
 
 ## Status
 
-**Iteration 2 — Deployment**: Full-stack application with Fastify backend, PostgreSQL, MinIO object storage, and Caddy reverse proxy — deployed via Docker Compose. Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
+**Iteration 3 — Stabilization**: Structural refactor and maintainability overhaul. Service layer, split stores, centralized API client, test expansion (136 → 186). Fastify backend, PostgreSQL, MinIO object storage, Caddy reverse proxy — all via Docker Compose. Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
 
 ## Prerequisites
 
@@ -27,18 +27,37 @@ The app is served by Caddy on ports 80/443. The application itself listens on po
 
 ### Development
 
-Start backend services (PostgreSQL + MinIO) with exposed ports:
-
 ```bash
+cp .env.example .env                  # first time only — edit passwords if desired
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up db storage
-```
-
-Then run the frontend locally:
-
-```bash
 npm install
-npm run dev          # dev server at http://localhost:5173
+npm run dev                           # starts backend + frontend at http://localhost:5173
 ```
+
+`npm run dev` starts both the Fastify backend (port 3000) and the Vite dev server (port 5173) via `concurrently`. API requests are proxied automatically. To use a custom frontend port: `npm run dev:client -- --port 3005`.
+
+### Seed Data
+
+The `SEED` variable in `.env` controls database seeding on backend startup:
+
+| Value | Behavior |
+|---|---|
+| `true` (default) | Seed only if the database is empty. Data you create or change during development survives server restarts. |
+| `force` | Wipe all data and re-seed. Use when seed data structure changes or you need a clean slate. |
+| `false` / unset | Don't seed. |
+
+Seeding is always blocked in production (`NODE_ENV=production`).
+
+All seed users share the password **`changeme`**.
+
+| Username | Display Name | Role |
+|---|---|---|
+| `inhaber` | Thomas Berger | owner |
+| `buero` | Maria Schmidt | office |
+| `arbeiter1` | Jan Nowak | worker |
+| `arbeiter2` | Lukas Fischer | worker |
+| `buchhalter` | Petra Weiß | bookkeeper |
+| `deaktiviert` | Ehemaliger Mitarbeiter | worker (inactive) |
 
 ### Tests
 

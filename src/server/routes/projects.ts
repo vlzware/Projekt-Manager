@@ -1,25 +1,20 @@
 /**
  * Project routes — CRUD and transitions for projects.
  * All routes require authentication.
+ *
+ * Routes are thin HTTP adapters: request parsing, response formatting,
+ * Fastify-specific concerns. Business logic lives in ProjectService.
  */
 
 import type { FastifyInstance } from 'fastify';
-import {
-  listProjects,
-  getProject,
-  transitionForward,
-  transitionBackward,
-  updateDates,
-  TransitionError,
-  DateValidationError,
-} from '../repositories/project.js';
-import { validationError, notFound } from '../errors.js';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
+import { ProjectService } from '../services/ProjectService.js';
 
 export function projectRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
+    const projectService = new ProjectService(db);
 
     // Apply auth to all routes in this plugin
     app.addHook('preHandler', authenticate);
@@ -42,7 +37,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const query = request.query as { offset?: number; limit?: number };
-        const result = await listProjects(db, {
+        const result = await projectService.listProjects({
           offset: query.offset,
           limit: query.limit,
         });
@@ -69,10 +64,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await getProject(db, id);
-
-        if (!project) throw notFound('Projekt');
-
+        const project = await projectService.getProject(id);
         return reply.code(200).send(project);
       },
     );
@@ -96,14 +88,8 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-
-        try {
-          const project = await transitionForward(db, id, request.user!.id);
-          return reply.code(200).send(project);
-        } catch (err) {
-          if (err instanceof TransitionError) throw validationError(err.message);
-          throw err;
-        }
+        const project = await projectService.transitionForward(id, request.user!.id);
+        return reply.code(200).send(project);
       },
     );
 
@@ -126,14 +112,8 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-
-        try {
-          const project = await transitionBackward(db, id, request.user!.id);
-          return reply.code(200).send(project);
-        } catch (err) {
-          if (err instanceof TransitionError) throw validationError(err.message);
-          throw err;
-        }
+        const project = await projectService.transitionBackward(id, request.user!.id);
+        return reply.code(200).send(project);
       },
     );
 
@@ -169,13 +149,8 @@ export function projectRoutes(db: Database) {
           plannedEnd?: string;
         };
 
-        try {
-          const project = await updateDates(db, id, request.user!.id, body);
-          return reply.code(200).send(project);
-        } catch (err) {
-          if (err instanceof DateValidationError) throw validationError(err.message);
-          throw err;
-        }
+        const project = await projectService.updateDates(id, request.user!.id, body);
+        return reply.code(200).send(project);
       },
     );
   };

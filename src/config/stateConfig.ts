@@ -1,17 +1,25 @@
-export type WorkflowState =
-  | 'anfrage'
-  | 'angebot'
-  | 'beauftragt'
-  | 'geplant'
-  | 'in_arbeit'
-  | 'abnahme'
-  | 'rechnung_faellig'
-  | 'abgerechnet'
-  | 'erledigt';
-
 export type StateType = 'action' | 'buffer' | 'active' | 'done';
 
 export type CollapseTier = 1 | 2 | 3;
+
+/**
+ * Single source of truth for workflow states.
+ * To add or remove a state: update this array only.
+ * WorkflowState type and all downstream config derive from it.
+ */
+export const STATE_KEYS = [
+  'anfrage',
+  'angebot',
+  'beauftragt',
+  'geplant',
+  'in_arbeit',
+  'abnahme',
+  'rechnung_faellig',
+  'abgerechnet',
+  'erledigt',
+] as const;
+
+export type WorkflowState = (typeof STATE_KEYS)[number];
 
 export interface StateConfig {
   key: WorkflowState;

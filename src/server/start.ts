@@ -7,18 +7,18 @@
  * Executed via: node --import tsx src/server/start.ts
  */
 
+import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fastifyStatic from '@fastify/static';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { buildApp } from './app.js';
+import { validateEnv } from './config/env.js';
 import { createDatabase } from './db/connection.js';
 import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
 
-const PORT = Number(process.env.PORT) || 3000;
 const HOST = '0.0.0.0';
-const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(__dirname, 'db/migrations');
@@ -48,8 +48,12 @@ function rejectDevCredentials(): void {
 }
 
 async function start(): Promise<void> {
-  // --- Production safety checks (before any I/O) ---
-  if (IS_PRODUCTION) {
+  // --- Validate environment (fail fast before any I/O) ---
+  const env = validateEnv();
+  const isProduction = env.NODE_ENV === 'production';
+
+  // --- Production safety checks ---
+  if (isProduction) {
     rejectDevCredentials();
   }
 
@@ -58,15 +62,16 @@ async function start(): Promise<void> {
   // Run database migrations (idempotent — Drizzle tracks applied migrations)
   await migrate(db, { migrationsFolder });
 
-  // Seed data — never in production
-  if (process.env.SEED === 'true') {
-    if (IS_PRODUCTION) {
+  // Seed data — never in production.
+  // SEED=true  → seed only if database is empty (safe default for dev)
+  // SEED=force → wipe and re-seed (when seed data structure changes)
+  if (env.SEED === 'true' || env.SEED === 'force') {
+    if (isProduction) {
       console.warn(
-        'WARNING: SEED=true is set but NODE_ENV=production — skipping seed to protect production data.',
+        'WARNING: SEED is set but NODE_ENV=production — skipping seed to protect production data.',
       );
     } else {
-      await seed(db);
-      console.log('Database seeded (SEED=true).');
+      await seed(db, { force: env.SEED === 'force' });
     }
   }
 
@@ -83,19 +88,30 @@ async function start(): Promise<void> {
     return reply.code(200).send({ status: 'ok' });
   });
 
-  // Serve the Vite-built frontend from dist/
-  await app.register(fastifyStatic, {
-    root: distFolder,
-    wildcard: false,
-  });
+  // Serve the Vite-built frontend from dist/ (production).
+  // In dev, Vite's dev server handles the frontend via proxy.
+  if (existsSync(distFolder)) {
+    await app.register(fastifyStatic, {
+      root: distFolder,
+      wildcard: false,
+    });
 
-  // SPA fallback: serve index.html for non-API routes
-  app.setNotFoundHandler((req, reply) => {
-    if (!req.url.startsWith('/api')) {
-      return reply.sendFile('index.html');
-    }
-    reply.code(404).send({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
-  });
+    // SPA fallback: serve index.html for non-API routes
+    app.setNotFoundHandler((req, reply) => {
+      if (!req.url.startsWith('/api')) {
+        return reply.sendFile('index.html');
+      }
+      reply.code(404).send({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
+    });
+  } else if (isProduction) {
+    throw new Error(
+      `dist/ not found at ${distFolder}. Run 'npm run build' before starting in production.`,
+    );
+  } else {
+    app.setNotFoundHandler((_req, reply) => {
+      reply.code(404).send({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
+    });
+  }
 
   // Graceful shutdown — registered before listen to avoid a window
   // where SIGTERM during startup causes an unclean exit.
@@ -107,7 +123,7 @@ async function start(): Promise<void> {
     });
   }
 
-  await app.listen({ port: PORT, host: HOST });
+  await app.listen({ port: env.PORT, host: HOST });
 }
 
 start().catch((err) => {

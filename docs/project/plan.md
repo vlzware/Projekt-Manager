@@ -1,6 +1,6 @@
 # Plan
 
-## Iteration 0.A - Discovery ✅
+## Iteration 0.A - Discovery
 
 - [x] project definition
 - [x] preliminary discussions with the target company[^1]
@@ -10,7 +10,7 @@
 **Artifacts**
 - [x] Kickoff document
 
-## Iteration 0.B - Clarification ✅
+## Iteration 0.B - Clarification
 
 - [x] meetings with stakeholders, clarification of details and ambiguities[^1]
 - [x] meeting with owner, clarification of roles and rights[^1]
@@ -35,7 +35,7 @@
 
 Environment setup recurs whenever an iteration introduces new technology (e.g., backend, hosting).
 
-## Iteration 1 - Walking Skeleton ✅
+## Iteration 1 - Walking Skeleton
 
 - [x] parallel prototyping of 5 tech stacks (React+FullCalendar+shadcn, React+Custom, Svelte 5, Vue 3, PHP)
 - [x] empirical evaluation: page weight, LOC, build time, configurability audit
@@ -67,7 +67,25 @@ Presentation skipped — no visible difference for non-technical users vs the wa
 - realistic app with persistent data and authentication
 - security-hardened foundation for deployment
 
-## Iteration 3 - Deployment and integration testing
+## Iteration 3 - Stabilization
+
+Structural refactor triggered by code quality analysis that exposed compounding debt from iterations 1–2. Feature work halted to establish a clean baseline before production deployment.
+
+- [x] multi-angle code quality audit (5 parallel agents: spec, backend, frontend, infra, coupling)
+- [x] backend: service layer (AuthService, ProjectService), repository split, centralized config, Zod env validation
+- [x] frontend: API client extraction (eliminated 3× fetch duplication), Zustand store split into auth/project/ui slices, shared transition hook
+- [x] routing: React Router for URL-based navigation
+- [x] testing: +50 tests (136 → 186), test file split, shared DB setup helper, seed race fix
+- [x] docs: ARCHITECTURE.md, spec security checklist, known debt index, iteration scope mapping
+- [x] infra: MinIO bucket init container, DB indexes
+- [x] retrospection → journal entry, workflow learnings (agent isolation, spec-implementation gap as quality signal)
+
+**Artifacts**
+- structurally sound codebase ready for production deployment
+- documented architecture and onboarding entry point
+- validated extensibility: config-driven states, independent view composition
+
+## Iteration 4 - Deployment and integration testing
 
 - [ ] deploy to Hetzner VPS (Docker Compose, Caddy with real domain + TLS)
 - [ ] object storage: evaluate Cloudflare R2 vs Hetzner Object Storage (S3-compatible, test with real MinIO adapter)

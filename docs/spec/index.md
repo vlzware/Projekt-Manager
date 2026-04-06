@@ -19,7 +19,9 @@ This iteration must answer two questions:
 | Iteration | Focus | Status |
 |---|---|---|
 | 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
-| 2 | Persistence (database + API), authentication, object storage, deployment | **Current** |
+| 2 | Persistence (database + API), authentication, object storage | Accepted |
+| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | **Current** |
+| 4 | Deployment, integration testing, monitoring | Planned |
 
 ---
 
@@ -35,11 +37,9 @@ This iteration must answer two questions:
 - Summary area with aggregate indicators
 - German UI, English code
 - All company-specific values configurable
-
-**Added in iteration 2:**
 - API layer between front end and data store
-- Persistent data storage in a database, replacing mock data
-- Seed data to replace the mock data set (same coverage as the iteration 1 dataset)
+- Persistent data storage in a database
+- Seed data providing a realistic starting snapshot
 - User authentication (login/logout, session management)
 - Object storage module encapsulating all binary storage operations (prepared for future file uploads — no upload UI in this iteration)
 - Deployment to a hosted environment (application, database, object storage)
@@ -104,7 +104,7 @@ All assumptions are candidates for later configuration, marked **[C]**.
 
 The system introduces authenticated access.
 
-The only fully implemented interactive perspective remains the **Owner / Office Manager** operational view. All authenticated users see all projects and can perform the same state and date changes defined in iteration 1. This is a deliberate simplification for the iteration, not a statement about the final authorization model.
+The only fully implemented interactive perspective is the **Owner / Office Manager** operational view. All authenticated users see all projects and can perform the same state and date changes. This is a deliberate simplification, not a statement about the final authorization model.
 
 **Assumptions [C]:**
 - Initial deployments may start with a very small user set (e.g. 1–5 named users) **[C]**
@@ -146,6 +146,50 @@ This specification is split across multiple files:
 | **[architecture.md](architecture.md)** | 11–13 | Responsibility layers, dependencies, extensibility, configuration, NFRs, security |
 | **[api.md](api.md)** | 14 | API design principles, operations, authorization, error handling |
 | **[verification.md](verification.md)** | 15–18 | Acceptance criteria, test specifications, risks, open questions |
+
+---
+
+## Iteration Scope vs. Vision
+
+Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) to their target iteration. Iteration 2 features are marked Done; future features show their earliest target.
+
+| Feature | Status | Iteration |
+|---------|--------|-----------|
+| Kanban view with state columns and basic interactivity | Done | 1 |
+| Calendar overview for planning | Done | 1 |
+| Persistent data storage (database + API) | Done | 2 |
+| User authentication (login/logout, sessions) | Done | 2 |
+| Object storage module (prepared for uploads) | Done | 2 |
+| Structural refactor and maintainability overhaul | Done | 3 |
+| Deployment to hosted environment | Planned | 4 |
+| Continuous Delivery pipeline | Planned | 4 |
+| End-to-end tests on all integrations (CI) | Planned | 4 |
+| LLM-based customer data extraction from emails | Planned | 5+ |
+| All customer and project data managed in central system | Planned | 5+ |
+| Worker view (relevant projects, calendar, object data, GPS) | Planned | 5+ |
+| Worker uploads (notes, photos, Aufmass) | Planned | 5+ |
+| Binary file optimization and space alerts | Planned | 6+ |
+| Configurable event notifications (email, optional WhatsApp) | Planned | 6+ |
+| Modular architecture with open-standard data exchange | Planned | 5+ |
+| Bookkeeper view (invoices, search, grouping, export) | Planned | 6+ |
+| Administrator view (users, groups, rights) | Planned | 5+ |
+| German user manual ("Handbuch") | Planned | 6+ |
+| Tooltips, hints, and in-app help | Planned | 6+ |
+
+---
+
+## Known Debt
+
+Items marked as "Known debt" across the specification. Each will be resolved or re-assessed when its target iteration begins.
+
+| Item | Location | Target Iteration | Issue |
+|------|----------|-----------------|-------|
+| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
+| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
+| Minimal role set — add fine-grained permissions and per-role view restrictions | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
+| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
+| Password change does not invalidate existing sessions | [data-model.md §5.4](data-model.md#54-session) | 4+ | TBD |
+| State actions mutate silently — need middleware or event hooks for audit trail and notifications | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 4+ | TBD |
 
 ---
 
