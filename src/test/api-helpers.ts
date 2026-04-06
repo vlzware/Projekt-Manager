@@ -31,7 +31,7 @@ const migrationsFolder = path.resolve(__dirname, '../server/db/migrations');
  *
  * Connects to the test database, runs migrations, seeds data,
  * and boots a Fastify instance. Test files run sequentially
- * (fileParallelism: false in vitest.config.ts) so each file
+ * (fileParallelism: false in vitest.config.ts integration project) so each file
  * gets a fresh seed without race conditions.
  */
 export async function startApp(): Promise<FastifyInstance> {
