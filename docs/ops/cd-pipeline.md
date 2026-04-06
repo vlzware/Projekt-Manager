@@ -33,7 +33,7 @@ The server is always in **detached HEAD** at a specific commit — it does not t
 
 **From GitHub Actions** (audit trail): check the Deploy workflow run — the smoke test step prints the deployed SHA.
 
-**From the server** (ground truth):
+**From the server** (logged in as admin user):
 
 ```bash
 # What commit is running
@@ -42,7 +42,7 @@ sudo -u deploy git -C /opt/projekt-manager rev-parse --short HEAD
 # Container status
 sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps
 
-# Health check
+# Health check (localhost bypasses TLS — this is expected)
 curl http://localhost/api/health
 ```
 
@@ -70,7 +70,7 @@ Go to Actions → Deploy → find the last successful run → Re-run all jobs. T
 **Manual (emergency):**
 
 ```bash
-ssh deploy@<server-ip>
+ssh -i ~/.ssh/projekt-manager-deploy deploy@<server-ip>
 cd /opt/projekt-manager
 git log --oneline -10          # find the known-good SHA
 git checkout <sha>

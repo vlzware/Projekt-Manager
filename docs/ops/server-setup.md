@@ -34,10 +34,12 @@ Provisioned: 2026-04-06
 | Port | Protocol | Status | Purpose |
 |------|----------|--------|---------|
 | 22 | TCP | Open | SSH (admin + CI/CD) |
-| 80 | TCP | Closed | HTTP — not needed while VPN-only (ADR-0008) |
-| 443 | TCP | Closed | HTTPS — open when domain is acquired |
+| 80 | TCP | Closed | HTTP — open when domain acquired (ACME challenge + redirect) |
+| 443 | TCP | Closed | HTTPS — open when domain acquired |
 
 All other inbound traffic is blocked. Application access is via Tailscale VPN only (see ADR-0008).
+
+Tailscale uses WireGuard (UDP/41641 by default), but relies on NAT traversal — no inbound firewall rule is needed. The coordination server brokers the connection; the data plane is peer-to-peer after handshake.
 
 ## Automatic Maintenance
 
@@ -46,9 +48,10 @@ All other inbound traffic is blocked. Application access is via Tailscale VPN on
 ## Network Access
 
 - **VPN:** Tailscale (WireGuard-based) — see ADR-0008
-- **Application URL:** `http://<tailscale-ip>` (HTTP only, encrypted by WireGuard tunnel)
-- **Caddy:** Reverse proxy on port 80, `DOMAIN=:80` (no TLS — deferred until domain is acquired)
+- **Application URL:** `https://<tailscale-ip>` via VPN (Caddy with `tls internal` until domain is acquired)
+- **Caddy:** Reverse proxy with TLS termination. Uses internal CA (self-signed) until a domain enables Let's Encrypt.
 - Pilot users must install the Tailscale client and join the tailnet to access the app
+- **HTTPS is mandatory** in all deployments — the application requires TLS for `Secure` cookies and HSTS. See #47 for domain/certificate planning.
 
 ## Software Installed
 
@@ -70,22 +73,43 @@ All other inbound traffic is blocked. Application access is via Tailscale VPN on
 
 ## Setup Steps (recreatable)
 
-Each step assumes the previous one succeeded. Always test access in a second terminal before locking down the current access method.
+This guide provisions a VPS from scratch. Each phase builds on the previous one.
 
-### Phase 1 — Base OS (as root)
+**Golden rule:** always verify access in a second terminal before changing authentication. Locking yourself out of a headless server means reprovisioning from zero.
+
+### Prerequisites
+
+Before starting you need:
+
+- A Hetzner Cloud account
+- An ED25519 SSH keypair on your local machine
+- Access to the GitHub repo settings (for deploy keys and secrets)
+- Access to the team password manager (for storing server credentials)
+
+### Phase 1 — Base OS
+
+**Goal:** Fresh server with a non-root admin account.
+
+**Why a separate admin user:** Root should never be used for interactive sessions. A named admin account provides audit trail (who did what), sudo requires re-authentication, and disabling root SSH later doesn't lock you out.
+
+1. Create VPS in Hetzner Cloud: Ubuntu 24.04, CX23, add your SSH key during creation.
+2. Configure Hetzner Cloud Firewall: allow 22/TCP inbound, block everything else.
+3. SSH in as root:
 
 ```bash
-# 1. Provision VPS with Ubuntu 24.04, add SSH key during creation
-#    Configure Hetzner Cloud Firewall: allow 22/TCP inbound, block all else
-
-# 2. SSH in as root, update and reboot
 apt update && apt upgrade -y && reboot
+```
 
-# 3. Create admin user (use a strong password — needed for sudo)
+4. After reboot, create the admin user:
+
+```bash
 adduser <admin-username>
 usermod -aG sudo <admin-username>
+```
 
-# 4. Copy SSH key to admin user
+5. Copy your SSH key to the admin user:
+
+```bash
 mkdir -p /home/<admin-username>/.ssh
 cp /root/.ssh/authorized_keys /home/<admin-username>/.ssh/authorized_keys
 chown -R <admin-username>:<admin-username> /home/<admin-username>/.ssh
@@ -93,44 +117,59 @@ chmod 700 /home/<admin-username>/.ssh
 chmod 600 /home/<admin-username>/.ssh/authorized_keys
 ```
 
-**Checkpoint:** open a second terminal, verify `ssh <admin-username>@<ip>` and `sudo whoami` both work.
+**Verify:** in a new terminal, `ssh <admin-username>@<ip>` works and `sudo whoami` returns `root`. Do not proceed until this works.
 
-### Phase 2 — SSH hardening (as admin user)
+### Phase 2 — SSH hardening
+
+**Goal:** Eliminate password-based and root login.
+
+**Why sed instead of sshd_config.d:** Ubuntu 24.04 supports drop-in configs in `/etc/ssh/sshd_config.d/`, but the main config file may have conflicting directives (uncommented defaults). `sed` ensures the exact state regardless of the initial file. Alternatively, drop a file into `sshd_config.d/` and verify no conflicts with `sshd -T | grep -E 'permitrootlogin|passwordauthentication'`.
 
 ```bash
-# 5. Disable root login and password auth
 sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
 sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
 sudo systemctl reload sshd
 ```
 
-**Checkpoint:** in a new terminal, verify `ssh root@<ip>` is rejected, admin login still works.
+**Verify:** `ssh root@<ip>` is rejected. Admin key-based login still works.
 
-### Phase 3 — Deploy user (as admin user)
+### Phase 3 — Deploy user
+
+**Goal:** A least-privilege account that CI/CD uses to deploy. Never has admin access.
+
+**Why a system account:** `--system` creates a user with no password, no aging, and a UID below 1000 — conventional for service accounts. It cannot log in interactively unless explicitly given a shell (we give `/bin/bash` because git and docker compose need it).
+
+1. On the **server**:
 
 ```bash
-# 6. Create system user (no password, no sudo)
 sudo adduser --system --group --shell /bin/bash --home /home/deploy deploy
+```
 
-# 7. Generate SSH key locally for deploy access (no passphrase)
-#    On your LOCAL machine:
+2. On your **local machine** — generate a dedicated SSH key (no passphrase):
+
+```bash
 ssh-keygen -t ed25519 -C "deploy@projekt-manager" -f ~/.ssh/projekt-manager-deploy
+```
 
-# 8. Copy public key to server
-#    On the SERVER (paste the .pub content):
+3. On the **server** — install the public key:
+
+```bash
 sudo mkdir -p /home/deploy/.ssh
-sudo tee /home/deploy/.ssh/authorized_keys <<< "<paste public key>"
+sudo tee /home/deploy/.ssh/authorized_keys <<< "$(cat)"  # paste the .pub content, then Ctrl+D
 sudo chown -R deploy:deploy /home/deploy/.ssh
 sudo chmod 700 /home/deploy/.ssh
 sudo chmod 600 /home/deploy/.ssh/authorized_keys
 ```
 
-**Checkpoint:** `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` works, `sudo whoami` fails.
+**Verify:** `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` connects. `sudo whoami` fails with "deploy is not in the sudoers file."
 
-### Phase 4 — Docker (as admin user)
+### Phase 4 — Docker
+
+**Goal:** Container runtime for the application stack.
+
+**Why the official Docker repo:** Ubuntu's `docker.io` package lags behind on security patches and does not include the Compose V2 plugin. The official repo uses `signed-by` APT pinning — the GPG key (`docker.asc`) is bound to this specific repository, preventing it from being used to sign packages from other sources.
 
 ```bash
-# 9. Install Docker from official repo (not Ubuntu package)
 sudo apt-get install -y ca-certificates curl
 sudo install -m 0755 -d /etc/apt/keyrings
 sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
@@ -140,17 +179,20 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# 10. Grant deploy user Docker access
 sudo usermod -aG docker deploy
 ```
 
-**Checkpoint:** `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` then `docker ps` returns empty table.
+**Verify:** `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` then `docker ps` returns an empty table (not "permission denied").
 
-### Phase 5 — Security (as admin user)
+**Note:** Docker group membership grants effective root access on the host (a known Docker design decision). The deploy user can escalate via `docker run -v /:/host ...`. This is tracked as a hardening item in #48.
+
+### Phase 5 — Brute-force protection
+
+**Goal:** Rate-limit SSH login attempts to reduce noise and waste attacker resources.
+
+**Why these parameters:** 5 retries in a 10-minute window triggers a 1-hour ban. With key-only auth, brute force is already futile — fail2ban's value is reducing log noise and making automated scanning unprofitable. These are conservative defaults; tighten `maxretry` if log volume warrants it.
 
 ```bash
-# 11. fail2ban
 sudo apt-get install -y fail2ban
 sudo tee /etc/fail2ban/jail.local << 'EOF'
 [sshd]
@@ -163,31 +205,53 @@ findtime = 600
 EOF
 sudo systemctl enable fail2ban
 sudo systemctl start fail2ban
+```
 
-# 12. Verify unattended-upgrades (pre-installed on Ubuntu 24.04)
+Unattended security upgrades are pre-enabled on Ubuntu 24.04. Confirm:
+
+```bash
 sudo apt-get install -y unattended-upgrades
 sudo dpkg-reconfigure -plow unattended-upgrades  # select Yes
 ```
 
-### Phase 6 — Tailscale VPN (as admin user)
+**Verify:** `sudo fail2ban-client status sshd` shows the jail is active with 0 currently banned.
+
+### Phase 6 — Tailscale VPN
+
+**Goal:** Encrypted access to the application without exposing ports publicly.
+
+**Why Tailscale:** See ADR-0008 for the full decision record. Short version: WireGuard encryption, zero-config NAT traversal, app store clients for pilot users, migration path to self-hosted Headscale.
+
+**Install via APT** (preferred over curl-pipe-sh — uses package signature verification):
 
 ```bash
-# 13. Install and authenticate
-curl -fsSL https://tailscale.com/install.sh | sh
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | \
+  sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
+curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | \
+  sudo tee /etc/apt/sources.list.d/tailscale.list
+sudo apt-get update
+sudo apt-get install -y tailscale
 sudo tailscale up   # opens auth URL — approve in browser
-
-# 14. Note the Tailscale IP
-tailscale ip -4
 ```
 
-### Phase 7 — Git access for deploy user (as admin user)
+**Verify:** `tailscale ip -4` returns a `100.x.y.z` address. From your local machine (with Tailscale running): `ping <tailscale-ip>` succeeds.
+
+### Phase 7 — Git access for deploy user
+
+**Goal:** The deploy user can pull from the private repo. Read-only.
+
+**Why a separate keypair:** The deploy user has two SSH keys serving different purposes: one for CI to reach the server (Phase 3), one for the server to reach GitHub (this phase). Separate keys mean rotating one doesn't affect the other, and the GitHub key is read-only by design.
+
+1. Generate a keypair on the server:
 
 ```bash
-# 15. Generate a keypair ON THE SERVER for GitHub access
 sudo -u deploy ssh-keygen -t ed25519 -C "deploy-git@projekt-manager" \
   -f /home/deploy/.ssh/github_deploy -N ""
+```
 
-# 16. Configure deploy user to use this key for GitHub
+2. Configure the deploy user's SSH to use this key for GitHub:
+
+```bash
 sudo tee /home/deploy/.ssh/config << 'EOF'
 Host github.com
   IdentityFile ~/.ssh/github_deploy
@@ -195,51 +259,77 @@ Host github.com
 EOF
 sudo chown deploy:deploy /home/deploy/.ssh/config
 sudo chmod 600 /home/deploy/.ssh/config
+```
 
-# 17. Add the public key as a read-only Deploy Key on GitHub:
-#     Repo → Settings → Deploy keys → Add deploy key
-#     Title: "VPS deploy (read-only)", leave write access unchecked
+3. Add the public key as a **read-only** Deploy Key on GitHub (Repo > Settings > Deploy keys). Leave "Allow write access" unchecked.
+
+```bash
 sudo cat /home/deploy/.ssh/github_deploy.pub
 ```
 
-### Phase 8 — Application (as admin user)
+**Verify:** `sudo -u deploy ssh -T git@github.com` prints "successfully authenticated" (exit code 1 is normal — GitHub closes the session).
+
+### Phase 8 — Application
+
+**Goal:** Running application stack with production credentials.
+
+1. Create the project directory and clone:
 
 ```bash
-# 18. Clone repo and create production environment
 sudo mkdir -p /opt/projekt-manager
 sudo chown deploy:deploy /opt/projekt-manager
-sudo -u deploy git clone git@github.com:vlzware/Projekt-Manager.git /opt/projekt-manager
+sudo -u deploy git clone <repo-ssh-url> /opt/projekt-manager
+```
 
-# 19. Create .env from template (generate passwords with: openssl rand -base64 24)
+2. Create the production `.env` file. Generate each password independently:
+
+```bash
 sudo -u deploy cp /opt/projekt-manager/.env.example /opt/projekt-manager/.env
-sudo -u deploy nano /opt/projekt-manager/.env
-# Set: POSTGRES_PASSWORD, MINIO_ROOT_USER, MINIO_ROOT_PASSWORD,
-#       STORAGE_ACCESS_KEY=MINIO_ROOT_USER, STORAGE_SECRET_KEY=MINIO_ROOT_PASSWORD,
-#       DATABASE_URL with the postgres password, DOMAIN=:80, NODE_ENV=production, SEED=false
+```
 
-# 20. Start the stack
+Edit `/opt/projekt-manager/.env` and set these values:
+
+| Variable | What to set | Notes |
+|----------|-------------|-------|
+| `POSTGRES_PASSWORD` | `openssl rand -base64 24` | Unique generated password |
+| `DATABASE_URL` | `postgresql://pm:<password>@db:5432/projekt_manager` | Same password as above |
+| `MINIO_ROOT_USER` | A username you choose | MinIO admin account |
+| `MINIO_ROOT_PASSWORD` | `openssl rand -base64 24` | Unique generated password |
+| `STORAGE_ACCESS_KEY` | Same value as `MINIO_ROOT_USER` | The app connects to MinIO using the root credentials |
+| `STORAGE_SECRET_KEY` | Same value as `MINIO_ROOT_PASSWORD` | Same credentials, different variable name |
+| `DOMAIN` | Tailscale IP or domain when available | Caddy uses this for TLS certificate provisioning |
+| `NODE_ENV` | `production` | Enables security checks, disables seeding |
+| `SEED` | `false` | Never seed in production |
+
+3. Start the stack:
+
+```bash
 sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose up -d'
 ```
 
+**Verify:** `sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps` shows all containers as "healthy" or "running". `curl -k https://localhost/api/health` returns `{"status":"ok"}`.
+
 ### Phase 9 — GitHub Secrets and CD
 
-Add three repository secrets at Repo → Settings → Secrets → Actions:
+**Goal:** GitHub Actions can deploy automatically after CI passes.
 
-| Secret | Value |
-|--------|-------|
-| `DEPLOY_HOST` | Server **public** IP (not Tailscale — GitHub runners can't join tailnet) |
-| `DEPLOY_USER` | `deploy` |
-| `DEPLOY_KEY` | Contents of `~/.ssh/projekt-manager-deploy` (private key, from local machine) |
+Add three repository secrets at Repo > Settings > Secrets and variables > Actions:
 
-### Verification
+| Secret | Value | Why |
+|--------|-------|-----|
+| `DEPLOY_HOST` | Server **public** IP | GitHub runners cannot join the tailnet — SSH must use the public IP |
+| `DEPLOY_USER` | `deploy` | The least-privilege account from Phase 3 |
+| `DEPLOY_KEY` | Contents of `~/.ssh/projekt-manager-deploy` (private key) | The key generated in Phase 3, on your local machine |
+
+**Verify:**
 
 ```bash
-# From local machine via Tailscale — should return {"status":"ok"}
-curl http://<tailscale-ip>/api/health
-
-# From local machine via public IP — should timeout
-curl --connect-timeout 5 http://<public-ip>/api/health
-
-# Push to iteration branch or main — CI should pass, deploy should trigger
+# Push a commit to an iteration branch — CI should pass, deploy should trigger
 gh run list --workflow=Deploy --limit 3
+
+# From local machine via Tailscale
+curl -k https://<tailscale-ip>/api/health
+
+# From local machine via public IP — should timeout (firewall blocks it)
+curl --connect-timeout 5 https://<public-ip>/api/health
 ```

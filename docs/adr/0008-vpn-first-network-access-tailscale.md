@@ -2,7 +2,6 @@
 
 - **Status:** Accepted
 - **Date:** 2026-04-06
-- **Confidence:** High
 
 ## Context
 
@@ -59,10 +58,10 @@ No domain, no VPN — just HTTPS with a self-signed cert. Ruled out because brow
 - Every pilot user must install the Tailscale client (~5 min one-time setup)
 - Dependency on Tailscale's proprietary coordination server for key exchange and peer discovery (data plane remains peer-to-peer)
 - Free tier limited to 3 users — exceeding this requires paid Tailscale or migration to Headscale
-- The deployment is not representative of eventual public-facing production — integration testing of HTTPS, CORS, and cookie security attributes (`Secure` flag) is deferred
+- HTTPS remains mandatory regardless of VPN — the application requires TLS for `Secure` cookies and HSTS. Caddy must terminate TLS (`tls internal` until domain is acquired). See #47.
 
 ## References
 
 - [ADR-0003: Deployment infrastructure — VPS, Docker Compose, GitHub Actions](0003-deployment-infrastructure-vps-docker-compose-github-actions.md)
-- [ADR-0005: Session management — HttpOnly cookies](0005-session-management-httponly-cookies.md) — `Secure` flag behavior deferred until HTTPS is enabled
+- [ADR-0005: Session management — HttpOnly cookies](0005-session-management-httponly-cookies.md) — `Secure` flag requires TLS in all deployments
 - [docs/ops/server-setup.md](../ops/server-setup.md) — current server configuration and firewall rules
