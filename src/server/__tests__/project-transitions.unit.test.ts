@@ -10,8 +10,6 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { createDatabase } from '../db/connection.js';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../seed.js';
 import { eq } from 'drizzle-orm';
 import { projects } from '../db/schema.js';
@@ -25,11 +23,7 @@ import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import type { Database } from '../db/connection.js';
 import type pg from 'pg';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const migrationsFolder = path.resolve(__dirname, '../db/migrations');
+import { setupTestDb, teardownTestDb } from './helpers/setup-db.js';
 
 let db: Database;
 let pool: pg.Pool;
@@ -49,10 +43,9 @@ async function findProjectByStatus(status: WorkflowState) {
 
 // Single connection for the entire file.
 beforeAll(async () => {
-  const conn = createDatabase();
+  const conn = await setupTestDb();
   db = conn.db;
   pool = conn.pool;
-  await migrate(db, { migrationsFolder });
 });
 
 beforeEach(async () => {
@@ -61,7 +54,7 @@ beforeEach(async () => {
 });
 
 afterAll(async () => {
-  await pool.end();
+  await teardownTestDb(pool);
 });
 
 describe('transitionForward', () => {

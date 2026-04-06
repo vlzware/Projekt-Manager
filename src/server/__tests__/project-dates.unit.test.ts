@@ -10,19 +10,13 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { createDatabase } from '../db/connection.js';
-import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../seed.js';
 import { projects } from '../db/schema.js';
 import { updateDates, DateValidationError } from '../repositories/project-dates.js';
 import { ProjectNotFoundError } from '../repositories/project-read.js';
 import type { Database } from '../db/connection.js';
 import type pg from 'pg';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const migrationsFolder = path.resolve(__dirname, '../db/migrations');
+import { setupTestDb, teardownTestDb } from './helpers/setup-db.js';
 
 let db: Database;
 let pool: pg.Pool;
@@ -44,10 +38,9 @@ async function findProjectWithDates() {
 
 describe('updateDates', () => {
   beforeAll(async () => {
-    const conn = createDatabase();
+    const conn = await setupTestDb();
     db = conn.db;
     pool = conn.pool;
-    await migrate(db, { migrationsFolder });
   });
 
   beforeEach(async () => {
@@ -56,7 +49,7 @@ describe('updateDates', () => {
   });
 
   afterAll(async () => {
-    await pool.end();
+    await teardownTestDb(pool);
   });
 
   // -----------------------------------------------------------------

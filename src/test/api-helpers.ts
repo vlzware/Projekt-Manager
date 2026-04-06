@@ -39,6 +39,9 @@ export async function startApp(): Promise<FastifyInstance> {
   db = conn.db;
   pool = conn.pool;
 
+  // Verify the new pool is live and PG has released prior connections
+  await pool.query('SELECT 1');
+
   // Run migrations (idempotent — drizzle tracks applied migrations)
   await migrate(db, { migrationsFolder });
 
@@ -52,6 +55,9 @@ export async function startApp(): Promise<FastifyInstance> {
 
 /**
  * Shut down the test application. Call in `afterAll`.
+ *
+ * Closing order matters: Fastify first (stops accepting requests and
+ * waits for in-flight handlers to finish), then drain the pg pool.
  */
 export async function stopApp(): Promise<void> {
   if (app) {
