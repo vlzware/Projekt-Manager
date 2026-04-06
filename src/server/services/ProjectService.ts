@@ -149,17 +149,29 @@ export class ProjectService {
     }
 
     // Customer validation
-    if (item.customer == null || typeof item.customer !== 'object' || Array.isArray(item.customer)) {
+    if (
+      item.customer == null ||
+      typeof item.customer !== 'object' ||
+      Array.isArray(item.customer)
+    ) {
       return 'customer ist erforderlich und muss ein Objekt sein.';
     }
     const customer = item.customer as Record<string, unknown>;
     if (typeof customer.name !== 'string' || customer.name.trim() === '') {
       return 'customer.name ist erforderlich und muss ein nicht-leerer String sein.';
     }
-    if (customer.phone !== undefined && customer.phone !== null && typeof customer.phone !== 'string') {
+    if (
+      customer.phone !== undefined &&
+      customer.phone !== null &&
+      typeof customer.phone !== 'string'
+    ) {
       return 'customer.phone muss ein String sein.';
     }
-    if (customer.email !== undefined && customer.email !== null && typeof customer.email !== 'string') {
+    if (
+      customer.email !== undefined &&
+      customer.email !== null &&
+      typeof customer.email !== 'string'
+    ) {
       return 'customer.email muss ein String sein.';
     }
 
@@ -201,7 +213,10 @@ export class ProjectService {
 
     // Assigned workers validation
     if (item.assignedWorkers !== undefined && item.assignedWorkers !== null) {
-      if (!Array.isArray(item.assignedWorkers) || !item.assignedWorkers.every((w) => typeof w === 'string')) {
+      if (
+        !Array.isArray(item.assignedWorkers) ||
+        !item.assignedWorkers.every((w) => typeof w === 'string')
+      ) {
         return 'assignedWorkers muss ein Array von Strings sein.';
       }
     }

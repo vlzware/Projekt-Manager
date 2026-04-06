@@ -120,8 +120,7 @@ export const authApi = {
       body: { username, password },
     }),
 
-  logout: () =>
-    apiCall<{ success: boolean }>('/api/auth/logout', { method: 'POST' }),
+  logout: () => apiCall<{ success: boolean }>('/api/auth/logout', { method: 'POST' }),
 
   me: () => apiCall<AuthUser>('/api/auth/me'),
 };

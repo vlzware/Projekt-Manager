@@ -14,14 +14,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import {
-  startApp,
-  stopApp,
-  login,
-  authGet,
-  authPost,
-  authPatch,
-} from '../../test/api-helpers.js';
+import { startApp, stopApp, login, authGet, authPost, authPatch } from '../../test/api-helpers.js';
 
 /** Helper: find the first project in a given status from the list endpoint. */
 async function findProjectByStatus(
@@ -119,10 +112,7 @@ describe('Role-based Permission Enforcement', () => {
     it('cannot transition forward — returns 403 NOT_PERMITTED', async () => {
       const project = await findProjectByStatus(bookkeeperToken, 'geplant');
 
-      const res = await authPost(
-        bookkeeperToken,
-        `/api/projects/${project.id}/transition/forward`,
-      );
+      const res = await authPost(bookkeeperToken, `/api/projects/${project.id}/transition/forward`);
 
       expect(res.statusCode).toBe(403);
 

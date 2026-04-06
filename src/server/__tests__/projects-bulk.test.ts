@@ -103,9 +103,7 @@ describe('Bulk Project Import', () => {
       // Verify by listing projects and finding the imported one
       const listRes = await authGet(ownerToken, '/api/projects');
       const projects = listRes.json().data;
-      const imported = projects.find(
-        (p: Record<string, unknown>) => p.number === 'IMP-003',
-      );
+      const imported = projects.find((p: Record<string, unknown>) => p.number === 'IMP-003');
       expect(imported).toBeDefined();
       expect(imported.status).toBe('anfrage');
     });
@@ -122,7 +120,7 @@ describe('Bulk Project Import', () => {
             plannedStart: '2026-06-01',
             plannedEnd: '2026-06-15',
             assignedWorkers: ['Monteur A', 'Monteur B'],
-            estimatedValue: 15000.50,
+            estimatedValue: 15000.5,
             notes: 'Testnotiz',
           },
         ],

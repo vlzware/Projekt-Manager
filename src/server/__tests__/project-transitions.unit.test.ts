@@ -33,11 +33,7 @@ const TEST_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 /** Find the first project in a given state. */
 async function findProjectByStatus(status: WorkflowState) {
-  const rows = await db
-    .select()
-    .from(projects)
-    .where(eq(projects.status, status))
-    .limit(1);
+  const rows = await db.select().from(projects).where(eq(projects.status, status)).limit(1);
   return rows[0] ?? null;
 }
 
@@ -106,9 +102,7 @@ describe('transitionForward', () => {
     const project = await findProjectByStatus('erledigt');
     expect(project).not.toBeNull();
 
-    await expect(transitionForward(db, project!.id, TEST_USER_ID)).rejects.toThrow(
-      TransitionError,
-    );
+    await expect(transitionForward(db, project!.id, TEST_USER_ID)).rejects.toThrow(TransitionError);
   });
 
   it('throws ProjectNotFoundError for a nonexistent project ID', async () => {
@@ -167,6 +161,8 @@ describe('transitionBackward', () => {
   it('throws ProjectNotFoundError for a nonexistent project ID', async () => {
     const fakeId = '00000000-0000-0000-0000-000000000000';
 
-    await expect(transitionBackward(db, fakeId, TEST_USER_ID)).rejects.toThrow(ProjectNotFoundError);
+    await expect(transitionBackward(db, fakeId, TEST_USER_ID)).rejects.toThrow(
+      ProjectNotFoundError,
+    );
   });
 });

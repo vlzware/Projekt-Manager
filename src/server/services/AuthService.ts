@@ -7,7 +7,11 @@
 
 import type { FastifyBaseLogger } from 'fastify';
 import type { Database } from '../db/connection.js';
-import { findByUsername, updateLastLogin, changePassword as changePasswordRepo } from '../repositories/user.js';
+import {
+  findByUsername,
+  updateLastLogin,
+  changePassword as changePasswordRepo,
+} from '../repositories/user.js';
 import { createSession, deleteSession, deleteSessionsByUserId } from '../repositories/session.js';
 import { hashPassword, verifyPassword } from '../password.js';
 import { isCommonPassword } from '../data/common-passwords.js';
@@ -89,9 +93,7 @@ export class AuthService {
 
     // Check blocklist
     if (isCommonPassword(newPassword)) {
-      throw validationError(
-        'Dieses Passwort ist zu häufig. Bitte ein sichereres Passwort wählen.',
-      );
+      throw validationError('Dieses Passwort ist zu häufig. Bitte ein sichereres Passwort wählen.');
     }
 
     // Hash and store

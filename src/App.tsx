@@ -47,18 +47,21 @@ export function App() {
   const projects = useProjectStore((s) => s.projects);
 
   const selectedProject = selectedProjectId
-    ? projects.find((p) => p.id === selectedProjectId) ?? null
+    ? (projects.find((p) => p.id === selectedProjectId) ?? null)
     : null;
   const sessionCheckFired = useRef(false);
 
   useEffect(() => {
     if (!authUser && !sessionCheckFired.current) {
       sessionCheckFired.current = true;
-      useAuthStore.getState().checkSession().then(() => {
-        if (useAuthStore.getState().authUser) {
-          useProjectStore.getState().fetchProjects();
-        }
-      });
+      useAuthStore
+        .getState()
+        .checkSession()
+        .then(() => {
+          if (useAuthStore.getState().authUser) {
+            useProjectStore.getState().fetchProjects();
+          }
+        });
     }
   }, [authUser]);
 
@@ -71,9 +74,11 @@ export function App() {
         <Route path="/" element={<Navigate to="/kanban" replace />} />
         <Route path="*" element={<Navigate to="/kanban" replace />} />
       </Routes>
+    ) : // Fallback for tests that render <App /> without a router
+    activeView === 'kanban' ? (
+      <KanbanBoard />
     ) : (
-      // Fallback for tests that render <App /> without a router
-      activeView === 'kanban' ? <KanbanBoard /> : <CalendarView />
+      <CalendarView />
     );
 
     return (

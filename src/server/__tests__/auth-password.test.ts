@@ -10,13 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import {
-  startApp,
-  stopApp,
-  getApp,
-  login,
-  authPost,
-} from '../../test/api-helpers.js';
+import { startApp, stopApp, getApp, login, authPost } from '../../test/api-helpers.js';
 
 describe('Password Change Operations', () => {
   beforeAll(async () => {
