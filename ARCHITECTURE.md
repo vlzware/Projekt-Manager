@@ -56,12 +56,15 @@ Six responsibility layers. Dependency flows left-to-right only, never reversed. 
 | `src/domain/` | Types, transition rules, aging calc, validation, date formatting | Import from state, API, storage, or UI |
 | `src/server/config/` | Env validation (Zod), centralized policy constants (auth, rate limits, storage) | Contain business logic or import from layers above |
 | `src/server/db/` | Drizzle schema, connection, SQL migrations | Contain business logic |
-| `src/server/repositories/` | Database queries (project, user, session) | Know about HTTP or request objects |
+| `src/server/services/` | Business logic orchestration (AuthService, ProjectService) | Know about HTTP, Fastify, or request objects |
+| `src/server/repositories/` | Database queries (project, user, session) | Know about HTTP or contain business rules |
 | `src/server/storage/` | S3/MinIO client, upload/download/presign ops | Be called from anywhere except API routes |
 | `src/server/middleware/` | Cookie parsing, session auth, request decoration | Contain route handlers or business logic |
-| `src/server/routes/` | Route definitions, request validation, response serialization | Access the database directly (must go through repositories) |
+| `src/server/routes/` | Route definitions, request validation, response serialization | Access repositories directly (must go through services) |
 | `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), seed, password hashing, error types | - |
-| `src/state/` | Zustand store, API calls, client-side cache | Access the database or import server code |
+| `src/state/` | Zustand stores (authStore, projectStore, uiStore), client-side cache | Access the database or import server code |
+| `src/api/` | Centralized API client, typed fetch wrappers | Contain business logic or UI concerns |
+| `src/hooks/` | Shared React hooks (transitions, routing) | Contain API calls directly (must use stores) |
 | `src/ui/` | React components (kanban, calendar, detail, auth, layout) | Contain business logic beyond dispatching to state |
 | `src/data/` | Legacy mock data (iteration 1 artifact) | Be imported in production code |
 | `src/test/` | Shared test setup and API test helpers | Be imported in production code |
@@ -88,11 +91,14 @@ Fastify
   |  -> 401 if missing/expired
   v
 Route handler (src/server/routes/)
-  |  validates request body
-  |  calls domain functions (transition rules)
-  |  calls repository (src/server/repositories/)
+  |  validates request body (Fastify JSON schema)
+  |  delegates to service
   v
-Drizzle ORM -> PostgreSQL
+Service (src/server/services/)
+  |  business logic, domain validation
+  |  calls repository for data access
+  v
+Repository (src/server/repositories/) -> Drizzle ORM -> PostgreSQL
   |  query executes, returns rows
   v
 Route handler
@@ -116,7 +122,7 @@ React re-renders affected components
 2. **Domain types**: add TypeScript interface in `src/domain/types.ts`
 3. **Repository**: create `src/server/repositories/supplier.ts` with CRUD functions
 4. **Routes**: create `src/server/routes/suppliers.ts`, register in `src/server/app.ts`
-5. **State**: add supplier slice to `src/state/store.ts`
+5. **State**: add `src/state/supplierStore.ts` (follows authStore/projectStore pattern)
 6. **UI**: add components under `src/ui/suppliers/`
 7. **Tests**: unit tests in `src/domain/__tests__/`, API tests in `src/server/__tests__/`, component tests in `src/ui/__tests__/`
 8. **Seed data**: update `src/server/seed.ts` if demo data is needed
@@ -148,13 +154,14 @@ React re-renders affected components
 
 ### Docker Compose (production)
 
-Four services defined in `docker-compose.yml`:
+Five services defined in `docker-compose.yml`:
 
 | Service | Image / Build | Role |
 |---|---|---|
 | `app` | `Dockerfile` (multi-stage Node 22 Alpine) | Fastify server serving API + static frontend |
 | `db` | `postgres:17-alpine` | PostgreSQL with persistent volume |
 | `storage` | `minio/minio` | S3-compatible object storage |
+| `storage-init` | `minio/mc` (one-shot) | Creates the default bucket on first start, then exits |
 | `caddy` | `caddy:2-alpine` | Reverse proxy, automatic HTTPS via `Caddyfile` |
 
 Local development uses `docker-compose.dev.yml` for database and storage only; app runs via `npm run dev` (Vite + tsx watch).
