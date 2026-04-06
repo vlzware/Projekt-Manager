@@ -1,79 +1,81 @@
 # Project Journal
 
-Captures workflow decisions, scope shifts, and learnings — not what was built (that's git log) or why a technology was chosen (that's ADRs).
+Concise remarks about: (1) the workflow, (2) readjustments to the workflow, and (3) the motivation behind those readjustments. Not what was built (git log) or why a technology was chosen (ADRs).
 
-## 2026-04-06 — Structural refactor: maintainability overhaul
+## 2026-04-06 — Iteration 4: deployment and post-session audit
 
-### Trigger: code quality analysis exposed compounding debt
+### Workflow: long sessions need hard quality gates
 
-Deep multi-angle analysis (5 parallel agents: spec, backend, frontend, infra, coupling) revealed a consistent pattern: the *architecture design* (spec, ADRs, six-layer model) was solid, but the *implementation* took shortcuts. New features required touching too many files, and logic was duplicated rather than shared. The Zustand store was a 406-line god object mixing 5 concerns. Backend routes called repositories directly with no service layer. Fetch logic was copy-pasted 3x with identical session-expiry boilerplate. The spec claimed config-driven extensibility but WorkflowState was a hardcoded string union.
+The deployment session ran too long without checkpoints. Issues were closed with zero checklist boxes ticked, docs were written as command dumps, and the app was deployed over HTTP despite requiring HTTPS (Secure cookies, HSTS). Cleaned up in a follow-up session: branch squashed from 22 commits to 4, #42 reopened, docs rewritten, TLS enforcement tracked in #47, CD hardening in #48.
 
-Left unchecked, every future feature would deepen the mess. Decision: halt all feature work and restructure.
+**Readjustment:** end-of-session audit is now mandatory before closing issues. Checklist boxes get ticked individually, not assumed done because "the code is there."
 
-### What changed (77 files, +4557/-1727 lines; code-only excl. tests/docs: +2089/-908)
+**Why:** output quality degrades silently over long sessions. The earlier structural refactor (same day) was high quality with focused scope. The deployment work drifted into "just ship it." The cost of the cleanup session was higher than pausing earlier would have been.
 
-Backend: centralized config, Zod env validation, service layer (AuthService + ProjectService), repository split into 3 focused files, test file split from 1x629-line file into 5. Frontend: extracted API client eliminating 3x fetch duplication, split monolithic store into auth/project/ui slices, extracted shared transition hook, added React Router for URL-based navigation. Testing: +10 permission enforcement tests, +27 repository unit tests, shared DB setup helper fixing intermittent seed race. Docs: ARCHITECTURE.md as onboarding entry point, spec security checklist, known debt index, iteration scope mapping. Features: bulk import endpoint, DB indexes.
+### Workflow: defense in depth is not negotiable
 
-Test count: 136 → 186 across 23 files. Net code expansion — structural refactoring (splitting god objects, adding layers) adds imports, exports, and file scaffolding. The payoff is in maintainability, not line count.
+VPN encryption was treated as sufficient, skipping TLS. This left authentication broken and the API exposed over plain HTTP.
 
-### Key learning: AI-generated code accumulates structural debt silently
+**Readjustment:** HTTPS is mandatory in every deployment, regardless of network layer. No assumptions about what sits in front of the app.
 
-The agents that built iterations 1-2 produced code that worked and passed tests, but optimized locally — each feature was implemented in the most direct way without regard for how the next feature would interact. No agent spontaneously introduced a service layer, split a growing store, or flagged that copy-pasting fetch boilerplate 3 times was a pattern worth abstracting. The code looked clean file-by-file but the *connections between files* degraded steadily. This is invisible until you trace a feature change across the full call graph.
+**Why:** one failing layer should never leave customer data unprotected.
 
-Takeaway: periodic structural audits are essential in AI-assisted development — not as a nice-to-have, but as a hard gate before the codebase crosses a complexity threshold. The cost of this refactor was one session. Doing it two iterations later would have been a rewrite.
+## 2026-04-06 — Iteration 3: structural refactor
 
-### Workflow: parallel agents with file-level isolation work, shared-file agents don't
+### Workflow: periodic structural audits as a hard gate
 
-Launched up to 6 agents simultaneously for non-overlapping file groups. Agents that touched independent files (ARCHITECTURE.md, spec docs, DB indexes, permission tests) landed cleanly. Agents that touched files already modified in the main thread (store.ts, component files) caused overwrites requiring manual reconciliation. Rule for future: agents get isolated file sets, never files the orchestrator is actively editing.
+Multi-angle analysis (5 parallel agents: spec, backend, frontend, infra, coupling) found the architecture was sound but the implementation took shortcuts — duplicated logic, god objects, hardcoded types that the spec claimed were configurable. Decision: halt features and restructure. 77 files changed, tests 136 to 186.
 
-### Spec-implementation gap as a quality signal
+**Readjustment:** structural audit before each complexity threshold, not after. Compare spec claims against actual code to catch drift early.
 
-The most actionable finding was comparing spec extensibility claims against actual code. "States driven by configuration" was false — the type was hardcoded. "Views consume the shared state layer independently" was technically true but the hardcoded ViewMode union and ternary in App.tsx made adding a view a 3-file surgery. Spec claims without corresponding implementation tests are wishful thinking. Future iterations should include "extensibility door" smoke tests that verify the spec's promises.
+**Why:** AI-generated code optimizes locally — each feature lands cleanly in isolation, but cross-file coupling degrades silently. Invisible until you trace a change across the full call graph.
 
-## 2026-04-05 — Iteration 2 retrospective
+### Workflow: parallel agents need file-level isolation
 
-### Scope shift: deployment deferred
+6 agents launched simultaneously. Non-overlapping file groups landed cleanly. Agents touching files the orchestrator was also editing caused overwrites.
 
-Iteration 2 was scoped as "Deployment and Data." Implementation went fast — one session on 04-04 produced a running full stack with 136 passing tests. Security review on 04-05 found 42 issues (6 critical). Deployment was deferred; the iteration became "build the secure foundation." The right call — the 04-04 codebase would have been an attractive-looking liability.
+**Readjustment:** agents get exclusive file sets. No shared files between parallel agents or between agents and the orchestrator.
 
-### Key learning: LLM security blind spots
+### Workflow: spec extensibility claims need smoke tests
 
-LLM-generated code passes tests and looks professional, but has systematic security blind spots. It optimizes for "make it work" and underweights "make it safe" — no input validation, no security headers, no CSRF thinking, hardcoded dev credentials with no production guard. A security review before any deployment is non-negotiable in this workflow.
+"States driven by configuration" was false — the type was hardcoded. Spec promises without implementation tests are wishful thinking.
 
-### Workflow: big-bang implementation → big-bang review doesn't scale
+**Readjustment:** future iterations include "extensibility door" tests that verify the spec's promises compile and run.
 
-The entire backend, auth, storage, Docker, and CI/CD were built in one session, then reviewed in one session. Result: 4 `feat` commits followed by 12+ `fix` commits. Smaller implementation + review cycles (per-module) would catch issues earlier with less rework. The CONTRIBUTING.md workflow (spec → tests → implementation → review) doesn't account for security as a distinct concern — it's bundled under "code quality review," which proved insufficient.
+## 2026-04-05 — Iteration 2: security foundation
 
-### Workflow: adversarial review pattern scales
+### Workflow: security review is a distinct phase, not part of "code quality"
 
-The adversarial review pattern from iteration 1 scaled to the security domain. 5 parallel reviewers (auth/sessions, API/injection, Docker/infra, frontend/XSS, storage/dependencies) → 6 agents fixing non-overlapping file groups → second wave for cross-cutting changes. The pattern works, but needs to happen incrementally, not as a final gate.
+Implementation went fast — full stack in one session, 136 passing tests. Security review found 42 issues (6 critical). Deployment deferred; iteration rescoped to "secure foundation."
 
-### Presentation skipped — no visible change for non-technical users
+**Readjustment:** security review is a separate workflow step, not bundled under code quality. Non-negotiable before any deployment.
 
-The backend, auth, storage, and security work is invisible to non-technical users. The Kanban board looks identical to the walking skeleton from iteration 1. The only visible difference would be a real URL instead of localhost — but deployment was deferred. Presenting an identical-looking app wouldn't serve the grounding purpose. Stakes are much higher now that the app is heading toward production — the quality and security grind is where the real time goes.
+**Why:** AI-generated code systematically underweights security — no input validation, no security headers, hardcoded dev credentials without production guards. Tests pass, code looks professional, but the security posture is absent.
 
-### Workflow adjustments still in flux
+### Workflow: incremental implementation + review, not big-bang
 
-Constantly adjusting the LLM-assisted workflow: how to orchestrate agents, when to review, what to parallelize. This is expected for a new process, but the churn suggests the workflow needs to stabilize before iteration 3. Key open question: at what granularity should the implement→review cycle operate?
+One session built everything, another session reviewed everything. Result: 4 feat commits followed by 12+ fix commits.
 
-## 2026-04-03 — Iteration 0/1 workflow decisions
+**Readjustment:** smaller cycles — implement and review per module, not per iteration.
 
-### Spec evaluation process
+### Workflow: adversarial review scales
 
-5 spec proposals from different LLMs evaluated against 8 criteria using independent adversarial agents. Best elements synthesized into the final spec. Two rounds of adversarial review (9+10 agents). This established the pattern: parallel generation → adversarial review → synthesis.
+Parallel adversarial reviewers (5 domain-specific agents) followed by parallel fixers followed by a cross-cutting second wave. The pattern works but should happen incrementally, not as a final gate.
 
-### Parallel prototyping as a decision method
+## 2026-04-03 — Iteration 0/1: bootstrap
 
-5 tech stacks prototyped in parallel by independent agents in isolated worktrees. Empirical evaluation replaced speculation. Showed all prototypes to pilot company ("excited") — validated information architecture before choosing a stack. The method worked well; the only risk is that prototypes can look "done" when they're not.
+### Workflow: parallel generation + adversarial review + synthesis
 
-### UX principle correction
+5 spec proposals evaluated against 8 criteria by independent agents. Best elements synthesized. Two rounds of adversarial review (9+10 agents). Established the core pattern.
 
-Board structure IS the visibility mechanism — action-column accumulation signals falling behind. Not per-card decoration. This was a fundamental correction to how the Kanban semantics work.
+### Workflow: parallel prototyping replaces speculation
 
-### Stack decision deferred correctly
+5 tech stacks prototyped in parallel in isolated worktrees. Showed all to pilot company — validated information architecture before choosing a stack. Stack decision deferred to iteration 1, where empirical evidence could inform it (ADR-0002).
 
-Stack decision deferred from iteration 0 to iteration 1, where parallel prototyping could inform it empirically. Decision rationale recorded in ADR-0002.
+### UX insight: board structure IS the visibility mechanism
 
-## 2026-04-02 — Project bootstrap workflow
+Action-column accumulation signals falling behind. Not per-card decoration.
 
-Multi-agent teams for spec preparation (8 agents) and framework evaluation (6 agents). Established the pattern of parallel agent teams for exploratory work. Open items tracked as GitHub Issues from day one.
+## 2026-04-02 — Project bootstrap
+
+Parallel agent teams for spec preparation (8 agents) and framework evaluation (6 agents). Open items tracked as GitHub Issues from day one.
