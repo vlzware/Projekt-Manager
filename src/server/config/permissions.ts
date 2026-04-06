@@ -1,5 +1,6 @@
 export type Permission =
   | 'project:read'
+  | 'project:create'
   | 'project:transition'
   | 'project:dates'
   | 'auth:change-password';
@@ -7,8 +8,8 @@ export type Permission =
 export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
 
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
-  owner: ['project:read', 'project:transition', 'project:dates', 'auth:change-password'],
-  office: ['project:read', 'project:transition', 'project:dates', 'auth:change-password'],
+  owner: ['project:read', 'project:create', 'project:transition', 'project:dates', 'auth:change-password'],
+  office: ['project:read', 'project:create', 'project:transition', 'project:dates', 'auth:change-password'],
   worker: ['project:read', 'auth:change-password'],
   bookkeeper: ['project:read', 'auth:change-password'],
 };

@@ -147,6 +147,8 @@ export class ProjectService {
     if (typeof item.title !== 'string' || item.title.trim() === '') {
       return 'title ist erforderlich und muss ein nicht-leerer String sein.';
     }
+
+    // Customer validation
     if (item.customer == null || typeof item.customer !== 'object' || Array.isArray(item.customer)) {
       return 'customer ist erforderlich und muss ein Objekt sein.';
     }
@@ -154,11 +156,73 @@ export class ProjectService {
     if (typeof customer.name !== 'string' || customer.name.trim() === '') {
       return 'customer.name ist erforderlich und muss ein nicht-leerer String sein.';
     }
+    if (customer.phone !== undefined && customer.phone !== null && typeof customer.phone !== 'string') {
+      return 'customer.phone muss ein String sein.';
+    }
+    if (customer.email !== undefined && customer.email !== null && typeof customer.email !== 'string') {
+      return 'customer.email muss ein String sein.';
+    }
+
+    // Address validation (optional, but must be well-formed if present)
+    if (item.address !== undefined && item.address !== null) {
+      if (typeof item.address !== 'object' || Array.isArray(item.address)) {
+        return 'address muss ein Objekt sein.';
+      }
+      const addr = item.address as Record<string, unknown>;
+      if (typeof addr.street !== 'string' || addr.street.trim() === '') {
+        return 'address.street ist erforderlich und muss ein nicht-leerer String sein.';
+      }
+      if (typeof addr.zip !== 'string' || addr.zip.trim() === '') {
+        return 'address.zip ist erforderlich und muss ein nicht-leerer String sein.';
+      }
+      if (typeof addr.city !== 'string' || addr.city.trim() === '') {
+        return 'address.city ist erforderlich und muss ein nicht-leerer String sein.';
+      }
+    }
+
+    // Status validation
     if (item.status !== undefined && item.status !== null) {
       if (typeof item.status !== 'string' || !VALID_STATES.has(item.status)) {
         return `status '${String(item.status)}' ist kein gültiger Workflow-Status.`;
       }
     }
+
+    // Date validation
+    if (item.plannedStart !== undefined && item.plannedStart !== null) {
+      if (typeof item.plannedStart !== 'string' || isNaN(Date.parse(item.plannedStart))) {
+        return 'plannedStart muss ein gültiges ISO-Datum sein.';
+      }
+    }
+    if (item.plannedEnd !== undefined && item.plannedEnd !== null) {
+      if (typeof item.plannedEnd !== 'string' || isNaN(Date.parse(item.plannedEnd))) {
+        return 'plannedEnd muss ein gültiges ISO-Datum sein.';
+      }
+    }
+
+    // Assigned workers validation
+    if (item.assignedWorkers !== undefined && item.assignedWorkers !== null) {
+      if (!Array.isArray(item.assignedWorkers) || !item.assignedWorkers.every((w) => typeof w === 'string')) {
+        return 'assignedWorkers muss ein Array von Strings sein.';
+      }
+    }
+
+    // Estimated value validation (optional, but must be numeric if present)
+    if (item.estimatedValue !== undefined && item.estimatedValue !== null) {
+      if (typeof item.estimatedValue !== 'string' && typeof item.estimatedValue !== 'number') {
+        return 'estimatedValue muss eine Zahl oder ein numerischer String sein.';
+      }
+      if (isNaN(Number(item.estimatedValue))) {
+        return 'estimatedValue muss ein gültiger numerischer Wert sein.';
+      }
+    }
+
+    // Notes validation (optional, but must be a string if present)
+    if (item.notes !== undefined && item.notes !== null) {
+      if (typeof item.notes !== 'string') {
+        return 'notes muss ein String sein.';
+      }
+    }
+
     return null;
   }
 }
