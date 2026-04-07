@@ -10,6 +10,7 @@ import { KanbanBoard } from '@/ui/kanban/KanbanBoard';
 import { CalendarView } from '@/ui/calendar/CalendarView';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
+import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
 import styles from './App.module.css';
 
 /**
@@ -104,6 +105,7 @@ export function App() {
         {selectedProject && (
           <ProjectDetailPanel project={selectedProject} onClose={() => selectProject(null)} />
         )}
+        <ConfirmDialog />
       </div>
     );
   }

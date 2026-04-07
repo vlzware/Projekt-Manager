@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
-import { mockProjects } from '@/data/mockProjects';
+import { mockProjects } from '@/test/fixtures/mockProjects';
 import { STATE_CONFIGS } from '@/config/stateConfig';
 import { BRANDING } from '@/config/brandingConfig';
+import { mockConfirmAccept, mockConfirmReject } from '@/test/confirmHelpers';
 import { App } from '@/App';
 
 import * as collapseTierHook from '@/ui/kanban/useCollapseTier';
@@ -121,7 +122,7 @@ describe('Project Card', () => {
   // CT-7: [→] button triggers state change and moves card to next column
   it('CT-7: forward button triggers state change with confirmation', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = mockConfirmAccept();
 
     render(<App />);
 
@@ -130,21 +131,21 @@ describe('Project Card', () => {
     await user.click(forwardBtn);
 
     // Finding 4: verify full dialog format, not just state names
-    expect(window.confirm).toHaveBeenCalledWith(
+    expect(confirmSpy).toHaveBeenCalledWith(
       expect.stringContaining('Status ändern: Geplant → In Arbeit?'),
     );
 
-    // Card should now be in 'in_arbeit' column
-    const inArbeitColumn = screen.getByTestId('kanban-column-in_arbeit');
-    expect(within(inArbeitColumn).getByTestId('project-card-p07')).toBeInTheDocument();
-
-    vi.restoreAllMocks();
+    // Card should now be in 'in_arbeit' column (transition runs after confirm resolves)
+    await waitFor(() => {
+      const inArbeitColumn = screen.getByTestId('kanban-column-in_arbeit');
+      expect(within(inArbeitColumn).getByTestId('project-card-p07')).toBeInTheDocument();
+    });
   });
 
   // Finding 10 (R2): dialog cancellation — project must NOT transition when user clicks Abbrechen
   it('CT-7b: forward button does not transition when confirm is cancelled', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const confirmSpy = mockConfirmReject();
 
     render(<App />);
 
@@ -152,7 +153,7 @@ describe('Project Card', () => {
     const forwardBtn = screen.getByTestId('forward-button-p07');
     await user.click(forwardBtn);
 
-    expect(window.confirm).toHaveBeenCalled();
+    expect(confirmSpy).toHaveBeenCalled();
 
     // Card should remain in 'geplant' column
     const geplantColumn = screen.getByTestId('kanban-column-geplant');
@@ -161,8 +162,6 @@ describe('Project Card', () => {
     // Card should NOT be in 'in_arbeit'
     const inArbeitColumn = screen.getByTestId('kanban-column-in_arbeit');
     expect(within(inArbeitColumn).queryByTestId('project-card-p07')).not.toBeInTheDocument();
-
-    vi.restoreAllMocks();
   });
 
   // CT-8: [→] button is hidden on Erledigt cards

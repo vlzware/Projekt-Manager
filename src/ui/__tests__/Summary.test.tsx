@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
-import { mockProjects } from '@/data/mockProjects';
+import { mockProjects } from '@/test/fixtures/mockProjects';
+import { mockConfirmAccept } from '@/test/confirmHelpers';
 import { App } from '@/App';
 
 beforeEach(() => {
@@ -58,7 +59,7 @@ describe('Summary Area', () => {
   // CT-13: Summary area updates after a state change
   it('CT-13: summary area updates after a state change', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockConfirmAccept();
 
     render(<App />);
 
@@ -70,10 +71,10 @@ describe('Summary Area', () => {
     const forwardBtn = screen.getByTestId('forward-button-p13');
     await user.click(forwardBtn);
 
-    // Now should be 2
-    expect(rechnungIndicator).toHaveTextContent('2');
-
-    vi.restoreAllMocks();
+    // Now should be 2 (transition runs after confirm resolves)
+    await waitFor(() => {
+      expect(rechnungIndicator).toHaveTextContent('2');
+    });
   });
 
   // CT-14: Clicking a summary indicator filters the Kanban to matching projects
@@ -117,7 +118,7 @@ describe('Summary Area', () => {
   // Finding 4 (R2): zero-count action state should not render an indicator
   it('zero-count action state is excluded from summary', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockConfirmAccept();
 
     render(<App />);
 
@@ -129,9 +130,9 @@ describe('Summary Area', () => {
     await user.click(screen.getByTestId('forward-button-p02'));
 
     // Anfrage now has 0 projects — indicator should be absent
-    expect(screen.queryByTestId('summary-action-anfrage')).not.toBeInTheDocument();
-
-    vi.restoreAllMocks();
+    await waitFor(() => {
+      expect(screen.queryByTestId('summary-action-anfrage')).not.toBeInTheDocument();
+    });
   });
 
   // CT-15: "Filter aufheben" button clears the filter
