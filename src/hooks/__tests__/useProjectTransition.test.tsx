@@ -62,9 +62,7 @@ describe('useProjectTransition — canForward / canBackward', () => {
   });
 
   it('allows both directions in the middle of the workflow', () => {
-    const { result } = renderHook(() =>
-      useProjectTransition(makeProject({ status: 'in_arbeit' })),
-    );
+    const { result } = renderHook(() => useProjectTransition(makeProject({ status: 'in_arbeit' })));
     expect(result.current.canForward).toBe(true);
     expect(result.current.canBackward).toBe(true);
   });
@@ -126,9 +124,7 @@ describe('useProjectTransition — forward', () => {
 
 describe('useProjectTransition — backward', () => {
   it('asks for confirmation, then dispatches transitionBackward when confirmed', async () => {
-    const { result } = renderHook(() =>
-      useProjectTransition(makeProject({ status: 'in_arbeit' })),
-    );
+    const { result } = renderHook(() => useProjectTransition(makeProject({ status: 'in_arbeit' })));
 
     await act(async () => {
       await result.current.backward();
@@ -140,9 +136,7 @@ describe('useProjectTransition — backward', () => {
 
   it('short-circuits when a mutation is already in flight', async () => {
     mockMutationInFlight = { p1: true };
-    const { result } = renderHook(() =>
-      useProjectTransition(makeProject({ status: 'in_arbeit' })),
-    );
+    const { result } = renderHook(() => useProjectTransition(makeProject({ status: 'in_arbeit' })));
 
     await act(async () => {
       await result.current.backward();

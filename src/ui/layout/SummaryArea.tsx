@@ -47,11 +47,7 @@ export function SummaryArea() {
         </button>
       ))}
       {anyFilterActive && (
-        <button
-          className={styles.clearButton}
-          onClick={clearFilters}
-          data-testid="clear-filter"
-        >
+        <button className={styles.clearButton} onClick={clearFilters} data-testid="clear-filter">
           Filter aufheben
         </button>
       )}

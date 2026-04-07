@@ -40,11 +40,7 @@ export function ConfirmDialog() {
   if (!isOpen) return null;
 
   return (
-    <div
-      className={styles.overlay}
-      onClick={() => resolve(false)}
-      data-testid="confirm-overlay"
-    >
+    <div className={styles.overlay} onClick={() => resolve(false)} data-testid="confirm-overlay">
       <div
         className={styles.dialog}
         role="dialog"

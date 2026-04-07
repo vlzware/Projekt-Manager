@@ -78,10 +78,7 @@ const subscribers: Map<DomainEventName, Set<AnySubscriber>> = new Map();
  * Subscribe to a domain event. Returns an unsubscribe function so callers
  * can detach (essential for hot-reload and tests).
  */
-export function subscribe<E extends DomainEventName>(
-  event: E,
-  handler: Subscriber<E>,
-): () => void {
+export function subscribe<E extends DomainEventName>(event: E, handler: Subscriber<E>): () => void {
   let set = subscribers.get(event);
   if (!set) {
     set = new Set<AnySubscriber>();
@@ -115,10 +112,7 @@ export async function emit<E extends DomainEventName>(
       await (handler as Subscriber<E>)(payload);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log?.info(
-        { event, error: message },
-        'event_subscriber_failed',
-      );
+      log?.info({ event, error: message }, 'event_subscriber_failed');
     }
   }
 }

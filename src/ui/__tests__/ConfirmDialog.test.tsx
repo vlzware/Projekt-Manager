@@ -37,9 +37,7 @@ describe('ConfirmDialog', () => {
   it('uses the supplied custom labels', () => {
     render(<ConfirmDialog />);
     act(() => {
-      void useConfirmStore
-        .getState()
-        .request('Test', { confirmLabel: 'Ja', cancelLabel: 'Nein' });
+      void useConfirmStore.getState().request('Test', { confirmLabel: 'Ja', cancelLabel: 'Nein' });
     });
     expect(screen.getByTestId('confirm-ok')).toHaveTextContent('Ja');
     expect(screen.getByTestId('confirm-cancel')).toHaveTextContent('Nein');
