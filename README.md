@@ -29,10 +29,12 @@ The app is served by Caddy on ports 80/443. The application itself listens on po
 
 ```bash
 cp .env.example .env                  # first time only — edit passwords if desired
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up db storage
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init
 npm install
 npm run dev                           # starts backend + frontend at http://localhost:5173
 ```
+
+`storage-init` is a one-shot container that creates the MinIO bucket on first start; it exits after the bucket exists. Skipping it is what causes `NoSuchBucket` failures in the storage tests.
 
 `npm run dev` starts both the Fastify backend (port 3000) and the Vite dev server (port 5173) via `concurrently`. API requests are proxied automatically. To use a custom frontend port: `npm run dev:client -- --port 3005`.
 
