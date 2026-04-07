@@ -170,6 +170,20 @@ sudo chmod 600 /home/deploy/.ssh/authorized_keys
 
 **Why the official Docker repo:** Ubuntu's `docker.io` package lags behind on security patches and does not include the Compose V2 plugin. The official repo uses `signed-by` APT pinning — the GPG key (`docker.asc`) is bound to this specific repository, preventing it from being used to sign packages from other sources.
 
+**Why pinned versions:** Docker Engine and Compose plugin versions are pinned across every host (local dev, VPS) and placed on apt hold. This prevents silent drift from `apt upgrade` / `unattended-upgrades` and keeps `docker compose` behaviour deterministic between local and production. See [ADR-0009](../adr/0009-pin-docker-versions-across-environments.md) for the full decision and upgrade procedure.
+
+**Pinned versions (current):**
+
+| Package | Version |
+|---|---|
+| `docker-ce` | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `docker-ce-cli` | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `containerd.io` | `2.2.2-1~ubuntu.24.04~noble` |
+| `docker-buildx-plugin` | `0.33.0-1~ubuntu.24.04~noble` |
+| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble` |
+
+Add the Docker apt repository:
+
 ```bash
 sudo apt-get install -y ca-certificates curl
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -179,11 +193,37 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
   https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" | \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Install the pinned versions explicitly (not `apt-get install docker-ce` — that grabs latest):
+
+```bash
+sudo apt-get install -y \
+  docker-ce=5:29.3.1-1~ubuntu.24.04~noble \
+  docker-ce-cli=5:29.3.1-1~ubuntu.24.04~noble \
+  containerd.io=2.2.2-1~ubuntu.24.04~noble \
+  docker-buildx-plugin=0.33.0-1~ubuntu.24.04~noble \
+  docker-compose-plugin=5.1.1-1~ubuntu.24.04~noble
 sudo usermod -aG docker deploy
 ```
 
-**Verify:** `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` then `docker ps` returns an empty table (not "permission denied").
+Hold the versions so future `apt upgrade` cannot bump them:
+
+```bash
+sudo apt-mark hold docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+**Verify:**
+
+```bash
+docker --version                  # expect: Docker version 29.3.1
+docker compose version            # expect: Docker Compose version v5.1.1
+apt-mark showhold                 # expect: all five packages listed
+```
+
+Then `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` and `docker ps` — should return an empty table (not "permission denied").
+
+**Upgrading later:** Do not bump Docker casually. Follow the lockstep procedure in ADR-0009 — unhold, install the new explicit version on a non-production host first, smoke test, repeat on remaining hosts (VPS last), then update both the ADR and the version table above.
 
 **Note:** Docker group membership grants effective root access on the host (a known Docker design decision). The deploy user can escalate via `docker run -v /:/host ...`. This is tracked as a hardening item in #48.
 
