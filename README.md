@@ -4,7 +4,7 @@ A centralized system for consolidation, control, and viewing of data and process
 
 ## Status
 
-**Iteration 3 — Stabilization**: Structural refactor and maintainability overhaul. Service layer, split stores, centralized API client, test expansion (136 → 186). Fastify backend, PostgreSQL, MinIO object storage, Caddy reverse proxy — all via Docker Compose. Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
+**Iteration 4 — Deployment & integration**: Hetzner VPS deployment via Docker Compose, Caddy reverse proxy, VPN-first access (Tailscale, [ADR-0008](docs/adr/0008-vpn-first-network-access-tailscale.md)), CD pipeline with deploy-by-SHA + smoke test + rollback. Built on the iteration-3 stabilized codebase (service layer, split stores, centralized API client, 186 tests). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
 
 ## Prerequisites
 

@@ -20,8 +20,8 @@ This iteration must answer two questions:
 |---|---|---|
 | 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
 | 2 | Persistence (database + API), authentication, object storage | Accepted |
-| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | **Current** |
-| 4 | Deployment, integration testing, monitoring | Planned |
+| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | Accepted |
+| 4 | Deployment, integration testing, CD pipeline, VPN access | **Current** |
 
 ---
 

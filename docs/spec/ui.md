@@ -1,6 +1,6 @@
 # UI Specification
 
-*Iteration 2 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
 
 ## 8. UI Specification
 
