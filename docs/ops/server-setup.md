@@ -48,10 +48,11 @@ Tailscale uses WireGuard (UDP/41641 by default), but relies on NAT traversal —
 ## Network Access
 
 - **VPN:** Tailscale (WireGuard-based) — see ADR-0008
-- **Application URL:** `https://<tailscale-ip>` via VPN (Caddy with `tls internal` until domain is acquired)
-- **Caddy:** Reverse proxy with TLS termination. Uses internal CA (self-signed) until a domain enables Let's Encrypt.
+- **Application URL (target state):** `https://prmng.org`, resolved to the server's tailnet interface via Tailscale DNS override or subnet routing
+- **Caddy:** Reverse proxy with TLS termination via Let's Encrypt, using DNS-01 ACME through the Cloudflare provider (no public ACME port required)
 - Pilot users must install the Tailscale client and join the tailnet to access the app
-- **HTTPS is mandatory** in all deployments — the application requires TLS for `Secure` cookies and HSTS. See #47 for domain/certificate planning.
+- **HTTPS is mandatory** in every deployment — TLS for `Secure` cookies and HSTS is a baseline security requirement and is not substituted by the VPN. Defense in depth: VPN and TLS are independent controls.
+- **Current deployment state (as of 2026-04-07):** the test server still serves plain HTTP — this is broken, blocks pilot use, and is tracked by #47. No pilot users should be onboarded until this is fixed.
 
 ## Software Installed
 
