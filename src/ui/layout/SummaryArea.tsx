@@ -7,10 +7,13 @@ import styles from './SummaryArea.module.css';
 export function SummaryArea() {
   const projects = useProjectStore((s) => s.projects);
   const activeFilter = useUIStore((s) => s.activeFilter);
+  const filterNoDates = useUIStore((s) => s.filterNoDates);
   const setFilter = useUIStore((s) => s.setFilter);
+  const clearFilters = useUIStore((s) => s.clearFilters);
   const getSummary = useProjectStore((s) => s.getSummary);
 
   const summary = getSummary();
+  const anyFilterActive = activeFilter !== null || filterNoDates;
 
   const handleFilterClick = (state: WorkflowState) => {
     setFilter(activeFilter === state ? null : state);
@@ -43,10 +46,10 @@ export function SummaryArea() {
           {count} {STATE_CONFIG_MAP[state].label} seit &gt;{thresholdDays} Tagen
         </button>
       ))}
-      {activeFilter && (
+      {anyFilterActive && (
         <button
           className={styles.clearButton}
-          onClick={() => setFilter(null)}
+          onClick={clearFilters}
           data-testid="clear-filter"
         >
           Filter aufheben

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
-import { mockProjects } from '@/data/mockProjects';
+import { mockProjects } from '@/test/fixtures/mockProjects';
 import { App } from '@/App';
 
 beforeEach(() => {
@@ -77,6 +77,51 @@ describe('Calendar View', () => {
     const counter = screen.getByTestId('no-dates-counter');
     expect(counter).toBeInTheDocument();
     expect(counter).toHaveTextContent('4 Projekte ohne Termin');
+  });
+
+  // Clicking the "no-dates" counter switches to kanban with the no-dates filter
+  // applied — only projects missing both planned dates remain visible.
+  it('clicking the no-dates counter filters Kanban to projects without dates', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    // Switch to calendar view
+    await user.click(screen.getByTestId('view-toggle-kalender'));
+
+    // Click the counter
+    await user.click(screen.getByTestId('no-dates-counter'));
+
+    // Should be back on Kanban
+    expect(screen.getByTestId('kanban-board')).toBeInTheDocument();
+
+    // p01 (anfrage, no dates) — visible
+    expect(screen.getByTestId('project-card-p01')).toBeInTheDocument();
+    // p07 (geplant, has both plannedStart and plannedEnd from seed) — NOT visible
+    expect(screen.queryByTestId('project-card-p07')).not.toBeInTheDocument();
+
+    // The "Filter aufheben" button is shown so the user can clear the filter
+    expect(screen.getByTestId('clear-filter')).toBeInTheDocument();
+  });
+
+  // The no-dates filter is mutually exclusive with the workflow-state filter.
+  it('clicking a workflow-state filter clears the no-dates filter', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    // Activate the no-dates filter via the calendar route.
+    await user.click(screen.getByTestId('view-toggle-kalender'));
+    await user.click(screen.getByTestId('no-dates-counter'));
+
+    // Sanity: only no-dates projects visible.
+    expect(screen.queryByTestId('project-card-p07')).not.toBeInTheDocument();
+
+    // Now click an action-state filter — this should switch filters.
+    await user.click(screen.getByTestId('summary-action-anfrage'));
+
+    // p01 is in anfrage and has no dates → still visible.
+    expect(screen.getByTestId('project-card-p01')).toBeInTheDocument();
+    // p13 (rechnung_faellig) is filtered out by the state filter.
+    expect(screen.queryByTestId('project-card-p13')).not.toBeInTheDocument();
   });
 
   // CT-17: Changing dates in detail panel updates calendar bar position
