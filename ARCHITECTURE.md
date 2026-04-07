@@ -66,8 +66,7 @@ Six responsibility layers. Dependency flows left-to-right only, never reversed. 
 | `src/api/` | Centralized API client, typed fetch wrappers | Contain business logic or UI concerns |
 | `src/hooks/` | Shared React hooks (transitions, routing) | Contain API calls directly (must use stores) |
 | `src/ui/` | React components (kanban, calendar, detail, auth, layout) | Contain business logic beyond dispatching to state |
-| `src/data/` | Legacy mock data (iteration 1 artifact) | Be imported in production code |
-| `src/test/` | Shared test setup and API test helpers | Be imported in production code |
+| `src/test/` | Shared test setup, API test helpers, and seed fixtures | Be imported in production code |
 
 ---
 
