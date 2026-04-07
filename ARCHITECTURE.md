@@ -114,6 +114,32 @@ React re-renders affected components
 
 ---
 
+## API Surface
+
+All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives here because [`docs/spec/api.md`](docs/spec/api.md) is intentionally stack-agnostic (operations, inputs, outputs — not URLs).
+
+| Method | Path | Auth | Permission | Rate limit | Purpose |
+|---|---|---|---|---|---|
+| GET | `/api/health` | none | — | none | Liveness probe; does not touch the database |
+| POST | `/api/auth/login` | none | — | 5 / 1 min | Login; sets HttpOnly `session` cookie |
+| POST | `/api/auth/logout` | session | — | none | Invalidates the current session |
+| GET | `/api/auth/me` | session | — | none | Current user profile |
+| POST | `/api/auth/change-password` | session | — | 5 / 1 min | Change own password (requires current password) |
+| GET | `/api/projects` | session | — | none | List projects (optional `offset`, `limit`) |
+| GET | `/api/projects/:id` | session | — | none | Single project |
+| POST | `/api/projects/:id/transition/forward` | session | `project:transition` | none | Advance status by one step |
+| POST | `/api/projects/:id/transition/backward` | session | `project:transition` | none | Reverse status by one step |
+| PATCH | `/api/projects/:id/dates` | session | `project:dates` | none | Update `plannedStart` / `plannedEnd` |
+| POST | `/api/projects/bulk/import` | session | `project:create` | none | Import an array of projects |
+
+Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Both are enforced centrally in `src/server/middleware/auth.ts` — never at the route level.
+
+Route definitions live in `src/server/routes/auth.ts`, `src/server/routes/projects.ts`, and `src/server/routes/projects-bulk.ts`. The health endpoint is registered in `src/server/start.ts`.
+
+**Keep this table in sync** when adding or changing endpoints. It is the onboarding reference and is cross-checked by the spec (`docs/spec/api.md`) for abstract-operation coverage.
+
+---
+
 ## How to Extend
 
 ### Adding a new entity (e.g., Supplier)
