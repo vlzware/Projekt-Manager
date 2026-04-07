@@ -97,12 +97,12 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
   // ── Step 8: User clicks "Nächster Schritt" — confirmation dialog appears ──
   // ── Step 9: User confirms — card moves to In Arbeit ──
   // AC-5: Forward transition with German confirmation dialog
-  const [forwardDialog] = await Promise.all([
-    page.waitForEvent('dialog'),
-    page.getByTestId('detail-forward-button').click(),
-  ]);
-  expect(forwardDialog.message()).toContain('Geplant → In Arbeit');
-  await forwardDialog.accept();
+  await page.getByTestId('detail-forward-button').click();
+  const forwardDialog = page.getByTestId('confirm-dialog');
+  await expect(forwardDialog).toBeVisible();
+  await expect(forwardDialog).toContainText('Geplant → In Arbeit');
+  await page.getByTestId('confirm-ok').click();
+  await expect(forwardDialog).not.toBeVisible();
   await expect(page.getByTestId('detail-status-badge')).toContainText('In Arbeit');
 
   // Verify the card is now in the "In Arbeit" column
@@ -115,12 +115,12 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
 
   // ── Step 10: User clicks "Vorheriger Schritt" — card moves back to Geplant ──
   // AC-6: Backward transition
-  const [backwardDialog] = await Promise.all([
-    page.waitForEvent('dialog'),
-    page.getByTestId('detail-backward-button').click(),
-  ]);
-  expect(backwardDialog.message()).toContain('In Arbeit → Geplant');
-  await backwardDialog.accept();
+  await page.getByTestId('detail-backward-button').click();
+  const backwardDialog = page.getByTestId('confirm-dialog');
+  await expect(backwardDialog).toBeVisible();
+  await expect(backwardDialog).toContainText('In Arbeit → Geplant');
+  await page.getByTestId('confirm-ok').click();
+  await expect(backwardDialog).not.toBeVisible();
   await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
 
   // Verify the card is back in the "Geplant" column
@@ -133,9 +133,16 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
 
   // ── Step 11: User changes planned end date via date picker in detail panel ──
   // AC-7: Changing a date updates plannedEnd and persists
-  // Both geplant projects have dates from seed data — only end date is changed
+  // Both geplant projects have dates from seed data — only end date is changed.
+  // Wait for the PATCH to land before moving on, otherwise the next steps may
+  // race the optimistic update against the actual server commit.
   const endDateInput = page.getByTestId('detail-date-end');
-  await endDateInput.fill('2026-04-25');
+  await Promise.all([
+    page.waitForResponse(
+      (r) => /\/api\/projects\/[^/]+\/dates$/.test(r.url()) && r.request().method() === 'PATCH',
+    ),
+    endDateInput.fill('2026-04-25'),
+  ]);
 
   // ── Step 12: User switches to calendar view — project bar reflects the new date ──
   // AC-3: Calendar renders projects with planned dates as colored bars
