@@ -20,6 +20,7 @@ import {
 import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { notFound, validationError } from '../errors.js';
+import { emit } from './events.js';
 
 export interface BulkImportItem {
   number?: unknown;
@@ -60,23 +61,61 @@ export class ProjectService {
   }
 
   async transitionForward(projectId: string, userId: string) {
+    let before;
     try {
-      return await transitionForwardRepo(this.db, projectId, userId);
+      before = await getProjectRepo(this.db, projectId);
+    } catch {
+      // Fall through; the repo call below will surface the canonical error.
+    }
+
+    let updated;
+    try {
+      updated = await transitionForwardRepo(this.db, projectId, userId);
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
       if (err instanceof TransitionError) throw validationError(err.message);
       throw err;
     }
+
+    await emit('project.transitioned', {
+      projectId,
+      fromStatus: before?.status ?? '',
+      toStatus: updated.status,
+      direction: 'forward',
+      actorUserId: userId,
+      occurredAt: new Date(),
+    });
+
+    return updated;
   }
 
   async transitionBackward(projectId: string, userId: string) {
+    let before;
     try {
-      return await transitionBackwardRepo(this.db, projectId, userId);
+      before = await getProjectRepo(this.db, projectId);
+    } catch {
+      // Fall through; the repo call below will surface the canonical error.
+    }
+
+    let updated;
+    try {
+      updated = await transitionBackwardRepo(this.db, projectId, userId);
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
       if (err instanceof TransitionError) throw validationError(err.message);
       throw err;
     }
+
+    await emit('project.transitioned', {
+      projectId,
+      fromStatus: before?.status ?? '',
+      toStatus: updated.status,
+      direction: 'backward',
+      actorUserId: userId,
+      occurredAt: new Date(),
+    });
+
+    return updated;
   }
 
   async updateDates(
@@ -84,13 +123,24 @@ export class ProjectService {
     userId: string,
     dates: { plannedStart?: string; plannedEnd?: string },
   ) {
+    let updated;
     try {
-      return await updateDatesRepo(this.db, projectId, userId, dates);
+      updated = await updateDatesRepo(this.db, projectId, userId, dates);
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
       if (err instanceof DateValidationError) throw validationError(err.message);
       throw err;
     }
+
+    await emit('project.dates_changed', {
+      projectId,
+      actorUserId: userId,
+      occurredAt: new Date(),
+      plannedStart: dates.plannedStart,
+      plannedEnd: dates.plannedEnd,
+    });
+
+    return updated;
   }
 
   /**
