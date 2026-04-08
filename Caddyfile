@@ -4,12 +4,19 @@
 # environment variable. Local development should bypass Caddy and run the app
 # directly via npm — this Caddyfile will fail to provision a cert for localhost.
 #
+# Caddy defaults to Let's Encrypt production. For initial bootstrap of a new
+# deployment, see docs/ops/caddy-tls-bootstrap.md (the staging-first procedure
+# is a manual Caddyfile edit, not an env var toggle).
+#
+# Security headers (HSTS, CSP, X-Frame-Options, etc.) are emitted by the
+# application via @fastify/helmet. The reverse proxy does NOT add a second
+# copy. Helmet is the single source of truth.
+#
 # See ADR-0008 for the network topology and ${DOMAIN} resolution model.
 
 {$DOMAIN:localhost} {
 	tls {
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-		ca {$ACME_CA_URL:https://acme-v02.api.letsencrypt.org/directory}
 	}
 
 	# Health check endpoint, served outside the reverse proxy so it works
@@ -22,14 +29,5 @@
 	# Application reverse proxy.
 	handle {
 		reverse_proxy app:3000
-	}
-
-	# Security headers. HSTS without `preload` — preload is a one-way
-	# commitment and we are not yet ready to make it.
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "strict-origin-when-cross-origin"
-		X-Frame-Options "DENY"
 	}
 }

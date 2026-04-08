@@ -106,7 +106,6 @@ services:
     environment:
       DOMAIN: ${DOMAIN:-localhost}
       CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
-      ACME_CA_URL: ${ACME_CA_URL:-}
     depends_on:
       - app
     restart: unless-stopped

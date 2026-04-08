@@ -462,7 +462,6 @@ Edit `/opt/projekt-manager/.env` and set these values:
 | `DOMAIN` | Fully qualified domain for Caddy / TLS | Caddy uses this for TLS certificate provisioning |
 | `CLOUDFLARE_API_TOKEN` | Scoped Cloudflare API token | Permissions: `Zone:Zone:Read` + `Zone:DNS:Edit` on the single managed zone. NOT the Global API Key. Record the issue date in your password manager for rotation tracking. |
 | `WG_BIND_IP` | `10.213.17.1` | WireGuard server interface address. Caddy publishes `:443` only on this host IP. |
-| `ACME_CA_URL` | (empty for production; staging URL during bootstrap) | Empty defaults to Let's Encrypt production. For initial bootstrap of a new deployment, set to `https://acme-staging-v02.api.letsencrypt.org/directory` to avoid LE rate limits while debugging. Unset/empty after the cert chain is verified. |
 | `NODE_ENV` | `production` | Enables security checks, disables seeding |
 | `SEED` | `false` | Never seed in production |
 
@@ -508,7 +507,7 @@ docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').th
 # From a WireGuard client (your laptop, with the per-peer config imported and tunnel up)
 curl -v --resolve "${DOMAIN}:443:10.213.17.1" "https://${DOMAIN}/api/health"
 # expect: 200 OK with a real Let's Encrypt certificate
-#         (or staging cert during bootstrap if ACME_CA_URL is set to staging)
+# (during initial bootstrap, see docs/ops/caddy-tls-bootstrap.md)
 
 # From outside the VPN (any other machine) — should fail
 curl --connect-timeout 5 "https://<server-public-ip>/api/health"
