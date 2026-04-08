@@ -66,8 +66,9 @@ describe('transitionForward', () => {
 
     const result = await transitionForward(db, project!.id, TEST_USER_ID);
 
-    expect(result.status).toBe('angebot');
-    expect(result.updatedBy).toBe(TEST_USER_ID);
+    expect(result.before).toBe('anfrage');
+    expect(result.project.status).toBe('angebot');
+    expect(result.project.updatedBy).toBe(TEST_USER_ID);
   });
 
   // Test forward transition from each intermediate state (not erledigt).
@@ -83,7 +84,8 @@ describe('transitionForward', () => {
 
       const result = await transitionForward(db, project!.id, TEST_USER_ID);
 
-      expect(result.status).toBe(to);
+      expect(result.before).toBe(from);
+      expect(result.project.status).toBe(to);
     });
   }
 
@@ -96,10 +98,10 @@ describe('transitionForward', () => {
 
     const result = await transitionForward(db, project!.id, TEST_USER_ID);
 
-    expect(new Date(result.statusChangedAt).getTime()).toBeGreaterThanOrEqual(
+    expect(new Date(result.project.statusChangedAt).getTime()).toBeGreaterThanOrEqual(
       originalStatusChangedAt.getTime(),
     );
-    expect(new Date(result.updatedAt).getTime()).toBeGreaterThanOrEqual(
+    expect(new Date(result.project.updatedAt).getTime()).toBeGreaterThanOrEqual(
       originalUpdatedAt.getTime(),
     );
   });
@@ -125,8 +127,9 @@ describe('transitionBackward', () => {
 
     const result = await transitionBackward(db, project!.id, TEST_USER_ID);
 
-    expect(result.status).toBe('anfrage');
-    expect(result.updatedBy).toBe(TEST_USER_ID);
+    expect(result.before).toBe('angebot');
+    expect(result.project.status).toBe('anfrage');
+    expect(result.project.updatedBy).toBe(TEST_USER_ID);
   });
 
   it('throws TransitionError when going backward from anfrage (first state)', async () => {
@@ -156,10 +159,10 @@ describe('transitionBackward', () => {
 
     const result = await transitionBackward(db, project!.id, TEST_USER_ID);
 
-    expect(new Date(result.statusChangedAt).getTime()).toBeGreaterThanOrEqual(
+    expect(new Date(result.project.statusChangedAt).getTime()).toBeGreaterThanOrEqual(
       originalStatusChangedAt.getTime(),
     );
-    expect(new Date(result.updatedAt).getTime()).toBeGreaterThanOrEqual(
+    expect(new Date(result.project.updatedAt).getTime()).toBeGreaterThanOrEqual(
       originalUpdatedAt.getTime(),
     );
   });

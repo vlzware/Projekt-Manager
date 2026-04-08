@@ -21,6 +21,7 @@ import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { notFound, validationError } from '../errors.js';
 import { emit } from './events.js';
+import type { ServiceLogger } from './Logger.js';
 
 export interface BulkImportItem {
   number?: unknown;
@@ -60,68 +61,63 @@ export class ProjectService {
     return project;
   }
 
-  async transitionForward(projectId: string, userId: string) {
-    let before;
+  async transitionForward(projectId: string, userId: string, log: ServiceLogger) {
+    let result;
     try {
-      before = await getProjectRepo(this.db, projectId);
-    } catch {
-      // Fall through; the repo call below will surface the canonical error.
-    }
-
-    let updated;
-    try {
-      updated = await transitionForwardRepo(this.db, projectId, userId);
+      result = await transitionForwardRepo(this.db, projectId, userId);
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
       if (err instanceof TransitionError) throw validationError(err.message);
       throw err;
     }
 
-    await emit('project.transitioned', {
-      projectId,
-      fromStatus: before?.status ?? '',
-      toStatus: updated.status,
-      direction: 'forward',
-      actorUserId: userId,
-      occurredAt: new Date(),
-    });
+    await emit(
+      'project.transitioned',
+      {
+        projectId,
+        fromStatus: result.before,
+        toStatus: result.project.status,
+        direction: 'forward',
+        actorUserId: userId,
+        occurredAt: new Date(),
+      },
+      log,
+    );
 
-    return updated;
+    return result.project;
   }
 
-  async transitionBackward(projectId: string, userId: string) {
-    let before;
+  async transitionBackward(projectId: string, userId: string, log: ServiceLogger) {
+    let result;
     try {
-      before = await getProjectRepo(this.db, projectId);
-    } catch {
-      // Fall through; the repo call below will surface the canonical error.
-    }
-
-    let updated;
-    try {
-      updated = await transitionBackwardRepo(this.db, projectId, userId);
+      result = await transitionBackwardRepo(this.db, projectId, userId);
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
       if (err instanceof TransitionError) throw validationError(err.message);
       throw err;
     }
 
-    await emit('project.transitioned', {
-      projectId,
-      fromStatus: before?.status ?? '',
-      toStatus: updated.status,
-      direction: 'backward',
-      actorUserId: userId,
-      occurredAt: new Date(),
-    });
+    await emit(
+      'project.transitioned',
+      {
+        projectId,
+        fromStatus: result.before,
+        toStatus: result.project.status,
+        direction: 'backward',
+        actorUserId: userId,
+        occurredAt: new Date(),
+      },
+      log,
+    );
 
-    return updated;
+    return result.project;
   }
 
   async updateDates(
     projectId: string,
     userId: string,
     dates: { plannedStart?: string; plannedEnd?: string },
+    log: ServiceLogger,
   ) {
     let updated;
     try {
@@ -132,13 +128,17 @@ export class ProjectService {
       throw err;
     }
 
-    await emit('project.dates_changed', {
-      projectId,
-      actorUserId: userId,
-      occurredAt: new Date(),
-      plannedStart: dates.plannedStart,
-      plannedEnd: dates.plannedEnd,
-    });
+    await emit(
+      'project.dates_changed',
+      {
+        projectId,
+        actorUserId: userId,
+        occurredAt: new Date(),
+        plannedStart: dates.plannedStart,
+        plannedEnd: dates.plannedEnd,
+      },
+      log,
+    );
 
     return updated;
   }
