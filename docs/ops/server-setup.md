@@ -464,6 +464,9 @@ Edit `/opt/projekt-manager/.env` and set these values:
 | `WG_BIND_IP` | `10.213.17.1` | WireGuard server interface address. Caddy publishes `:443` only on this host IP. |
 | `NODE_ENV` | `production` | Enables security checks, disables seeding |
 | `SEED` | `false` | Never seed in production |
+| `BOOTSTRAP_ADMIN_USERNAME` | Strong admin username | First-deploy only — see Phase 8.1. Leave unset on subsequent deploys. |
+| `BOOTSTRAP_ADMIN_PASSWORD` | `openssl rand -base64 24` | First-deploy only — see Phase 8.1. Must pass the standard password policy (≥8 chars, ≤72 bytes, not in the common-password blocklist). |
+| `BOOTSTRAP_ADMIN_DISPLAY_NAME` | Human-readable name (optional) | First-deploy only — defaults to the username if unset. |
 
 3. Start the stack:
 
@@ -479,6 +482,115 @@ sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
 ```
 
 Caddy is bound only to `${WG_BIND_IP}:443` (the WireGuard interface), so `curl https://localhost/api/health` from the server will not work — that is expected. The full TLS chain is verified from a WireGuard client in Phase 9.
+
+### Phase 8.1 — First-login ritual (one-time, first deploy only)
+
+**Goal:** Create the first admin account and scrub the bootstrap credentials from disk.
+
+**Why this phase exists:** Seeding is a development fixture and is deliberately skipped when `NODE_ENV=production` (`src/server/start.ts`). A fresh production database is schema-migrated but empty, so nothing can authenticate. On the very first deploy, the application's startup hook reads `BOOTSTRAP_ADMIN_USERNAME`/`BOOTSTRAP_ADMIN_PASSWORD`/`BOOTSTRAP_ADMIN_DISPLAY_NAME` from `.env`, inserts exactly one `owner`-role user, emits a loud warning log, and on every subsequent start it is a no-op because the `users` table is no longer empty. See [ADR-0010](../adr/0010-first-run-admin-bootstrap.md).
+
+**When this phase runs:** Exactly once, on the first deploy of a fresh `pgdata` volume. Re-run only if the `pgdata` volume has been rebuilt from scratch (e.g. a restore-from-backup that chose not to preserve the users table).
+
+**Golden rule:** the bootstrap values sit in `/opt/projekt-manager/.env` in plaintext during this phase. The window between step 3 (set) and step 7 (scrub) must be as short as operationally possible.
+
+1. On the **server**, confirm the stack is running and healthy (Phase 8 verification above).
+
+2. Verify the database is empty — the bootstrap only runs on an empty `users` table and this is the one time you want to see a zero:
+
+   ```bash
+   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+     exec -T db psql -U pm -d projekt_manager -c 'SELECT count(*) FROM users;'
+   # expect: count = 0
+   ```
+
+3. Generate a strong password and set the bootstrap values in `.env`:
+
+   ```bash
+   openssl rand -base64 24          # copy the output
+   sudo -u deploy nano /opt/projekt-manager/.env
+   ```
+
+   Set:
+
+   ```env
+   BOOTSTRAP_ADMIN_USERNAME=<choose a strong admin username>
+   BOOTSTRAP_ADMIN_PASSWORD=<paste the openssl output>
+   BOOTSTRAP_ADMIN_DISPLAY_NAME=<your real name, optional>
+   ```
+
+   Password policy: ≥8 characters, ≤72 UTF-8 bytes, not in the common-password blocklist (`src/server/data/common-passwords.ts`). A half-configured pair (only one of the two) will refuse to start the service.
+
+4. Restart the `app` container so it re-reads `.env`:
+
+   ```bash
+   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+     up -d --force-recreate app
+   ```
+
+5. Verify the bootstrap fired by tailing the app logs:
+
+   ```bash
+   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+     logs app --tail=30 | grep -F 'Bootstrap admin user'
+   # expect: one line naming your BOOTSTRAP_ADMIN_USERNAME and instructing you to
+   # change the password and remove the env vars.
+   ```
+
+6. From a WireGuard client, open `https://${DOMAIN}` in a browser. Log in with the bootstrap credentials to confirm authentication works end-to-end.
+
+   **Immediately after logging in succeeds**, change the password. This iteration has no change-password UI (out of scope for the walking skeleton — see `docs/spec/index.md` §4.5), so the rotation is done via `curl` against the change-password endpoint. From the same WireGuard client:
+
+   ```bash
+   # Generate the replacement password first so the window is minimal.
+   NEW_PW="$(openssl rand -base64 24)"
+   echo "$NEW_PW"                 # write it down / paste into password manager NOW
+
+   # Log in to obtain a session cookie.
+   curl -sS -c /tmp/pm-rotate-cookies.txt \
+     -H 'Content-Type: application/json' \
+     -d "{\"username\":\"<BOOTSTRAP_ADMIN_USERNAME>\",\"password\":\"<BOOTSTRAP_ADMIN_PASSWORD>\"}" \
+     "https://${DOMAIN}/api/auth/login"
+   # expect: {"user":{...}} and a session cookie in /tmp/pm-rotate-cookies.txt
+
+   # Rotate the password.
+   curl -sS -b /tmp/pm-rotate-cookies.txt \
+     -H 'Content-Type: application/json' \
+     -d "{\"currentPassword\":\"<BOOTSTRAP_ADMIN_PASSWORD>\",\"newPassword\":\"${NEW_PW}\"}" \
+     "https://${DOMAIN}/api/auth/change-password"
+   # expect: {"success":true}
+
+   # Clean up the cookie jar — it carries a valid session.
+   shred -u /tmp/pm-rotate-cookies.txt
+   ```
+
+   Then in the browser, refresh the page, log out, and log back in with the new password to confirm the rotation took effect.
+
+7. Back on the **server**, scrub the three bootstrap vars from `.env`:
+
+   ```bash
+   sudo -u deploy nano /opt/projekt-manager/.env
+   ```
+
+   Delete (or comment out) the `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, and `BOOTSTRAP_ADMIN_DISPLAY_NAME` lines.
+
+8. Restart the `app` container again to confirm the bootstrap hook is a no-op once users exist:
+
+   ```bash
+   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+     up -d --force-recreate app
+   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+     logs app --tail=30 | grep -F 'Bootstrap admin user' || echo 'ok — no bootstrap warning'
+   # expect: no match on the second restart.
+   ```
+
+9. Confirm the account is still usable by logging in from a WireGuard client with the password you set in step 6. Bootstrap phase complete.
+
+**If something goes wrong:**
+- **"BOOTSTRAP_ADMIN_PASSWORD is required" on startup**: only one of the two vars is set. Fix the `.env` and restart.
+- **"BOOTSTRAP_ADMIN_PASSWORD must be at least 8 characters" or "…must not exceed 72 bytes"**: the password fails the policy. Generate a new one.
+- **"BOOTSTRAP_ADMIN_PASSWORD is in the common-password blocklist"**: pick a less common password. Do not work around the blocklist.
+- **Bootstrap log says "user created" but login fails**: the browser may be holding a stale session. Clear cookies for `${DOMAIN}` and try again.
+- **Database already has users but you want to start over**: this is a destructive operation — do not use the bootstrap for it. Manually reset with `psql` under explicit human control.
 
 ### Phase 9 — GitHub Secrets and CD
 

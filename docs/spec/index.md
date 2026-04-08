@@ -127,10 +127,10 @@ All data is stored in a persistent database, accessed through an API layer. On f
 | Password policy | Minimum 8 characters **[C]** |
 | Session duration | 24 hours **[C]** |
 | Maximum concurrent sessions per user | Unlimited **[C]** |
-| Default admin account | Created during seed data loading |
+| Default admin account | Environment-variable bootstrap on first run (`BOOTSTRAP_ADMIN_*`) — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
 | Self-registration | Not available **[C]** |
 
-The system does not implement a user management UI in this iteration. Initial users are part of the seed data. Adding or modifying users is an administrative operation (direct database or a simple admin endpoint), not a polished UI. A user management interface is planned for a later iteration (see kickoff: "administrator's view").
+The system does not implement a user management UI in this iteration. For development, initial users come from seed data (see [data-model.md §7.2](data-model.md#72-seed-users)). For production, the first admin account is created by the first-run bootstrap mechanism (see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md)): set `BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` on first deploy, log in, change the password, remove the env vars, redeploy. Subsequent users are added administratively (direct database write in this iteration). A user management interface is planned for a later iteration (see kickoff: "administrator's view").
 
 ---
 

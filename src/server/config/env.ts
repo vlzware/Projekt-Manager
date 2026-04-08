@@ -14,6 +14,13 @@ const envSchema = z.object({
   STORAGE_SECRET_KEY: z.string().min(1, 'STORAGE_SECRET_KEY is required'),
   DOMAIN: z.string().default('localhost'),
   SEED: z.enum(['true', 'false', 'force']).default('false'),
+  // First-run admin bootstrap — see ADR-0010 and issue #57. All three are
+  // optional; validation of the "both or neither" pairing and the password
+  // policy happens in src/server/bootstrap.ts where the schema check would
+  // be too coarse.
+  BOOTSTRAP_ADMIN_USERNAME: z.string().optional(),
+  BOOTSTRAP_ADMIN_PASSWORD: z.string().optional(),
+  BOOTSTRAP_ADMIN_DISPLAY_NAME: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;
