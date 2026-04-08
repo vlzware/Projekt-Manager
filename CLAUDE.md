@@ -21,7 +21,7 @@ Security and quality defaults are the baseline, **not open questions.** When an 
 
 If the environment cannot meet a security or quality requirement, the correct behavior is to **refuse to serve, fail the deploy, or block the merge** — not to downgrade the requirement. When the implementation lags behind a safety criterion in the spec or an AC, fix the implementation. Do not rewrite the criterion to match the stub.
 
-Concrete anchor: HTTPS must always terminate; the VPN does **not** substitute for TLS (defense in depth). See [ADR-0008](docs/adr/0008-vpn-first-network-access-tailscale.md) (amendment 2026-04-07) and [#47](https://github.com/vlzware/Projekt-Manager/issues/47). If a review proposes removing an HTTPS-enforcement AC because the Caddyfile isn't yet configured, the answer is to configure the Caddyfile — the AC was right.
+Concrete anchor: HTTPS must always terminate; the VPN does **not** substitute for TLS (defense in depth). See [ADR-0008](docs/adr/0008-vpn-first-network-access.md) and [#47](https://github.com/vlzware/Projekt-Manager/issues/47). If a review proposes removing an HTTPS-enforcement AC because the Caddyfile isn't yet configured, the answer is to configure the Caddyfile — the AC was right.
 
 ## Undecided Specifics
 Many details are deliberately left open until their iteration. When work hits something undefined:
