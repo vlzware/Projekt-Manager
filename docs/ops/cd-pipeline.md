@@ -16,18 +16,18 @@ The server is always in **detached HEAD** at a specific commit — it does not t
 
 ## Workflow Files
 
-| File | Trigger | Purpose |
-|------|---------|---------|
-| `.github/workflows/ci.yml` | Push/PR to `main`, `iteration/**` | Lint, type-check, test, build |
-| `.github/workflows/deploy.yml` | CI completes successfully | SSH deploy + smoke test |
+| File                           | Trigger                           | Purpose                       |
+| ------------------------------ | --------------------------------- | ----------------------------- |
+| `.github/workflows/ci.yml`     | Push/PR to `main`, `iteration/**` | Lint, type-check, test, build |
+| `.github/workflows/deploy.yml` | CI completes successfully         | SSH deploy + smoke test       |
 
 ## GitHub Secrets
 
-| Secret | Purpose |
-|--------|---------|
-| `DEPLOY_HOST` | Server public IP (not Tailscale — GitHub runners can't join the tailnet) |
-| `DEPLOY_USER` | `deploy` |
-| `DEPLOY_KEY` | Private SSH key for the deploy user |
+| Secret        | Purpose                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------- |
+| `DEPLOY_HOST` | Server public IP (GitHub runners cannot join the WireGuard tunnel, so deploy SSH uses the public IP) |
+| `DEPLOY_USER` | `deploy`                                                                                             |
+| `DEPLOY_KEY`  | Private SSH key for the deploy user                                                                  |
 
 ## Verifying a Deploy
 
@@ -42,8 +42,21 @@ sudo -u deploy git -C /opt/projekt-manager rev-parse --short HEAD
 # Container status
 sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps
 
-# Health check (localhost bypasses TLS — this is expected)
-curl http://localhost/api/health
+# Health check — probe the app container directly via docker exec.
+# Caddy listens only on ${WG_BIND_IP}:443 (the WireGuard interface), so
+# `curl http://localhost/api/health` from the server does not work and
+# `curl https://localhost/api/health` fails SNI validation. The supported
+# path is to bypass Caddy entirely and hit the app's internal listener:
+sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+  exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
+echo "exit=$?"  # 0 = healthy
+```
+
+**From a WireGuard client** (end-to-end including TLS):
+
+```bash
+curl -sS https://${DOMAIN}/api/health
+# expect: "ok" (HTTP 200), with a real Let's Encrypt certificate
 ```
 
 ## What Gets Deployed When
@@ -54,7 +67,9 @@ curl http://localhost/api/health
 
 ## Smoke Test
 
-After `docker compose up -d`, the workflow polls `http://localhost/api/health` for up to 60 seconds. If the health endpoint does not respond, the workflow:
+After `docker compose up -d`, the workflow polls the app container's `/api/health` endpoint for up to 60 seconds by running `node -e fetch(...)` inside the app container via `docker compose exec`. This bypasses Caddy and the TLS chain entirely — the TLS path is not reachable from GitHub runners (Caddy binds to the WireGuard interface only), so the smoke test validates the application stack (app + db + storage) without depending on the network-layer topology. Verification of the full TLS chain is a manual step from a WireGuard client, documented in `docs/ops/server-setup.md` Phase 9.
+
+If the health endpoint does not respond within 60 seconds, the workflow:
 
 1. Dumps the last 50 lines of container logs
 2. Fails the deploy — visible in GitHub Actions
