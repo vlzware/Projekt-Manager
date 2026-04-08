@@ -23,6 +23,17 @@ services:
       NODE_ENV: production
       PORT: '3000'
       SEED: ${SEED:-false}
+      # First-run admin bootstrap (ADR-0010 / #57). Optional with an empty
+      # default so the container starts fine when the operator hasn't set
+      # them — the bootstrap code itself handles "neither var set" as the
+      # AC-B4 silent no-op path. `:-` is required: without it, docker compose
+      # warns and substitutes the literal empty string inconsistently across
+      # versions. Leaving these out of `environment:` silently hides the
+      # .env values from the container, which is how they got missed on the
+      # first deploy of this feature.
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:-}
     healthcheck:
       test:
         [
