@@ -10,6 +10,7 @@ import { KanbanBoard } from '@/ui/kanban/KanbanBoard';
 import { CalendarView } from '@/ui/calendar/CalendarView';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
+import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
 import styles from './App.module.css';
 
 /**
@@ -87,7 +88,7 @@ export function App() {
         <Header />
         <main className={styles.main}>
           {mutationError && (
-            <div className={styles.mutationError}>
+            <div className={styles.mutationError} role="alert" data-testid="mutation-error-banner">
               <span>{mutationError}</span>
               <button
                 className={styles.mutationErrorDismiss}
@@ -104,6 +105,7 @@ export function App() {
         {selectedProject && (
           <ProjectDetailPanel project={selectedProject} onClose={() => selectProject(null)} />
         )}
+        <ConfirmDialog />
       </div>
     );
   }

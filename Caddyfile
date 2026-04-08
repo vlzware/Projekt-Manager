@@ -1,3 +1,33 @@
+# Caddy reverse proxy + TLS termination for Projekt-Manager.
+#
+# Production-focused: requires DNS-01 ACME via Cloudflare and a CLOUDFLARE_API_TOKEN
+# environment variable. Local development should bypass Caddy and run the app
+# directly via npm — this Caddyfile will fail to provision a cert for localhost.
+#
+# Caddy defaults to Let's Encrypt production. For initial bootstrap of a new
+# deployment, see docs/ops/caddy-tls-bootstrap.md (the staging-first procedure
+# is a manual Caddyfile edit, not an env var toggle).
+#
+# Security headers (HSTS, CSP, X-Frame-Options, etc.) are emitted by the
+# application via @fastify/helmet. The reverse proxy does NOT add a second
+# copy. Helmet is the single source of truth.
+#
+# See ADR-0008 for the network topology and ${DOMAIN} resolution model.
+
 {$DOMAIN:localhost} {
-	reverse_proxy app:3000
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	# Health check endpoint, served outside the reverse proxy so it works
+	# even if the upstream app is down. Used by the support runbook to let
+	# users self-diagnose "is the tunnel up" vs "is the app up".
+	handle /.well-known/healthz {
+		respond "ok" 200
+	}
+
+	# Application reverse proxy.
+	handle {
+		reverse_proxy app:3000
+	}
 }

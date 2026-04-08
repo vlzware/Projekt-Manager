@@ -11,7 +11,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { seed } from '../seed.js';
-import { projects } from '../db/schema.js';
+import { projects, users } from '../db/schema.js';
 import { updateDates, DateValidationError } from '../repositories/project-dates.js';
 import { ProjectNotFoundError } from '../repositories/project-read.js';
 import type { Database } from '../db/connection.js';
@@ -21,8 +21,9 @@ import { setupTestDb, teardownTestDb } from './helpers/setup-db.js';
 let db: Database;
 let pool: pg.Pool;
 
-/** Fake user ID for the updatedBy field. */
-const TEST_USER_ID = '00000000-0000-0000-0000-000000000001';
+/** A real seeded user ID, resolved in beforeEach so the FK on
+ *  projects.updated_by → users.id is satisfied. */
+let TEST_USER_ID!: string;
 
 /** Find the first project that has no planned dates. */
 async function findProjectWithoutDates() {
@@ -46,6 +47,9 @@ describe('updateDates', () => {
   beforeEach(async () => {
     // Re-seed before each test for a clean slate.
     await seed(db, { force: true });
+    // Resolve a real seeded user id (FK on projects.updated_by → users.id).
+    const [user] = await db.select({ id: users.id }).from(users).limit(1);
+    TEST_USER_ID = user!.id;
   });
 
   afterAll(async () => {

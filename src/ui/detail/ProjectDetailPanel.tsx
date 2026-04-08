@@ -3,6 +3,7 @@ import type { Project } from '@/domain/types';
 import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
 import { useProjectTransition } from '@/hooks/useProjectTransition';
 import { useProjectStore } from '@/state/projectStore';
+import { dateInputValue } from './dateInputValue';
 import styles from './ProjectDetailPanel.module.css';
 
 interface ProjectDetailPanelProps {
@@ -133,7 +134,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                 <input
                   type="date"
                   className={styles.dateInput}
-                  value={currentProject.plannedStart ?? ''}
+                  value={dateInputValue(currentProject.plannedStart)}
                   onChange={handleStartDateChange}
                   data-testid="detail-date-start"
                 />
@@ -143,7 +144,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                 <input
                   type="date"
                   className={styles.dateInput}
-                  value={currentProject.plannedEnd ?? ''}
+                  value={dateInputValue(currentProject.plannedEnd)}
                   onChange={handleEndDateChange}
                   data-testid="detail-date-end"
                 />

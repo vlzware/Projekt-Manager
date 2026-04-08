@@ -20,8 +20,8 @@ This iteration must answer two questions:
 |---|---|---|
 | 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
 | 2 | Persistence (database + API), authentication, object storage | Accepted |
-| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | **Current** |
-| 4 | Deployment, integration testing, monitoring | Planned |
+| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | Accepted |
+| 4 | Deployment, integration testing, CD pipeline, VPN access | **Current** |
 
 ---
 
@@ -127,10 +127,10 @@ All data is stored in a persistent database, accessed through an API layer. On f
 | Password policy | Minimum 8 characters **[C]** |
 | Session duration | 24 hours **[C]** |
 | Maximum concurrent sessions per user | Unlimited **[C]** |
-| Default admin account | Created during seed data loading |
+| Default admin account | Environment-variable bootstrap on first run (`BOOTSTRAP_ADMIN_*`) — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
 | Self-registration | Not available **[C]** |
 
-The system does not implement a user management UI in this iteration. Initial users are part of the seed data. Adding or modifying users is an administrative operation (direct database or a simple admin endpoint), not a polished UI. A user management interface is planned for a later iteration (see kickoff: "administrator's view").
+The system does not implement a user management UI in this iteration. For development, initial users come from seed data (see [data-model.md §7.2](data-model.md#72-seed-users)). For production, the first admin account is created by the first-run bootstrap mechanism (see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md)): set `BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` on first deploy, log in, change the password, remove the env vars, redeploy. Subsequent users are added administratively (direct database write in this iteration). A user management interface is planned for a later iteration (see kickoff: "administrator's view").
 
 ---
 
@@ -185,9 +185,9 @@ Items marked as "Known debt" across the specification. Each will be resolved or 
 | Item | Location | Target Iteration | Issue |
 |------|----------|-----------------|-------|
 | `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
-| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
+| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
 | Minimal role set — add fine-grained permissions and per-role view restrictions | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
-| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
+| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
 | Password change does not invalidate existing sessions | [data-model.md §5.4](data-model.md#54-session) | 4+ | TBD |
 | State actions mutate silently — need middleware or event hooks for audit trail and notifications | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 4+ | TBD |
 

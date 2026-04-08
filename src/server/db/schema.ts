@@ -87,8 +87,11 @@ export const projects = pgTable(
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-    createdBy: uuid('created_by'),
-    updatedBy: uuid('updated_by'),
+    // Audit references — nullable for seeded/imported records (data-model.md §5.5).
+    // ON DELETE SET NULL: a user is deactivated rather than deleted (§6.9), but
+    // if a user is ever hard-deleted we keep the project rather than orphan it.
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
   },
   (table) => [
     // Used by future dashboard queries (count by status, filter by status).

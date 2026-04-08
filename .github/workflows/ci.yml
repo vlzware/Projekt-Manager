@@ -59,10 +59,53 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      # Static check: every var declared in src/server/config/env.ts must
+      # be forwarded to the app container via docker-compose.yml's
+      # services.app.environment. Regression guard for the #57 failure
+      # mode where BOOTSTRAP_ADMIN_* landed in the Zod schema but were
+      # forgotten in compose, silently stripping them from the container
+      # env at runtime.
+      - name: Env drift check (env.ts ↔ docker-compose.yml)
+        run: bash scripts/check-env-drift.sh
+
+      # MinIO runs as a step (not a service container) because GitHub service
+      # containers do not support overriding `command`, and minio/minio needs
+      # `server /data` as its argv. Versions are pinned to match
+      # docker-compose.yml (ADR-0009 — version pinning across environments).
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=changeme \
+            minio/minio:RELEASE.2025-09-07T16-13-09Z \
+            server /data
+          # Wait for MinIO to become ready (max 30s).
+          for i in {1..30}; do
+            if curl -sf http://localhost:9000/minio/health/live > /dev/null; then
+              echo "MinIO ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          # Create the test bucket. Uses mc with the same pinned version as
+          # docker-compose.yml's storage-init sidecar.
+          docker run --rm --network host \
+            --entrypoint /bin/sh \
+            minio/mc:RELEASE.2025-08-13T08-35-41Z \
+            -c "mc alias set local http://localhost:9000 minioadmin changeme && mc mb --ignore-existing local/projekt-manager"
+
       - name: Unit and component tests
         run: npm run test:coverage
         env:
           DATABASE_URL: postgresql://pm:postgres@localhost:5432/projekt_manager_test
+          # Storage env vars are required by src/server/__tests__/storage.test.ts
+          # which fails loud if any is missing (no silent skips — see file
+          # header in storage.test.ts).
+          STORAGE_ENDPOINT: http://localhost:9000
+          STORAGE_BUCKET: projekt-manager
+          STORAGE_ACCESS_KEY: minioadmin
+          STORAGE_SECRET_KEY: changeme
 
       - name: Build
         run: npm run build

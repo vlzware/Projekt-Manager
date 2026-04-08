@@ -28,6 +28,7 @@ dist/
 coverage/
 test-results/
 playwright-report/
+.playwright-mcp/
 
 # WIP scratch directory (local only)
 docs/wip/

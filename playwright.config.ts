@@ -14,7 +14,13 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        // Override the default 1280px viewport: the responsive collapse
+        // tiers (spec ui.md §10) hide tier-2 columns (incl. Geplant) below
+        // 1350px, which the E2E tests need open.
+        viewport: { width: 1920, height: 1080 },
+      },
     },
   ],
   webServer: {

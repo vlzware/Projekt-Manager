@@ -3,9 +3,12 @@
  *
  * Sits between routes (HTTP concerns) and repositories (data access).
  * Handles credential verification, session management, and password policy.
+ *
+ * The service does NOT import from `fastify`. Logging goes through the
+ * `ServiceLogger` interface so the service can be invoked from any context
+ * (CLI, background job, alternative transport) — see Logger.ts.
  */
 
-import type { FastifyBaseLogger } from 'fastify';
 import type { Database } from '../db/connection.js';
 import {
   findByUsername,
@@ -14,14 +17,15 @@ import {
 } from '../repositories/user.js';
 import { createSession, deleteSession, deleteSessionsByUserId } from '../repositories/session.js';
 import { hashPassword, verifyPassword } from '../password.js';
-import { isCommonPassword } from '../data/common-passwords.js';
+import { checkPasswordPolicy } from '../config/password-policy.js';
 import { invalidCredentials, validationError } from '../errors.js';
 import { AUTH_CONFIG } from '../config/index.js';
+import type { ServiceLogger } from './Logger.js';
 
 export class AuthService {
   constructor(private db: Database) {}
 
-  async login(username: string, password: string, ip: string, log: FastifyBaseLogger) {
+  async login(username: string, password: string, ip: string, log: ServiceLogger) {
     const user = await findByUsername(this.db, username);
 
     // Timing side-channel mitigation: burn the same bcrypt time
@@ -64,7 +68,7 @@ export class AuthService {
     };
   }
 
-  async logout(token: string, userId: string, ip: string, log: FastifyBaseLogger) {
+  async logout(token: string, userId: string, ip: string, log: ServiceLogger) {
     if (token) {
       await deleteSession(this.db, token);
     }
@@ -78,7 +82,7 @@ export class AuthService {
     newPassword: string,
     currentToken: string | undefined,
     ip: string,
-    log: FastifyBaseLogger,
+    log: ServiceLogger,
   ) {
     const user = await findByUsername(this.db, username);
     if (!user) {
@@ -91,9 +95,22 @@ export class AuthService {
     const valid = await verifyPassword(currentPassword, user.passwordHash);
     if (!valid) throw invalidCredentials();
 
-    // Check blocklist
-    if (isCommonPassword(newPassword)) {
-      throw validationError('Dieses Passwort ist zu häufig. Bitte ein sichereres Passwort wählen.');
+    // Password policy — length + UTF-8 byte ceiling (bcrypt truncates at
+    // 72 bytes, not 72 characters — see ADR-0006 and password-policy.ts).
+    // The same checker is called from the bootstrap path, so the two
+    // enforcement points cannot diverge.
+    const violation = checkPasswordPolicy(newPassword);
+    if (violation) {
+      switch (violation.code) {
+        case 'too_short':
+          throw validationError('Neues Passwort ist zu kurz (mindestens 8 Zeichen).');
+        case 'too_long':
+          throw validationError('Neues Passwort ist zu lang.');
+        case 'blocklist':
+          throw validationError(
+            'Dieses Passwort ist zu häufig. Bitte ein sichereres Passwort wählen.',
+          );
+      }
     }
 
     // Hash and store

@@ -66,8 +66,7 @@ Six responsibility layers. Dependency flows left-to-right only, never reversed. 
 | `src/api/` | Centralized API client, typed fetch wrappers | Contain business logic or UI concerns |
 | `src/hooks/` | Shared React hooks (transitions, routing) | Contain API calls directly (must use stores) |
 | `src/ui/` | React components (kanban, calendar, detail, auth, layout) | Contain business logic beyond dispatching to state |
-| `src/data/` | Legacy mock data (iteration 1 artifact) | Be imported in production code |
-| `src/test/` | Shared test setup and API test helpers | Be imported in production code |
+| `src/test/` | Shared test setup, API test helpers, and seed fixtures | Be imported in production code |
 
 ---
 
@@ -114,39 +113,83 @@ React re-renders affected components
 
 ---
 
+## API Surface
+
+All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives here because [`docs/spec/api.md`](docs/spec/api.md) is intentionally stack-agnostic (operations, inputs, outputs — not URLs).
+
+| Method | Path | Auth | Permission | Rate limit | Purpose |
+|---|---|---|---|---|---|
+| GET | `/api/health` | none | — | none | Liveness probe; does not touch the database |
+| POST | `/api/auth/login` | none | — | 5 / 1 min | Login; sets HttpOnly `session` cookie |
+| POST | `/api/auth/logout` | session | — | none | Invalidates the current session |
+| GET | `/api/auth/me` | session | — | none | Current user profile |
+| POST | `/api/auth/change-password` | session | — | 5 / 1 min | Change own password (requires current password) |
+| GET | `/api/projects` | session | — | none | List projects (optional `offset`, `limit`) |
+| GET | `/api/projects/:id` | session | — | none | Single project |
+| POST | `/api/projects/:id/transition/forward` | session | `project:transition` | none | Advance status by one step |
+| POST | `/api/projects/:id/transition/backward` | session | `project:transition` | none | Reverse status by one step |
+| PATCH | `/api/projects/:id/dates` | session | `project:dates` | none | Update `plannedStart` / `plannedEnd` |
+| POST | `/api/projects/bulk/import` | session | `project:create` | none | Import an array of projects |
+
+Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Both are enforced centrally in `src/server/middleware/auth.ts` — never at the route level.
+
+Route definitions live in `src/server/routes/auth.ts`, `src/server/routes/projects.ts`, and `src/server/routes/projects-bulk.ts`. The health endpoint is registered in `src/server/start.ts`.
+
+**Keep this table in sync** when adding or changing endpoints. It is the onboarding reference and is cross-checked by the spec (`docs/spec/api.md`) for abstract-operation coverage.
+
+---
+
 ## How to Extend
+
+The four scenarios below are the most common changes. Each lists exact files to read first (the existing pattern) and the files to add or edit. The dependency direction in [Architecture Overview](#architecture-overview) is the only invariant — everything else is convention.
 
 ### Adding a new entity (e.g., Supplier)
 
-1. **Schema**: add table in `src/server/db/schema.ts`, generate migration with `npx drizzle-kit generate`
-2. **Domain types**: add TypeScript interface in `src/domain/types.ts`
-3. **Repository**: create `src/server/repositories/supplier.ts` with CRUD functions
-4. **Routes**: create `src/server/routes/suppliers.ts`, register in `src/server/app.ts`
-5. **State**: add `src/state/supplierStore.ts` (follows authStore/projectStore pattern)
-6. **UI**: add components under `src/ui/suppliers/`
-7. **Tests**: unit tests in `src/domain/__tests__/`, API tests in `src/server/__tests__/`, component tests in `src/ui/__tests__/`
-8. **Seed data**: update `src/server/seed.ts` if demo data is needed
+**Pattern to copy**: the `Project` entity. Read `src/server/db/schema.ts:60-99` (table), `src/domain/types.ts:1-33` (interface), `src/server/repositories/project-read.ts` (repo with `toProject` projection), `src/server/repositories/project.ts` (barrel re-export), `src/server/services/ProjectService.ts:49-95` (thin orchestration), `src/server/routes/projects.ts` (routes), `src/state/projectStore.ts` (store).
+
+1. **Schema**: add the table in `src/server/db/schema.ts`. Use the same audit-field pattern as `projects` (`createdAt`/`updatedAt`/`createdBy`/`updatedBy`). Generate the migration with `npx drizzle-kit generate`. Never edit an existing migration file — always generate a new one.
+2. **Domain types**: add the TypeScript interface in `src/domain/types.ts`. Keep optional fields optional so the UI tolerates missing data ([spec §13.5](docs/spec/architecture.md#135-robustness)).
+3. **Repository**: create `src/server/repositories/supplier-read.ts`, `…-write.ts`, etc. — split by concern as the project repos do. Re-export through a barrel `supplier.ts`. Add a `toSupplier(row)` projection so Drizzle types do not leak upward.
+4. **Service**: create `src/server/services/SupplierService.ts`. Keep it framework-agnostic — the service layer must not import `fastify` types ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
+5. **Routes**: create `src/server/routes/suppliers.ts`. Register it in `src/server/app.ts` next to the existing `projectRoutes(db)` registration. Always go through the service — never call repositories from a route handler.
+6. **API client**: add a `supplierApi` block in `src/api/client.ts` (same pattern as `projectApi` at lines 128-144). One typed function per operation, ~3 lines each.
+7. **State**: add `src/state/supplierStore.ts` modeled on `src/state/projectStore.ts`. Use optimistic updates with rollback for mutations.
+8. **UI**: add components under `src/ui/suppliers/`. One component per file with a sibling `.module.css` (per [CONTRIBUTING.md](CONTRIBUTING.md#code-style)).
+9. **Tests**: unit tests in `src/domain/__tests__/` for any pure functions, integration tests in `src/server/__tests__/` (copy `projects-list.test.ts` as a starting point), component tests in `src/ui/__tests__/`.
+10. **Seed data**: extend `src/server/seed.ts` if the entity needs demo records.
+11. **Spec**: update `docs/spec/data-model.md` (add the entity), `docs/spec/api.md §14.2` (add the operations), and `docs/spec/verification.md` (add ACs).
 
 ### Adding a new view (e.g., Worker view)
 
-1. Create components under `src/ui/worker/`
-2. Add a view option to the state store (follows the existing Kanban/Calendar pattern)
-3. Consume existing state queries -- the store already exposes project data grouped by state
-4. No backend changes needed if the view uses existing data
+**Pattern to copy**: the existing Kanban view consumes `useProjectStore` independently of the Calendar view. Read `src/ui/kanban/KanbanBoard.tsx` (the view component), `src/state/projectStore.ts:229-235` (the `getProjectsByState` selector), `src/App.tsx:71-76` (route registration), `src/domain/types.ts:45` (the `ViewMode` union).
+
+1. **View type**: add the new view name to the `ViewMode` union in `src/domain/types.ts:45` (e.g., `'worker' | 'bookkeeper'`).
+2. **Component**: create `src/ui/worker/WorkerView.tsx` with its own `WorkerView.module.css`. The component reads from `useProjectStore` and filters in JSX — for example, `projects.filter(p => p.assignedWorkers?.includes(user.displayName))`.
+3. **Route**: register in `src/App.tsx` next to the existing kanban/calendar routes.
+4. **Navigation**: extend the header dropdown or sidebar so users can switch to the new view.
+5. **Tests**: copy the structure from `src/ui/__tests__/KanbanBoard.test.tsx`.
+
+**Backend changes are usually not needed.** The store already exposes the full project list, and any filter that can be expressed against it is a frontend concern. If the view introduces a new query the store cannot answer, add the query to `projectStore.ts` rather than to a new store — that keeps the cache coherent.
 
 ### Adding a new API endpoint
 
-1. Create or extend a route file in `src/server/routes/`
-2. Register the route in `src/server/app.ts`
-3. Use existing middleware (`src/server/middleware/auth.ts`) for auth
-4. Call repositories for data access -- never query the DB directly in route handlers
-5. Add integration tests in `src/server/__tests__/`
+**Pattern to copy**: read `src/server/routes/projects.ts` (route definitions), `src/server/services/ProjectService.ts` (service orchestration), and `docs/spec/api.md §14.2` (how operations are documented).
+
+1. **Decide where the route lives**: extend an existing file (`projects.ts`, `auth.ts`, `projects-bulk.ts`) if it belongs to an existing entity/group; create a new route file otherwise.
+2. **Define the schema**: every route uses Fastify's JSON Schema for the request body (see `projects.ts` for examples). This is your input validation — don't validate inside the handler.
+3. **Auth & permission**: apply `createAuthMiddleware(db)` as a `preHandler` for the plugin, and `requirePermission('your:permission')` per route. Add the new permission key to `src/server/config/permissions.ts` if it doesn't exist.
+4. **Delegate to a service method**. Routes never call repositories directly — see [spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries). If the service method doesn't exist yet, add it to the appropriate `*Service.ts`.
+5. **Errors**: throw `notFound(...)`, `validationError(...)`, etc. from `src/server/errors.ts`. Never throw raw `Error` from a route — the global handler in `src/server/app.ts:35-42` only normalizes `AppError`.
+6. **Register**: add the route plugin in `src/server/app.ts`.
+7. **Tests**: integration test in `src/server/__tests__/` using `api-helpers.ts` (`startApp()`, `login()`, `authPost()`/`authGet()`).
+8. **Spec**: add the operation to `docs/spec/api.md §14.2` and an AC in `docs/spec/verification.md`.
 
 ### Adding a new workflow state
 
-1. Update the state array in `src/config/stateConfig.ts` (name, type, color, threshold)
-2. No code changes required -- the Kanban board, transitions, and aging logic are all config-driven
-3. Run seed migration if existing data needs the new state
+1. Update the state array in `src/config/stateConfig.ts` (name, type, color, aging thresholds, collapse tier).
+2. No application code changes are required — the Kanban board, transition logic (`src/domain/transitions.ts`), and aging calculation (`src/domain/aging.ts`) all read from the config.
+3. Note that **two existing tests hardcode the state list** and will need updating: `src/server/__tests__/projects-list.test.ts:74-91` and `src/domain/__tests__/transitions.test.ts`.
+4. Re-seed the database if existing data must be migrated to a new state (`SEED=force npm run dev`).
 
 ---
 

@@ -1,6 +1,8 @@
 # Architecture, Configuration, NFRs and Security
 
-*Iteration 2 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
+
+> **This document is the architectural contract** — what must hold for any code in this repository to be considered correct. For the **navigation guide** (tech stack overview, module map with file paths, request lifecycle, "how to extend" recipes), see [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repo root. The two documents serve different readers: this one is for spec audits, the root one is for finding your way around the code.
 
 ---
 

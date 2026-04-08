@@ -61,9 +61,17 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
       },
     },
     hsts: {
-      maxAge: 63072000, // 2 years
+      // 180 days — helmet's default. The previous value (2 years with
+      // `preload: true`) was chosen with the browser HSTS preload list in
+      // mind, but preload is a one-way commitment: removal from the list
+      // takes months and requires a manual application. The project is
+      // not yet ready for that commitment (LLM-generated code, not yet
+      // independently audited — see ADR-0008). 180 days is long enough
+      // that returning visitors always see HTTPS, short enough that a
+      // future rollback is tractable. See #56 for the decision.
+      maxAge: 15552000,
       includeSubDomains: true,
-      preload: true,
+      preload: false,
     },
     frameguard: { action: 'deny' },
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },

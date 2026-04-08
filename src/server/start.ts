@@ -13,6 +13,7 @@ import { fileURLToPath } from 'url';
 import fastifyStatic from '@fastify/static';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { buildApp } from './app.js';
+import { bootstrapAdminIfEmpty } from './bootstrap.js';
 import { validateEnv } from './config/env.js';
 import { createDatabase } from './db/connection.js';
 import { seed } from './seed.js';
@@ -74,6 +75,19 @@ async function start(): Promise<void> {
       await seed(db, { force: env.SEED === 'force' });
     }
   }
+
+  // First-run admin bootstrap (ADR-0010 / issue #57). Runs AFTER migrate
+  // and BEFORE app.listen — see AC-B7. Any thrown error propagates to the
+  // start().catch(…) handler below, which exits non-zero.
+  await bootstrapAdminIfEmpty(
+    db,
+    {
+      username: env.BOOTSTRAP_ADMIN_USERNAME,
+      password: env.BOOTSTRAP_ADMIN_PASSWORD,
+      displayName: env.BOOTSTRAP_ADMIN_DISPLAY_NAME,
+    },
+    { warn: (m) => console.warn(m), error: (m) => console.error(m) },
+  );
 
   // Clean up expired sessions on startup
   const deleted = await deleteExpiredSessions(db);

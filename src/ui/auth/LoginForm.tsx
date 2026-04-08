@@ -62,6 +62,7 @@ export function LoginForm() {
 
         <button
           type="submit"
+          data-testid="login-submit"
           className={styles.submitButton}
           disabled={isSubmitting || !username.trim() || !password.trim()}
         >

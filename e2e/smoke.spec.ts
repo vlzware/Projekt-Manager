@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
+import { addDays, format, isSameMonth, lastDayOfMonth } from 'date-fns';
 
 /**
- * E2E Smoke Test — Iteration 2
+ * E2E Smoke Test — Iteration 4
  *
  * Single scenario covering the full authenticated end-to-end path.
  * Maps to spec §16.4 steps 1–17.
@@ -15,7 +16,29 @@ import { test, expect } from '@playwright/test';
  *
  * Project IDs are auto-generated UUIDs — the test discovers them
  * dynamically from the page rather than hardcoding.
+ *
+ * Dates picked for the planned-end change in step 11 are computed at run
+ * time (today + 5 days, clamped to stay inside the current month so the
+ * default calendar view shows the day cell without navigation). This used
+ * to be a hardcoded `2026-04-25` which would have started failing in May
+ * 2026.
  */
+
+/**
+ * Pick a date that is (a) in the future relative to today and (b) in the
+ * same calendar month as today. The calendar view opens on the current
+ * month by default, so a same-month target avoids the need to click
+ * `calendar-next`/`calendar-prev` to find the day cell.
+ */
+function pickPlannedEndDate(): { iso: string; testId: string } {
+  const today = new Date();
+  let target = addDays(today, 5);
+  if (!isSameMonth(target, today)) {
+    target = lastDayOfMonth(today);
+  }
+  const iso = format(target, 'yyyy-MM-dd');
+  return { iso, testId: `calendar-day-${iso}` };
+}
 test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => {
   // ── Step 1: App loads — login screen is displayed ──
   // AC-21: Unauthenticated users see only a login screen.
@@ -97,12 +120,12 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
   // ── Step 8: User clicks "Nächster Schritt" — confirmation dialog appears ──
   // ── Step 9: User confirms — card moves to In Arbeit ──
   // AC-5: Forward transition with German confirmation dialog
-  const [forwardDialog] = await Promise.all([
-    page.waitForEvent('dialog'),
-    page.getByTestId('detail-forward-button').click(),
-  ]);
-  expect(forwardDialog.message()).toContain('Geplant → In Arbeit');
-  await forwardDialog.accept();
+  await page.getByTestId('detail-forward-button').click();
+  const forwardDialog = page.getByTestId('confirm-dialog');
+  await expect(forwardDialog).toBeVisible();
+  await expect(forwardDialog).toContainText('Geplant → In Arbeit');
+  await page.getByTestId('confirm-ok').click();
+  await expect(forwardDialog).not.toBeVisible();
   await expect(page.getByTestId('detail-status-badge')).toContainText('In Arbeit');
 
   // Verify the card is now in the "In Arbeit" column
@@ -115,12 +138,12 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
 
   // ── Step 10: User clicks "Vorheriger Schritt" — card moves back to Geplant ──
   // AC-6: Backward transition
-  const [backwardDialog] = await Promise.all([
-    page.waitForEvent('dialog'),
-    page.getByTestId('detail-backward-button').click(),
-  ]);
-  expect(backwardDialog.message()).toContain('In Arbeit → Geplant');
-  await backwardDialog.accept();
+  await page.getByTestId('detail-backward-button').click();
+  const backwardDialog = page.getByTestId('confirm-dialog');
+  await expect(backwardDialog).toBeVisible();
+  await expect(backwardDialog).toContainText('In Arbeit → Geplant');
+  await page.getByTestId('confirm-ok').click();
+  await expect(backwardDialog).not.toBeVisible();
   await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
 
   // Verify the card is back in the "Geplant" column
@@ -133,9 +156,17 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
 
   // ── Step 11: User changes planned end date via date picker in detail panel ──
   // AC-7: Changing a date updates plannedEnd and persists
-  // Both geplant projects have dates from seed data — only end date is changed
+  // Both geplant projects have dates from seed data — only end date is changed.
+  // Wait for the PATCH to land before moving on, otherwise the next steps may
+  // race the optimistic update against the actual server commit.
+  const plannedEndDate = pickPlannedEndDate();
   const endDateInput = page.getByTestId('detail-date-end');
-  await endDateInput.fill('2026-04-25');
+  await Promise.all([
+    page.waitForResponse(
+      (r) => /\/api\/projects\/[^/]+\/dates$/.test(r.url()) && r.request().method() === 'PATCH',
+    ),
+    endDateInput.fill(plannedEndDate.iso),
+  ]);
 
   // ── Step 12: User switches to calendar view — project bar reflects the new date ──
   // AC-3: Calendar renders projects with planned dates as colored bars
@@ -149,8 +180,9 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
   // The project bar should be visible with the updated date
   const calendarBar = page.getByTestId(`calendar-bar-${projectId}`).first();
   await expect(calendarBar).toBeVisible();
-  // Verify the calendar contains the day cell for the new planned end date
-  await expect(page.getByTestId('calendar-day-2026-04-25')).toBeVisible();
+  // Verify the calendar contains the day cell for the new planned end date.
+  // The date is in the current month by construction, so no navigation needed.
+  await expect(page.getByTestId(plannedEndDate.testId)).toBeVisible();
 
   // ── Step 13: User clicks "X Projekte ohne Termin" — switches to filtered Kanban ──
   // AC-10: "X Projekte ohne Termin" counter appears below calendar
@@ -190,10 +222,12 @@ test('E2E Smoke Test: full authenticated interaction path', async ({ page }) => 
     page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
   ).toBeVisible();
 
-  // The date change from step 11 persisted — verify via detail panel
+  // The date change from step 11 persisted — verify via detail panel.
+  // Use the same computed date as step 11 (relative to today) so this
+  // assertion does not become stale as the calendar moves.
   await page.getByTestId(`project-card-${projectId}`).click();
   await expect(page.getByTestId('detail-panel')).toBeVisible();
-  await expect(page.getByTestId('detail-date-end')).toHaveValue('2026-04-25');
+  await expect(page.getByTestId('detail-date-end')).toHaveValue(plannedEndDate.iso);
   await page.getByTestId('detail-close').click();
 
   // ── Step 16: User clicks "Abmelden" — login screen appears ──

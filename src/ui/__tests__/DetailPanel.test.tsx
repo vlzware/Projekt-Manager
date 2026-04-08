@@ -1,10 +1,11 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
-import { mockProjects } from '@/data/mockProjects';
+import { mockProjects } from '@/test/fixtures/mockProjects';
+import { mockConfirmAccept, mockConfirmReject } from '@/test/confirmHelpers';
 import { App } from '@/App';
 
 beforeEach(() => {
@@ -29,7 +30,7 @@ describe('Detail Panel Transitions', () => {
   // CT-9: Backward transition via detail panel moves card to previous column
   it('CT-9: backward transition via detail panel moves card to previous column', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const confirmSpy = mockConfirmAccept();
 
     render(<App />);
 
@@ -46,20 +47,20 @@ describe('Detail Panel Transitions', () => {
     // Click backward button
     await user.click(backwardBtn);
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Geplant → Beauftragt'));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('Geplant → Beauftragt'));
 
-    // Verify the project moved
-    const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');
-    expect(project?.status).toBe('beauftragt');
-
-    vi.restoreAllMocks();
+    // Verify the project moved (the transition runs after the confirm resolves)
+    await waitFor(() => {
+      const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');
+      expect(project?.status).toBe('beauftragt');
+    });
   });
 
   // Finding 3 (R3): backward transition dialog cancellation — project must NOT
   // transition when user clicks Abbrechen (mirrors CT-7b for forward in KanbanBoard)
   it('CT-9b: backward transition does not happen when confirm is cancelled', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const confirmSpy = mockConfirmReject();
 
     render(<App />);
 
@@ -71,13 +72,11 @@ describe('Detail Panel Transitions', () => {
     const backwardBtn = screen.getByTestId('detail-backward-button');
     await user.click(backwardBtn);
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('Geplant → Beauftragt'));
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining('Geplant → Beauftragt'));
 
     // Project should remain in geplant
     const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');
     expect(project?.status).toBe('geplant');
-
-    vi.restoreAllMocks();
   });
 
   // CT-10: Backward button is hidden for Anfrage and Erledigt

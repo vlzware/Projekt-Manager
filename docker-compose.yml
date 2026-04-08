@@ -1,3 +1,11 @@
+# Standard logging policy reused across services so /var/lib/docker doesn't
+# fill from unbounded JSON-file driver defaults.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
 services:
   app:
     build: .
@@ -15,6 +23,17 @@ services:
       NODE_ENV: production
       PORT: '3000'
       SEED: ${SEED:-false}
+      # First-run admin bootstrap (ADR-0010 / #57). Optional with an empty
+      # default so the container starts fine when the operator hasn't set
+      # them — the bootstrap code itself handles "neither var set" as the
+      # AC-B4 silent no-op path. `:-` is required: without it, docker compose
+      # warns and substitutes the literal empty string inconsistently across
+      # versions. Leaving these out of `environment:` silently hides the
+      # .env values from the container, which is how they got missed on the
+      # first deploy of this feature.
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      BOOTSTRAP_ADMIN_DISPLAY_NAME: ${BOOTSTRAP_ADMIN_DISPLAY_NAME:-}
     healthcheck:
       test:
         [
@@ -33,6 +52,7 @@ services:
       storage-init:
         condition: service_completed_successfully
     restart: unless-stopped
+    logging: *default-logging
 
   db:
     image: postgres:17-alpine
@@ -50,6 +70,7 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
+    logging: *default-logging
 
   storage:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
@@ -61,6 +82,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     restart: unless-stopped
+    logging: *default-logging
 
   storage-init:
     image: minio/mc:RELEASE.2025-08-13T08-35-41Z
@@ -77,20 +99,28 @@ services:
     restart: 'no'
 
   caddy:
-    image: caddy:2-alpine
+    build: ./docker/caddy
     mem_limit: 128m
+    # SECURITY: Caddy's :443 listener is published only on the WireGuard
+    # interface IP. WG_BIND_IP must be set to the wg0 address (e.g.
+    # 10.213.17.1) in production. If unset, defaults to 127.0.0.1 (loopback
+    # only) — safe for local dev where Caddy must not be reachable from any
+    # external interface. Do NOT change this to 0.0.0.0 without also
+    # opening the Hetzner firewall, which defeats the VPN-first principle.
+    # See ADR-0008 §Network topology.
     ports:
-      - '80:80'
-      - '443:443'
+      - '${WG_BIND_IP:-127.0.0.1}:443:443'
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
       DOMAIN: ${DOMAIN:-localhost}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
     depends_on:
       - app
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   pgdata:
