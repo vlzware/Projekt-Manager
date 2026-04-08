@@ -9,21 +9,21 @@ Conventions for this project. Applies to all contributors (human and AI).
 
 ## Tech Stack
 
-| Concern | Choice | Reference |
-|---|---|---|
-| Language | TypeScript (strict) | [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md) |
-| Framework (frontend) | React 19 | |
-| Build | Vite | |
-| State | Zustand | |
-| Styling | CSS Modules (`.module.css`) | |
-| Date math | date-fns | |
-| Server framework | Fastify | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md) |
-| ORM | Drizzle ORM | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md) |
-| Database | PostgreSQL | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md) |
-| Object storage | S3-compatible (MinIO) | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
-| Deployment | Docker Compose, GitHub Actions | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
-| Unit/Component tests | Vitest + @testing-library/react | |
-| E2E tests | Playwright | |
+| Concern              | Choice                          | Reference                                                                                |
+| -------------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
+| Language             | TypeScript (strict)             | [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)                    |
+| Framework (frontend) | React 19                        |                                                                                          |
+| Build                | Vite                            |                                                                                          |
+| State                | Zustand                         |                                                                                          |
+| Styling              | CSS Modules (`.module.css`)     |                                                                                          |
+| Date math            | date-fns                        |                                                                                          |
+| Server framework     | Fastify                         | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| ORM                  | Drizzle ORM                     | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| Database             | PostgreSQL                      | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| Object storage       | S3-compatible (MinIO)           | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
+| Deployment           | Docker Compose, GitHub Actions  | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
+| Unit/Component tests | Vitest + @testing-library/react |                                                                                          |
+| E2E tests            | Playwright                      |                                                                                          |
 
 ## Workflow
 
@@ -55,6 +55,7 @@ Gaps block implementation (step 4). The reviewer must be different from the test
 Required when a change affects trust boundaries. The trigger question: **"Does this change affect how the system authenticates, authorizes, stores data, communicates externally, or exposes itself to the network?"** If yes — audit. If no — skip.
 
 Triggers include:
+
 - Auth or session logic
 - New or changed API endpoints with authorization
 - Infrastructure changes (Docker, Compose, CI/CD, reverse proxy)
@@ -96,7 +97,19 @@ main                          always reflects completed iterations
 [optional body]
 ```
 
-**Types**: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `style`
+**Types**:
+
+| Type       | Use for                                                                                                                                                                                                                |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `feat`     | A new user-visible feature or capability                                                                                                                                                                               |
+| `fix`      | A bug fix in existing behavior                                                                                                                                                                                         |
+| `refactor` | Restructuring existing code without changing behavior                                                                                                                                                                  |
+| `test`     | Adding or improving tests                                                                                                                                                                                              |
+| `docs`     | Documentation only — no code changes                                                                                                                                                                                   |
+| `style`    | Formatting, whitespace, missing semicolons — no logic changes                                                                                                                                                          |
+| `chore`    | Routine maintenance, tooling, dependency bumps — nothing user-visible and nothing deliberate about production readiness                                                                                                |
+| `ci`       | CI configuration files and scripts (`.github/workflows/**`, lint/format/type-check wiring in the build)                                                                                                                |
+| `ops`      | Operational readiness — deployment, infrastructure, runbooks, incident response. Use when the change is deliberate infra work that isn't routine maintenance (`chore`) and doesn't add a user-visible feature (`feat`) |
 
 One logical change per commit. Don't batch unrelated changes.
 
@@ -123,18 +136,18 @@ This makes dependencies clickable and machine-readable. Don't describe the block
 
 ### Labels
 
-| Label | Purpose |
-|-------|---------|
-| `bug` | Something isn't working |
-| `feature` | New feature |
-| `chore` | Build, tooling, config, refactoring |
+| Label           | Purpose                                    |
+| --------------- | ------------------------------------------ |
+| `bug`           | Something isn't working                    |
+| `feature`       | New feature                                |
+| `chore`         | Build, tooling, config, refactoring        |
 | `documentation` | Improvements or additions to documentation |
-| `spec` | Specification work |
-| `research` | Needs investigation |
-| `spike` | Timeboxed investigation |
-| `decision` | Needs a decision |
-| `adr` | Architecture Decision Record candidate |
-| `blocked` | Waiting on something external |
+| `spec`          | Specification work                         |
+| `research`      | Needs investigation                        |
+| `spike`         | Timeboxed investigation                    |
+| `decision`      | Needs a decision                           |
+| `adr`           | Architecture Decision Record candidate     |
+| `blocked`       | Waiting on something external              |
 
 Labels describe **type** and **status**. Scope is tracked via GitHub Milestones.
 
@@ -152,12 +165,12 @@ Issues without a milestone stay in the backlog.
 
 ## Specification vs Design
 
-| Document | Location | Answers | Contains | Does NOT contain |
-|---|---|---|---|---|
-| **Spec** | `docs/spec/` | "What does the system do?" | Current user-facing behavior, data model, acceptance criteria, edge cases | Architecture, component structure, implementation details |
-| **Working files** | `docs/wip/` | Scratch space for the current iteration | Design notes, research, reference screenshots — anything ephemeral | Nothing that should outlive the iteration |
-| **Design doc** | optional, per feature | "How do we build it?" | Architecture, APIs, data flow, component breakdown | Business requirements, acceptance criteria |
-| **ADR** | `docs/adr/` | "Why this and not that?" | A single decision with rationale and alternatives | Implementation details, full designs |
+| Document          | Location              | Answers                                 | Contains                                                                  | Does NOT contain                                          |
+| ----------------- | --------------------- | --------------------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------- |
+| **Spec**          | `docs/spec/`          | "What does the system do?"              | Current user-facing behavior, data model, acceptance criteria, edge cases | Architecture, component structure, implementation details |
+| **Working files** | `docs/wip/`           | Scratch space for the current iteration | Design notes, research, reference screenshots — anything ephemeral        | Nothing that should outlive the iteration                 |
+| **Design doc**    | optional, per feature | "How do we build it?"                   | Architecture, APIs, data flow, component breakdown                        | Business requirements, acceptance criteria                |
+| **ADR**           | `docs/adr/`           | "Why this and not that?"                | A single decision with rationale and alternatives                         | Implementation details, full designs                      |
 
 ### The framework-swap test
 
