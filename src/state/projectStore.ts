@@ -11,7 +11,7 @@ import type { WorkflowState } from '@/config/stateConfig';
 import type { Project, SummaryData } from '@/domain/types';
 import { getNextState, getPreviousState } from '@/domain/transitions';
 import { computeSummary } from '@/domain/summary';
-import { projectApi } from '@/api/client';
+import { projectApi, type ApiResult } from '@/api/client';
 import { useAuthStore } from './authStore';
 
 interface ProjectState {
@@ -34,22 +34,30 @@ function handleSessionExpired() {
   useAuthStore.getState().handleSessionExpired();
 }
 
-export const useProjectStore = create<ProjectState>((set, get) => ({
-  projects: [],
-  mutationError: null,
-  mutationInFlight: {},
-
-  fetchProjects: async () => {
-    const result = await projectApi.list();
-    if (!result.ok) return;
-    set({ projects: result.data.data ?? result.data });
-  },
-
-  transitionForward: (projectId: string) => {
+export const useProjectStore = create<ProjectState>((set, get) => {
+  /**
+   * Shared transition runner used by both forward and backward transitions.
+   *
+   * The two directions used to be near-duplicate methods. They differ only in:
+   *   - which `getNextState`/`getPreviousState` to call
+   *   - which `projectApi.transition*` to invoke
+   * Everything else (in-flight tracking, optimistic-style commit, error
+   * handling, session-expiry delegation) is identical.
+   *
+   * `flushSync` is used unconditionally on success: in the forward case the
+   * card moves to a new column, and React must commit the re-enabled
+   * controls to the DOM *before* the layout shift; in the backward case the
+   * cost is negligible and consistency is more valuable than micro-perf.
+   */
+  function runTransition(
+    projectId: string,
+    computeNext: (current: WorkflowState) => WorkflowState | null,
+    apiCall: (id: string) => Promise<ApiResult<Project>>,
+  ): void {
     const project = get().projects.find((p) => p.id === projectId);
     if (!project) return;
 
-    const next = getNextState(project.status);
+    const next = computeNext(project.status);
     if (!next) return;
 
     set((s) => ({
@@ -57,8 +65,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       mutationError: null,
     }));
 
-    projectApi
-      .transitionForward(projectId)
+    apiCall(projectId)
       .then((result) => {
         if (!result.ok) {
           if (result.sessionExpired) {
@@ -83,7 +90,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             return { mutationInFlight: rest };
           });
         });
-        // Then apply the status change — card moves to new column
+        // Then apply the status change — card moves to new column.
         set((s) => ({
           projects: s.projects.map((p) => {
             if (p.id !== projectId) return p;
@@ -105,136 +112,99 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           };
         });
       });
-  },
+  }
 
-  transitionBackward: (projectId: string) => {
-    const project = get().projects.find((p) => p.id === projectId);
-    if (!project) return;
+  return {
+    projects: [],
+    mutationError: null,
+    mutationInFlight: {},
 
-    const prev = getPreviousState(project.status);
-    if (!prev) return;
+    fetchProjects: async () => {
+      const result = await projectApi.list();
+      if (!result.ok) return;
+      set({ projects: result.data.data ?? result.data });
+    },
 
-    set((s) => ({
-      mutationInFlight: { ...s.mutationInFlight, [projectId]: true },
-      mutationError: null,
-    }));
+    transitionForward: (projectId: string) => {
+      runTransition(projectId, getNextState, projectApi.transitionForward);
+    },
 
-    projectApi
-      .transitionBackward(projectId)
-      .then((result) => {
-        if (!result.ok) {
-          if (result.sessionExpired) {
-            handleSessionExpired();
+    transitionBackward: (projectId: string) => {
+      runTransition(projectId, getPreviousState, projectApi.transitionBackward);
+    },
+
+    updateDates: (projectId: string, start?: string | null, end?: string | null) => {
+      const project = get().projects.find((p) => p.id === projectId);
+      if (!project) return;
+
+      const originalProject = { ...project };
+
+      // Optimistic update
+      set((s) => ({
+        projects: s.projects.map((p) => {
+          if (p.id !== projectId) return p;
+          return {
+            ...p,
+            plannedStart: start === null ? undefined : start !== undefined ? start : p.plannedStart,
+            plannedEnd: end === null ? undefined : end !== undefined ? end : p.plannedEnd,
+            updatedAt: new Date().toISOString(),
+          };
+        }),
+        mutationInFlight: { ...s.mutationInFlight, [projectId]: true },
+        mutationError: null,
+      }));
+
+      projectApi
+        .updateDates(projectId, { plannedStart: start, plannedEnd: end })
+        .then((result) => {
+          if (!result.ok) {
+            if (result.sessionExpired) {
+              handleSessionExpired();
+              return;
+            }
+            // Revert optimistic update
+            set((s) => {
+              const { [projectId]: _, ...rest } = s.mutationInFlight;
+              return {
+                projects: s.projects.map((p) => (p.id === projectId ? originalProject : p)),
+                mutationError: result.error.message,
+                mutationInFlight: rest,
+              };
+            });
             return;
           }
+
           set((s) => {
             const { [projectId]: _, ...rest } = s.mutationInFlight;
-            return {
-              mutationError: result.error.message,
-              mutationInFlight: rest,
-            };
+            return { mutationInFlight: rest };
           });
-          return;
-        }
-
-        set((s) => {
-          const { [projectId]: _, ...rest } = s.mutationInFlight;
-          return {
-            projects: s.projects.map((p) => {
-              if (p.id !== projectId) return p;
-              return {
-                ...p,
-                status: prev,
-                statusChangedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-              };
-            }),
-            mutationInFlight: rest,
-          };
-        });
-      })
-      .catch(() => {
-        set((s) => {
-          const { [projectId]: _, ...rest } = s.mutationInFlight;
-          return {
-            mutationError: 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
-            mutationInFlight: rest,
-          };
-        });
-      });
-  },
-
-  updateDates: (projectId: string, start?: string | null, end?: string | null) => {
-    const project = get().projects.find((p) => p.id === projectId);
-    if (!project) return;
-
-    const originalProject = { ...project };
-
-    // Optimistic update
-    set((s) => ({
-      projects: s.projects.map((p) => {
-        if (p.id !== projectId) return p;
-        return {
-          ...p,
-          plannedStart: start === null ? undefined : start !== undefined ? start : p.plannedStart,
-          plannedEnd: end === null ? undefined : end !== undefined ? end : p.plannedEnd,
-          updatedAt: new Date().toISOString(),
-        };
-      }),
-      mutationInFlight: { ...s.mutationInFlight, [projectId]: true },
-      mutationError: null,
-    }));
-
-    projectApi
-      .updateDates(projectId, { plannedStart: start, plannedEnd: end })
-      .then((result) => {
-        if (!result.ok) {
-          if (result.sessionExpired) {
-            handleSessionExpired();
-            return;
-          }
-          // Revert optimistic update
+        })
+        .catch(() => {
           set((s) => {
             const { [projectId]: _, ...rest } = s.mutationInFlight;
             return {
               projects: s.projects.map((p) => (p.id === projectId ? originalProject : p)),
-              mutationError: result.error.message,
+              mutationError: 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
               mutationInFlight: rest,
             };
           });
-          return;
-        }
-
-        set((s) => {
-          const { [projectId]: _, ...rest } = s.mutationInFlight;
-          return { mutationInFlight: rest };
         });
-      })
-      .catch(() => {
-        set((s) => {
-          const { [projectId]: _, ...rest } = s.mutationInFlight;
-          return {
-            projects: s.projects.map((p) => (p.id === projectId ? originalProject : p)),
-            mutationError: 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
-            mutationInFlight: rest,
-          };
-        });
-      });
-  },
+    },
 
-  clearMutationError: () => {
-    set({ mutationError: null });
-  },
+    clearMutationError: () => {
+      set({ mutationError: null });
+    },
 
-  getProjectsByState: (state: WorkflowState) => {
-    return get().projects.filter((p) => p.status === state);
-  },
+    getProjectsByState: (state: WorkflowState) => {
+      return get().projects.filter((p) => p.status === state);
+    },
 
-  getSummary: () => {
-    return computeSummary(get().projects);
-  },
+    getSummary: () => {
+      return computeSummary(get().projects);
+    },
 
-  isMutationInFlight: (projectId: string) => {
-    return !!get().mutationInFlight[projectId];
-  },
-}));
+    isMutationInFlight: (projectId: string) => {
+      return !!get().mutationInFlight[projectId];
+    },
+  };
+});

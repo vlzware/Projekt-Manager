@@ -1,6 +1,6 @@
 # Verification
 
-*Iteration 2 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
 
 ---
 
@@ -54,8 +54,15 @@ The system is accepted when all of the following are true.
 
 ### 15.6 Deployment
 
-- **AC-30**: The application is accessible at a public URL over HTTPS.
+- **AC-30**: The application is accessible at a public URL over HTTPS. _Note: the "public URL" framing reflects the original goal. If the project settles on a VPN-only topology (see [ADR-0008](../adr/0008-vpn-first-network-access-tailscale.md) and [#42](https://github.com/vlzware/Projekt-Manager/issues/42)), there may be no public URL at all and this criterion will be reworded. The HTTPS part is non-negotiable in either case — see AC-45._
 - **AC-31**: Merging to `main` triggers an automated deployment to the hosted environment.
+- **AC-45**: No request reaches application code over plain HTTP. Port 80 either unconditionally redirects to HTTPS before any application handler runs, or is not bound at all. HTTPS-or-nothing applies in every environment regardless of network topology — see [ADR-0008](../adr/0008-vpn-first-network-access-tailscale.md) for the rationale that VPN does not substitute for TLS. Implementation tracked by [#47](https://github.com/vlzware/Projekt-Manager/issues/47).
+- **AC-46**: A failed deployment leaves the previously running version running. The pipeline aborts before swapping containers if the build, smoke test, or health check fails.
+- **AC-47**: A previously deployed commit can be redeployed (rollback) by re-running the deploy workflow against that commit's SHA, without requiring code changes or manual server access.
+- **AC-48**: After deploy completes, an automated smoke test verifies that the application responds to a known health-check endpoint. Failure of the smoke test aborts the deploy and reports failure.
+- **AC-49**: Network access to the hosted environment is restricted to authorized clients (initially via VPN per [ADR-0008](../adr/0008-vpn-first-network-access-tailscale.md)). The application is not reachable from the public internet without VPN credentials.
+- **AC-50**: Database and object storage data persist across application container restarts and redeploys. A redeploy of the application containers does not wipe project, user, or session data.
+- **AC-51**: Deployments use a specific commit SHA, not a moving tag. The deployed version is reproducible and traceable to a single commit in the iteration branch.
 
 ### 15.7 Engineering
 

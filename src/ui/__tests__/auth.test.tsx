@@ -6,6 +6,7 @@ import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { App } from '@/App';
 import { LoginForm } from '@/ui/auth/LoginForm';
+import { mockConfirmAccept } from '@/test/confirmHelpers';
 
 // ---------------------------------------------------------------------------
 // API mock infrastructure
@@ -285,7 +286,7 @@ describe('Mutation Error Handling', () => {
   // CT-23: When a mutation API call fails, the UI shows an error message and reverts local state
   it('CT-23: failed mutation shows error and reverts local state', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockConfirmAccept();
 
     // Mock: transition API returns failure
     mockFetchNetworkError('Server error');
@@ -348,7 +349,7 @@ describe('Double-Submit Prevention', () => {
   // CT-24: While a mutation is in flight, the triggering control is disabled
   it('CT-24: triggering control is disabled while mutation is in flight', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockConfirmAccept();
 
     // Use a deferred promise so we can inspect the button state while the
     // mutation is pending (before the API responds).
@@ -428,7 +429,7 @@ describe('Session Expiry Mid-Use', () => {
   // AC-27: A session that expires while the app is open redirects to login with an expiry message.
   it('AC-27: session expiry during use redirects to login with expiry message', async () => {
     const user = userEvent.setup();
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockConfirmAccept();
 
     // Mock: transition API returns 401 SESSION_EXPIRED
     mockFetchError({ code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen' }, 401);

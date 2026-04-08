@@ -20,8 +20,8 @@ This iteration must answer two questions:
 |---|---|---|
 | 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
 | 2 | Persistence (database + API), authentication, object storage | Accepted |
-| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | **Current** |
-| 4 | Deployment, integration testing, monitoring | Planned |
+| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | Accepted |
+| 4 | Deployment, integration testing, CD pipeline, VPN access | **Current** |
 
 ---
 
@@ -185,9 +185,9 @@ Items marked as "Known debt" across the specification. Each will be resolved or 
 | Item | Location | Target Iteration | Issue |
 |------|----------|-----------------|-------|
 | `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
-| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
+| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
 | Minimal role set — add fine-grained permissions and per-role view restrictions | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
-| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
+| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
 | Password change does not invalidate existing sessions | [data-model.md §5.4](data-model.md#54-session) | 4+ | TBD |
 | State actions mutate silently — need middleware or event hooks for audit trail and notifications | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 4+ | TBD |
 

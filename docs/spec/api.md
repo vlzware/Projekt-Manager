@@ -1,6 +1,6 @@
 # API Specification
 
-*Iteration 2 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
 
 ---
 
@@ -68,6 +68,21 @@ Design notes:
 
 - Password fields are accepted as plaintext input over the API (over HTTPS). The server hashes them before storage. Plaintext passwords are never stored or logged.
 - The change-password operation is API-only in this iteration — there is no UI surface for it. A "Passwort ändern" entry in the user dropdown is planned for a future iteration.
+
+#### 14.2.4 Bulk Operations
+
+Bulk operations let an administrator (or import flow) submit many items in a single request. They follow a uniform shape: each item is validated independently, valid items are persisted, and the response reports both how many succeeded and which ones failed (with the index in the input array and a German error message).
+
+| Operation | Input | Output | Notes |
+|---|---|---|---|
+| **Bulk import projects** | array of project items, each with the same fields as a single project (`number`, `title`, `customer`, optional `address`, optional `status`, optional `plannedStart`/`plannedEnd`, optional `assignedWorkers`, optional `estimatedValue`, optional `notes`) | `{ imported: number, errors: { index: number, message: string }[] }` | Each item is validated independently. The endpoint never aborts on the first invalid item — partial success is the expected outcome. Items with `status` omitted default to the first workflow state. Requires the `project:create` permission. |
+
+Design notes:
+
+- **Partial success is intentional.** A 30-row import where 2 rows are malformed should not block the other 28. The response gives the client enough information to render an error report and let the user fix the rejected rows.
+- **Validation runs server-side.** The same shape rules used by single-project creation are applied per item. The validator is a pure function so it can also be reused client-side for an "import preview" UI in a future iteration without round-tripping to the server.
+- **No transactional all-or-nothing semantics.** If a row fails *after* it passed validation (e.g., a unique-key conflict on `number`), the row is reported in `errors` and the others still commit. This matches the import-tool model the kickoff describes.
+- **The shape generalizes.** Future bulk operations (bulk update, bulk transition, bulk delete, bulk customer import) follow the same `{ imported|updated|... , errors }` pattern. The client can write a single `BulkResult` handler instead of one per operation.
 
 ---
 

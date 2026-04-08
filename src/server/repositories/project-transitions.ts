@@ -10,6 +10,19 @@ import type { WorkflowState } from '../../config/stateConfig.js';
 import { toProject, ProjectNotFoundError } from './project-read.js';
 
 /**
+ * Result of a transition: both the previous status and the updated project,
+ * captured atomically inside the same transaction. The `before` field is what
+ * audit subscribers (event seam) need to construct a from→to event without a
+ * second read against a state that may already have moved.
+ */
+export interface TransitionResult {
+  /** The status the project held immediately before the update committed. */
+  before: WorkflowState;
+  /** The updated project after the transition. */
+  project: ReturnType<typeof toProject>;
+}
+
+/**
  * Transition a project forward by one state.
  * Rejects terminal state (erledigt).
  */
@@ -17,7 +30,7 @@ export async function transitionForward(
   db: Database,
   id: string,
   userId: string,
-): Promise<ReturnType<typeof toProject>> {
+): Promise<TransitionResult> {
   return db.transaction(async (tx) => {
     const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
 
@@ -26,7 +39,8 @@ export async function transitionForward(
     }
 
     const project = rows[0]!;
-    const currentIndex = WORKFLOW_ORDER.indexOf(project.status as WorkflowState);
+    const before = project.status as WorkflowState;
+    const currentIndex = WORKFLOW_ORDER.indexOf(before);
 
     if (currentIndex === -1 || currentIndex === WORKFLOW_ORDER.length - 1) {
       throw new TransitionError(
@@ -48,7 +62,7 @@ export async function transitionForward(
       .where(eq(projects.id, id))
       .returning();
 
-    return toProject(updated[0]!);
+    return { before, project: toProject(updated[0]!) };
   });
 }
 
@@ -60,7 +74,7 @@ export async function transitionBackward(
   db: Database,
   id: string,
   userId: string,
-): Promise<ReturnType<typeof toProject>> {
+): Promise<TransitionResult> {
   return db.transaction(async (tx) => {
     const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
 
@@ -69,7 +83,8 @@ export async function transitionBackward(
     }
 
     const project = rows[0]!;
-    const currentIndex = WORKFLOW_ORDER.indexOf(project.status as WorkflowState);
+    const before = project.status as WorkflowState;
+    const currentIndex = WORKFLOW_ORDER.indexOf(before);
 
     if (currentIndex === -1 || currentIndex === 0) {
       throw new TransitionError(
@@ -98,7 +113,7 @@ export async function transitionBackward(
       .where(eq(projects.id, id))
       .returning();
 
-    return toProject(updated[0]!);
+    return { before, project: toProject(updated[0]!) };
   });
 }
 

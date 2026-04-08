@@ -28,28 +28,41 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { createStorageClient } from '../../server/storage/client.js';
 import type { StorageClient } from '../../server/storage/client.js';
 
+/**
+ * STORAGE_* env vars are required. If they are not set, this file fails loud
+ * at `beforeAll` instead of silently reporting green. The storage module is
+ * a core boundary of the architecture (architecture.md §11.4) and whether it
+ * is wired up correctly is not optional state — it must be observable from
+ * CI. Running tests that skip themselves on missing config teaches you
+ * nothing about whether the module works.
+ *
+ * Whether the endpoint points at real S3 or a local MinIO is a deployment
+ * choice, not a test concern — either way the env must be set.
+ */
+
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `Storage tests require ${name} to be set. ` +
+        'STORAGE_ENDPOINT, STORAGE_BUCKET, STORAGE_ACCESS_KEY, and STORAGE_SECRET_KEY ' +
+        'must all be present. Point them at your S3-compatible backend ' +
+        '(e.g. MinIO at http://localhost:9000 in local dev). ' +
+        'Silent skipping is not allowed — see file header.',
+    );
+  }
+  return value;
+}
+
 describe('Object Storage Module', () => {
   let storage: StorageClient;
 
-  beforeAll(async () => {
-    const endpoint = process.env.STORAGE_ENDPOINT;
-    const bucket = process.env.STORAGE_BUCKET;
-    const accessKey = process.env.STORAGE_ACCESS_KEY;
-    const secretKey = process.env.STORAGE_SECRET_KEY;
-
-    if (!endpoint || !bucket || !accessKey || !secretKey) {
-      console.warn(
-        'Skipping storage tests: STORAGE_ENDPOINT, STORAGE_BUCKET, ' +
-          'STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY must be set.',
-      );
-      return;
-    }
-
+  beforeAll(() => {
     storage = createStorageClient({
-      endpoint,
-      bucket,
-      accessKey,
-      secretKey,
+      endpoint: requireEnv('STORAGE_ENDPOINT'),
+      bucket: requireEnv('STORAGE_BUCKET'),
+      accessKey: requireEnv('STORAGE_ACCESS_KEY'),
+      secretKey: requireEnv('STORAGE_SECRET_KEY'),
       region: process.env.STORAGE_REGION ?? 'us-east-1',
     });
   });
@@ -67,14 +80,12 @@ describe('Object Storage Module', () => {
     const testContentType = 'text/plain';
 
     it('uploads a file without error', async () => {
-      if (!storage) return; // skip if no credentials
       const result = await storage.upload(testKey, testContent, testContentType);
       expect(result).toBeDefined();
       expect(result.key).toBe(testKey);
     });
 
     it('retrieves the uploaded file with matching contents', async () => {
-      if (!storage) return;
       const downloaded = await storage.download(testKey);
       expect(Buffer.isBuffer(downloaded.data) || downloaded.data instanceof Uint8Array).toBe(true);
       expect(Buffer.from(downloaded.data).toString('utf-8')).toBe(testContent.toString('utf-8'));
@@ -82,19 +93,16 @@ describe('Object Storage Module', () => {
     });
 
     it('generates a signed URL for the uploaded file', async () => {
-      if (!storage) return;
       const url = await storage.getSignedUrl(testKey, 60);
       expect(typeof url).toBe('string');
       expect(url).toMatch(/^https?:\/\//);
     });
 
     it('deletes the uploaded file', async () => {
-      if (!storage) return;
       await expect(storage.delete(testKey)).resolves.not.toThrow();
     });
 
     it('download after delete returns not-found or throws', async () => {
-      if (!storage) return;
       await expect(storage.download(testKey)).rejects.toThrow();
     });
   });

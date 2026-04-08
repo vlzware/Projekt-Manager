@@ -11,7 +11,6 @@ export function CalendarView() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const projects = useProjectStore((s) => s.projects);
   const activeFilter = useUIStore((s) => s.activeFilter);
-  const setFilter = useUIStore((s) => s.setFilter);
   const getSummary = useProjectStore((s) => s.getSummary);
   const { navigateTo } = useRouterNav();
 
@@ -25,11 +24,16 @@ export function CalendarView() {
   // Only show projects with at least plannedStart
   const calendarProjects = filteredProjects.filter((p) => p.plannedStart);
 
+  const setFilterNoDates = useUIStore((s) => s.setFilterNoDates);
+
   const handleNoDatesClick = () => {
-    // Switch to kanban and filter to show projects without dates
-    // Since we can't filter by "no dates" directly, just switch to kanban
+    // Switch to kanban and apply the "no dates" filter so only projects
+    // missing both planned dates are visible. Order matters: navigateTo
+    // calls setView which clears filters, so the filter must be set AFTER
+    // the navigation. The filter is mutually exclusive with the
+    // workflow-state filter (see uiStore).
     navigateTo('/kanban');
-    setFilter(null);
+    setFilterNoDates(true);
   };
 
   return (

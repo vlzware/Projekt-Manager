@@ -7,6 +7,7 @@ import {
 } from '@/domain/transitions';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import { useProjectStore } from '@/state/projectStore';
+import { useConfirmStore } from '@/state/confirmStore';
 
 export function useProjectTransition(project: Project) {
   const transitionForward = useProjectStore((s) => s.transitionForward);
@@ -19,23 +20,27 @@ export function useProjectTransition(project: Project) {
     canBackward: canTransitionBackward(project.status),
     inFlight,
 
-    forward: () => {
+    forward: async () => {
       if (inFlight) return;
       const next = getNextState(project.status);
       if (!next) return;
       const nextLabel = STATE_CONFIG_MAP[next].label;
-      const confirmed = window.confirm(`Status ändern: ${config.label} → ${nextLabel}?`);
+      const confirmed = await useConfirmStore
+        .getState()
+        .request(`Status ändern: ${config.label} → ${nextLabel}?`);
       if (confirmed) {
         transitionForward(project.id);
       }
     },
 
-    backward: () => {
+    backward: async () => {
       if (inFlight) return;
       const prev = getPreviousState(project.status);
       if (!prev) return;
       const prevLabel = STATE_CONFIG_MAP[prev].label;
-      const confirmed = window.confirm(`Status ändern: ${config.label} → ${prevLabel}?`);
+      const confirmed = await useConfirmStore
+        .getState()
+        .request(`Status ändern: ${config.label} → ${prevLabel}?`);
       if (confirmed) {
         transitionBackward(project.id);
       }

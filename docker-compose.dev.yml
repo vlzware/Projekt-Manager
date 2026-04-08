@@ -1,7 +1,11 @@
 # Development overlay — exposes DB and MinIO ports directly, no Caddy.
 #
 # Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up db storage
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init
+#
+# `storage-init` is a one-shot container that creates the MinIO bucket on
+# first start; without it the storage tests fail with NoSuchBucket. It exits
+# after the bucket is created.
 
 services:
   app:

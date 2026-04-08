@@ -10,6 +10,7 @@ import styles from './KanbanBoard.module.css';
 export function KanbanBoard() {
   const projects = useProjectStore((s) => s.projects);
   const activeFilter = useUIStore((s) => s.activeFilter);
+  const filterNoDates = useUIStore((s) => s.filterNoDates);
   const activeTier = useCollapseTier();
   const [expanded, setExpanded] = useState<Set<WorkflowState>>(new Set());
 
@@ -25,9 +26,12 @@ export function KanbanBoard() {
     });
   }, []);
 
-  const filteredProjects = activeFilter
-    ? projects.filter((p) => p.status === activeFilter)
-    : projects;
+  // Filters are mutually exclusive (see uiStore). Apply whichever is active.
+  const filteredProjects = filterNoDates
+    ? projects.filter((p) => !p.plannedStart && !p.plannedEnd)
+    : activeFilter
+      ? projects.filter((p) => p.status === activeFilter)
+      : projects;
 
   return (
     <div className={styles.board} data-testid="kanban-board">

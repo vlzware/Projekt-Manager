@@ -3,9 +3,12 @@
  *
  * Sits between routes (HTTP concerns) and repositories (data access).
  * Handles credential verification, session management, and password policy.
+ *
+ * The service does NOT import from `fastify`. Logging goes through the
+ * `ServiceLogger` interface so the service can be invoked from any context
+ * (CLI, background job, alternative transport) — see Logger.ts.
  */
 
-import type { FastifyBaseLogger } from 'fastify';
 import type { Database } from '../db/connection.js';
 import {
   findByUsername,
@@ -17,11 +20,12 @@ import { hashPassword, verifyPassword } from '../password.js';
 import { isCommonPassword } from '../data/common-passwords.js';
 import { invalidCredentials, validationError } from '../errors.js';
 import { AUTH_CONFIG } from '../config/index.js';
+import type { ServiceLogger } from './Logger.js';
 
 export class AuthService {
   constructor(private db: Database) {}
 
-  async login(username: string, password: string, ip: string, log: FastifyBaseLogger) {
+  async login(username: string, password: string, ip: string, log: ServiceLogger) {
     const user = await findByUsername(this.db, username);
 
     // Timing side-channel mitigation: burn the same bcrypt time
@@ -64,7 +68,7 @@ export class AuthService {
     };
   }
 
-  async logout(token: string, userId: string, ip: string, log: FastifyBaseLogger) {
+  async logout(token: string, userId: string, ip: string, log: ServiceLogger) {
     if (token) {
       await deleteSession(this.db, token);
     }
@@ -78,7 +82,7 @@ export class AuthService {
     newPassword: string,
     currentToken: string | undefined,
     ip: string,
-    log: FastifyBaseLogger,
+    log: ServiceLogger,
   ) {
     const user = await findByUsername(this.db, username);
     if (!user) {
