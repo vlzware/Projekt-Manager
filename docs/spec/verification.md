@@ -56,7 +56,7 @@ The system is accepted when all of the following are true.
 
 - **AC-30**: The application is accessible at a public URL over HTTPS.
 - **AC-31**: Merging to `main` triggers an automated deployment to the hosted environment.
-- **AC-45**: All HTTP requests to the application are redirected to HTTPS. The application never serves over plain HTTP in production.
+- **AC-45**: No request reaches application code over plain HTTP. Port 80 either unconditionally redirects to HTTPS before any application handler runs, or is not bound at all. HTTPS-or-nothing applies in every environment regardless of network topology — see [ADR-0008](../adr/0008-vpn-first-network-access-tailscale.md) for the rationale that VPN does not substitute for TLS. Implementation tracked by [#47](https://github.com/vlzware/Projekt-Manager/issues/47).
 - **AC-46**: A failed deployment leaves the previously running version running. The pipeline aborts before swapping containers if the build, smoke test, or health check fails.
 - **AC-47**: A previously deployed commit can be redeployed (rollback) by re-running the deploy workflow against that commit's SHA, without requiring code changes or manual server access.
 - **AC-48**: After deploy completes, an automated smoke test verifies that the application responds to a known health-check endpoint. Failure of the smoke test aborts the deploy and reports failure.
