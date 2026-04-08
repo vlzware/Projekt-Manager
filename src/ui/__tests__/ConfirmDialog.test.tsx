@@ -203,9 +203,7 @@ describe('ConfirmDialog — accessibility', () => {
   it('uses a custom title when supplied', () => {
     render(<ConfirmDialog />);
     act(() => {
-      void useConfirmStore
-        .getState()
-        .request('Wirklich löschen?', { title: 'Projekt löschen' });
+      void useConfirmStore.getState().request('Wirklich löschen?', { title: 'Projekt löschen' });
     });
 
     expect(screen.getByText('Projekt löschen')).toBeInTheDocument();

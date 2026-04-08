@@ -88,11 +88,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.transitionForward(
-          id,
-          request.user!.id,
-          request.log,
-        );
+        const project = await projectService.transitionForward(id, request.user!.id, request.log);
         return reply.code(200).send(project);
       },
     );
@@ -116,11 +112,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.transitionBackward(
-          id,
-          request.user!.id,
-          request.log,
-        );
+        const project = await projectService.transitionBackward(id, request.user!.id, request.log);
         return reply.code(200).send(project);
       },
     );
@@ -157,12 +149,7 @@ export function projectRoutes(db: Database) {
           plannedEnd?: string;
         };
 
-        const project = await projectService.updateDates(
-          id,
-          request.user!.id,
-          body,
-          request.log,
-        );
+        const project = await projectService.updateDates(id, request.user!.id, body, request.log);
         return reply.code(200).send(project);
       },
     );
