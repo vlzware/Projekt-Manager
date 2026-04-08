@@ -54,7 +54,7 @@ The system is accepted when all of the following are true.
 
 ### 15.6 Deployment
 
-- **AC-30**: The application is accessible at a public URL over HTTPS.
+- **AC-30**: The application is accessible at a public URL over HTTPS. _Note: the "public URL" framing reflects the original goal. If the project settles on a VPN-only topology (see [ADR-0008](../adr/0008-vpn-first-network-access-tailscale.md) and [#42](https://github.com/vlzware/Projekt-Manager/issues/42)), there may be no public URL at all and this criterion will be reworded. The HTTPS part is non-negotiable in either case — see AC-45._
 - **AC-31**: Merging to `main` triggers an automated deployment to the hosted environment.
 - **AC-45**: No request reaches application code over plain HTTP. Port 80 either unconditionally redirects to HTTPS before any application handler runs, or is not bound at all. HTTPS-or-nothing applies in every environment regardless of network topology — see [ADR-0008](../adr/0008-vpn-first-network-access-tailscale.md) for the rationale that VPN does not substitute for TLS. Implementation tracked by [#47](https://github.com/vlzware/Projekt-Manager/issues/47).
 - **AC-46**: A failed deployment leaves the previously running version running. The pipeline aborts before swapping containers if the build, smoke test, or health check fails.
