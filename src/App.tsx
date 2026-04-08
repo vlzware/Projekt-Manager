@@ -88,7 +88,11 @@ export function App() {
         <Header />
         <main className={styles.main}>
           {mutationError && (
-            <div className={styles.mutationError}>
+            <div
+              className={styles.mutationError}
+              role="alert"
+              data-testid="mutation-error-banner"
+            >
               <span>{mutationError}</span>
               <button
                 className={styles.mutationErrorDismiss}

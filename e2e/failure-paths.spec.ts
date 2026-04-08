@@ -45,9 +45,12 @@ test.describe('E2E failure paths', () => {
     await page.getByTestId('detail-forward-button').click();
     await page.getByTestId('confirm-ok').click();
 
-    // The error banner appears (German, no stack trace).
-    const errorBanner = page.locator('text=/fehlgeschlagen|Netzwerk/i').first();
+    // The error banner appears (German, no stack trace). Use the dedicated
+    // testid instead of a fuzzy text regex — a regex that matches "Netzwerk"
+    // would happily match any other element on the page that mentions it.
+    const errorBanner = page.getByTestId('mutation-error-banner');
     await expect(errorBanner).toBeVisible();
+    await expect(errorBanner).toContainText(/fehlgeschlagen|Netzwerk/i);
 
     // State is unchanged: the project is still in geplant, not in_arbeit.
     await page.getByTestId('detail-close').click();
