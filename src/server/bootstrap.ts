@@ -18,17 +18,7 @@ import { sql } from 'drizzle-orm';
 import type { Database } from './db/connection.js';
 import { users } from './db/schema.js';
 import { hashPassword } from './password.js';
-import { isCommonPassword } from './data/common-passwords.js';
-
-const MIN_PASSWORD_LENGTH = 8;
-/**
- * bcrypt's practical limit. Enforced as a BYTE count (not JS character
- * count) because bcrypt truncates at 72 bytes of UTF-8 input — a password
- * like `'测'.repeat(25)` is 25 JS characters but 75 bytes, and would be
- * silently truncated to ~24 characters if we checked `.length` instead.
- * See issue #57 security audit and ADR-0006.
- */
-const MAX_PASSWORD_BYTES = 72;
+import { checkPasswordPolicy } from './config/password-policy.js';
 
 export interface BootstrapAdminConfig {
   username: string | undefined;
@@ -129,22 +119,27 @@ export async function bootstrapAdminIfEmpty(
   }
 
   // ---------------------------------------------------------------
-  // Step 5: password policy [AC-B5]. Error messages MUST NOT include
-  // the password itself [AC-B8].
+  // Step 5: password policy [AC-B5]. The check itself lives in
+  // src/server/config/password-policy.ts so it cannot diverge from the
+  // change-password endpoint. Error messages MUST NOT include the
+  // password itself [AC-B8] — the violation object does not carry it.
   // ---------------------------------------------------------------
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    throw new Error(`BOOTSTRAP_ADMIN_PASSWORD must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-  }
-  // Byte count, not character count — bcrypt truncates at 72 UTF-8 bytes.
-  if (Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES) {
-    throw new Error(
-      `BOOTSTRAP_ADMIN_PASSWORD must not exceed ${MAX_PASSWORD_BYTES} bytes when UTF-8 encoded.`,
-    );
-  }
-  if (isCommonPassword(password)) {
-    throw new Error(
-      'BOOTSTRAP_ADMIN_PASSWORD is in the common-password blocklist. Choose a less common password.',
-    );
+  const violation = checkPasswordPolicy(password);
+  if (violation) {
+    switch (violation.code) {
+      case 'too_short':
+        throw new Error(
+          `BOOTSTRAP_ADMIN_PASSWORD must be at least ${violation.minLength} characters.`,
+        );
+      case 'too_long':
+        throw new Error(
+          `BOOTSTRAP_ADMIN_PASSWORD must not exceed ${violation.maxBytes} bytes when UTF-8 encoded.`,
+        );
+      case 'blocklist':
+        throw new Error(
+          'BOOTSTRAP_ADMIN_PASSWORD is in the common-password blocklist. Choose a less common password.',
+        );
+    }
   }
 
   // ---------------------------------------------------------------

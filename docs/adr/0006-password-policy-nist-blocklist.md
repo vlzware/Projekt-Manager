@@ -18,12 +18,14 @@ Key forces:
 
 Password policy follows NIST SP 800-63B:
 
-1. **Minimum length: 8 characters** — enforced via Fastify JSON schema validation
-2. **Maximum length: 72 characters** — enforced via schema; matches bcrypt's internal truncation point so users are never silently given a weaker password than they intended
+1. **Minimum length: 8 characters** — counted in JavaScript `.length` (UTF-16 code units, close enough to "characters" for the user-facing rule)
+2. **Maximum length: 72 UTF-8 bytes** — counted with `Buffer.byteLength(pw, 'utf8')`, matching bcrypt's internal truncation point so users are never silently given a weaker password than they intended. Counting characters instead would be a trap: `'测'.repeat(25)` is 25 characters but 75 bytes, and bcrypt would truncate to the first ~24 characters regardless
 3. **Local blocklist: ~100 common passwords** — checked server-side before hashing; rejects trivially guessable passwords (`password`, `123456`, `changeme`, etc.) with a German-language error message
 4. **No complexity rules** — no requirements for uppercase, digits, or special characters. This is a deliberate NIST-aligned choice, not an omission.
 
 The blocklist is a bundled static list, not an external API call.
+
+All three rules live in a single module (`src/server/config/password-policy.ts`) so the change-password endpoint and the first-run admin bootstrap (see ADR-0010) cannot drift. Rule ordering is cheap-to-expensive: length checks first, blocklist lookup last.
 
 ## Alternatives Considered
 
@@ -36,6 +38,7 @@ The pre-NIST approach still used by many systems. Rejected because NIST evidence
 The gold standard for breach checking. Sends a 5-character SHA-1 prefix to the API, receives ~500 matching suffixes, checks locally. The full password never leaves the server.
 
 Rejected for now because:
+
 - Adds an external runtime dependency for a VPN-internal tool
 - The VPN context already limits the attack surface significantly
 - A local blocklist catches the worst offenders at zero operational cost
@@ -55,7 +58,7 @@ Rejected because the blocklist costs near-zero (static set lookup, no I/O) and c
 - Aligns with current NIST recommendations — the policy is defensible under audit
 - No user frustration from arbitrary complexity rules
 - Upgrade path to HIBP is straightforward if deployment context changes
-- bcrypt max-length enforcement prevents the silent truncation trap
+- bcrypt max-length enforcement (in bytes) prevents the silent truncation trap for both ASCII and multi-byte UTF-8 passwords
 
 ### Negative
 

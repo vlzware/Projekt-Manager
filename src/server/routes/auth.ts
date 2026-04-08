@@ -89,7 +89,13 @@ export function authRoutes(db: Database) {
             additionalProperties: false,
             properties: {
               currentPassword: { type: 'string', minLength: 1 },
-              newPassword: { type: 'string', minLength: 8, maxLength: 72 },
+              // maxLength here is a coarse payload-size bound only — the
+              // real policy (min 8 chars, max 72 UTF-8 *bytes*, blocklist)
+              // lives in config/password-policy.ts and runs in AuthService.
+              // Using `maxLength: 72` here would be a trap because JSON
+              // Schema maxLength counts characters, not bytes — see the
+              // commit that added this comment for the full story.
+              newPassword: { type: 'string', minLength: 1, maxLength: 1024 },
             },
           },
         },

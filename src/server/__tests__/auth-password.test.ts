@@ -87,4 +87,76 @@ describe('Password Change Operations', () => {
       expect(res.statusCode).toBe(200);
     });
   });
+
+  // ---------------------------------------------------------------
+  // Password policy — shared with bootstrap via password-policy.ts
+  // ---------------------------------------------------------------
+  describe('Password policy enforcement on change-password', () => {
+    it('rejects a blocklist entry as the new password', async () => {
+      // Self-contained: uses arbeiter1 to avoid side effects on other tests.
+      const token = await login('arbeiter1', 'changeme');
+      const res = await authPost(token, '/api/auth/change-password', {
+        currentPassword: 'changeme',
+        newPassword: 'qwerty123',
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+    });
+
+    it('rejects a new password shorter than 8 characters', async () => {
+      const token = await login('arbeiter2', 'changeme');
+      const res = await authPost(token, '/api/auth/change-password', {
+        currentPassword: 'changeme',
+        newPassword: 'short1!',
+      });
+      // 422 from the service's checkPasswordPolicy call. Not 400 from the
+      // JSON schema, because the schema's minLength is now 1 — the full
+      // policy lives in the service layer so it cannot diverge from the
+      // bootstrap path.
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+    });
+
+    // Regression test for the UTF-8 byte-length bug found by the security
+    // audit on issue #57. Before the fix, the change-password schema had
+    // maxLength:72 (characters), and a password like '测'.repeat(25) is 25
+    // characters but 75 UTF-8 bytes — it would sneak past the schema and
+    // bcrypt would silently truncate to the first ~24 characters.
+    it('rejects a UTF-8 password whose bytes exceed 72 despite having fewer characters', async () => {
+      const token = await login('buchhalter', 'changeme');
+      const utf8Pw = '测'.repeat(25); // 25 chars, 75 bytes
+      expect(utf8Pw.length).toBe(25);
+      expect(Buffer.byteLength(utf8Pw, 'utf8')).toBe(75);
+
+      const res = await authPost(token, '/api/auth/change-password', {
+        currentPassword: 'changeme',
+        newPassword: utf8Pw,
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+
+      // And the original password must still work — confirming no partial
+      // mutation on the rejection path.
+      const loginRes = await getApp().inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: 'buchhalter', password: 'changeme' },
+      });
+      expect(loginRes.statusCode).toBe(200);
+    });
+
+    it('accepts a 72-ASCII-byte password at the boundary', async () => {
+      // Counterpart to the UTF-8 test — a 72-character ASCII password is
+      // exactly 72 bytes, which is the boundary value and must be allowed.
+      const token = await login('inhaber', 'changeme');
+      const at72 = 'A'.repeat(72);
+      expect(Buffer.byteLength(at72, 'utf8')).toBe(72);
+
+      const res = await authPost(token, '/api/auth/change-password', {
+        currentPassword: 'changeme',
+        newPassword: at72,
+      });
+      expect(res.statusCode).toBe(200);
+    });
+  });
 });
