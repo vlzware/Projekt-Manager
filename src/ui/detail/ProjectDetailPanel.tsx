@@ -3,6 +3,7 @@ import type { Project } from '@/domain/types';
 import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
 import { useProjectTransition } from '@/hooks/useProjectTransition';
 import { useProjectStore } from '@/state/projectStore';
+import { dateInputValue } from './dateInputValue';
 import styles from './ProjectDetailPanel.module.css';
 
 interface ProjectDetailPanelProps {
@@ -27,14 +28,6 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
   const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     updateDates(currentProject.id, undefined, val || null);
-  };
-
-  // <input type="date"> expects YYYY-MM-DD, but the API returns full ISO
-  // datetimes (the database column is timestamptz). Strip the time component
-  // for display so the input renders the date correctly after a reload.
-  const dateInputValue = (iso: string | undefined): string => {
-    if (!iso) return '';
-    return iso.length > 10 ? iso.slice(0, 10) : iso;
   };
 
   const mapsUrl = currentProject.address
