@@ -59,6 +59,15 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
+      # Static check: every var declared in src/server/config/env.ts must
+      # be forwarded to the app container via docker-compose.yml's
+      # services.app.environment. Regression guard for the #57 failure
+      # mode where BOOTSTRAP_ADMIN_* landed in the Zod schema but were
+      # forgotten in compose, silently stripping them from the container
+      # env at runtime.
+      - name: Env drift check (env.ts ↔ docker-compose.yml)
+        run: bash scripts/check-env-drift.sh
+
       # MinIO runs as a step (not a service container) because GitHub service
       # containers do not support overriding `command`, and minio/minio needs
       # `server /data` as its argv. Versions are pinned to match
