@@ -34,12 +34,13 @@ Provisioned: 2026-04-06
 | Port | Protocol | Status | Purpose |
 |------|----------|--------|---------|
 | 22 | TCP | Open | SSH (admin + CI/CD) |
-| 80 | TCP | Closed | HTTP — open when domain acquired (ACME challenge + redirect) |
-| 443 | TCP | Closed | HTTPS — open when domain acquired |
+| 51820 | UDP | Open | WireGuard |
+| 80 | TCP | Closed | (Not opened — DNS-01 ACME does not need it) |
+| 443 | TCP | Closed | (Not opened — Caddy binds only to the `wg0` interface) |
 
-All other inbound traffic is blocked. Application access is via Tailscale VPN only (see ADR-0008).
+All other inbound traffic is blocked. Application access is via WireGuard VPN only (see [ADR-0008](../adr/0008-vpn-first-network-access.md)).
 
-Tailscale uses WireGuard (UDP/41641 by default), but relies on NAT traversal — no inbound firewall rule is needed. The coordination server brokers the connection; the data plane is peer-to-peer after handshake.
+WireGuard listens on UDP/51820. The Hetzner Cloud Firewall must allow inbound UDP/51820 from any source. WireGuard is stealth by default — it returns no response to unauthenticated packets, so the open port is not detectable to an unauthenticated portscan without a valid peer private key.
 
 ## Automatic Maintenance
 
@@ -47,18 +48,19 @@ Tailscale uses WireGuard (UDP/41641 by default), but relies on NAT traversal —
 
 ## Network Access
 
-- **VPN:** Tailscale (WireGuard-based) — see ADR-0008
-- **Application URL (target state):** `https://prmng.org`, resolved to the server's tailnet interface via Tailscale DNS override or subnet routing
-- **Caddy:** Reverse proxy with TLS termination via Let's Encrypt, using DNS-01 ACME through the Cloudflare provider (no public ACME port required)
-- Pilot users must install the Tailscale client and join the tailnet to access the app
-- **HTTPS is mandatory** in every deployment — TLS for `Secure` cookies and HSTS is a baseline security requirement and is not substituted by the VPN. Defense in depth: VPN and TLS are independent controls.
-- **Current deployment state (as of 2026-04-07):** the test server still serves plain HTTP — this is broken, blocks pilot use, and is tracked by #47. No pilot users should be onboarded until this is fixed.
+- **VPN:** plain WireGuard (Linux kernel module) — see [ADR-0008](../adr/0008-vpn-first-network-access.md)
+- **Tunnel subnet:** `10.213.0.0/22` allocated, `10.213.17.0/24` routed initially. Server interface `wg0` at `10.213.17.1/32`. Peers at `10.213.17.10` and up.
+- **Application URL (target state):** `https://${DOMAIN}`, served by Caddy bound only to `wg0` (`10.213.17.1:443`). Clients reach the application by joining the WireGuard network and resolving `${DOMAIN}` to `10.213.17.1` (initially via `--resolve` or hosts override; future iterations may add internal DNS).
+- **Caddy:** custom `xcaddy` build (see `docker/caddy/Dockerfile`) with the `caddy-dns/cloudflare` plugin pinned to a specific git SHA. TLS termination via Let's Encrypt using DNS-01 ACME through the Cloudflare provider — no public ACME port required.
+- **Onboarding:** users install the official WireGuard client and import a per-peer config file (server-side keygen, distributed via Signal or in-person; never email).
+- **HTTPS is mandatory** in every deployment regardless of VPN status — TLS for `Secure` cookies and HSTS is a baseline security requirement and is not substituted by the VPN. Defense in depth: VPN and TLS are independent controls.
 
 ## Software Installed
 
 - Docker Engine (official repo, not Ubuntu package)
 - Docker Compose plugin
-- Tailscale
+- WireGuard (`wireguard-tools` from Ubuntu apt; kernel module is already in the mainline kernel)
+- `qrencode` (for peer QR generation)
 - fail2ban
 
 ## Key File Locations
@@ -257,25 +259,144 @@ sudo dpkg-reconfigure -plow unattended-upgrades  # select Yes
 
 **Verify:** `sudo fail2ban-client status sshd` shows the jail is active with 0 currently banned.
 
-### Phase 6 — Tailscale VPN
+### Phase 6 — WireGuard VPN
 
-**Goal:** Encrypted access to the application without exposing ports publicly.
+**Goal:** Encrypted access to the application without exposing HTTP/HTTPS ports publicly.
 
-**Why Tailscale:** See ADR-0008 for the full decision record. Short version: WireGuard encryption, zero-config NAT traversal, app store clients for pilot users, migration path to self-hosted Headscale.
+**Why plain WireGuard:** See [ADR-0008](../adr/0008-vpn-first-network-access.md) for the full decision. Short version: audited protocol, mainlined Linux kernel module, no third-party control plane, official Android client is open-source and actively maintained.
 
-**Install via APT** (preferred over curl-pipe-sh — uses package signature verification):
+**Why a systemd drop-in for Docker:** `docker.service` and `wg-quick@wg0.service` are independent siblings under `multi-user.target` with no inherent ordering. On a cold boot, Docker can start before `wg0` exists; Caddy's `${WG_BIND_IP}:443:443` port publish then fails with `EADDRNOTAVAIL` and the container restart-loops. The drop-in declares `Requires=` + `After=` so Docker waits for the WireGuard interface to come up.
+
+1. Install WireGuard userspace tools (kernel module is already in the mainline kernel):
+
+   ```bash
+   sudo apt-get install -y wireguard-tools qrencode
+   ```
+
+2. Generate the server keypair:
+
+   ```bash
+   sudo mkdir -p /etc/wireguard
+   cd /etc/wireguard
+   sudo sh -c 'umask 077 && wg genkey | tee server.privkey | wg pubkey > server.pubkey'
+   sudo chmod 600 server.privkey
+   ```
+
+3. Create `wg0.conf` with no peers (peers are added in Phase 6.1):
+
+   ```bash
+   sudo tee /etc/wireguard/wg0.conf > /dev/null <<EOF
+   [Interface]
+   Address    = 10.213.17.1/24
+   ListenPort = 51820
+   PrivateKey = $(sudo cat /etc/wireguard/server.privkey)
+
+   # Peers added one block per pilot user — see Phase 6.1
+   EOF
+   sudo chmod 600 /etc/wireguard/wg0.conf
+   ```
+
+4. Install the systemd drop-in that orders Docker after `wg-quick@wg0`:
+
+   ```bash
+   sudo mkdir -p /etc/systemd/system/docker.service.d
+   sudo tee /etc/systemd/system/docker.service.d/wait-for-wireguard.conf > /dev/null <<'EOF'
+   [Unit]
+   Requires=wg-quick@wg0.service
+   After=wg-quick@wg0.service
+   EOF
+   sudo systemctl daemon-reload
+   ```
+
+5. Enable and start the WireGuard interface:
+
+   ```bash
+   sudo systemctl enable --now wg-quick@wg0.service
+   ```
+
+6. Open UDP/51820 in the Hetzner Cloud Firewall (Cloud Console or `hcloud firewall add-rule ...`).
+
+**Verify** (run all four):
 
 ```bash
-curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg | \
-  sudo tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null
-curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list | \
-  sudo tee /etc/apt/sources.list.d/tailscale.list
-sudo apt-get update
-sudo apt-get install -y tailscale
-sudo tailscale up   # opens auth URL — approve in browser
+# Interface is up with the expected address
+ip -4 addr show wg0
+# expect: inet 10.213.17.1/24
+
+# Service is active
+systemctl is-active wg-quick@wg0.service
+# expect: active
+
+# Drop-in ordering is in effect — BOTH commands must return a non-empty match
+systemctl list-dependencies docker.service | grep -F wg-quick@wg0.service
+systemctl list-dependencies --reverse wg-quick@wg0.service | grep -F docker.service
+
+# WireGuard is listening on UDP/51820
+sudo ss -ulnp | grep -F :51820
 ```
 
-**Verify:** `tailscale ip -4` returns a `100.x.y.z` address. From your local machine (with Tailscale running): `ping <tailscale-ip>` succeeds.
+### Phase 6.1 — Pilot peer onboarding
+
+**Goal:** Add a WireGuard peer for each user. Per [ADR-0008](../adr/0008-vpn-first-network-access.md), peer keys are generated server-side; only the rendered config or QR code is distributed, via Signal or in-person — never email.
+
+For each user, on the server:
+
+```bash
+PEER_NAME="<user-device>"          # e.g. vladimir-pixel
+PEER_IP="10.213.17.10"             # next /32 from 10.213.17.10+
+SERVER_PUB=$(sudo cat /etc/wireguard/server.pubkey)
+SERVER_ENDPOINT="<server-public-ip>:51820"
+
+sudo mkdir -p /etc/wireguard/peers
+cd /etc/wireguard
+sudo sh -c "umask 077 && wg genkey | tee peers/${PEER_NAME}.privkey | wg pubkey > peers/${PEER_NAME}.pubkey"
+
+# Append the peer to wg0.conf
+sudo tee -a /etc/wireguard/wg0.conf > /dev/null <<EOF
+
+# ${PEER_NAME} added $(date -I)
+[Peer]
+PublicKey  = $(sudo cat peers/${PEER_NAME}.pubkey)
+AllowedIPs = ${PEER_IP}/32
+EOF
+
+# Reload wg0 with the new peer — no interface restart, no Caddy restart
+sudo wg syncconf wg0 <(sudo wg-quick strip wg0)
+
+# Generate the per-peer client config (this is the file the user imports)
+sudo tee peers/${PEER_NAME}.conf > /dev/null <<EOF
+[Interface]
+PrivateKey = $(sudo cat peers/${PEER_NAME}.privkey)
+Address    = ${PEER_IP}/32
+
+[Peer]
+PublicKey           = ${SERVER_PUB}
+Endpoint            = ${SERVER_ENDPOINT}
+AllowedIPs          = 10.213.17.0/24
+PersistentKeepalive = 25
+EOF
+
+# Render as QR code for in-person Android scanning
+sudo qrencode -t ansiutf8 < peers/${PEER_NAME}.conf
+```
+
+After the user reports "connected" on their device, verify the handshake on the server:
+
+```bash
+sudo wg show wg0 latest-handshakes | grep -F "$(sudo cat /etc/wireguard/peers/${PEER_NAME}.pubkey)"
+# expect: a Unix timestamp within the last 30 seconds
+```
+
+If no handshake appears within ~5 minutes, the import did not work — revoke the peer (remove its `[Peer]` block from `wg0.conf`, re-run `wg syncconf wg0 <(wg-quick strip wg0)`), regenerate, and retry.
+
+After successful handshake, securely delete the per-peer scratch files containing the private key:
+
+```bash
+sudo shred -u /etc/wireguard/peers/${PEER_NAME}.conf
+sudo shred -u /etc/wireguard/peers/${PEER_NAME}.privkey
+```
+
+Keep `peers/${PEER_NAME}.pubkey` for audit trail.
 
 ### Phase 7 — Git access for deploy user
 
@@ -338,7 +459,10 @@ Edit `/opt/projekt-manager/.env` and set these values:
 | `MINIO_ROOT_PASSWORD` | `openssl rand -base64 24` | Unique generated password |
 | `STORAGE_ACCESS_KEY` | Same value as `MINIO_ROOT_USER` | The app connects to MinIO using the root credentials |
 | `STORAGE_SECRET_KEY` | Same value as `MINIO_ROOT_PASSWORD` | Same credentials, different variable name |
-| `DOMAIN` | Tailscale IP or domain when available | Caddy uses this for TLS certificate provisioning |
+| `DOMAIN` | Fully qualified domain for Caddy / TLS | Caddy uses this for TLS certificate provisioning |
+| `CLOUDFLARE_API_TOKEN` | Scoped Cloudflare API token | Permissions: `Zone:Zone:Read` + `Zone:DNS:Edit` on the single managed zone. NOT the Global API Key. Record the issue date in your password manager for rotation tracking. |
+| `WG_BIND_IP` | `10.213.17.1` | WireGuard server interface address. Caddy publishes `:443` only on this host IP. |
+| `ACME_CA_URL` | (empty for production; staging URL during bootstrap) | Empty defaults to Let's Encrypt production. For initial bootstrap of a new deployment, set to `https://acme-staging-v02.api.letsencrypt.org/directory` to avoid LE rate limits while debugging. Unset/empty after the cert chain is verified. |
 | `NODE_ENV` | `production` | Enables security checks, disables seeding |
 | `SEED` | `false` | Never seed in production |
 
@@ -348,7 +472,14 @@ Edit `/opt/projekt-manager/.env` and set these values:
 sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose up -d'
 ```
 
-**Verify:** `sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps` shows all containers as "healthy" or "running". `curl -k https://localhost/api/health` returns `{"status":"ok"}`.
+**Verify:** `sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps` shows all containers as "healthy" or "running". To probe the app stack directly, bypassing Caddy:
+
+```bash
+sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+  exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
+```
+
+Caddy is bound only to `${WG_BIND_IP}:443` (the WireGuard interface), so `curl https://localhost/api/health` from the server will not work — that is expected. The full TLS chain is verified from a WireGuard client in Phase 9.
 
 ### Phase 9 — GitHub Secrets and CD
 
@@ -358,7 +489,7 @@ Add three repository secrets at Repo > Settings > Secrets and variables > Action
 
 | Secret | Value | Why |
 |--------|-------|-----|
-| `DEPLOY_HOST` | Server **public** IP | GitHub runners cannot join the tailnet — SSH must use the public IP |
+| `DEPLOY_HOST` | Server **public** IP | GitHub runners cannot join the VPN — SSH must use the public IP |
 | `DEPLOY_USER` | `deploy` | The least-privilege account from Phase 3 |
 | `DEPLOY_KEY` | Contents of `~/.ssh/projekt-manager-deploy` (private key) | The key generated in Phase 3, on your local machine |
 
@@ -367,10 +498,19 @@ Add three repository secrets at Repo > Settings > Secrets and variables > Action
 ```bash
 # Push a commit to an iteration branch — CI should pass, deploy should trigger
 gh run list --workflow=Deploy --limit 3
+```
 
-# From local machine via Tailscale
-curl -k https://<tailscale-ip>/api/health
+```bash
+# From the server itself, verify the app is healthy (bypasses Caddy)
+docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
+# expect: exit 0
 
-# From local machine via public IP — should timeout (firewall blocks it)
-curl --connect-timeout 5 https://<public-ip>/api/health
+# From a WireGuard client (your laptop, with the per-peer config imported and tunnel up)
+curl -v --resolve "${DOMAIN}:443:10.213.17.1" "https://${DOMAIN}/api/health"
+# expect: 200 OK with a real Let's Encrypt certificate
+#         (or staging cert during bootstrap if ACME_CA_URL is set to staging)
+
+# From outside the VPN (any other machine) — should fail
+curl --connect-timeout 5 "https://<server-public-ip>/api/health"
+# expect: timeout (port 443 is not bound on the public interface)
 ```

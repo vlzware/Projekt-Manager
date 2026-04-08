@@ -41,15 +41,20 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
+            cd /opt/projekt-manager
             timeout=60
             elapsed=0
-            until curl -sf http://localhost/api/health > /dev/null 2>&1; do
+            # Probe the app container's health endpoint directly, bypassing
+            # Caddy. Verifies app+db+storage are healthy without depending on
+            # the TLS / VPN bind path. The TLS chain is verified separately
+            # via a tailnet probe (see docs/ops/cd-pipeline.md).
+            until docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; do
               sleep 2
               elapsed=$((elapsed + 2))
               if [ "$elapsed" -ge "$timeout" ]; then
                 echo "Health check failed after ${timeout}s"
-                docker compose -f /opt/projekt-manager/docker-compose.yml logs --tail=50
+                docker compose logs --tail=50
                 exit 1
               fi
             done
-            echo "Deploy verified — healthy at $(git -C /opt/projekt-manager rev-parse --short HEAD)"
+            echo "Deploy verified — healthy at $(git rev-parse --short HEAD)"
