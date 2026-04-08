@@ -157,7 +157,9 @@ describe('events — error isolation', () => {
   });
 
   it('logs the error via the supplied logger when a subscriber throws', async () => {
-    const logger = { info: vi.fn() };
+    // Audit-trail loss must surface as error-level, not info-level, so it
+    // shows up in alert pipelines instead of disappearing into request noise.
+    const logger = { info: vi.fn(), error: vi.fn() };
     subscribe('project.transitioned', () => {
       throw new Error('subscriber-error');
     });
@@ -175,17 +177,18 @@ describe('events — error isolation', () => {
       logger,
     );
 
-    expect(logger.info).toHaveBeenCalledWith(
+    expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({
         event: 'project.transitioned',
         error: 'subscriber-error',
       }),
       'event_subscriber_failed',
     );
+    expect(logger.info).not.toHaveBeenCalled();
   });
 
   it('also catches async (rejected promise) errors from subscribers', async () => {
-    const logger = { info: vi.fn() };
+    const logger = { info: vi.fn(), error: vi.fn() };
     const after = vi.fn();
     subscribe('project.transitioned', async () => {
       await Promise.reject(new Error('async-boom'));
@@ -205,7 +208,7 @@ describe('events — error isolation', () => {
       logger,
     );
 
-    expect(logger.info).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalled();
     expect(after).toHaveBeenCalled();
   });
 });

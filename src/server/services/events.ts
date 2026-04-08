@@ -12,16 +12,19 @@
  *   - We don't need any of EventEmitter's bells and whistles (once,
  *     prependListener, max-listener warnings, etc.). The minimal API is
  *     easier to reason about and to mock in tests.
- *   - Subscribers are async-aware: handlers may return promises and the
- *     emitter does NOT block on them — fire and forget by design, so a
- *     slow notification subscriber never delays an HTTP response. Errors
- *     in handlers are logged-and-swallowed so a broken subscriber cannot
- *     poison the request that emitted the event.
+ *   - Subscribers are async-aware: handlers may return promises. Errors in
+ *     handlers are logged-and-swallowed so a broken subscriber cannot poison
+ *     the request that emitted the event.
  *
  * Threading model: subscribers run after the repo write commits but before
- * the service method returns. They run in the same event loop tick (no
- * setImmediate), so subscribers see the new state immediately. The emitter
- * itself is process-local; replicate via an external broker (e.g. NATS)
+ * the service method returns. They are awaited sequentially in registration
+ * order, in the same event-loop tick (no setImmediate), so subscribers see
+ * the new state immediately and a slow subscriber WILL delay the HTTP
+ * response. If a subscriber needs strict fire-and-forget semantics, it must
+ * wrap its work in `setImmediate` or queue to a background worker itself —
+ * the emitter does not impose that decision globally.
+ *
+ * The emitter is process-local; replicate via an external broker (e.g. NATS)
  * if you ever want cross-process fan-out.
  *
  * Test contract: tests can call `clearAllSubscribers()` in beforeEach to
@@ -92,12 +95,18 @@ export function subscribe<E extends DomainEventName>(event: E, handler: Subscrib
 
 /**
  * Emit an event to all current subscribers. Errors thrown by subscribers are
- * logged via the supplied logger and swallowed — a broken subscriber must not
- * propagate failure to the request that emitted the event.
+ * logged via the supplied logger at error level and swallowed — a broken
+ * subscriber must not propagate failure to the request that emitted the
+ * event, but losing an audit trail must trigger alerts (not blend into
+ * info-level noise).
  *
  * Awaits subscribers in registration order. If any subscriber needs strict
  * fire-and-forget semantics, it should wrap its work in `setImmediate`
  * itself; the emitter does not impose that decision globally.
+ *
+ * Callers must always pass a logger in production. The parameter is optional
+ * only so unit tests of `emit` itself can omit it; in routes the logger is
+ * `request.log` and must be threaded through the service layer.
  */
 export async function emit<E extends DomainEventName>(
   event: E,
@@ -112,7 +121,7 @@ export async function emit<E extends DomainEventName>(
       await (handler as Subscriber<E>)(payload);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      log?.info({ event, error: message }, 'event_subscriber_failed');
+      log?.error({ event, error: message }, 'event_subscriber_failed');
     }
   }
 }
