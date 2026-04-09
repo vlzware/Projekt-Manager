@@ -33,26 +33,41 @@ set -euo pipefail
 : "${SMOKE_TEST_USERNAME:?SMOKE_TEST_USERNAME must be set}"
 : "${SMOKE_TEST_PASSWORD:?SMOKE_TEST_PASSWORD must be set}"
 
-# Password policy sanity check — match src/server/config/password-policy.ts.
-# The DB accepts anything, but a smoke account that can't log in via the
-# real password-policy-enforced flow on /api/auth/login is useless, so
-# catch it here before we insert.
-PASS_LEN=${#SMOKE_TEST_PASSWORD}
-if [ "$PASS_LEN" -lt 12 ]; then
-  echo "FAIL: SMOKE_TEST_PASSWORD must be at least 12 characters (got $PASS_LEN)" >&2
-  exit 1
-fi
-
-# Hash the password using the app container's bcryptjs at the same version
-# production uses. Running it inside the container avoids any
-# host-vs-container version drift — whatever bcrypt round-trips there is
-# what /api/auth/login will verify against.
-echo "Hashing password via app container..."
+# Password policy check + bcrypt hash, both done inside the app container.
+#
+# The policy lives in src/server/config/password-policy.ts and has three
+# rules: MIN_PASSWORD_LENGTH = 8 characters, MAX_PASSWORD_BYTES = 72
+# (bcrypt truncates at 72 bytes), and a common-password blocklist.
+# An earlier revision of this script hard-coded a 12-character minimum
+# in shell, which was stricter than the real policy on length and
+# silently skipped the byte-length and blocklist rules. That meant a
+# password like `'测'.repeat(25)` would pass this check (25 chars >= 12)
+# and then get truncated at 72 bytes by bcrypt, and the policy
+# blocklist rule was never applied at all.
+#
+# Mirror the first two rules exactly; the blocklist is a data module
+# bundled into dist/server/start.js and not reachable from a standalone
+# node invocation, so we skip it here and rely on the server-side
+# enforcement at /api/auth/login. If the operator picks a blocklisted
+# password, the next smoke E2E run will fail loudly with a login
+# error — that's the right time to catch it, for a one-shot account.
+echo "Checking password policy and hashing..."
 HASH=$(docker compose -f /opt/projekt-manager/docker-compose.yml exec -T \
   -e PASSWORD="$SMOKE_TEST_PASSWORD" \
   app node --input-type=module -e "
-    import bcrypt from 'bcryptjs';
-    const h = await bcrypt.hash(process.env.PASSWORD, 10);
+    const p = process.env.PASSWORD;
+    if (p.length < 8) {
+      console.error('FAIL: password has ' + p.length + ' characters, min 8');
+      process.exit(1);
+    }
+    const bytes = Buffer.byteLength(p, 'utf8');
+    if (bytes > 72) {
+      console.error('FAIL: password is ' + bytes + ' UTF-8 bytes, max 72 (bcrypt truncation point)');
+      process.exit(1);
+    }
+    const bcryptModule = await import('bcryptjs');
+    const bcrypt = bcryptModule.default ?? bcryptModule;
+    const h = await bcrypt.hash(p, 10);
     process.stdout.write(h);
   ")
 

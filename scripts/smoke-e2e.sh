@@ -91,13 +91,20 @@ echo "OK"
 # 2. POST /api/auth/login — returns Secure HttpOnly SameSite=Strict cookie
 # ---------------------------------------------------------------------
 step "2. POST /api/auth/login"
-# Build the JSON body with a here-doc so special characters in the
-# password don't need escaping in the command line. printf |jq is
-# overkill for a two-field object.
-LOGIN_PAYLOAD=$(cat <<JSON
-{"username":"${SMOKE_TEST_USERNAME}","password":"${SMOKE_TEST_PASSWORD}"}
-JSON
-)
+# Build the JSON body via `jq -n --arg` so any special character in the
+# password (quote, backslash, dollar sign, backtick, newline) is escaped
+# correctly. An earlier revision of this script used a bare here-doc —
+# that was broken: a `"` in the password produced `{"password":"abc"def"}`
+# (JSON parse error), a `$var` was expanded by bash (silently altered),
+# and a `\` made an invalid JSON escape.
+#
+# jq is present on the deploy VPS (verified as part of #58) — if a future
+# environment lacks it, install via `apt-get install -y jq` in the server
+# bootstrap, not by falling back to heredoc.
+LOGIN_PAYLOAD=$(jq -nc \
+  --arg u "$SMOKE_TEST_USERNAME" \
+  --arg p "$SMOKE_TEST_PASSWORD" \
+  '{username:$u,password:$p}')
 : > "$HEADERS"
 "${CURL[@]}" \
   -c "$COOKIES" \
