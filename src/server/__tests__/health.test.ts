@@ -87,22 +87,36 @@ describe('probeHealth', () => {
   });
 
   it('runs both checks in parallel — a hang in one does not block the other', async () => {
-    // Storage resolves immediately; DB takes a bit. Promise.allSettled
-    // returns the wall-clock duration of the slower check, not the sum.
+    // BOTH mocks take ~40ms so the sequential and parallel wall-clock times
+    // diverge sharply:
+    //   - Parallel (Promise.allSettled): max(40, 40) ≈ 40ms
+    //   - Sequential (await-then-await):  40 + 40   ≈ 80ms
+    //
+    // The previous setup had storage resolving instantly, which made the
+    // serial and parallel cases both ~40ms — the test would have kept
+    // passing even if a future refactor broke parallelism with something
+    // like:
+    //     const db = await pool.query(...);
+    //     const st = await storage.ping();
+    //
+    // With the balanced delays, a refactor like that would push elapsed to
+    // ~80ms and trip the 60ms ceiling below.
     const pool = mockPool(async () => {
       await new Promise((resolve) => setTimeout(resolve, 40));
       return { rows: [{ '?column?': 1 }] };
     });
-    const storage = mockStorage(async () => undefined);
+    const storage = mockStorage(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
 
     const start = Date.now();
     await probeHealth(pool, storage);
     const elapsed = Date.now() - start;
 
-    // Parallel execution should finish at roughly max(40ms, ~0ms) = ~40ms.
-    // Serial would be the sum. The 150ms ceiling is intentionally loose:
-    // CI timers can stutter (observed 92ms once under load), so we bound
-    // this as "not catastrophically serial" rather than a tight budget.
-    expect(elapsed).toBeLessThan(150);
+    // 60ms is ~20ms jitter budget above the parallel floor (40ms) and
+    // comfortably below the sequential floor (80ms). Widen incrementally
+    // if CI proves flaky — but do NOT widen past 70ms, or a serial refactor
+    // would slip through unnoticed.
+    expect(elapsed).toBeLessThan(60);
   });
 });
