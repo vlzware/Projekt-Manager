@@ -12,3 +12,4 @@
 | [0008](0008-vpn-first-network-access.md) | VPN-first network access | Accepted | 2026-04-08 |
 | [0009](0009-pin-docker-versions-across-environments.md) | Pin Docker Engine and Compose versions across environments | Accepted | 2026-04-07 |
 | [0010](0010-first-run-admin-bootstrap.md) | First-run admin bootstrap from environment variables | Accepted | 2026-04-08 |
+| [0011](0011-build-images-in-ci-distribute-via-ghcr.md) | Build app images in CI, distribute via GHCR | Accepted | 2026-04-09 |

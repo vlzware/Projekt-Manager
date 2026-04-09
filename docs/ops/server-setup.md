@@ -227,7 +227,7 @@ Then `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` and `docker ps` — shou
 
 **Upgrading later:** Do not bump Docker casually. Follow the lockstep procedure in ADR-0009 — unhold, install the new explicit version on a non-production host first, smoke test, repeat on remaining hosts (VPS last), then update both the ADR and the version table above.
 
-**Note:** Docker group membership grants effective root access on the host (a known Docker design decision). The deploy user can escalate via `docker run -v /:/host ...`. This is tracked as a hardening item in #48.
+**Note:** Docker group membership grants effective root access on the host (a known Docker design decision). The deploy user can escalate via `docker run -v /:/host ...`. Treat the deploy SSH key as a root-equivalent credential until this is mitigated. Research and resolution tracked in #72.
 
 ### Phase 5 — Brute-force protection
 

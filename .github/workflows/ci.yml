@@ -151,14 +151,14 @@ jobs:
 
   # ---------------------------------------------------------------
   # Docker validation — only runs when container-relevant files
-  # changed. Validates the Compose files (including a drift check
-  # for unset variable references) and builds the app image with
-  # GitHub Actions layer cache so warm builds land in ~30s instead
-  # of ~90s cold. See #51.
+  # changed, and only on pull requests. On push (merge) events the
+  # `build-and-push` job below does the same build for real (and
+  # actually publishes), so running both would just double-build
+  # the same layers. See ADR-0011 for the split rationale.
   # ---------------------------------------------------------------
   docker:
     needs: changes
-    if: needs.changes.outputs.docker == 'true'
+    if: needs.changes.outputs.docker == 'true' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -216,5 +216,71 @@ jobs:
           push: false
           load: false
           tags: projekt-manager-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------
+  # Build and push the production app image to GHCR on every push
+  # to main/iteration branches. See ADR-0011 for the rationale
+  # (short version: 2 vCPU / 4 GB VPS cannot host both the running
+  # stack and a build peak without risking OOM during deploys).
+  #
+  # Runs on every push regardless of which files changed — a pure
+  # TypeScript commit still changes the image because `COPY . .`
+  # bakes `src/**` in, so path-filtering would silently ship stale
+  # images. GHA layer cache keeps no-op commits in the ~10-15s
+  # range.
+  #
+  # Gated on `check` so we never publish an image from a commit
+  # that fails tests, lint, or type-check.
+  # ---------------------------------------------------------------
+  build-and-push:
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Compute both tags we want to push in one place so the diff
+      # is obvious if we ever change the scheme. The SHA tag is the
+      # immutable rollback target; the branch-slug tag is the
+      # moving "latest on this branch" pointer used by deploy.yml's
+      # default.
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          sha_tag="sha-${GITHUB_SHA}"
+          # Slugify the branch name for Docker tag legality:
+          # lowercase, replace '/' with '-', strip anything not in
+          # [a-z0-9._-].
+          branch_slug=$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]/' '[:lower:]-' | sed 's/[^a-z0-9._-]/-/g')
+          {
+            echo "tags<<TAGS_EOF"
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/projekt-manager:${sha_tag}"
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/projekt-manager:${branch_slug}"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Build and push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
