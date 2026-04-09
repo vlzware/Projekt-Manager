@@ -1,9 +1,9 @@
 /**
  * API client tests — mocks `fetch` and verifies the apiCall wrapper:
  * success, network error, 401 + SESSION_EXPIRED detection, generic error,
- * malformed JSON, the typed projectApi/authApi request shapes AND return
- * values, and response-parsing edge cases (null body, 204, malformed JSON
- * on 2xx, structurally-wrong body).
+ * the typed projectApi/authApi request shapes AND return values, and
+ * response-parsing edge cases (literal JSON null, 204 No Content, malformed
+ * JSON on 2xx → INVALID_RESPONSE, structurally-wrong body).
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -333,8 +333,10 @@ describe('apiCall — response parsing edge cases', () => {
 
     const result = await apiCall('/api/x');
 
-    // Literal `null` is valid JSON; the client surfaces it as data=null with
-    // ok=true. It does NOT throw. Callers must handle the null themselves.
+    // Literal `null` is valid JSON; JSON.parse("null") succeeds and returns
+    // null, so this is a successful parse that happens to yield null — NOT
+    // the INVALID_RESPONSE path. This is distinct from the malformed-body
+    // case above, which is the whole point of the C4 fix.
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data).toBeNull();
@@ -349,28 +351,52 @@ describe('apiCall — response parsing edge cases', () => {
 
     const result = await apiCall('/api/x');
 
-    // 204 is a legitimate success. The body is null, res.json() throws (no
-    // content to parse), and the `.catch(() => null)` branch in apiCall coerces
-    // it to data=null. This keeps 204 from looking like an error to callers.
+    // 204 is a legitimate success. apiCall short-circuits on status===204
+    // BEFORE calling res.json(), so this never goes through the malformed-body
+    // branch — which is the whole point of the C4 fix: a 204 and a malformed
+    // 2xx body no longer collapse into the same result.
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data).toBeNull();
     }
   });
 
-  it('swallows a malformed JSON body on a 2xx response and yields data=null', async () => {
+  it('treats a 204 as empty even if a non-empty body slips through', async () => {
+    // Defensive: some stacks (or buggy mocks) will produce a 204 with a body
+    // attached. The Fetch spec says the UA must strip it, but we do not rely
+    // on that. Our short-circuit on status===204 fires before res.json() runs,
+    // so even garbage bytes on a 204 are ignored — NOT surfaced as
+    // INVALID_RESPONSE. This keeps the malformed-body branch distinct from
+    // the legitimate-empty-success branch.
+    const res = new Response('garbage{{{', { status: 200 });
+    // Mutate status to 204 after construction so `new Response` does not
+    // reject the non-null body. (This is the shape a buggy server/mock could
+    // produce in practice.)
+    Object.defineProperty(res, 'status', { value: 204, configurable: true });
+    fetchMock.mockResolvedValue(res);
+
+    const result = await apiCall('/api/x');
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data).toBeNull();
+    }
+  });
+
+  it('surfaces INVALID_RESPONSE when a 2xx response has a malformed JSON body', async () => {
     fetchMock.mockResolvedValue(new Response('not json{{{', { status: 200 }));
 
     const result = await apiCall('/api/x');
 
-    // KNOWN BEHAVIOR: apiCall does `res.json().catch(() => null)` on success,
-    // so a malformed body on a 2xx response becomes ok=true, data=null instead
-    // of ok=false. A caller can't distinguish a genuine null payload from a
-    // parse failure. This is a gap in the contract (see report C4), but this
-    // test pins the current behavior so any future change is a deliberate one.
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.data).toBeNull();
+    // A malformed body on a 2xx response is an ERROR, not a null payload.
+    // Callers need to distinguish "server sent garbage" from "server sent a
+    // legitimately null payload" — the latter is a separate code path below
+    // (literal JSON null, 204 No Content). See the C4 fix for the rationale.
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.code).toBe('INVALID_RESPONSE');
+      expect(result.error.message).toMatch(/malformed/i);
+      expect(result.sessionExpired).toBe(false);
     }
   });
 
