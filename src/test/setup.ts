@@ -16,18 +16,19 @@ beforeEach(() => {
   if (!vi.isMockFunction(globalThis.fetch)) {
     vi.stubGlobal(
       'fetch',
-      vi
-        .fn()
-        .mockRejectedValue(
+      vi.fn().mockImplementation((url: string | URL | Request) => {
+        const target = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+        return Promise.reject(
           new Error(
-            'Test tried to call fetch without configuring a mock response. ' +
+            `Test tried to call fetch (${target}) without configuring a mock response. ` +
               'This used to silently return 200 with {} — the audit found that ' +
               'made component mutation tests trivially pass without exercising ' +
               'the API integration. Use vi.spyOn(globalThis, "fetch") with ' +
               'mockResolvedValue / mockRejectedValue in your beforeEach or per ' +
               'test, following the src/ui/__tests__/auth.test.tsx pattern.',
           ),
-        ),
+        );
+      }),
     );
   }
 });

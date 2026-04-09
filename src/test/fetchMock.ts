@@ -35,19 +35,23 @@ import { vi, type MockInstance } from 'vitest';
 export type FetchSpy = MockInstance<typeof fetch>;
 
 /**
- * Replace `globalThis.fetch` with a spy that rejects with a loud error.
- * Call this in `beforeEach`. Each test that needs a successful (or explicit
- * error) response must then call `mockFetchJson` / `mockFetchError` /
- * `mockFetchNetworkError` on the returned spy.
+ * Replace `globalThis.fetch` with a spy that rejects with a loud error
+ * naming the offending request URL. Call this in `beforeEach`. Each test
+ * that needs a successful (or explicit error) response must then call
+ * `mockFetchJson` / `mockFetchError` / `mockFetchNetworkError` on the
+ * returned spy.
  */
 export function installFailingFetch(): FetchSpy {
   const spy = vi.spyOn(globalThis, 'fetch') as FetchSpy;
-  spy.mockRejectedValue(
-    new Error(
-      'fetch not configured for this test — call mockFetchJson(fetchSpy, ...) ' +
-        'or mockFetchError(fetchSpy, ...) before triggering the mutation.',
-    ),
-  );
+  spy.mockImplementation((url) => {
+    const target = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+    return Promise.reject(
+      new Error(
+        `fetch not configured for ${target} — call mockFetchJson(fetchSpy, ...) ` +
+          'or mockFetchError(fetchSpy, ...) before triggering the mutation.',
+      ),
+    );
+  });
   return spy;
 }
 
@@ -69,8 +73,12 @@ export function mockFetchJson<T>(spy: FetchSpy, body: T, status = 200): void {
  * Queue a single non-2xx JSON response on the spy. Use for deliberate API
  * failure scenarios (e.g. 500 server error, 409 conflict). Don't use this
  * for network-level failures — use `mockFetchNetworkError` instead.
+ *
+ * Argument order matches the local helper in `auth.test.tsx` (the reference
+ * template): body first, then status. This way devs reading the template can
+ * switch to the shared helper without transposing positional arguments.
  */
-export function mockFetchError(spy: FetchSpy, status = 500, body: unknown = {}): void {
+export function mockFetchError(spy: FetchSpy, body: unknown = {}, status = 500): void {
   spy.mockResolvedValueOnce(
     new Response(JSON.stringify(body), {
       status,
