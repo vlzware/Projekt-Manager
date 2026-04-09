@@ -12,6 +12,7 @@ export type ErrorCode =
   | 'NOT_PERMITTED'
   | 'VALIDATION_ERROR'
   | 'NOT_FOUND'
+  | 'RATE_LIMITED'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
@@ -63,6 +64,10 @@ export function validationError(message: string): AppError {
 
 export function notFound(entity = 'Ressource'): AppError {
   return new AppError('NOT_FOUND', `${entity} nicht gefunden.`, 404);
+}
+
+export function rateLimited(): AppError {
+  return new AppError('RATE_LIMITED', 'Zu viele Anfragen. Bitte später erneut versuchen.', 429);
 }
 
 export function serverError(): AppError {
