@@ -6,15 +6,13 @@
  *   - worker / bookkeeper: can read, cannot transition or update dates
  *   - owner / office: can read, transition, and update dates
  *
- * Seed users (from seed.ts):
- *   - inhaber / changeme  — owner
- *   - buero / changeme    — office
- *   - arbeiter1 / changeme — worker
- *   - buchhalter / changeme — bookkeeper
+ * Seed users referenced via SEED_USERS from `../../test/seedAssumptions.js`
+ * (see that file for the single source of truth on usernames / passwords).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startApp, stopApp, login, authGet, authPost, authPatch } from '../../test/api-helpers.js';
+import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 
 /** Helper: find the first project in a given status from the list endpoint. */
 async function findProjectByStatus(
@@ -37,10 +35,10 @@ describe('Role-based Permission Enforcement', () => {
   beforeAll(async () => {
     await startApp();
     [workerToken, bookkeeperToken, ownerToken, officeToken] = await Promise.all([
-      login('arbeiter1', 'changeme'),
-      login('buchhalter', 'changeme'),
-      login('inhaber', 'changeme'),
-      login('buero', 'changeme'),
+      login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD),
+      login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD),
+      login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD),
+      login(SEED_USERS.office.username, SEED_DEFAULT_PASSWORD),
     ]);
   });
 
@@ -49,10 +47,11 @@ describe('Role-based Permission Enforcement', () => {
   });
 
   // ---------------------------------------------------------------
-  // Restricted roles — worker (arbeiter1) and bookkeeper (buchhalter)
-  // share the same permission model (read-only: cannot transition or
-  // update dates). Parametrized so adding/removing a restricted role is
-  // a one-line change and assertions never drift between the two roles.
+  // Restricted roles — worker (SEED_USERS.worker1) and bookkeeper
+  // (SEED_USERS.bookkeeper) share the same permission model (read-only:
+  // cannot transition or update dates). Parametrized so adding/removing
+  // a restricted role is a one-line change and assertions never drift
+  // between the two roles.
   //
   // Tokens are looked up by role name inside each test because `it.each`
   // evaluates its table at describe-collection time, before `beforeAll`
@@ -129,7 +128,7 @@ describe('Role-based Permission Enforcement', () => {
   // ---------------------------------------------------------------
   // Owner — full access
   // ---------------------------------------------------------------
-  describe('Owner (inhaber)', () => {
+  describe(`Owner (${SEED_USERS.owner.username})`, () => {
     it('can transition forward — returns 200', async () => {
       const project = await findProjectByStatus(ownerToken, 'abnahme');
 
@@ -146,7 +145,7 @@ describe('Role-based Permission Enforcement', () => {
   // ---------------------------------------------------------------
   // Office — full access
   // ---------------------------------------------------------------
-  describe('Office (buero)', () => {
+  describe(`Office (${SEED_USERS.office.username})`, () => {
     it('can transition forward — returns 200', async () => {
       // Use a project that hasn't been transitioned by the owner test above.
       // anfrage -> angebot is safe since seed has 2 anfrage projects.
