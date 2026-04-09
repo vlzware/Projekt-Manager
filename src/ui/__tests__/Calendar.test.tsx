@@ -170,7 +170,10 @@ describe('Calendar View', () => {
     await waitFor(() => {
       expect(fetchSpy).toHaveBeenCalledWith(
         '/api/projects/p07/dates',
-        expect.objectContaining({ method: 'PATCH' }),
+        expect.objectContaining({
+          method: 'PATCH',
+          body: expect.stringContaining(`"plannedEnd":"${endDateStr}"`),
+        }),
       );
     });
     expect(useProjectStore.getState().projects.find((p) => p.id === 'p07')?.plannedEnd).toBe(
