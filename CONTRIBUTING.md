@@ -73,6 +73,7 @@ The audit uses adversarial framing — reviewers with a security-specific lens, 
 - **CSS Modules.** One `.module.css` per component. No inline styles for layout, no global CSS except a minimal reset.
 - **No `any`.** TypeScript strict mode. Use proper types or `unknown`.
 - **Imports.** Absolute from `src/` root where the bundler supports it, relative within the same module.
+- **Formatting is enforced by a pre-commit hook.** `husky` + `lint-staged` run `prettier --write` on staged `src/**/*.{ts,tsx,css}` files automatically. The hook installs on `npm install` via the `prepare` script — no extra setup. If you need to bypass it in an emergency, `git commit --no-verify` skips the hook; CI's `format:check` will still catch the drift.
 
 ## Branching Strategy
 
