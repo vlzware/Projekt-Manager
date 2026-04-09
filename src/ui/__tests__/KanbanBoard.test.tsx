@@ -8,12 +8,19 @@ import { mockProjects } from '@/test/fixtures/mockProjects';
 import { STATE_CONFIGS } from '@/config/stateConfig';
 import { BRANDING } from '@/config/brandingConfig';
 import { mockConfirmAccept, mockConfirmReject } from '@/test/confirmHelpers';
+import { installFailingFetch, mockFetchJson, type FetchSpy } from '@/test/fetchMock';
 import { App } from '@/App';
 
 import * as collapseTierHook from '@/ui/kanban/useCollapseTier';
 
+// Each test that triggers a mutation must configure fetchSpy explicitly.
+// The src/test/setup.ts default now fails loudly on unconfigured calls — see
+// src/ui/__tests__/auth.test.tsx for the gold-standard pattern.
+let fetchSpy: FetchSpy;
+
 // Reset stores before each test
 beforeEach(() => {
+  fetchSpy = installFailingFetch();
   useAuthStore.setState({
     ...useAuthStore.getInitialState(),
     authUser: {
@@ -124,6 +131,12 @@ describe('Project Card', () => {
     const user = userEvent.setup();
     const confirmSpy = mockConfirmAccept();
 
+    // Mock the successful transition response — the store waits for the API
+    // to resolve before moving the card, so without this mock the default
+    // fail-fast fetch stub would reject and leave the card in 'geplant'.
+    const p07 = mockProjects.find((p) => p.id === 'p07')!;
+    mockFetchJson(fetchSpy, { ...p07, status: 'in_arbeit' });
+
     render(<App />);
 
     // p07 is in 'geplant' — forward should move to 'in_arbeit'
@@ -140,6 +153,13 @@ describe('Project Card', () => {
       const inArbeitColumn = screen.getByTestId('kanban-column-in_arbeit');
       expect(within(inArbeitColumn).getByTestId('project-card-p07')).toBeInTheDocument();
     });
+
+    // Hedge: verify the store called the right endpoint. The previous default
+    // mock accepted any URL so a typo in projectApi would have gone unnoticed.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/projects/p07/transition/forward',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   // Finding 10 (R2): dialog cancellation — project must NOT transition when user clicks Abbrechen
@@ -172,6 +192,53 @@ describe('Project Card', () => {
     const card = screen.getByTestId('project-card-p18');
     expect(card).toBeInTheDocument();
     expect(screen.queryByTestId('forward-button-p18')).not.toBeInTheDocument();
+  });
+});
+
+describe('Transition Error Handling (Optimistic Revert)', () => {
+  // CT-23 (transitions): when the transition API fails the UI must surface
+  // the error and leave the card in its original column. The store does NOT
+  // apply an optimistic column move for transitions (it waits for the API),
+  // but we still assert the card stays put to catch any future regression
+  // that introduces a pre-API optimistic move without a revert.
+  it('CT-23 (transitions): forward transition failure shows error and keeps card in place', async () => {
+    const user = userEvent.setup();
+    mockConfirmAccept();
+
+    // Mock fetch to reject — simulates network failure.
+    fetchSpy.mockRejectedValueOnce(new Error('simulated network failure'));
+
+    render(<App />);
+
+    // Pre-condition: p07 is in 'geplant'
+    const geplantColumn = screen.getByTestId('kanban-column-geplant');
+    expect(within(geplantColumn).getByTestId('project-card-p07')).toBeInTheDocument();
+
+    const forwardBtn = screen.getByTestId('forward-button-p07');
+    await user.click(forwardBtn);
+
+    // Error banner appears with a non-empty message.
+    const banner = await screen.findByTestId('mutation-error-banner');
+    expect(banner).toBeVisible();
+    expect(banner.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    expect(banner).toHaveTextContent('Änderung fehlgeschlagen. Bitte erneut versuchen.');
+
+    // Card remains in the original column, NOT in 'in_arbeit'.
+    expect(
+      within(screen.getByTestId('kanban-column-geplant')).getByTestId('project-card-p07'),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId('kanban-column-in_arbeit')).queryByTestId('project-card-p07'),
+    ).not.toBeInTheDocument();
+
+    // Store state reflects the revert — p07 still in 'geplant'.
+    expect(useProjectStore.getState().projects.find((p) => p.id === 'p07')?.status).toBe('geplant');
+
+    // And the correct endpoint was hit.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/projects/p07/transition/forward',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 });
 
