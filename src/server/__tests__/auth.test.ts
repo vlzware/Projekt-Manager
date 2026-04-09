@@ -332,6 +332,19 @@ describe('Authentication & Session Management', () => {
       // 4. The same token must no longer work
       const afterRes = await authGet(logoutToken, '/api/auth/me');
       expect(afterRes.statusCode).toBe(401);
+
+      // The error code must be SESSION_EXPIRED, not UNAUTHENTICATED.
+      // Why it matters: this test passes the original token cookie back via
+      // authGet, so the auth middleware sees a cookie and looks up the session
+      // row. SESSION_EXPIRED is only returned when the row is MISSING from the
+      // database (src/server/middleware/auth.ts:42-46) — so asserting this
+      // code proves the logout actually deleted the session row, not just
+      // cleared the browser cookie. Without this check, a silent regression
+      // where logout only expired the cookie (leaving the row harvestable)
+      // would pass the 401 assertion above.
+      // See src/server/services/AuthService.ts:73 — the deleteSession call.
+      const body = afterRes.json();
+      expect(body.code).toBe('SESSION_EXPIRED');
     });
   });
 });
