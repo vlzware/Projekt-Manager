@@ -1,5 +1,11 @@
 # Projekt-Manager
 
+## Context
+
+This project is an exercise in LLM-based development. Because LLMs do not always produce reliable output, and there is no practical way to predict when such slips will happen, we treat every artifact skeptically. Everything in the project is LLM-generated: docs, specs, code, ADRs. The fact that all of it was produced under human supervision does not make the output substantially more reliable — a reviewer's attention is easily saturated when a large number of changes land in a small amount of time.
+
+The methodology is therefore to arrive at confidence in sequential steps. Each artifact is trusted in proportion to the number of rounds of _independent_ reviews it has survived. In other words, we are _converging_ on the truth one step at a time.
+
 ## References
 - **Repo**: vlzware/Projekt-Manager (private)
 - **Project board**: https://github.com/users/vlzware/projects/2
