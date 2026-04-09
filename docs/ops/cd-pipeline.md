@@ -5,21 +5,26 @@
 ```
 push to main or iteration/** branch
   → CI workflow runs (lint, types, tests, build)
+    → build-and-push job builds the app image and pushes to GHCR
+      (tags: sha-<commit>, <branch-slug>)
     → on success: Deploy workflow triggers
       → SSH into VPS as deploy user
       → git fetch + checkout exact SHA that CI tested
-      → docker compose build + up
+      → docker compose pull app (image: ghcr.io/vlzware/projekt-manager:sha-<commit>)
+      → docker compose up -d
       → smoke test: wait for /api/health
 ```
 
 The server is always in **detached HEAD** at a specific commit — it does not track a branch. Every deploy checks out the exact SHA that passed CI. No ambiguity about what's running.
 
+The app image is built in GitHub Actions, not on the VPS. See [ADR-0011](../adr/0011-build-images-in-ci-distribute-via-ghcr.md) for the rationale. `deploy.yml` pulls from `ghcr.io/vlzware/projekt-manager` tagged with the exact commit SHA — `APP_IMAGE_TAG=sha-$EXPECTED_SHA` is set in the deploy script so the pull is deterministic and rollback via a previous SHA is a one-line change.
+
 ## Workflow Files
 
-| File                           | Trigger                           | Purpose                       |
-| ------------------------------ | --------------------------------- | ----------------------------- |
-| `.github/workflows/ci.yml`     | Push/PR to `main`, `iteration/**` | Lint, type-check, test, build |
-| `.github/workflows/deploy.yml` | CI completes successfully         | SSH deploy + smoke test       |
+| File                           | Trigger                           | Purpose                                                                                 |
+| ------------------------------ | --------------------------------- | --------------------------------------------------------------------------------------- |
+| `.github/workflows/ci.yml`     | Push/PR to `main`, `iteration/**` | Lint, type-check, test, build; on push also builds and pushes the app image to GHCR    |
+| `.github/workflows/deploy.yml` | CI completes successfully         | SSH to VPS, pull new app image from GHCR, `up -d`, smoke test                           |
 
 ## GitHub Secrets
 
@@ -82,7 +87,7 @@ The app's Docker Compose healthcheck (`/api/health` via `node -e fetch(...)`) al
 
 **Via GitHub Actions (preferred):**
 
-Go to Actions → Deploy → find the last successful run → Re-run all jobs. This re-deploys the SHA from that run.
+Go to Actions → Deploy → find the last successful run → Re-run all jobs. This re-deploys the SHA from that run. With ADR-0011 in place, "re-deploy" is a GHCR pull of the already-built image for that SHA — no rebuild, no VPS resource spike.
 
 **Manual (emergency):**
 
@@ -91,9 +96,12 @@ ssh -i ~/.ssh/projekt-manager-deploy deploy@<server-ip>
 cd /opt/projekt-manager
 git log --oneline -10          # find the known-good SHA
 git checkout <sha>
-docker compose build app
+export APP_IMAGE_TAG="sha-<sha>"   # must match the full commit SHA
+docker compose pull app
 docker compose up -d
 ```
+
+The image for any deployed SHA is retained in GHCR (see ADR-0011 for the retention policy). If the image is no longer available (e.g., pruned), fall back to a forward-rollback: `git revert` the bad commit and push, which triggers a fresh CI build and deploy.
 
 ## Caveats
 
@@ -103,33 +111,36 @@ docker compose up -d
 ## What the Deploy User Can Do
 
 - `git fetch` / `git checkout` (read-only Deploy Key on GitHub)
-- `docker compose build` / `up` / `down` / `logs` (member of `docker` group)
+- `docker compose pull` / `up` / `down` / `logs` / `exec` (member of `docker` group)
+- `docker compose build` is no longer part of the deploy path — the app image comes from GHCR (ADR-0011). `build` is still available to the user via group membership, but normal operations do not use it.
 - No `sudo`, no write access outside `/opt/projekt-manager`
 
 ## Diagram
 
 ```
-┌────────────────────┐     ┌──────────────────────┐
-│   Developer push   │────▶│   CI (GitHub runner) │
-│                    │     │   lint, test, build  │
-└────────────────────┘     └──────────┬───────────┘
-                                      │ on success
-                                      ▼
-                           ┌──────────────────────┐
-                           │  Deploy (GH runner)  │
-                           │  SSH into VPS        │
-                           └──────────┬───────────┘
-                                      │
-                                      ▼
-                           ┌──────────────────────┐
-                           │  VPS (deploy user)   │
-                           │  git checkout <sha>  │
+┌────────────────────┐     ┌──────────────────────┐     ┌───────────┐
+│   Developer push   │────▶│   CI (GitHub runner) │────▶│   GHCR    │
+│                    │     │   lint, test, build, │ push│ sha-<...> │
+│                    │     │   build+push image   │     │ <branch>  │
+└────────────────────┘     └──────────┬───────────┘     └─────┬─────┘
+                                      │ on success             │
+                                      ▼                        │
+                           ┌──────────────────────┐            │
+                           │  Deploy (GH runner)  │            │
+                           │  SSH into VPS        │            │
+                           └──────────┬───────────┘            │
+                                      │                        │
+                                      ▼                        │
+                           ┌──────────────────────┐            │
+                           │  VPS (deploy user)   │            │
+                           │  git checkout <sha>  │◀───────────┘
+                           │  docker compose pull │   pull sha-<sha>
                            │  docker compose up   │
                            └──────────┬───────────┘
                                       │
                                       ▼
                            ┌──────────────────────┐
                            │  Smoke test          │
-                           │  curl /api/health    │
+                           │  /api/health via exec│
                            └──────────────────────┘
 ```
