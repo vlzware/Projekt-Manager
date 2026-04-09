@@ -24,7 +24,7 @@
  *   npx vitest run src/server/__tests__/storage.test.ts
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { createStorageClient } from '../../server/storage/client.js';
 import type { StorageClient } from '../../server/storage/client.js';
 
@@ -71,13 +71,47 @@ describe('Object Storage Module', () => {
   // AT-16: Object storage module can upload a file, retrieve it,
   //        and verify the retrieved contents match the original
   // ---------------------------------------------------------------
+  //
+  // Test isolation rationale:
+  // Each test owns its own testKey and performs its own setup (upload,
+  // and in the case of the post-delete miss test, upload + delete).
+  // A previous version of this block shared a single describe-scoped
+  // testKey across all five tests, which created implicit ordering
+  // dependencies: if the upload test failed, the remaining tests all
+  // failed with misleading "not found" errors, hiding the real cause.
+  // Sharing state also broke `--grep` / `--testNamePattern` filtering
+  // for any single test and collapsed what should be independent
+  // assertions into one compound test split across `it` blocks.
+  //
+  // The cost is a few extra uploads per run. Storage tests are
+  // integration-level and not performance-critical — isolation wins.
+  // Do not "optimize" this back into a shared key.
   describe('AT-16: Upload, retrieve, and verify', () => {
-    const testKey = `test/at-16-${Date.now()}.txt`;
     const testContent = Buffer.from(
       'AT-16 Testdatei: Projekt-Manager Objekt-Speicher Integrationstest.',
       'utf-8',
     );
     const testContentType = 'text/plain';
+
+    let testKey: string;
+
+    beforeEach(() => {
+      // Math.random() guards against Date.now() collisions when tests
+      // run in the same millisecond (parallel workers, fast machines).
+      testKey = `test/at-16-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.txt`;
+    });
+
+    afterEach(async () => {
+      // Best-effort cleanup so leftover objects don't accumulate in the
+      // test bucket. Errors are swallowed: the object may already have
+      // been deleted by the test itself (e.g. tests 4 and 5), or the
+      // upload may have never happened (e.g. a failed upload in test 1).
+      try {
+        await storage.delete(testKey);
+      } catch {
+        // ignore — cleanup is best-effort
+      }
+    });
 
     it('uploads a file without error', async () => {
       const result = await storage.upload(testKey, testContent, testContentType);
@@ -86,6 +120,9 @@ describe('Object Storage Module', () => {
     });
 
     it('retrieves the uploaded file with matching contents', async () => {
+      // Own upload: this test verifies retrieval fidelity, not ordering.
+      await storage.upload(testKey, testContent, testContentType);
+
       const downloaded = await storage.download(testKey);
       expect(Buffer.isBuffer(downloaded.data) || downloaded.data instanceof Uint8Array).toBe(true);
       expect(Buffer.from(downloaded.data).toString('utf-8')).toBe(testContent.toString('utf-8'));
@@ -93,16 +130,29 @@ describe('Object Storage Module', () => {
     });
 
     it('generates a signed URL for the uploaded file', async () => {
+      // Own upload: this test verifies signed URL generation, independent
+      // of whether any earlier test uploaded something.
+      await storage.upload(testKey, testContent, testContentType);
+
       const url = await storage.getSignedUrl(testKey, 60);
       expect(typeof url).toBe('string');
       expect(url).toMatch(/^https?:\/\//);
     });
 
     it('deletes the uploaded file', async () => {
+      // Own upload: delete needs something to delete. Setup, not ordering.
+      await storage.upload(testKey, testContent, testContentType);
+
       await expect(storage.delete(testKey)).resolves.not.toThrow();
     });
 
     it('download after delete returns not-found or throws', async () => {
+      // Full setup: upload then delete, so the assertion under test is
+      // purely "download of a missing key fails". No reliance on any
+      // other test having run first.
+      await storage.upload(testKey, testContent, testContentType);
+      await storage.delete(testKey);
+
       await expect(storage.download(testKey)).rejects.toThrow();
     });
   });
