@@ -30,6 +30,9 @@ export default defineConfig({
       thresholds: {
         'src/domain/**': { statements: 80 },
         'src/config/**': { statements: 80 },
+        'src/server/**': { statements: 70 },
+        'src/state/**': { statements: 60 },
+        'src/hooks/**': { statements: 60 },
       },
     },
     projects: [

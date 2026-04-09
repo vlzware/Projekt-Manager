@@ -1,9 +1,7 @@
 /**
- * events.ts unit tests — pure subscription/emission logic, no DB needed.
- *
- * These run in the integration project (Node env, no jsdom) but don't
- * touch the database. They live in src/server/__tests__/ to keep test
- * organization consistent with the rest of the server code.
+ * Pure-function tests for the event bus. Runs under the integration project
+ * (per vitest.config.ts) even though it doesn't touch the DB — the
+ * .unit.test.ts naming was misleading, so the file is now just events.test.ts.
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
