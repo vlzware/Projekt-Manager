@@ -116,7 +116,7 @@ export class ProjectService {
   async updateDates(
     projectId: string,
     userId: string,
-    dates: { plannedStart?: string; plannedEnd?: string },
+    dates: { plannedStart?: string | null; plannedEnd?: string | null },
     log: ServiceLogger,
   ) {
     let updated;

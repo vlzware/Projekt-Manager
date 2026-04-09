@@ -12,11 +12,14 @@ export type ErrorCode =
   | 'NOT_PERMITTED'
   | 'VALIDATION_ERROR'
   | 'NOT_FOUND'
+  | 'RATE_LIMITED'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
   code: ErrorCode;
   message: string;
+  /** Optional machine-readable detail (e.g. ajv validation errors). */
+  details?: unknown;
 }
 
 export class AppError extends Error {
@@ -24,16 +27,21 @@ export class AppError extends Error {
     public readonly code: ErrorCode,
     public readonly userMessage: string,
     public readonly statusCode: number,
+    public readonly details?: unknown,
   ) {
     super(userMessage);
     this.name = 'AppError';
   }
 
   toResponse(): AppErrorResponse {
-    return {
+    const response: AppErrorResponse = {
       code: this.code,
       message: this.userMessage,
     };
+    if (this.details !== undefined) {
+      response.details = this.details;
+    }
+    return response;
   }
 }
 
@@ -57,12 +65,16 @@ export function notPermitted(): AppError {
   return new AppError('NOT_PERMITTED', 'Keine Berechtigung.', 403);
 }
 
-export function validationError(message: string): AppError {
-  return new AppError('VALIDATION_ERROR', message, 422);
+export function validationError(message: string, details?: unknown): AppError {
+  return new AppError('VALIDATION_ERROR', message, 422, details);
 }
 
 export function notFound(entity = 'Ressource'): AppError {
   return new AppError('NOT_FOUND', `${entity} nicht gefunden.`, 404);
+}
+
+export function rateLimited(): AppError {
+  return new AppError('RATE_LIMITED', 'Zu viele Anfragen. Bitte später erneut versuchen.', 429);
 }
 
 export function serverError(): AppError {

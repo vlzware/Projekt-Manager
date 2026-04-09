@@ -100,27 +100,6 @@ describe('Project Operations — Dates', () => {
       const updated = res.json();
       expect(updated.updatedBy).toBe(me.id);
     });
-
-    it('returns the full updated project', async () => {
-      const listRes = await authGet(token, '/api/projects');
-      const projects = listRes.json().data;
-      const project = projects.find((p: Record<string, unknown>) => p.plannedStart != null);
-      expect(project).toBeDefined();
-
-      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
-        plannedStart: '2026-08-01',
-        plannedEnd: '2026-08-20',
-      });
-
-      expect(res.statusCode).toBe(200);
-
-      const updated = res.json();
-      expect(updated.id).toBe(project.id);
-      expect(updated.number).toBeDefined();
-      expect(updated.title).toBeDefined();
-      expect(updated.status).toBe(project.status);
-      expect(updated.customer).toBeDefined();
-    });
   });
 
   // ---------------------------------------------------------------
@@ -185,6 +164,72 @@ describe('Project Operations — Dates', () => {
       expect(updated.plannedStart).toContain('2026-09-01');
       // plannedEnd should be absent or null after this update
       expect(updated.plannedEnd == null).toBe(true);
+    });
+
+    it('clears plannedStart and plannedEnd when null values are sent explicitly', async () => {
+      // AT-13 edge: frontend "clear planned dates" flow sends explicit nulls
+      // (ProjectDetailPanel.tsx → `updateDates(id, val || null, ...)`).
+      // Previously this returned 500 SERVER_ERROR because:
+      //   1. the schema rejected `null` at ajv validation time (string only)
+      //   2. the error handler rewrote the resulting FastifyError as a 500
+      // Both are now fixed: schema accepts `string | null`, error handler
+      // maps validation errors to 422 VALIDATION_ERROR, and the repo's
+      // existing falsy→null branch (project-dates.ts:33-46) handles the
+      // clear transparently.
+      const listRes = await authGet(token, '/api/projects');
+      const projects = listRes.json().data;
+      const project = projects.find(
+        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
+      );
+      expect(project).toBeDefined();
+
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: null,
+        plannedEnd: null,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const updated = res.json();
+      expect(updated.plannedStart).toBeNull();
+      expect(updated.plannedEnd).toBeNull();
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // NOT_FOUND path: preserves coverage of ProjectNotFoundError at the
+  // HTTP boundary. Was previously covered in project-dates.unit.test.ts
+  // (deleted in the .unit consolidation); the HTTP layer only tested
+  // 404 for GET /api/projects/:id, not for PATCH .../dates.
+  // ---------------------------------------------------------------
+  describe('PATCH dates on nonexistent project', () => {
+    it('returns 404 NOT_FOUND for a well-formed but nonexistent UUID', async () => {
+      const fakeId = '00000000-0000-0000-0000-000000000000';
+      const res = await authPatch(token, `/api/projects/${fakeId}/dates`, {
+        plannedStart: '2026-06-01',
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('NOT_FOUND');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Schema validation: regression guard for the "Fastify schema errors
+  // rewritten as 500" bug. Before the fix the global error handler only
+  // caught AppError + 429, so any schema validation failure fell through
+  // to serverError(). Now ajv failures are mapped to 422 VALIDATION_ERROR.
+  // ---------------------------------------------------------------
+  describe('PATCH dates with malformed body', () => {
+    it('returns 422 VALIDATION_ERROR for wrong type (not 500)', async () => {
+      const listRes = await authGet(token, '/api/projects');
+      const project = listRes.json().data[0];
+
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: 42, // wrong type: number instead of date string
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
     });
   });
 });

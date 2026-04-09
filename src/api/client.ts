@@ -88,8 +88,33 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
     };
   }
 
-  const data = await res.json().catch(() => null);
-  return { ok: true, data: data as T };
+  // Success path.
+  //
+  // We distinguish three cases that previously all collapsed to `data=null`:
+  //   1. 204 No Content (or explicit Content-Length: 0) — legitimately empty.
+  //      res.json() would throw; short-circuit to `{ ok: true, data: null }`.
+  //   2. 2xx with a JSON body that parses — return the parsed value, including
+  //      a literal `null` payload (JSON.parse("null") is valid JSON).
+  //   3. 2xx with a body that FAILS to parse — this is an error, not success.
+  //      Surface it as ok=false with code INVALID_RESPONSE so callers can
+  //      distinguish a malformed response from a legitimately null payload.
+  if (res.status === 204 || res.headers.get('Content-Length') === '0') {
+    return { ok: true, data: null as T };
+  }
+
+  try {
+    const data = (await res.json()) as T;
+    return { ok: true, data };
+  } catch {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_RESPONSE',
+        message: 'Server-Antwort ungültig. Bitte erneut versuchen.',
+      },
+      sessionExpired: false,
+    };
+  }
 }
 
 // --- Typed API functions -----------------------------------------------------

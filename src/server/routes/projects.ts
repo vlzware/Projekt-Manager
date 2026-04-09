@@ -135,8 +135,13 @@ export function projectRoutes(db: Database) {
             type: 'object',
             additionalProperties: false,
             properties: {
-              plannedStart: { type: 'string', format: 'date' },
-              plannedEnd: { type: 'string', format: 'date' },
+              // `null` is allowed so the frontend "clear planned date" flow
+              // (ProjectDetailPanel.tsx → updateDates(id, val || null, ...))
+              // reaches the repository's falsy→null branch. JSON Schema's
+              // `format` keyword applies to strings only; null values bypass
+              // it, which is exactly what we want.
+              plannedStart: { type: ['string', 'null'], format: 'date' },
+              plannedEnd: { type: ['string', 'null'], format: 'date' },
             },
           },
         },
@@ -145,8 +150,8 @@ export function projectRoutes(db: Database) {
       async (request, reply) => {
         const { id } = request.params as { id: string };
         const body = request.body as {
-          plannedStart?: string;
-          plannedEnd?: string;
+          plannedStart?: string | null;
+          plannedEnd?: string | null;
         };
 
         const project = await projectService.updateDates(id, request.user!.id, body, request.log);

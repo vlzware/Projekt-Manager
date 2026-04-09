@@ -1,11 +1,12 @@
 /**
- * useRouterNav tests — pure helpers + the no-router fallback variant
- * (the React Router variant is exercised end-to-end by component tests
- * that mount <BrowserRouter>).
+ * useRouterNav tests — pure helpers, the no-router fallback variant,
+ * and the React Router variant (mounted with a MemoryRouter wrapper).
  */
 
+import type { ReactNode } from 'react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { viewFromPath, pathFromView, useRouterNav } from '@/hooks/useRouterNav';
 import { useUIStore } from '@/state/uiStore';
 
@@ -80,5 +81,55 @@ describe('useRouterNav — store fallback (no router context)', () => {
     });
 
     expect(useUIStore.getState().activeFilter).toBeNull();
+  });
+});
+
+describe('useRouterNav — router branch (with React Router context)', () => {
+  const withRouter = (initialPath: string) => ({
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <MemoryRouter initialEntries={[initialPath]}>{children}</MemoryRouter>
+    ),
+  });
+
+  it('reflects the router location as pathname when inside a MemoryRouter', () => {
+    const { result } = renderHook(() => useRouterNav(), withRouter('/calendar'));
+    expect(result.current.pathname).toBe('/calendar');
+  });
+
+  it('navigateTo routes via react-router — pathname updates to the new path', () => {
+    const { result } = renderHook(() => useRouterNav(), withRouter('/kanban'));
+    expect(result.current.pathname).toBe('/kanban');
+
+    act(() => {
+      result.current.navigateTo('/calendar');
+    });
+
+    // pathname comes from useLocation() — proves the router branch was taken
+    // and the navigate() call actually updated the router's location.
+    expect(result.current.pathname).toBe('/calendar');
+  });
+
+  it('navigateTo also syncs uiStore.activeView (pre-empting the URL→store effect)', () => {
+    useUIStore.setState({ activeView: 'kanban' });
+    const { result } = renderHook(() => useRouterNav(), withRouter('/kanban'));
+
+    act(() => {
+      result.current.navigateTo('/calendar');
+    });
+
+    expect(useUIStore.getState().activeView).toBe('kalender');
+  });
+
+  it('navigateTo to an unknown path falls back to kanban in the uiStore sync', () => {
+    useUIStore.setState({ activeView: 'kalender' });
+    const { result } = renderHook(() => useRouterNav(), withRouter('/kanban'));
+
+    act(() => {
+      result.current.navigateTo('/some/unknown/route');
+    });
+
+    // Router moves to the unknown path, but the store sync maps unknown → kanban.
+    expect(result.current.pathname).toBe('/some/unknown/route');
+    expect(useUIStore.getState().activeView).toBe('kanban');
   });
 });

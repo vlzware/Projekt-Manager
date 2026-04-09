@@ -4,13 +4,14 @@
  * Tests AT-14 and AT-15 from the test specification (verification.md §16.3).
  * Runs against a real test database via Fastify inject (no network).
  *
- * Separated from auth.test.ts because AT-7 deactivates the buero user,
- * and AT-14 needs buero active. Each test file gets a fresh seed via
- * startApp(), so isolation requires a separate file.
+ * Separated from auth.test.ts because AT-7 deactivates the office user,
+ * and AT-14 needs that same user active. Each test file gets a fresh seed
+ * via startApp(), so isolation requires a separate file.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { startApp, stopApp, getApp, login, authPost } from '../../test/api-helpers.js';
+import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 
 describe('Password Change Operations', () => {
   beforeAll(async () => {
@@ -27,11 +28,13 @@ describe('Password Change Operations', () => {
   describe('AT-14: Change own password (success)', () => {
     it('changes password and allows login with the new one', async () => {
       // Self-contained: login, change, verify new password — all in one test.
-      // Uses buero to avoid affecting other tests that log in as inhaber.
-      const bueroToken = await login('buero', 'changeme');
+      // Uses the office user to avoid affecting other tests that log in as owner.
+      // The rotated password is a throwaway literal — it's the NEW value, not
+      // a seed reference, so it stays hardcoded here.
+      const officeToken = await login(SEED_USERS.office.username, SEED_DEFAULT_PASSWORD);
 
-      const changeRes = await authPost(bueroToken, '/api/auth/change-password', {
-        currentPassword: 'changeme',
+      const changeRes = await authPost(officeToken, '/api/auth/change-password', {
+        currentPassword: SEED_DEFAULT_PASSWORD,
         newPassword: 'neuesPasswort123!',
       });
 
@@ -41,7 +44,7 @@ describe('Password Change Operations', () => {
       const loginRes = await getApp().inject({
         method: 'POST',
         url: '/api/auth/login',
-        payload: { username: 'buero', password: 'neuesPasswort123!' },
+        payload: { username: SEED_USERS.office.username, password: 'neuesPasswort123!' },
       });
 
       expect(loginRes.statusCode).toBe(200);
@@ -57,10 +60,10 @@ describe('Password Change Operations', () => {
   // ---------------------------------------------------------------
   describe('AT-15: Change own password (wrong current password)', () => {
     it('rejects when current password is incorrect', async () => {
-      // Uses inhaber — completely independent of AT-14's buero flow.
-      const inhaberToken = await login('inhaber', 'changeme');
+      // Uses owner — completely independent of AT-14's office-user flow.
+      const ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
 
-      const res = await authPost(inhaberToken, '/api/auth/change-password', {
+      const res = await authPost(ownerToken, '/api/auth/change-password', {
         currentPassword: 'definitelywrong',
         newPassword: 'newpassword123!',
       });
@@ -81,7 +84,7 @@ describe('Password Change Operations', () => {
       const res = await getApp().inject({
         method: 'POST',
         url: '/api/auth/login',
-        payload: { username: 'inhaber', password: 'changeme' },
+        payload: { username: SEED_USERS.owner.username, password: SEED_DEFAULT_PASSWORD },
       });
 
       expect(res.statusCode).toBe(200);
@@ -93,10 +96,10 @@ describe('Password Change Operations', () => {
   // ---------------------------------------------------------------
   describe('Password policy enforcement on change-password', () => {
     it('rejects a blocklist entry as the new password', async () => {
-      // Self-contained: uses arbeiter1 to avoid side effects on other tests.
-      const token = await login('arbeiter1', 'changeme');
+      // Self-contained: uses worker1 to avoid side effects on other tests.
+      const token = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
       const res = await authPost(token, '/api/auth/change-password', {
-        currentPassword: 'changeme',
+        currentPassword: SEED_DEFAULT_PASSWORD,
         newPassword: 'qwerty123',
       });
       expect(res.statusCode).toBe(422);
@@ -104,9 +107,9 @@ describe('Password Change Operations', () => {
     });
 
     it('rejects a new password shorter than 8 characters', async () => {
-      const token = await login('arbeiter2', 'changeme');
+      const token = await login(SEED_USERS.worker2.username, SEED_DEFAULT_PASSWORD);
       const res = await authPost(token, '/api/auth/change-password', {
-        currentPassword: 'changeme',
+        currentPassword: SEED_DEFAULT_PASSWORD,
         newPassword: 'short1!',
       });
       // 422 from the service's checkPasswordPolicy call. Not 400 from the
@@ -123,13 +126,13 @@ describe('Password Change Operations', () => {
     // characters but 75 UTF-8 bytes — it would sneak past the schema and
     // bcrypt would silently truncate to the first ~24 characters.
     it('rejects a UTF-8 password whose bytes exceed 72 despite having fewer characters', async () => {
-      const token = await login('buchhalter', 'changeme');
+      const token = await login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD);
       const utf8Pw = '测'.repeat(25); // 25 chars, 75 bytes
       expect(utf8Pw.length).toBe(25);
       expect(Buffer.byteLength(utf8Pw, 'utf8')).toBe(75);
 
       const res = await authPost(token, '/api/auth/change-password', {
-        currentPassword: 'changeme',
+        currentPassword: SEED_DEFAULT_PASSWORD,
         newPassword: utf8Pw,
       });
       expect(res.statusCode).toBe(422);
@@ -140,7 +143,10 @@ describe('Password Change Operations', () => {
       const loginRes = await getApp().inject({
         method: 'POST',
         url: '/api/auth/login',
-        payload: { username: 'buchhalter', password: 'changeme' },
+        payload: {
+          username: SEED_USERS.bookkeeper.username,
+          password: SEED_DEFAULT_PASSWORD,
+        },
       });
       expect(loginRes.statusCode).toBe(200);
     });
@@ -148,12 +154,12 @@ describe('Password Change Operations', () => {
     it('accepts a 72-ASCII-byte password at the boundary', async () => {
       // Counterpart to the UTF-8 test — a 72-character ASCII password is
       // exactly 72 bytes, which is the boundary value and must be allowed.
-      const token = await login('inhaber', 'changeme');
+      const token = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
       const at72 = 'A'.repeat(72);
       expect(Buffer.byteLength(at72, 'utf8')).toBe(72);
 
       const res = await authPost(token, '/api/auth/change-password', {
-        currentPassword: 'changeme',
+        currentPassword: SEED_DEFAULT_PASSWORD,
         newPassword: at72,
       });
       expect(res.statusCode).toBe(200);
