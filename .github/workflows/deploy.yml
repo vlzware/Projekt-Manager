@@ -109,3 +109,45 @@ jobs:
               fi
             done
             echo "Deploy verified — healthy at $(git rev-parse --short HEAD)"
+
+      # The smoke-test account is long-lived and manually provisioned
+      # (see docs/ops/cd-pipeline.md §"Smoke-test account bootstrap"),
+      # so until `SMOKE_TEST_USERNAME`/`SMOKE_TEST_PASSWORD` are populated
+      # in repository secrets we skip the Smoke E2E step with a loud
+      # warning instead of failing the deploy. Once the account exists
+      # and the secrets are set, the step becomes mandatory.
+      # Secrets cannot be referenced directly in `if:` conditions, so we
+      # stage an output from a preceding step that CAN read them.
+      - name: Check smoke-test secrets
+        id: smoke_secrets
+        run: |
+          if [ -n "${{ secrets.SMOKE_TEST_USERNAME }}" ] && [ -n "${{ secrets.SMOKE_TEST_PASSWORD }}" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SMOKE_TEST_USERNAME / SMOKE_TEST_PASSWORD are not set — skipping Smoke E2E. See docs/ops/cd-pipeline.md § 'Smoke-test account bootstrap'."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke E2E (HTTPS + auth + API through Caddy)
+        if: steps.smoke_secrets.outputs.ready == 'true'
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          # #48: host key pinning — see the Deploy step above.
+          fingerprint: SHA256:Ph26z+Ew6IuYP4OxFkYdHMcRo2jzuhBV6az6QGhNkPo
+          # #58: exercise the real HTTPS + auth + API chain via curl on
+          # the VPS itself (GitHub runners can't join WireGuard). The
+          # previous "Smoke test" step only probes the app container's
+          # internal listener via `docker compose exec` — it bypasses
+          # Caddy, TLS, and the cookie/auth middleware entirely. This
+          # step is the "does the thing a real user hits actually work"
+          # check. Non-destructive: touches only session state, which
+          # the logout step cleans up.
+          envs: SMOKE_TEST_USERNAME,SMOKE_TEST_PASSWORD
+          script: |
+            bash /opt/projekt-manager/scripts/smoke-e2e.sh
+        env:
+          SMOKE_TEST_USERNAME: ${{ secrets.SMOKE_TEST_USERNAME }}
+          SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}

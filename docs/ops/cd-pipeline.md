@@ -11,7 +11,9 @@ push to main or iteration/** branch
       → pg_dump the live DB to /home/deploy/backups/projekt-manager
         (abort if dump fails or is empty)
       → docker compose build + up
-      → smoke test: wait for /api/health returning {status:"ok"}
+      → smoke test 1: wait for app container's /api/health returning {status:"ok"}
+      → smoke test 2 (#58): scripts/smoke-e2e.sh — curl over real HTTPS
+        through Caddy, login → /api/auth/me → /api/projects → logout
 ```
 
 The server is always in **detached HEAD** at a specific commit — it does not track a branch. Every deploy checks out the exact SHA that passed CI. No ambiguity about what's running.
@@ -25,11 +27,13 @@ The server is always in **detached HEAD** at a specific commit — it does not t
 
 ## GitHub Secrets
 
-| Secret        | Purpose                                                                                              |
-| ------------- | ---------------------------------------------------------------------------------------------------- |
-| `DEPLOY_HOST` | Server public IP (GitHub runners cannot join the WireGuard tunnel, so deploy SSH uses the public IP) |
-| `DEPLOY_USER` | `deploy`                                                                                             |
-| `DEPLOY_KEY`  | Private SSH key for the deploy user                                                                  |
+| Secret                | Purpose                                                                                              |
+| --------------------- | ---------------------------------------------------------------------------------------------------- |
+| `DEPLOY_HOST`         | Server public IP (GitHub runners cannot join the WireGuard tunnel, so deploy SSH uses the public IP) |
+| `DEPLOY_USER`         | `deploy`                                                                                             |
+| `DEPLOY_KEY`          | Private SSH key for the deploy user                                                                  |
+| `SMOKE_TEST_USERNAME` | Long-lived smoke-test account username (see "Smoke E2E" below, #58)                                  |
+| `SMOKE_TEST_PASSWORD` | Long-lived smoke-test account password                                                               |
 
 ## SSH Host Key Pinning
 
@@ -134,6 +138,71 @@ the DB (`SELECT 1`) and object storage (`HeadBucket`), returning
 fully-healthy stack and `{status:"degraded", ...}` with HTTP 503 when
 any dependency fails. The smoke test's `r.ok` check correctly interprets
 503 as failure.
+
+## Smoke E2E (#58)
+
+The container-internal smoke test above validates the app's dependencies
+but bypasses Caddy, TLS, cookies, and authentication — exactly the parts
+most likely to break silently and most visible to real users. After the
+internal probe passes, the deploy workflow runs
+`scripts/smoke-e2e.sh` on the VPS itself, which:
+
+1. Hits `GET /api/health` through `https://${DOMAIN}` via
+   `curl --resolve` against the WireGuard interface IP. Validates the
+   real TLS chain, SNI, and that Caddy is forwarding to the app.
+2. Logs in as the dedicated smoke-test account, asserting that the
+   `Set-Cookie` header carries `Secure`, `HttpOnly`, and
+   `SameSite=Strict`.
+3. Reads `/api/auth/me` with the cookie — proves the auth middleware
+   accepts the session and the app can resolve the user.
+4. Reads `/api/projects` with the cookie — proves the DB round-trip
+   works end-to-end. No row-count assertions: the smoke test must not
+   couple to real production data.
+5. Logs out — deletes the session row created by step 2. The only
+   persistent state touched is this one transient session, which the
+   logout cleans up.
+
+Runs from the VPS (not from a GitHub-hosted runner) because Caddy's
+`:443` listener is bound only to the WireGuard interface and
+GitHub-hosted runners cannot join the tunnel (#47). Self-hosted runner
+infrastructure is a future option for a Playwright-based browser test
+that would also catch JS/CSS/CSP regressions, but curl-from-server is
+the pragmatic starting point.
+
+### Smoke-test account bootstrap
+
+The smoke-test account is long-lived — one row in the `users` table
+with `bookkeeper` role (read-only — a leaked credential must never
+grant write access) and a password stored in the GitHub
+`SMOKE_TEST_PASSWORD` secret. Password lives in the operator's vault
+as the source of truth.
+
+Walking-skeleton scope does not ship a user-management UI, and the
+first-run bootstrap mechanism (#57) only fires when the `users` table
+is empty. For the one-time account creation, run
+`scripts/create-smoke-test-user.sh` on the VPS:
+
+```sh
+ssh deploy@<server-ip>
+cd /opt/projekt-manager
+SMOKE_TEST_USERNAME=smoke \
+SMOKE_TEST_PASSWORD='<value from vault>' \
+bash scripts/create-smoke-test-user.sh
+```
+
+The script is idempotent — re-running with the same username is a
+no-op. Rotating the password requires deleting the row first (the
+script does not update existing rows, on purpose).
+
+After the account is created, add the credentials to GitHub secrets:
+
+```sh
+gh secret set SMOKE_TEST_USERNAME --body 'smoke'
+gh secret set SMOKE_TEST_PASSWORD   # prompts for the value
+```
+
+The next deploy will exercise the new smoke E2E step with these
+credentials.
 
 If the health endpoint does not respond within 60 seconds, the workflow:
 
