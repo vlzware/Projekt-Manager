@@ -196,4 +196,62 @@ describe('updateDates', () => {
       }),
     ).rejects.toThrow(ProjectNotFoundError);
   });
+
+  // -----------------------------------------------------------------
+  // #54: DB-level enforcement of the same invariant
+  // -----------------------------------------------------------------
+
+  it('DB CHECK constraint rejects direct INSERT of plannedEnd without plannedStart', async () => {
+    // The API layer already rejects this via updateDates (tested above), but
+    // direct DB writes (seed scripts, migrations, manual SQL) bypass the route
+    // layer. The `projects_end_requires_start` CHECK constraint is defense in
+    // depth — this test verifies the constraint is actually enforced, not just
+    // present in the schema file. Use the raw pg pool so the constraint name
+    // surfaces in the error (drizzle's wrapper hides it).
+    let pgError: { code?: string; constraint?: string } | null = null;
+    try {
+      await pool.query(
+        `INSERT INTO projects (number, title, customer, planned_start, planned_end)
+         VALUES ($1, $2, $3, NULL, $4)`,
+        ['CHK-01', 'end without start', { name: 'Test' }, '2026-06-10T00:00:00Z'],
+      );
+    } catch (err) {
+      pgError = err as { code?: string; constraint?: string };
+    }
+
+    expect(pgError).not.toBeNull();
+    // PG error code 23514 = check_violation
+    expect(pgError!.code).toBe('23514');
+    expect(pgError!.constraint).toBe('projects_end_requires_start');
+  });
+
+  it('DB CHECK constraint allows start without end, both dates, and neither', async () => {
+    // All three valid combinations must insert cleanly. If the constraint is
+    // written incorrectly (e.g., rejects start-only), this test surfaces it.
+    const base = {
+      title: 'constraint positive case',
+      customer: { name: 'Test' },
+    } as const;
+
+    // Neither date
+    await db
+      .insert(projects)
+      .values({ ...base, number: 'CHK-N', plannedStart: null, plannedEnd: null });
+
+    // Start only
+    await db.insert(projects).values({
+      ...base,
+      number: 'CHK-S',
+      plannedStart: new Date('2026-06-01T00:00:00Z'),
+      plannedEnd: null,
+    });
+
+    // Both dates
+    await db.insert(projects).values({
+      ...base,
+      number: 'CHK-B',
+      plannedStart: new Date('2026-06-01T00:00:00Z'),
+      plannedEnd: new Date('2026-06-10T00:00:00Z'),
+    });
+  });
 });

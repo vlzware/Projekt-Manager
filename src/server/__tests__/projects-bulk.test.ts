@@ -135,6 +135,31 @@ describe('Bulk Project Import', () => {
   // Validation errors
   // ---------------------------------------------------------------
   describe('Validation errors', () => {
+    it('skips items with plannedEnd but no plannedStart and reports the German error (#54)', async () => {
+      // Before the projects_end_requires_start CHECK constraint, this
+      // path inserted a row with end-only because validateImportItem did
+      // not enforce the start-before-end invariant. The item-level
+      // validation now rejects it with a German message, matching the
+      // `updateDates` route-level error.
+      const res = await authPost(ownerToken, '/api/projects/bulk/import', {
+        projects: [
+          {
+            number: 'IMP-ENDONLY',
+            title: 'end without start',
+            customer: { name: 'Testkunde' },
+            plannedEnd: '2026-06-15',
+          },
+        ],
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.imported).toBe(0);
+      expect(body.errors).toHaveLength(1);
+      expect(body.errors[0].index).toBe(0);
+      expect(body.errors[0].message).toBe('Enddatum kann nicht ohne Startdatum gesetzt werden.');
+    });
+
     it('skips items with missing number and reports error', async () => {
       const res = await authPost(ownerToken, '/api/projects/bulk/import', {
         projects: [

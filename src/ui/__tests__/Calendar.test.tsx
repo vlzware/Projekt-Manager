@@ -70,10 +70,12 @@ describe('Calendar View', () => {
 
     // Finding 1 (R3): verify the actual count, not just the label text.
     // Mock data has 4 projects without dates: p01, p02, p05, p06.
-    // NOTE (Finding 4/R3): the summary counts projects missing BOTH dates
-    // (!plannedStart && !plannedEnd), while the calendar filters on plannedStart
-    // alone. A project with only plannedEnd would be invisible in the calendar
-    // but not counted here. This is a spec/design question, not a test fix.
+    // The summary counts projects missing BOTH dates (!plannedStart && !plannedEnd),
+    // while the calendar filters on plannedStart alone. The gap would only surface
+    // for a project with plannedEnd but no plannedStart — which the API rejects
+    // (project-dates.ts) AND the DB rejects via the projects_end_requires_start
+    // CHECK constraint (#54, migration 0006). The state is unreachable, so the
+    // divergent filters are internally consistent against valid data.
     const counter = screen.getByTestId('no-dates-counter');
     expect(counter).toBeInTheDocument();
     expect(counter).toHaveTextContent('4 Projekte ohne Termin');

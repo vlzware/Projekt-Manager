@@ -5,6 +5,7 @@
  * See data-model.md for entity definitions.
  */
 
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
@@ -15,6 +16,7 @@ import {
   jsonb,
   numeric,
   index,
+  check,
 } from 'drizzle-orm/pg-core';
 
 // ---------------------------------------------------------------
@@ -98,5 +100,13 @@ export const projects = pgTable(
     index('idx_projects_status').on(table.status),
     // Used by future "recently changed" and aging threshold queries.
     index('idx_projects_status_changed_at').on(table.statusChangedAt),
+    // Invariant: an end date cannot exist without a start date.
+    // The API already rejects this combination in project-dates.ts; the
+    // constraint is defense in depth against direct DB writes (migrations,
+    // seed scripts, manual SQL) that bypass the route layer. See #54.
+    check(
+      'projects_end_requires_start',
+      sql`${table.plannedEnd} IS NULL OR ${table.plannedStart} IS NOT NULL`,
+    ),
   ],
 );

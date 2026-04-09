@@ -260,6 +260,18 @@ export class ProjectService {
         return 'plannedEnd muss ein gültiges ISO-Datum sein.';
       }
     }
+    // #54: same invariant as `updateDates` (project-dates.ts) —
+    // plannedEnd cannot exist without plannedStart. The DB now enforces
+    // this too via the projects_end_requires_start CHECK constraint, but
+    // surface a structured German message at validation time so the
+    // bulk-import error report is actionable instead of a raw PG error.
+    if (
+      item.plannedEnd !== undefined &&
+      item.plannedEnd !== null &&
+      (item.plannedStart === undefined || item.plannedStart === null)
+    ) {
+      return 'Enddatum kann nicht ohne Startdatum gesetzt werden.';
+    }
 
     // Assigned workers validation
     if (item.assignedWorkers !== undefined && item.assignedWorkers !== null) {
