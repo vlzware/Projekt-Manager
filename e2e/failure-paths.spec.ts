@@ -18,10 +18,12 @@ import { test, expect } from '@playwright/test';
 
 test.describe('E2E failure paths', () => {
   test.beforeEach(async ({ page }) => {
+    // Auth comes from the shared storageState (see auth.setup.ts);
+    // the tests in this file exercise transition-time failures, not
+    // login-time failures, so they start from an authenticated board.
+    // The "session expiry" test still simulates server-side invalidation
+    // via route mocking — that's unrelated to client-side auth state.
     await page.goto('/');
-    await page.getByTestId('login-username').fill('inhaber');
-    await page.getByTestId('login-password').fill('changeme');
-    await page.getByTestId('login-submit').click();
     await expect(page.getByTestId('kanban-board')).toBeVisible();
   });
 

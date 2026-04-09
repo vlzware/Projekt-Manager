@@ -7,8 +7,12 @@ import { addDays, format, isSameMonth, lastDayOfMonth } from 'date-fns';
  * Integration scenarios extracted from the original smoke test. The smoke
  * test is now a minimal boot-and-round-trip check (see smoke.spec.ts); this
  * file exercises the specific features that were previously bundled into
- * one 247-line mega-test. Each scenario is self-contained: a shared
- * beforeEach logs in, and every test starts from a clean Kanban view.
+ * one 247-line mega-test. Each scenario is self-contained: it inherits a
+ * logged-in context from the shared storageState (see e2e/auth.setup.ts
+ * and playwright.config.ts), navigates to `/`, and starts from a clean
+ * Kanban view. The per-test login was removed in favour of the shared
+ * auth state because repeated logins would trip the 5-per-minute login
+ * rate limit (src/server/config/index.ts:33) and 429 the 6th+ test.
  *
  * Seed data assumptions (inherited from the previous smoke test):
  *   - User: inhaber / changeme (Thomas Berger, admin/owner)
@@ -26,10 +30,19 @@ import { addDays, format, isSameMonth, lastDayOfMonth } from 'date-fns';
  * same calendar month as today. The calendar view opens on the current
  * month by default, so a same-month target avoids the need to click
  * `calendar-next`/`calendar-prev` to find the day cell.
+ *
+ * `daysOffset` is the baseline offset from today; each call site picks a
+ * different value so two parallel-running tests that both edit the same
+ * seeded card don't try to write the *same* value. A date-input's fill()
+ * is a no-op when the value already matches, and an unchanged input does
+ * not fire a PATCH — the second test's `waitForResponse` would hang. We
+ * also clamp to the last day of the current month if the offset would
+ * overflow into the next month so the calendar-view assertions still find
+ * the day cell without navigation.
  */
-function pickPlannedEndDate(): { iso: string; testId: string } {
+function pickPlannedEndDate(daysOffset: number): { iso: string; testId: string } {
   const today = new Date();
-  let target = addDays(today, 5);
+  let target = addDays(today, daysOffset);
   if (!isSameMonth(target, today)) {
     target = lastDayOfMonth(today);
   }
@@ -37,12 +50,24 @@ function pickPlannedEndDate(): { iso: string; testId: string } {
   return { iso, testId: `calendar-day-${iso}` };
 }
 
+// Run this file's tests serially within a single worker. The suite has
+// no DB reset between tests and every test operates on the same seeded
+// geplant card (via `.first()`), so parallel workers racing on writes
+// produce flaky "last-write-wins" failures — the date-mutation tests in
+// particular would see each other's values after `page.reload()`, and
+// the net-zero state-transition teardown established in d9d8203 only
+// covers the forward/backward tests. Serial mode is a narrow constraint
+// (tests in other files still parallelize), and it pairs with
+// `fullyParallel: true` at the config level.
+test.describe.configure({ mode: 'serial' });
+
 test.describe('Kanban board flows', () => {
   test.beforeEach(async ({ page }) => {
+    // Auth is supplied by the shared storageState (see auth.setup.ts);
+    // all we need here is the initial navigation so every test starts
+    // from a freshly loaded board. The visibility assertion pins the
+    // pre-condition that the authenticated render actually succeeded.
     await page.goto('/');
-    await page.getByTestId('login-username').fill('inhaber');
-    await page.getByTestId('login-password').fill('changeme');
-    await page.getByTestId('login-submit').click();
     await expect(page.getByTestId('kanban-board')).toBeVisible();
   });
 
@@ -205,7 +230,11 @@ test.describe('Kanban board flows', () => {
 
       // Wait for the PATCH to land before moving on, otherwise the next steps
       // may race the optimistic update against the actual server commit.
-      const plannedEndDate = pickPlannedEndDate();
+      // This test uses offset 5; the other date-mutation tests in this file
+      // pick different offsets so parallel workers editing the same seeded
+      // card don't write the same value (which would make `fill()` a no-op
+      // and stall the `waitForResponse` below).
+      const plannedEndDate = pickPlannedEndDate(5);
       const endDateInput = page.getByTestId('detail-date-end');
       await Promise.all([
         page.waitForResponse(
@@ -232,7 +261,10 @@ test.describe('Kanban board flows', () => {
       const detailPanel = page.getByTestId('detail-panel');
       await expect(detailPanel).toBeVisible();
 
-      const plannedEndDate = pickPlannedEndDate();
+      // Offset 6 — see `pickPlannedEndDate` and the matching note in the
+      // "updates the planned end date" test above for why each date-
+      // mutation test needs a unique offset.
+      const plannedEndDate = pickPlannedEndDate(6);
       const endDateInput = page.getByTestId('detail-date-end');
       await Promise.all([
         page.waitForResponse(
@@ -311,8 +343,9 @@ test.describe('Kanban board flows', () => {
       await page.getByTestId('confirm-ok').click();
       await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
 
-      // Edit the planned end date.
-      const plannedEndDate = pickPlannedEndDate();
+      // Edit the planned end date. Offset 7 — see `pickPlannedEndDate`
+      // for why each date-mutation test uses a unique offset.
+      const plannedEndDate = pickPlannedEndDate(7);
       await Promise.all([
         page.waitForResponse(
           (r) => /\/api\/projects\/[^/]+\/dates$/.test(r.url()) && r.request().method() === 'PATCH',
@@ -344,25 +377,64 @@ test.describe('Kanban board flows', () => {
       await expect(page.getByTestId('detail-date-end')).toHaveValue(plannedEndDate.iso);
     });
 
-    test('back button does not leak project data after logout', async ({ page }) => {
-      // Discover a project ID we can later assert is gone from the DOM.
-      const geplantColumn = page.getByTestId('kanban-column-geplant');
-      const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
-      const cardTestId = await geplantCard.getAttribute('data-testid');
-      const projectId = cardTestId!.replace('project-card-', '');
+    test('back button does not leak project data after logout', async ({ browser }) => {
+      // This test must own its own browser context and its own session —
+      // it logs out via the UI, which destroys the server-side session
+      // behind the shared storageState cookie. If we consumed the shared
+      // `page` fixture here, parallel workers running other tests would
+      // suddenly see `Sitzung abgelaufen` mid-flight because their
+      // cookie is the same one we just invalidated. The whole point of
+      // running Playwright with fullyParallel is that tests don't
+      // interfere with each other — this test opts out of the shared
+      // state by construction.
+      const context = await browser.newContext({
+        storageState: { cookies: [], origins: [] },
+        viewport: { width: 1920, height: 1080 },
+      });
+      const page = await context.newPage();
+      try {
+        // Perform a dedicated login so we have our own session to kill.
+        await page.goto('/');
+        await page.getByTestId('login-username').fill('inhaber');
+        await page.getByTestId('login-password').fill('changeme');
+        await page.getByTestId('login-submit').click();
+        await expect(page.getByTestId('kanban-board')).toBeVisible();
 
-      // AC-25: Clicking "Abmelden" logs out and shows login screen
-      await page.getByTestId('user-indicator').click();
-      await page.getByTestId('logout-button').click();
+        // Discover a project ID we can later assert is gone from the DOM.
+        const geplantColumn = page.getByTestId('kanban-column-geplant');
+        const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
+        const cardTestId = await geplantCard.getAttribute('data-testid');
+        const projectId = cardTestId!.replace('project-card-', '');
 
-      await expect(page.getByTestId('login-form')).toBeVisible();
-      await expect(page.getByTestId('kanban-board')).not.toBeVisible();
+        // Navigate to the calendar view before logging out so the browser
+        // has at least one traversable history entry to go back to. The
+        // original monolithic smoke test covered AC-26 after many view
+        // toggles, which incidentally supplied the history `goBack()`
+        // expects — the split version was missing that setup, and
+        // `page.goBack()` on a context with only the auto-redirect from
+        // `/` to `/kanban` in its history is a no-op. The assertion
+        // below still exercises AC-26: after logout the router must not
+        // re-render project data for any historical URL.
+        await page.getByTestId('view-toggle-kalender').click();
+        await expect(page.getByTestId('calendar-view')).toBeVisible();
+        await page.getByTestId('view-toggle-kanban').click();
+        await expect(page.getByTestId('kanban-board')).toBeVisible();
 
-      // AC-26: After logout, back button must not reveal project data
-      await page.goBack();
-      await expect(page.getByTestId('login-form')).toBeVisible();
-      await expect(page.getByTestId('kanban-board')).not.toBeVisible();
-      await expect(page.getByTestId(`project-card-${projectId}`)).not.toBeVisible();
+        // AC-25: Clicking "Abmelden" logs out and shows login screen
+        await page.getByTestId('user-indicator').click();
+        await page.getByTestId('logout-button').click();
+
+        await expect(page.getByTestId('login-form')).toBeVisible();
+        await expect(page.getByTestId('kanban-board')).not.toBeVisible();
+
+        // AC-26: After logout, back button must not reveal project data
+        await page.goBack();
+        await expect(page.getByTestId('login-form')).toBeVisible();
+        await expect(page.getByTestId('kanban-board')).not.toBeVisible();
+        await expect(page.getByTestId(`project-card-${projectId}`)).not.toBeVisible();
+      } finally {
+        await context.close();
+      }
     });
   });
 });
