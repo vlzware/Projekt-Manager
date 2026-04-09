@@ -13,6 +13,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  HeadBucketCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { STORAGE_CONFIG } from '../config/index.js';
@@ -39,6 +40,15 @@ export interface StorageClient {
   download(key: string): Promise<DownloadResult>;
   delete(key: string): Promise<void>;
   getSignedUrl(key: string, expirySeconds: number): Promise<string>;
+  /**
+   * Liveness probe — verifies the configured bucket is reachable and
+   * accessible with the current credentials. Used by the /api/health
+   * endpoint (#48) so MinIO/S3 outages surface as "degraded" instead of
+   * the old unconditional "ok" that masked real infrastructure problems.
+   * Throws if the bucket is missing, credentials are wrong, or the
+   * endpoint is unreachable.
+   */
+  ping(): Promise<void>;
 }
 
 const VALID_KEY_PATTERN = STORAGE_CONFIG.validKeyPattern;
@@ -145,6 +155,12 @@ export function createStorageClient(config: StorageConfig): StorageClient {
         Key: key,
       });
       return getSignedUrl(s3, command, { expiresIn: clamped });
+    },
+
+    async ping(): Promise<void> {
+      // HeadBucket is cheap and authenticates, so a successful response
+      // verifies endpoint, credentials, and bucket access in one shot.
+      await s3.send(new HeadBucketCommand({ Bucket: bucket }));
     },
   };
 }

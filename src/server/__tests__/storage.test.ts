@@ -106,4 +106,24 @@ describe('Object Storage Module', () => {
       await expect(storage.download(testKey)).rejects.toThrow();
     });
   });
+
+  // ---------------------------------------------------------------
+  // #48 — health probe support: ping() verifies bucket reachability
+  // ---------------------------------------------------------------
+  describe('ping()', () => {
+    it('resolves when the configured bucket is reachable', async () => {
+      await expect(storage.ping()).resolves.not.toThrow();
+    });
+
+    it('rejects when the bucket does not exist', async () => {
+      const bogusStorage = createStorageClient({
+        endpoint: requireEnv('STORAGE_ENDPOINT'),
+        bucket: 'definitely-not-a-real-bucket-xyz-' + Date.now(),
+        accessKey: requireEnv('STORAGE_ACCESS_KEY'),
+        secretKey: requireEnv('STORAGE_SECRET_KEY'),
+        region: process.env.STORAGE_REGION ?? 'us-east-1',
+      });
+      await expect(bogusStorage.ping()).rejects.toThrow();
+    });
+  });
 });

@@ -27,10 +27,42 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
+          # #48: verify the server's SSH host key on every connection. Without
+          # this, a MITM between the GitHub runner and the VPS could silently
+          # hijack deploys. The fingerprint is the ed25519 host key as of
+          # 2026-04-09; if the VPS is reprovisioned or its host key is
+          # regenerated, this value must be updated in the same commit.
+          fingerprint: SHA256:Ph26z+Ew6IuYP4OxFkYdHMcRo2jzuhBV6az6QGhNkPo
           script: |
+            set -euo pipefail
             cd /opt/projekt-manager
             git fetch origin
             git checkout ${{ github.event.workflow_run.head_sha }}
+
+            # #48: pre-deploy DB backup. Migrations run inside the app
+            # container on startup and are irreversible — a broken schema
+            # change in production has no undo path without a restore
+            # point. Dump the live DB to disk before touching the stack.
+            # If the dump fails or produces an empty file, abort: a deploy
+            # that cannot be rolled back via restore must not proceed.
+            BACKUP_DIR=/home/deploy/backups/projekt-manager
+            BACKUP_FILE="$BACKUP_DIR/pre-deploy-$(date +%Y%m%d-%H%M%S).sql.gz"
+            mkdir -p "$BACKUP_DIR"
+            if ! docker compose exec -T db pg_dump -U pm projekt_manager | gzip > "$BACKUP_FILE"; then
+              echo "::error::Pre-deploy DB backup failed — aborting deploy"
+              rm -f "$BACKUP_FILE"
+              exit 1
+            fi
+            if [ ! -s "$BACKUP_FILE" ]; then
+              echo "::error::Pre-deploy DB backup is empty — aborting deploy"
+              rm -f "$BACKUP_FILE"
+              exit 1
+            fi
+            echo "Pre-deploy backup: $(ls -lh "$BACKUP_FILE" | awk '{print $5, $NF}')"
+            # Retention: keep 14 days of pre-deploy snapshots. Adjust with
+            # data volume and risk profile.
+            find "$BACKUP_DIR" -name 'pre-deploy-*.sql.gz' -mtime +14 -delete
+
             docker compose build app
             docker compose up -d
 
@@ -40,6 +72,8 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
+          # #48: host key pinning — see the Deploy step above.
+          fingerprint: SHA256:Ph26z+Ew6IuYP4OxFkYdHMcRo2jzuhBV6az6QGhNkPo
           script: |
             cd /opt/projekt-manager
             timeout=60
