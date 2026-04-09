@@ -96,6 +96,13 @@ test.describe('Kanban board flows', () => {
   });
 
   test.describe('State transitions', () => {
+    // Net-zero teardown note: the kanban-flows suite has no DB reset
+    // between tests (playwright.config.ts has no globalSetup, and the
+    // web server is reused across tests). Each mutating test must
+    // restore the seed state it touched — otherwise a later test that
+    // picks a `.first()` card from the same column gets a different
+    // card than the seed promises, cascading into count-assertion
+    // failures that look unrelated to the real cause.
     test('advances a card via the forward button and confirmation', async ({ page }) => {
       // AC-4: Clicking a project opens the detail panel
       const geplantColumn = page.getByTestId('kanban-column-geplant');
@@ -122,11 +129,32 @@ test.describe('Kanban board flows', () => {
         page.getByTestId('kanban-column-in_arbeit').getByTestId(`project-card-${projectId}`),
       ).toBeVisible();
 
-      // Summary counts reflect the transition
+      // Summary counts reflect the intermediate state: geplant has
+      // dropped by one. This pins the transition before teardown.
       await expect(page.getByTestId('column-count-geplant')).toContainText('1');
+
+      // Net-zero teardown: move the card back to geplant so the seed
+      // state is restored for later tests in this file. See the
+      // describe-block comment above for why this matters.
+      await page.getByTestId('detail-backward-button').click();
+      const backwardDialog = page.getByTestId('confirm-dialog');
+      await expect(backwardDialog).toBeVisible();
+      await expect(backwardDialog).toContainText('In Arbeit → Geplant');
+      await page.getByTestId('confirm-ok').click();
+      await expect(backwardDialog).not.toBeVisible();
+      await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
+      await expect(
+        page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
+      ).toBeVisible();
+      await expect(page.getByTestId('column-count-geplant')).toContainText('2');
     });
 
     test('moves a card backward from the detail panel', async ({ page }) => {
+      // Net-zero by construction: this test forwards then backs the
+      // SAME card, so it restores the seed regardless of execution
+      // order. The forward-test above also cleans up after itself —
+      // see the describe-block comment for the rationale.
+
       // Set up: advance a geplant card so we have something to move back.
       const geplantColumn = page.getByTestId('kanban-column-geplant');
       const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
