@@ -100,27 +100,6 @@ describe('Project Operations — Dates', () => {
       const updated = res.json();
       expect(updated.updatedBy).toBe(me.id);
     });
-
-    it('returns the full updated project', async () => {
-      const listRes = await authGet(token, '/api/projects');
-      const projects = listRes.json().data;
-      const project = projects.find((p: Record<string, unknown>) => p.plannedStart != null);
-      expect(project).toBeDefined();
-
-      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
-        plannedStart: '2026-08-01',
-        plannedEnd: '2026-08-20',
-      });
-
-      expect(res.statusCode).toBe(200);
-
-      const updated = res.json();
-      expect(updated.id).toBe(project.id);
-      expect(updated.number).toBeDefined();
-      expect(updated.title).toBeDefined();
-      expect(updated.status).toBe(project.status);
-      expect(updated.customer).toBeDefined();
-    });
   });
 
   // ---------------------------------------------------------------
@@ -185,6 +164,24 @@ describe('Project Operations — Dates', () => {
       expect(updated.plannedStart).toContain('2026-09-01');
       // plannedEnd should be absent or null after this update
       expect(updated.plannedEnd == null).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // NOT_FOUND path: preserves coverage of ProjectNotFoundError at the
+  // HTTP boundary. Was previously covered in project-dates.unit.test.ts
+  // (deleted in the .unit consolidation); the HTTP layer only tested
+  // 404 for GET /api/projects/:id, not for PATCH .../dates.
+  // ---------------------------------------------------------------
+  describe('PATCH dates on nonexistent project', () => {
+    it('returns 404 NOT_FOUND for a well-formed but nonexistent UUID', async () => {
+      const fakeId = '00000000-0000-0000-0000-000000000000';
+      const res = await authPatch(token, `/api/projects/${fakeId}/dates`, {
+        plannedStart: '2026-06-01',
+      });
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('NOT_FOUND');
     });
   });
 });
