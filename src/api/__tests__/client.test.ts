@@ -395,7 +395,7 @@ describe('apiCall — response parsing edge cases', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error.code).toBe('INVALID_RESPONSE');
-      expect(result.error.message).toMatch(/malformed/i);
+      expect(result.error.message).toBe('Server-Antwort ungültig. Bitte erneut versuchen.');
       expect(result.sessionExpired).toBe(false);
     }
   });

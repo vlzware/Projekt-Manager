@@ -110,7 +110,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       ok: false,
       error: {
         code: 'INVALID_RESPONSE',
-        message: 'Server returned malformed JSON',
+        message: 'Server-Antwort ungültig. Bitte erneut versuchen.',
       },
       sessionExpired: false,
     };
