@@ -87,20 +87,46 @@ Structural refactor triggered by code quality analysis that exposed compounding 
 
 ## Iteration 4 - Deployment and integration testing
 
-- [ ] deploy to Hetzner VPS (Docker Compose, Caddy with real domain + TLS)
-- [ ] object storage: evaluate Cloudflare R2 vs Hetzner Object Storage (S3-compatible, test with real MinIO adapter)
-- [ ] VPN setup (WireGuard or Tailscale) — all access behind VPN initially
-- [ ] validate full deployment path: push to main → CI green → auto-deploy → app running
-- [ ] integration/smoke tests against the deployed environment
-- [ ] backup strategy for PostgreSQL and object storage
-- [ ] monitoring: at minimum, health check pings and container restart alerting
-- [ ] seed with representative fake data, demo to pilot company[^1]
-- [ ] retrospection → issues for the backlog
+Moved the iteration-3 codebase from test environment into production on Hetzner. Focus ended up on the network and TLS architecture: HTTPS over WireGuard via DNS-01 ACME, Caddy bound to the VPN interface only, no cleartext exposure outside Docker internals, external surface limited to trusted audited open-source (SSH, WireGuard). No application features moved; everything around them did.
+
+- [x] deploy to Hetzner VPS (Docker Compose, Caddy with real domain + TLS)
+- [ ] object storage: evaluate Cloudflare R2 vs Hetzner Object Storage — deferred (#45); MinIO in Docker is sufficient for the walking skeleton
+- [x] VPN setup (plain WireGuard, [ADR-0008](../adr/0008-vpn-first-network-access.md)) — all access behind VPN initially
+- [x] validate full deployment path: push to main → CI green → auto-deploy → app running
+- [x] integration/smoke tests against the deployed environment
+- [ ] backup strategy for PostgreSQL and object storage — deferred (#46); needed before real customer data, not before walking skeleton
+- [ ] monitoring: at minimum, health check pings and container restart alerting — deferred (#46)
+- [ ] seed with representative fake data, demo to pilot company[^1] — skipped; no visible change for non-technical users vs iteration 3
+- [x] retrospection → issues for the backlog
+
+**Beyond plan**
+- first-run admin bootstrap from environment variables ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) — the walking skeleton had no way to log in on a fresh production deploy
+- env-drift CI check — regression guard for the bootstrap failure mode (compose ↔ env schema)
+- Docker version pinning across environments ([ADR-0009](../adr/0009-pin-docker-versions-across-environments.md))
+- CD pipeline hardening (#48) partially addressed via the env-drift check; rest deferred to iteration 5
 
 **Artifacts**
-- running deployment behind VPN, accessible to pilot company
-- validated CI/CD pipeline from commit to production
-- backup and monitoring baseline
+- walking skeleton live at `https://prmng.org`, reachable only through WireGuard
+- validated CI/CD pipeline from commit to production (8 successful deploys this iteration)
+- 310 tests (up from 186), new suites for first-run bootstrap and password policy
+
+## Iteration 5 - Consolidation
+
+Systematic check that the base is aligned and nothing is lagging or missing before adding features. The walking skeleton is online; the next iterations will add flesh to the bones. Constant readjustments like this are the expected rhythm in an LLM-driven project, where drift between ideal and reality accumulates quickly and compounds into tech debt if left unchecked.
+
+- [ ] test suite QC — coverage gaps, fragile assertions, tautological tests, redundant/repeating tests, test-spec drift
+- [ ] documentation QC and reorganization — audit ADRs, dev docs, admin docs, user docs; reorganize the docs tree; fill gaps
+- [ ] spec ↔ code drift reconciliation — realign the spec against current code, cleanup stale claims
+- [ ] multi-round independent security review — systematic audit across backend, frontend, infrastructure, deployment, data handling
+- [ ] cleanup of open non-architectural, non-feature issues — tracked via the iteration 5 milestone
+- [ ] retrospection → issues for the backlog
+
+**Not planned:** presentation to pilot company — same reason as iteration 4: no visible change for non-technical users. The next iteration with feature work is the natural next demo checkpoint.
+
+**Artifacts**
+- quality-controlled test suite, docs, and spec
+- documented baseline after a multi-round independent security review
+- backlog reduced to feature and architectural work
 
 ## Next iterations
 

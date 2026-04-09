@@ -4,7 +4,7 @@ A centralized system for consolidation, control, and viewing of data and process
 
 ## Status
 
-**Iteration 4 — Deployment & integration**: Hetzner VPS deployment via Docker Compose, Caddy reverse proxy, VPN-first access (plain WireGuard, [ADR-0008](docs/adr/0008-vpn-first-network-access.md)), CD pipeline with deploy-by-SHA + smoke test + rollback. Built on the iteration-3 stabilized codebase (service layer, split stores, centralized API client, 186 tests). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
+**Iteration 5 — Consolidation**: quality controls across tests, docs, and spec before the next round of feature work. Systematic audit to surface drift, fill gaps, and establish a clean baseline, plus a multi-round independent security review now that the walking skeleton is exposed. Built on iteration 4's production deployment: walking skeleton live at `https://prmng.org` behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME, first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)), 310 tests. Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
 
 ## Prerequisites
 
