@@ -119,35 +119,54 @@ jobs:
   # See #51.
   docker:
     runs-on: ubuntu-latest
+    env:
+      # Variables that appear in docker-compose.yml without a `:-` default.
+      # Values are deliberately dummy — this job validates the Compose file
+      # shape and the Dockerfile build, not runtime secrets. The set must
+      # stay in sync with every `${VAR}` reference in docker-compose.yml and
+      # docker-compose.dev.yml that has no `${VAR:-default}` fallback — the
+      # config steps below fail explicitly if a new required variable is
+      # added without being listed here.
+      POSTGRES_PASSWORD: ci-dummy
+      MINIO_ROOT_USER: ci-dummy
+      MINIO_ROOT_PASSWORD: ci-dummy
+      CLOUDFLARE_API_TOKEN: ci-dummy
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      # Variables that appear in docker-compose.yml without a `:-` default.
-      # Values are deliberately dummy — this job validates the Compose file
-      # shape and the Dockerfile build, not runtime secrets.
+      # NB: `docker compose config --quiet` suppresses the resolved output
+      # but NOT the `variable is not set. Defaulting to a blank string.`
+      # warnings, AND it exits 0 regardless. Relying on exit code alone is
+      # useless — a newly-referenced `${FOO}` with no default in compose
+      # would sail through. Capture stderr, grep for the warning, and fail
+      # explicitly. This is the regression guard #51 actually wanted.
       - name: Validate production Compose config
-        run: docker compose -f docker-compose.yml config --quiet
-        env:
-          POSTGRES_PASSWORD: ci-dummy
-          MINIO_ROOT_USER: ci-dummy
-          MINIO_ROOT_PASSWORD: ci-dummy
-          CLOUDFLARE_API_TOKEN: ci-dummy
+        run: |
+          set -euo pipefail
+          output=$(docker compose -f docker-compose.yml config --quiet 2>&1)
+          if echo "$output" | grep -qi 'variable is not set'; then
+            echo "::error::docker-compose.yml references an unset variable — add it to the docker job env or give it a \${VAR:-default} in the compose file"
+            echo "$output"
+            exit 1
+          fi
 
       - name: Validate dev Compose overlay
-        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
-        env:
-          POSTGRES_PASSWORD: ci-dummy
-          MINIO_ROOT_USER: ci-dummy
-          MINIO_ROOT_PASSWORD: ci-dummy
-          CLOUDFLARE_API_TOKEN: ci-dummy
+        run: |
+          set -euo pipefail
+          output=$(docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet 2>&1)
+          if echo "$output" | grep -qi 'variable is not set'; then
+            echo "::error::dev overlay references an unset variable — add it to the docker job env or give it a \${VAR:-default} in the compose file"
+            echo "$output"
+            exit 1
+          fi
 
-      # Actually build the production image. The prod deploy on Hetzner
-      # runs `docker compose build app` on the VPS today; mirroring that
-      # command here catches Dockerfile regressions before they reach main.
+      # Actually build the production image. The deploy workflow runs
+      # `docker compose build app` on the VPS at deploy time; mirroring
+      # that command here catches Dockerfile regressions before they
+      # reach main. Caddy has its own build context at `./docker/caddy`
+      # and is deliberately NOT built here — its Dockerfile is stable
+      # (pinned xcaddy + plugin SHA), rarely changes, and adds ~60s of
+      # Go compile time per CI run. A Caddy regression will still only
+      # surface at deploy time; that is a known, accepted gap.
       - name: Build app image
         run: docker compose -f docker-compose.yml build app
-        env:
-          POSTGRES_PASSWORD: ci-dummy
-          MINIO_ROOT_USER: ci-dummy
-          MINIO_ROOT_PASSWORD: ci-dummy
-          CLOUDFLARE_API_TOKEN: ci-dummy
