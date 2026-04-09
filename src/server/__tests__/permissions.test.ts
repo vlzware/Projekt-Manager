@@ -49,39 +49,60 @@ describe('Role-based Permission Enforcement', () => {
   });
 
   // ---------------------------------------------------------------
-  // Worker — restricted role
+  // Restricted roles — worker (arbeiter1) and bookkeeper (buchhalter)
+  // share the same permission model (read-only: cannot transition or
+  // update dates). Parametrized so adding/removing a restricted role is
+  // a one-line change and assertions never drift between the two roles.
+  //
+  // Tokens are looked up by role name inside each test because `it.each`
+  // evaluates its table at describe-collection time, before `beforeAll`
+  // has assigned the module-scoped token variables.
   // ---------------------------------------------------------------
-  describe('Worker (arbeiter1)', () => {
-    it('cannot transition forward — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(workerToken, 'geplant');
+  describe('Restricted roles (read-only)', () => {
+    type RestrictedRole = 'worker' | 'bookkeeper';
+    const restrictedRoles: RestrictedRole[] = ['worker', 'bookkeeper'];
+    const tokenFor = (role: RestrictedRole): string =>
+      role === 'worker' ? workerToken : bookkeeperToken;
 
-      const res = await authPost(workerToken, `/api/projects/${project.id}/transition/forward`);
+    it.each(restrictedRoles)(
+      '%s cannot transition forward — returns 403 NOT_PERMITTED',
+      async (role) => {
+        const token = tokenFor(role);
+        const project = await findProjectByStatus(token, 'geplant');
 
-      expect(res.statusCode).toBe(403);
+        const res = await authPost(token, `/api/projects/${project.id}/transition/forward`);
 
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
+        expect(res.statusCode).toBe(403);
 
-    it('cannot transition backward — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(workerToken, 'in_arbeit');
+        const body = res.json();
+        expect(body.code).toBe('NOT_PERMITTED');
+        expect(typeof body.message).toBe('string');
+        expect(body.message.length).toBeGreaterThan(0);
+      },
+    );
 
-      const res = await authPost(workerToken, `/api/projects/${project.id}/transition/backward`);
+    it.each(restrictedRoles)(
+      '%s cannot transition backward — returns 403 NOT_PERMITTED',
+      async (role) => {
+        const token = tokenFor(role);
+        const project = await findProjectByStatus(token, 'in_arbeit');
 
-      expect(res.statusCode).toBe(403);
+        const res = await authPost(token, `/api/projects/${project.id}/transition/backward`);
 
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
+        expect(res.statusCode).toBe(403);
 
-    it('cannot update dates — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(workerToken, 'geplant');
+        const body = res.json();
+        expect(body.code).toBe('NOT_PERMITTED');
+        expect(typeof body.message).toBe('string');
+        expect(body.message.length).toBeGreaterThan(0);
+      },
+    );
 
-      const res = await authPatch(workerToken, `/api/projects/${project.id}/dates`, {
+    it.each(restrictedRoles)('%s cannot update dates — returns 403 NOT_PERMITTED', async (role) => {
+      const token = tokenFor(role);
+      const project = await findProjectByStatus(token, 'geplant');
+
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
         plannedStart: '2026-10-01',
         plannedEnd: '2026-10-15',
       });
@@ -94,68 +115,8 @@ describe('Role-based Permission Enforcement', () => {
       expect(body.message.length).toBeGreaterThan(0);
     });
 
-    it('CAN read projects — returns 200', async () => {
-      const res = await authGet(workerToken, '/api/projects');
-
-      expect(res.statusCode).toBe(200);
-
-      const body = res.json();
-      expect(Array.isArray(body.data)).toBe(true);
-      expect(body.data.length).toBeGreaterThan(0);
-    });
-  });
-
-  // ---------------------------------------------------------------
-  // Bookkeeper — restricted role
-  // ---------------------------------------------------------------
-  describe('Bookkeeper (buchhalter)', () => {
-    it('cannot transition forward — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(bookkeeperToken, 'geplant');
-
-      const res = await authPost(bookkeeperToken, `/api/projects/${project.id}/transition/forward`);
-
-      expect(res.statusCode).toBe(403);
-
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
-
-    it('cannot transition backward — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(bookkeeperToken, 'in_arbeit');
-
-      const res = await authPost(
-        bookkeeperToken,
-        `/api/projects/${project.id}/transition/backward`,
-      );
-
-      expect(res.statusCode).toBe(403);
-
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
-
-    it('cannot update dates — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(bookkeeperToken, 'geplant');
-
-      const res = await authPatch(bookkeeperToken, `/api/projects/${project.id}/dates`, {
-        plannedStart: '2026-10-01',
-        plannedEnd: '2026-10-15',
-      });
-
-      expect(res.statusCode).toBe(403);
-
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
-
-    it('CAN read projects — returns 200', async () => {
-      const res = await authGet(bookkeeperToken, '/api/projects');
+    it.each(restrictedRoles)('%s CAN read projects — returns 200', async (role) => {
+      const res = await authGet(tokenFor(role), '/api/projects');
 
       expect(res.statusCode).toBe(200);
 
