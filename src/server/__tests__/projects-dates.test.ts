@@ -165,6 +165,34 @@ describe('Project Operations — Dates', () => {
       // plannedEnd should be absent or null after this update
       expect(updated.plannedEnd == null).toBe(true);
     });
+
+    it('clears plannedStart and plannedEnd when null values are sent explicitly', async () => {
+      // AT-13 edge: frontend "clear planned dates" flow sends explicit nulls
+      // (ProjectDetailPanel.tsx → `updateDates(id, val || null, ...)`).
+      // Previously this returned 500 SERVER_ERROR because:
+      //   1. the schema rejected `null` at ajv validation time (string only)
+      //   2. the error handler rewrote the resulting FastifyError as a 500
+      // Both are now fixed: schema accepts `string | null`, error handler
+      // maps validation errors to 422 VALIDATION_ERROR, and the repo's
+      // existing falsy→null branch (project-dates.ts:33-46) handles the
+      // clear transparently.
+      const listRes = await authGet(token, '/api/projects');
+      const projects = listRes.json().data;
+      const project = projects.find(
+        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
+      );
+      expect(project).toBeDefined();
+
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: null,
+        plannedEnd: null,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const updated = res.json();
+      expect(updated.plannedStart).toBeNull();
+      expect(updated.plannedEnd).toBeNull();
+    });
   });
 
   // ---------------------------------------------------------------

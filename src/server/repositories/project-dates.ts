@@ -16,7 +16,7 @@ export async function updateDates(
   db: Database,
   id: string,
   userId: string,
-  dates: { plannedStart?: string; plannedEnd?: string },
+  dates: { plannedStart?: string | null; plannedEnd?: string | null },
 ): Promise<ReturnType<typeof toProject>> {
   return db.transaction(async (tx) => {
     const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
