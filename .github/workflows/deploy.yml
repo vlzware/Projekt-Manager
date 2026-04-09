@@ -23,15 +23,42 @@ jobs:
     steps:
       - name: Deploy to VPS
         uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
+        env:
+          # Surface the expected SHA and tag to the remote shell so
+          # the script block does not have to re-interpolate the
+          # ${{ github.* }} expressions inline (harder to read and
+          # harder to quote safely). appleboy/ssh-action forwards
+          # listed env vars via its `envs:` parameter.
+          EXPECTED_SHA: ${{ github.event.workflow_run.head_sha }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
+          envs: EXPECTED_SHA
           script: |
+            set -euo pipefail
             cd /opt/projekt-manager
             git fetch origin
-            git checkout ${{ github.event.workflow_run.head_sha }}
-            docker compose build app
+            git checkout "$EXPECTED_SHA"
+            # Assert the checkout landed on the expected SHA. Without this,
+            # a silently-failed checkout (e.g. uncommitted local changes
+            # blocking the switch) would continue past with a stale working
+            # tree and deploy the wrong code — the exact failure mode
+            # hit in iteration 4. See #48 comment 2026-04-08.
+            actual=$(git rev-parse HEAD)
+            if [ "$actual" != "$EXPECTED_SHA" ]; then
+              echo "::error::git checkout landed at $actual, expected $EXPECTED_SHA"
+              exit 1
+            fi
+            # Pull the pre-built image from GHCR (see ADR-0011).
+            # APP_IMAGE_TAG pins the exact SHA so rollback is just
+            # re-running this workflow against an older commit.
+            # `docker compose pull` only pulls services that declare
+            # an `image:` — `db`, `storage`, `caddy` use their own
+            # pinned registry images (unchanged). The `app` service
+            # is the only one whose image is produced by this repo.
+            export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
+            docker compose pull app
             docker compose up -d
 
       - name: Smoke test
@@ -41,6 +68,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
+            set -euo pipefail
             cd /opt/projekt-manager
             timeout=60
             elapsed=0
