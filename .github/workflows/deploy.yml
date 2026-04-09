@@ -29,10 +29,26 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           # #48: verify the server's SSH host key on every connection. Without
           # this, a MITM between the GitHub runner and the VPS could silently
-          # hijack deploys. The fingerprint is the ed25519 host key as of
-          # 2026-04-09; if the VPS is reprovisioned or its host key is
-          # regenerated, this value must be updated in the same commit.
-          fingerprint: SHA256:Ph26z+Ew6IuYP4OxFkYdHMcRo2jzuhBV6az6QGhNkPo
+          # hijack deploys.
+          #
+          # **Algorithm note.** appleboy/ssh-action uses Go's crypto/ssh via
+          # easyssh-proxy, which does not set HostKeyAlgorithms in its
+          # ClientConfig. Go's crypto/ssh default preference order puts
+          # ECDSA before Ed25519, so the server presents its ecdsa-sha2-nistp256
+          # host key to this action — NOT the ed25519 key that OpenSSH picks
+          # by default. Pin the ECDSA fingerprint here. Using the Ed25519
+          # fingerprint would cause every deploy to fail with "ssh: host key
+          # fingerprint mismatch".
+          #
+          # Verified empirically by building a minimal Go SSH client against
+          # golang.org/x/crypto v0.49.0 and connecting to 178.104.126.80 —
+          # the HostKeyCallback received key type `ecdsa-sha2-nistp256` with
+          # the fingerprint below.
+          #
+          # If the VPS is reprovisioned or its host keys are regenerated,
+          # look up the new ECDSA fingerprint with:
+          #   ssh deploy@<ip> ssh-keygen -l -f /etc/ssh/ssh_host_ecdsa_key.pub | cut -d' ' -f2
+          fingerprint: SHA256:hPKNmL4ZGo8yMqw8q/H0F52chEiW/fnu8NLsUUjgzNA
           script: |
             set -euo pipefail
             cd /opt/projekt-manager
@@ -72,8 +88,9 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          # #48: host key pinning — see the Deploy step above.
-          fingerprint: SHA256:Ph26z+Ew6IuYP4OxFkYdHMcRo2jzuhBV6az6QGhNkPo
+          # #48: host key pinning — see the Deploy step above for the
+          # ECDSA-over-Ed25519 explanation.
+          fingerprint: SHA256:hPKNmL4ZGo8yMqw8q/H0F52chEiW/fnu8NLsUUjgzNA
           script: |
             cd /opt/projekt-manager
             timeout=60

@@ -38,17 +38,27 @@ Both SSH steps in `deploy.yml` pin the server's host key fingerprint via the
 sees, so a MITM between the GitHub runner and the VPS could silently
 intercept the SSH session and execute arbitrary commands as the deploy user.
 
-The current pinned value is the ed25519 fingerprint:
+**The pinned value is the ECDSA fingerprint, not Ed25519.** This is
+counter-intuitive because OpenSSH clients prefer Ed25519 by default, but
+`appleboy/ssh-action` uses Go's `crypto/ssh` via `easyssh-proxy`, which
+does not set `HostKeyAlgorithms` in its `ClientConfig`. Go's default
+preference order puts `ecdsa-sha2-nistp256` before `ssh-ed25519`, so
+the server presents its ECDSA host key to the action. Verified
+empirically by building a minimal Go SSH client against
+`golang.org/x/crypto` v0.49.0 — the `HostKeyCallback` received the
+ECDSA key.
+
+Current pinned value (from `/etc/ssh/ssh_host_ecdsa_key.pub`):
 
 ```
-SHA256:Ph26z+Ew6IuYP4OxFkYdHMcRo2jzuhBV6az6QGhNkPo
+SHA256:hPKNmL4ZGo8yMqw8q/H0F52chEiW/fnu8NLsUUjgzNA
 ```
 
 If the VPS is reprovisioned or its host keys are rotated, look up the new
 value with:
 
 ```sh
-ssh deploy@<server-ip> ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub | cut -d ' ' -f2
+ssh deploy@<server-ip> ssh-keygen -l -f /etc/ssh/ssh_host_ecdsa_key.pub | cut -d ' ' -f2
 ```
 
 and update `deploy.yml` in the same commit that causes the rotation.
