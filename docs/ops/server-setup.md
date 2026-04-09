@@ -2,6 +2,8 @@
 
 Provisioned: 2026-04-06
 
+> **Note — 2026-04-10:** The CI/CD auto-deploy path was replaced with a manual pull-based deploy in [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). Phase 9 below has been rewritten for the new flow. Phase 3 step (3) — the `authorized_keys`-for-GHA install — is obsolete; skip it for a new provisioning. Day-to-day deploy operations now live in [`manual-deploy.md`](manual-deploy.md).
+
 ## Server
 
 - **Provider:** Hetzner Cloud
@@ -11,16 +13,16 @@ Provisioned: 2026-04-06
 
 ## Accounts
 
-| Account | Purpose | SSH key | sudo | docker |
-|---------|---------|---------|------|--------|
-| `root` | Disabled for SSH | — | — | — |
-| Admin user | Interactive admin | Personal key (`authorized_keys`) | Yes (password required) | No |
-| `deploy` | CI/CD (GitHub Actions) | Dedicated key (`projekt-manager-deploy`) | No | Yes |
+| Account    | Purpose                                                                                                             | SSH key                                    | sudo                    | docker |
+| ---------- | ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------- | ------ |
+| `root`     | Disabled for SSH                                                                                                    | —                                          | —                       | —      |
+| Admin user | Interactive admin                                                                                                   | Personal key (`authorized_keys`)           | Yes (password required) | No     |
+| `deploy`   | Container ops (local `sudo -u deploy` only, see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)) | None — `/usr/sbin/nologin`, no inbound SSH | No                      | Yes    |
 
 - Admin username and credentials stored in password manager, not in this repo
 - `deploy` is a system account (`--system`), no password set
-- Deploy private key stored in GitHub Secrets (`DEPLOY_KEY`)
-- Deploy git access via read-only GitHub Deploy Key (separate keypair at `/home/deploy/.ssh/github_deploy`)
+- After the ADR-0012 cutover: `deploy` has no inbound SSH path. Shell is `/usr/sbin/nologin`, `~deploy/.ssh/authorized_keys` is removed. The account is invoked only via `sudo -u deploy` from an operator's existing sudo session.
+- Deploy git access via read-only GitHub Deploy Key (outbound-only keypair at `/home/deploy/.ssh/github_deploy`), used by `scripts/deploy.sh` for `git fetch origin`. Untouched by the cutover.
 
 ## SSH Hardening
 
@@ -31,12 +33,12 @@ Provisioned: 2026-04-06
 
 ## Firewall Rules (Hetzner Cloud Firewall)
 
-| Port | Protocol | Status | Purpose |
-|------|----------|--------|---------|
-| 22 | TCP | Open | SSH (admin + CI/CD) |
-| 51820 | UDP | Open | WireGuard |
-| 80 | TCP | Closed | (Not opened — DNS-01 ACME does not need it) |
-| 443 | TCP | Closed | (Not opened — Caddy binds only to the `wg0` interface) |
+| Port  | Protocol | Status | Purpose                                                |
+| ----- | -------- | ------ | ------------------------------------------------------ |
+| 22    | TCP      | Open   | SSH (admin only; CI/CD SSH path removed per ADR-0012)  |
+| 51820 | UDP      | Open   | WireGuard                                              |
+| 80    | TCP      | Closed | (Not opened — DNS-01 ACME does not need it)            |
+| 443   | TCP      | Closed | (Not opened — Caddy binds only to the `wg0` interface) |
 
 All other inbound traffic is blocked. Application access is via WireGuard VPN only (see [ADR-0008](../adr/0008-vpn-first-network-access.md)).
 
@@ -65,14 +67,14 @@ WireGuard listens on UDP/51820. The Hetzner Cloud Firewall must allow inbound UD
 
 ## Key File Locations
 
-| What | Where |
-|------|-------|
-| Project directory | `/opt/projekt-manager` |
-| Production environment | `/opt/projekt-manager/.env` (not in repo) |
-| Deploy authorized_keys | `/home/deploy/.ssh/authorized_keys` |
-| Deploy GitHub key | `/home/deploy/.ssh/github_deploy` |
-| Deploy SSH config | `/home/deploy/.ssh/config` |
-| fail2ban SSH config | `/etc/fail2ban/jail.local` |
+| What                         | Where                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Project directory            | `/opt/projekt-manager`                                                                                             |
+| Non-secret env vars          | `/opt/projekt-manager/.env` (not in repo)                                                                          |
+| Encrypted runtime secrets    | `/opt/projekt-manager/secrets.env.age` (age-encrypted, see [manual-deploy.md § Secrets](manual-deploy.md#secrets)) |
+| Deploy GitHub key (outbound) | `/home/deploy/.ssh/github_deploy`                                                                                  |
+| Deploy SSH config            | `/home/deploy/.ssh/config`                                                                                         |
+| fail2ban SSH config          | `/etc/fail2ban/jail.local`                                                                                         |
 
 ## Setup Steps (recreatable)
 
@@ -86,8 +88,8 @@ Before starting you need:
 
 - A Hetzner Cloud account
 - An ED25519 SSH keypair on your local machine
-- Access to the GitHub repo settings (for deploy keys and secrets)
-- Access to the team password manager (for storing server credentials)
+- Access to the GitHub repo settings (for the Deploy Key used in Phase 7)
+- Access to the team password manager (for storing server credentials, the age passphrase, and the GHCR PAT)
 
 ### Phase 1 — Base OS
 
@@ -138,33 +140,36 @@ sudo systemctl reload sshd
 
 ### Phase 3 — Deploy user
 
-**Goal:** A least-privilege account that CI/CD uses to deploy. Never has admin access.
+**Goal:** A least-privilege account that owns the production stack. Never has admin access, never logs in interactively.
 
-**Why a system account:** `--system` creates a user with no password, no aging, and a UID below 1000 — conventional for service accounts. It cannot log in interactively unless explicitly given a shell (we give `/bin/bash` because git and docker compose need it).
+**Why a system account:** `--system` creates a user with no password, no aging, and a UID below 1000 — conventional for service accounts. Shell is `/usr/sbin/nologin`: `sudo -u deploy <cmd>` works regardless (it runs the command directly, not via the user's shell), and denying an interactive shell removes an entire class of misuse.
+
+> **Note — ADR-0012:** Steps 2 and 3 below install an inbound SSH key (the former `DEPLOY_KEY` for GitHub Actions). That path was removed in the 2026-04-10 cutover. **For a new provisioning, skip steps 2 and 3.** Keep only step 1, then proceed to Phase 4. The manual deploy flow is set up in Phase 9 and documented in [manual-deploy.md](manual-deploy.md).
 
 1. On the **server**:
 
 ```bash
-sudo adduser --system --group --shell /bin/bash --home /home/deploy deploy
+sudo adduser --system --group --shell /usr/sbin/nologin --home /home/deploy deploy
+sudo mkdir -p /home/deploy/.ssh
+sudo chown deploy:deploy /home/deploy/.ssh
+sudo chmod 700 /home/deploy/.ssh
 ```
 
-2. On your **local machine** — generate a dedicated SSH key (no passphrase):
+2. _(Obsolete after ADR-0012 — skip for new provisioning.)_ On your **local machine** — generate a dedicated SSH key (no passphrase):
 
 ```bash
 ssh-keygen -t ed25519 -C "deploy@projekt-manager" -f ~/.ssh/projekt-manager-deploy
 ```
 
-3. On the **server** — install the public key:
+3. _(Obsolete after ADR-0012 — skip for new provisioning.)_ On the **server** — install the public key:
 
 ```bash
-sudo mkdir -p /home/deploy/.ssh
 sudo tee /home/deploy/.ssh/authorized_keys <<< "$(cat)"  # paste the .pub content, then Ctrl+D
-sudo chown -R deploy:deploy /home/deploy/.ssh
-sudo chmod 700 /home/deploy/.ssh
+sudo chown deploy:deploy /home/deploy/.ssh/authorized_keys
 sudo chmod 600 /home/deploy/.ssh/authorized_keys
 ```
 
-**Verify:** `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` connects. `sudo whoami` fails with "deploy is not in the sudoers file."
+**Verify:** `sudo -u deploy whoami` prints `deploy`. `sudo -u deploy sudo whoami` fails with "deploy is not in the sudoers file."
 
 ### Phase 4 — Docker
 
@@ -176,13 +181,13 @@ sudo chmod 600 /home/deploy/.ssh/authorized_keys
 
 **Pinned versions (current):**
 
-| Package | Version |
-|---|---|
-| `docker-ce` | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `docker-ce-cli` | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `containerd.io` | `2.2.2-1~ubuntu.24.04~noble` |
-| `docker-buildx-plugin` | `0.33.0-1~ubuntu.24.04~noble` |
-| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble` |
+| Package                 | Version                         |
+| ----------------------- | ------------------------------- |
+| `docker-ce`             | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `docker-ce-cli`         | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `containerd.io`         | `2.2.2-1~ubuntu.24.04~noble`    |
+| `docker-buildx-plugin`  | `0.33.0-1~ubuntu.24.04~noble`   |
+| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble`    |
 
 Add the Docker apt repository:
 
@@ -223,11 +228,11 @@ docker compose version            # expect: Docker Compose version v5.1.1
 apt-mark showhold                 # expect: all five packages listed
 ```
 
-Then `ssh -i ~/.ssh/projekt-manager-deploy deploy@<ip>` and `docker ps` — should return an empty table (not "permission denied").
+Then `sudo -u deploy docker ps` — should return an empty table (not "permission denied").
 
 **Upgrading later:** Do not bump Docker casually. Follow the lockstep procedure in ADR-0009 — unhold, install the new explicit version on a non-production host first, smoke test, repeat on remaining hosts (VPS last), then update both the ADR and the version table above.
 
-**Note:** Docker group membership grants effective root access on the host (a known Docker design decision). The deploy user can escalate via `docker run -v /:/host ...`. Treat the deploy SSH key as a root-equivalent credential until this is mitigated. Research and resolution tracked in #72.
+**Note:** Docker group membership grants effective root access on the host (a known Docker design decision). The deploy user can escalate via `docker run -v /:/host ...`. Treat the ability to invoke `sudo -u deploy` as a root-equivalent privilege until this is mitigated. The ADR-0012 cutover removed the remote trust link that handed this privilege out (the former `DEPLOY_KEY`), but the posture itself is unchanged. Research and resolution tracked in #72; see also [ADR-0012 § Negative / residual risks](../adr/0012-manual-pull-based-deploy-over-wireguard.md#negative--residual-risks).
 
 ### Phase 5 — Brute-force protection
 
@@ -402,7 +407,7 @@ Keep `peers/${PEER_NAME}.pubkey` for audit trail.
 
 **Goal:** The deploy user can pull from the private repo. Read-only.
 
-**Why a separate keypair:** The deploy user has two SSH keys serving different purposes: one for CI to reach the server (Phase 3), one for the server to reach GitHub (this phase). Separate keys mean rotating one doesn't affect the other, and the GitHub key is read-only by design.
+**Why a Deploy Key:** The deploy user needs read-only access to pull the private repo. A dedicated, read-only GitHub Deploy Key scoped to this single repository is the narrowest credential that satisfies the requirement — a personal access token would carry user-wide scope, and making the repo public is a separate decision (gated on the Dockerfile audit for any public flip). This is an **outbound** key — server to GitHub. It is unaffected by the ADR-0012 cutover, which removed only the _inbound_ (GHA → VPS) SSH path.
 
 1. Generate a keypair on the server:
 
@@ -443,35 +448,37 @@ sudo chown deploy:deploy /opt/projekt-manager
 sudo -u deploy git clone <repo-ssh-url> /opt/projekt-manager
 ```
 
-2. Create the production `.env` file. Generate each password independently:
+2. Create the production `.env` file (non-secret variables only; secrets move to `secrets.env.age` in Phase 9):
 
 ```bash
 sudo -u deploy cp /opt/projekt-manager/.env.example /opt/projekt-manager/.env
 ```
 
-Edit `/opt/projekt-manager/.env` and set these values:
+Edit `/opt/projekt-manager/.env` and set these values. The four secrets marked **[secret]** must **not** live in `.env` after the cutover — they go in `/opt/projekt-manager/secrets.env.age` (see Phase 9 and [manual-deploy.md § Secrets](manual-deploy.md#secrets)). They are listed here only to show how they are generated.
 
-| Variable | What to set | Notes |
-|----------|-------------|-------|
-| `POSTGRES_PASSWORD` | `openssl rand -base64 24` | Unique generated password |
-| `DATABASE_URL` | `postgresql://pm:<password>@db:5432/projekt_manager` | Same password as above |
-| `MINIO_ROOT_USER` | A username you choose | MinIO admin account |
-| `MINIO_ROOT_PASSWORD` | `openssl rand -base64 24` | Unique generated password |
-| `STORAGE_ACCESS_KEY` | Same value as `MINIO_ROOT_USER` | The app connects to MinIO using the root credentials |
-| `STORAGE_SECRET_KEY` | Same value as `MINIO_ROOT_PASSWORD` | Same credentials, different variable name |
-| `DOMAIN` | Fully qualified domain for Caddy / TLS | Caddy uses this for TLS certificate provisioning |
-| `CLOUDFLARE_API_TOKEN` | Scoped Cloudflare API token | Permissions: `Zone:Zone:Read` + `Zone:DNS:Edit` on the single managed zone. NOT the Global API Key. Record the issue date in your password manager for rotation tracking. |
-| `WG_BIND_IP` | `10.213.17.1` | WireGuard server interface address. Caddy publishes `:443` only on this host IP. |
-| `NODE_ENV` | `production` | Enables security checks, disables seeding |
-| `SEED` | `false` | Never seed in production |
-| `BOOTSTRAP_ADMIN_USERNAME` | Strong admin username | First-deploy only — see Phase 8.1. Leave unset on subsequent deploys. |
-| `BOOTSTRAP_ADMIN_PASSWORD` | `openssl rand -base64 24` | First-deploy only — see Phase 8.1. Must pass the standard password policy (≥8 chars, ≤72 bytes, not in the common-password blocklist). |
-| `BOOTSTRAP_ADMIN_DISPLAY_NAME` | Human-readable name (optional) | First-deploy only — defaults to the username if unset. |
+| Variable                       | What to set                                                    | Notes                                                                                                                                 |
+| ------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`            | `openssl rand -base64 24`                                      | **[secret]** → `secrets.env.age`                                                                                                      |
+| `DATABASE_URL`                 | `postgresql://pm:${POSTGRES_PASSWORD}@db:5432/projekt_manager` | Non-secret; `docker-compose.yml` composes it from `POSTGRES_PASSWORD` at runtime                                                      |
+| `MINIO_ROOT_USER`              | A username you choose                                          | MinIO admin account (non-secret username)                                                                                             |
+| `MINIO_ROOT_PASSWORD`          | `openssl rand -base64 24`                                      | **[secret]** → `secrets.env.age`                                                                                                      |
+| `STORAGE_ACCESS_KEY`           | Same value as `MINIO_ROOT_USER`                                | Non-secret                                                                                                                            |
+| `STORAGE_SECRET_KEY`           | Same value as `MINIO_ROOT_PASSWORD`                            | **[secret]** → `secrets.env.age`                                                                                                      |
+| `DOMAIN`                       | Fully qualified domain for Caddy / TLS                         | Caddy uses this for TLS certificate provisioning                                                                                      |
+| `CLOUDFLARE_API_TOKEN`         | Scoped Cloudflare API token                                    | **[secret]** → `secrets.env.age`. Permissions: `Zone:Zone:Read` + `Zone:DNS:Edit` on the single managed zone. NOT the Global API Key. |
+| `WG_BIND_IP`                   | `10.213.17.1`                                                  | WireGuard server interface address. Caddy publishes `:443` only on this host IP.                                                      |
+| `NODE_ENV`                     | `production`                                                   | Enables security checks, disables seeding                                                                                             |
+| `SEED`                         | `false`                                                        | Never seed in production                                                                                                              |
+| `BOOTSTRAP_ADMIN_USERNAME`     | Strong admin username                                          | First-deploy only — see Phase 8.1. Leave unset on subsequent deploys.                                                                 |
+| `BOOTSTRAP_ADMIN_PASSWORD`     | `openssl rand -base64 24`                                      | First-deploy only — see Phase 8.1. Must pass the standard password policy.                                                            |
+| `BOOTSTRAP_ADMIN_DISPLAY_NAME` | Human-readable name (optional)                                 | First-deploy only — defaults to the username if unset.                                                                                |
 
-3. Start the stack:
+After the ADR-0012 cutover, `.env` must not contain the four `[secret]` rows above; they live only in `secrets.env.age`. Use Phase 9 to build the encrypted file, then remove the plaintext secret lines from `.env`.
+
+3. Complete Phase 9 to build `secrets.env.age`, then start the stack via the deploy script:
 
 ```bash
-sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose up -d'
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 ```
 
 **Verify:** `sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps` shows all containers as "healthy" or "running". To probe the app stack directly, bypassing Caddy:
@@ -586,42 +593,95 @@ Caddy is bound only to `${WG_BIND_IP}:443` (the WireGuard interface), so `curl h
 9. Confirm the account is still usable by logging in from a WireGuard client with the password you set in step 6. Bootstrap phase complete.
 
 **If something goes wrong:**
+
 - **"BOOTSTRAP_ADMIN_PASSWORD is required" on startup**: only one of the two vars is set. Fix the `.env` and restart.
 - **"BOOTSTRAP_ADMIN_PASSWORD must be at least 8 characters" or "…must not exceed 72 bytes"**: the password fails the policy. Generate a new one.
 - **"BOOTSTRAP_ADMIN_PASSWORD is in the common-password blocklist"**: pick a less common password. Do not work around the blocklist.
 - **Bootstrap log says "user created" but login fails**: the browser may be holding a stale session. Clear cookies for `${DOMAIN}` and try again.
 - **Database already has users but you want to start over**: this is a destructive operation — do not use the bootstrap for it. Manually reset with `psql` under explicit human control.
 
-### Phase 9 — GitHub Secrets and CD
+### Phase 9 — Manual deploy bootstrap
 
-**Goal:** GitHub Actions can deploy automatically after CI passes.
+**Goal:** The operator can deploy via `scripts/deploy.sh` over WireGuard, with runtime secrets encrypted at rest and plaintext never touching the VPS disk.
 
-Add three repository secrets at Repo > Settings > Secrets and variables > Actions:
+This phase is a summary of [manual-deploy.md § Bootstrap](manual-deploy.md#bootstrap--first-run-on-a-freshly-cloned-vps). Refer to that section for the authoritative procedure and failure modes; what follows is the server-setup-specific subset.
 
-| Secret | Value | Why |
-|--------|-------|-----|
-| `DEPLOY_HOST` | Server **public** IP | GitHub runners cannot join the VPN — SSH must use the public IP |
-| `DEPLOY_USER` | `deploy` | The least-privilege account from Phase 3 |
-| `DEPLOY_KEY` | Contents of `~/.ssh/projekt-manager-deploy` (private key) | The key generated in Phase 3, on your local machine |
+**Rationale:** See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). The former push-based flow (`.github/workflows/deploy.yml` SSHing into the VPS as `deploy`) was removed because the SSH key it used was effectively a root credential, and LLM-assisted CD configuration could not be reliably audited (incident: #79).
 
-**Verify:**
+1. **Install `age`** for secrets encryption:
 
 ```bash
-# Push a commit to an iteration branch — CI should pass, deploy should trigger
-gh run list --workflow=Deploy --limit 3
+sudo apt update && sudo apt install -y age
 ```
 
-```bash
-# From the server itself, verify the app is healthy (bypasses Caddy)
-docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
-# expect: exit 0
+2. **Log the `deploy` user in to GHCR** so it can pull the app image. Use a classic GitHub PAT scoped `read:packages` only (generate at https://github.com/settings/tokens). Store the PAT in the password manager.
 
-# From a WireGuard client (your laptop, with the per-peer config imported and tunnel up)
+```bash
+sudo -u deploy docker login ghcr.io -u vlzware --password-stdin <<< '<PAT>'
+```
+
+3. **Verify the pull works end-to-end**:
+
+```bash
+sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main
+```
+
+4. **Create the encrypted secrets file** on your workstation and scp it to the VPS. Keep the passphrase in the password manager.
+
+```bash
+# Workstation:
+cat > /tmp/secrets.env <<'EOF'
+POSTGRES_PASSWORD='...'
+MINIO_ROOT_PASSWORD='...'
+STORAGE_SECRET_KEY='...'
+CLOUDFLARE_API_TOKEN='...'
+EOF
+age -p -o secrets.env.age /tmp/secrets.env   # enter passphrase
+shred -u /tmp/secrets.env
+
+scp secrets.env.age deploy@vps:/tmp/secrets.env.age
+
+# VPS (via sudo account):
+sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
+sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
+sudo chmod 0640 /opt/projekt-manager/secrets.env.age
+```
+
+5. **Remove the plaintext secrets from `.env`** — the four `[secret]` rows listed in Phase 8 must only exist in `secrets.env.age` going forward.
+
+6. **Dry-run the deploy script**:
+
+```bash
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
+```
+
+Confirm: age prompts for the passphrase, the GHCR image pulls, `docker compose up -d` brings the stack up, the smoke test loop prints `Deploy verified — healthy at <sha>`.
+
+7. **Lock down the `deploy` user's inbound SSH path** — only after step 6 succeeds. Removes the former GHA `authorized_keys` entry only; the outbound `github_deploy` key stays in place so future `git fetch origin` calls still work.
+
+```bash
+sudo usermod -s /usr/sbin/nologin deploy
+sudo rm -f /home/deploy/.ssh/authorized_keys
+```
+
+8. **Prove the locked-down flow** end-to-end by tearing the stack down and bringing it back up via the script:
+
+```bash
+sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose down'
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
+```
+
+**Verify from a WireGuard client** (your laptop, with the per-peer config imported and tunnel up):
+
+```bash
 curl -v --resolve "${DOMAIN}:443:10.213.17.1" "https://${DOMAIN}/api/health"
 # expect: 200 OK with a real Let's Encrypt certificate
 # (during initial bootstrap, see docs/ops/caddy-tls-bootstrap.md)
+```
 
-# From outside the VPN (any other machine) — should fail
+**Verify negative case** — from outside the VPN (any other machine), the app must be unreachable:
+
+```bash
 curl --connect-timeout 5 "https://<server-public-ip>/api/health"
 # expect: timeout (port 443 is not bound on the public interface)
 ```

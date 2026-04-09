@@ -102,4 +102,4 @@ The integration tests connect to the same Postgres the dev server uses. They wip
 
 ## When you need the production stack
 
-Don't try to reproduce it locally. Push to an `iteration/**` branch, let CI and the deploy pipeline bring it up on `prmng.org`, test through the WireGuard tunnel. See [`cd-pipeline.md`](cd-pipeline.md) and [`server-setup.md`](server-setup.md).
+Don't try to reproduce it locally. Push to an `iteration/**` branch, let CI build and publish the image to GHCR, then the operator pulls it onto `prmng.org` over WireGuard via `scripts/deploy.sh` (see [`manual-deploy.md`](manual-deploy.md) for the full flow). Test through the WireGuard tunnel. Server setup reference: [`server-setup.md`](server-setup.md).

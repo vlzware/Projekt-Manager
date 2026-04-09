@@ -9,12 +9,13 @@ x-logging: &default-logging
 services:
   app:
     # Pulled from GHCR — see ADR-0011. The tag is the commit SHA of
-    # the currently-deployed revision, set by deploy.yml via
-    # APP_IMAGE_TAG. Default falls back to the `main` branch tag so
-    # a manual `docker compose up` on the VPS picks up a sensible
-    # image without requiring the env var. The dev overlay
-    # (docker-compose.dev.yml) reintroduces `build: .` so local
-    # development still builds from source.
+    # the currently-deployed revision, set by scripts/deploy.sh via
+    # APP_IMAGE_TAG (see ADR-0012 for the manual pull-based deploy
+    # flow that replaces the former deploy.yml). Default falls back
+    # to the `main` branch tag so a manual `docker compose up` on
+    # the VPS picks up a sensible image without requiring the env
+    # var. The dev overlay (docker-compose.dev.yml) reintroduces
+    # `build: .` so local development still builds from source.
     image: ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG:-main}
     read_only: true
     tmpfs:

@@ -246,9 +246,11 @@ jobs:
 
       # Compute both tags we want to push in one place so the diff
       # is obvious if we ever change the scheme. The SHA tag is the
-      # immutable rollback target; the branch-slug tag is the
-      # moving "latest on this branch" pointer used by deploy.yml's
-      # default.
+      # immutable rollback target used by scripts/deploy.sh; the
+      # branch-slug tag is the moving "latest on this branch"
+      # pointer kept as a human-friendly fallback (scripts/deploy.sh
+      # always resolves to a SHA, so it is not on the hot path).
+      # See ADR-0012 for the manual pull-based deploy flow.
       - name: Compute image tags
         id: tags
         run: |

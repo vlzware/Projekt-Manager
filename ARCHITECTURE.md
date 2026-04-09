@@ -8,19 +8,19 @@ For the full product specification, see [docs/spec/](docs/spec/index.md).
 
 ## Tech Stack
 
-| Technology | Version | Purpose | Docs |
-|---|---|---|---|
-| TypeScript | 6.0 | Language (strict, shared client+server) | [typescriptlang.org](https://www.typescriptlang.org/) |
-| React | 19 | UI rendering | [react.dev](https://react.dev/) |
-| Vite | 8 | Dev server, bundler, HMR | [vite.dev](https://vite.dev/) |
-| Zustand | 5 | Client-side state management | [zustand](https://github.com/pmndrs/zustand) |
-| Fastify | 5 | HTTP server and API framework | [fastify.dev](https://fastify.dev/) |
-| Drizzle ORM | 0.45 | Type-safe SQL, schema, migrations | [orm.drizzle.team](https://orm.drizzle.team/) |
-| PostgreSQL | 17 | Relational database | [postgresql.org](https://www.postgresql.org/) |
-| MinIO | S3-compatible | Object/file storage (future uploads) | [min.io](https://min.io/) |
-| Caddy | 2 | Reverse proxy, automatic HTTPS | [caddyserver.com](https://caddyserver.com/) |
-| Vitest | 4 | Unit and component tests | [vitest.dev](https://vitest.dev/) |
-| Playwright | 1.59 | End-to-end tests | [playwright.dev](https://playwright.dev/) |
+| Technology  | Version       | Purpose                                 | Docs                                                  |
+| ----------- | ------------- | --------------------------------------- | ----------------------------------------------------- |
+| TypeScript  | 6.0           | Language (strict, shared client+server) | [typescriptlang.org](https://www.typescriptlang.org/) |
+| React       | 19            | UI rendering                            | [react.dev](https://react.dev/)                       |
+| Vite        | 8             | Dev server, bundler, HMR                | [vite.dev](https://vite.dev/)                         |
+| Zustand     | 5             | Client-side state management            | [zustand](https://github.com/pmndrs/zustand)          |
+| Fastify     | 5             | HTTP server and API framework           | [fastify.dev](https://fastify.dev/)                   |
+| Drizzle ORM | 0.45          | Type-safe SQL, schema, migrations       | [orm.drizzle.team](https://orm.drizzle.team/)         |
+| PostgreSQL  | 17            | Relational database                     | [postgresql.org](https://www.postgresql.org/)         |
+| MinIO       | S3-compatible | Object/file storage (future uploads)    | [min.io](https://min.io/)                             |
+| Caddy       | 2             | Reverse proxy, automatic HTTPS          | [caddyserver.com](https://caddyserver.com/)           |
+| Vitest      | 4             | Unit and component tests                | [vitest.dev](https://vitest.dev/)                     |
+| Playwright  | 1.59          | End-to-end tests                        | [playwright.dev](https://playwright.dev/)             |
 
 Stack decisions are recorded in ADRs: [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md) (frontend), [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) (infra), [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md) (backend).
 
@@ -50,23 +50,23 @@ Six responsibility layers. Dependency flows left-to-right only, never reversed. 
 
 ## Module Map
 
-| Directory | Owns | Must NOT |
-|---|---|---|
-| `src/config/` | State definitions, colors, thresholds, branding, company assumptions | Import anything outside `src/config/` |
-| `src/domain/` | Types, transition rules, aging calc, validation, date formatting | Import from state, API, storage, or UI |
-| `src/server/config/` | Env validation (Zod), centralized policy constants (auth, rate limits, storage) | Contain business logic or import from layers above |
-| `src/server/db/` | Drizzle schema, connection, SQL migrations | Contain business logic |
-| `src/server/services/` | Business logic orchestration (AuthService, ProjectService) | Know about HTTP, Fastify, or request objects |
-| `src/server/repositories/` | Database queries (project, user, session) | Know about HTTP or contain business rules |
-| `src/server/storage/` | S3/MinIO client, upload/download/presign ops | Be called from anywhere except API routes |
-| `src/server/middleware/` | Cookie parsing, session auth, request decoration | Contain route handlers or business logic |
-| `src/server/routes/` | Route definitions, request validation, response serialization | Access repositories directly (must go through services) |
-| `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), seed, password hashing, error types | - |
-| `src/state/` | Zustand stores (authStore, projectStore, uiStore), client-side cache | Access the database or import server code |
-| `src/api/` | Centralized API client, typed fetch wrappers | Contain business logic or UI concerns |
-| `src/hooks/` | Shared React hooks (transitions, routing) | Contain API calls directly (must use stores) |
-| `src/ui/` | React components (kanban, calendar, detail, auth, layout) | Contain business logic beyond dispatching to state |
-| `src/test/` | Shared test setup, API test helpers, and seed fixtures | Be imported in production code |
+| Directory                  | Owns                                                                                   | Must NOT                                                |
+| -------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions                   | Import anything outside `src/config/`                   |
+| `src/domain/`              | Types, transition rules, aging calc, validation, date formatting                       | Import from state, API, storage, or UI                  |
+| `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)        | Contain business logic or import from layers above      |
+| `src/server/db/`           | Drizzle schema, connection, SQL migrations                                             | Contain business logic                                  |
+| `src/server/services/`     | Business logic orchestration (AuthService, ProjectService)                             | Know about HTTP, Fastify, or request objects            |
+| `src/server/repositories/` | Database queries (project, user, session)                                              | Know about HTTP or contain business rules               |
+| `src/server/storage/`      | S3/MinIO client, upload/download/presign ops                                           | Be called from anywhere except API routes               |
+| `src/server/middleware/`   | Cookie parsing, session auth, request decoration                                       | Contain route handlers or business logic                |
+| `src/server/routes/`       | Route definitions, request validation, response serialization                          | Access repositories directly (must go through services) |
+| `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), seed, password hashing, error types | -                                                       |
+| `src/state/`               | Zustand stores (authStore, projectStore, uiStore), client-side cache                   | Access the database or import server code               |
+| `src/api/`                 | Centralized API client, typed fetch wrappers                                           | Contain business logic or UI concerns                   |
+| `src/hooks/`               | Shared React hooks (transitions, routing)                                              | Contain API calls directly (must use stores)            |
+| `src/ui/`                  | React components (kanban, calendar, detail, auth, layout)                              | Contain business logic beyond dispatching to state      |
+| `src/test/`                | Shared test setup, API test helpers, and seed fixtures                                 | Be imported in production code                          |
 
 ---
 
@@ -117,19 +117,19 @@ React re-renders affected components
 
 All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives here because [`docs/spec/api.md`](docs/spec/api.md) is intentionally stack-agnostic (operations, inputs, outputs — not URLs).
 
-| Method | Path | Auth | Permission | Rate limit | Purpose |
-|---|---|---|---|---|---|
-| GET | `/api/health` | none | — | none | Liveness probe; runs `SELECT 1` on the DB and a `HeadBucket` on MinIO in parallel. Returns `{status,checks:{db,storage}}`; 503 on any probe failure. See #48 |
-| POST | `/api/auth/login` | none | — | 5 / 1 min | Login; sets HttpOnly `session` cookie |
-| POST | `/api/auth/logout` | session | — | none | Invalidates the current session |
-| GET | `/api/auth/me` | session | — | none | Current user profile |
-| POST | `/api/auth/change-password` | session | — | 5 / 1 min | Change own password (requires current password) |
-| GET | `/api/projects` | session | — | none | List projects (optional `offset`, `limit`) |
-| GET | `/api/projects/:id` | session | — | none | Single project |
-| POST | `/api/projects/:id/transition/forward` | session | `project:transition` | none | Advance status by one step |
-| POST | `/api/projects/:id/transition/backward` | session | `project:transition` | none | Reverse status by one step |
-| PATCH | `/api/projects/:id/dates` | session | `project:dates` | none | Update `plannedStart` / `plannedEnd` |
-| POST | `/api/projects/bulk/import` | session | `project:create` | none | Import an array of projects |
+| Method | Path                                    | Auth    | Permission           | Rate limit | Purpose                                                                                                                                                      |
+| ------ | --------------------------------------- | ------- | -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/api/health`                           | none    | —                    | none       | Liveness probe; runs `SELECT 1` on the DB and a `HeadBucket` on MinIO in parallel. Returns `{status,checks:{db,storage}}`; 503 on any probe failure. See #48 |
+| POST   | `/api/auth/login`                       | none    | —                    | 5 / 1 min  | Login; sets HttpOnly `session` cookie                                                                                                                        |
+| POST   | `/api/auth/logout`                      | session | —                    | none       | Invalidates the current session                                                                                                                              |
+| GET    | `/api/auth/me`                          | session | —                    | none       | Current user profile                                                                                                                                         |
+| POST   | `/api/auth/change-password`             | session | —                    | 5 / 1 min  | Change own password (requires current password)                                                                                                              |
+| GET    | `/api/projects`                         | session | —                    | none       | List projects (optional `offset`, `limit`)                                                                                                                   |
+| GET    | `/api/projects/:id`                     | session | —                    | none       | Single project                                                                                                                                               |
+| POST   | `/api/projects/:id/transition/forward`  | session | `project:transition` | none       | Advance status by one step                                                                                                                                   |
+| POST   | `/api/projects/:id/transition/backward` | session | `project:transition` | none       | Reverse status by one step                                                                                                                                   |
+| PATCH  | `/api/projects/:id/dates`               | session | `project:dates`      | none       | Update `plannedStart` / `plannedEnd`                                                                                                                         |
+| POST   | `/api/projects/bulk/import`             | session | `project:create`     | none       | Import an array of projects                                                                                                                                  |
 
 Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Both are enforced centrally in `src/server/middleware/auth.ts` — never at the route level.
 
@@ -199,38 +199,46 @@ The four scenarios below are the most common changes. Each lists exact files to 
 
 Five services defined in `docker-compose.yml`:
 
-| Service | Image / Build | Role |
-|---|---|---|
-| `app` | `Dockerfile` (multi-stage Node 22 Alpine) | Fastify server serving API + static frontend |
-| `db` | `postgres:17-alpine` | PostgreSQL with persistent volume |
-| `storage` | `minio/minio` | S3-compatible object storage |
-| `storage-init` | `minio/mc` (one-shot) | Creates the default bucket on first start, then exits |
-| `caddy` | `caddy:2-alpine` | Reverse proxy, automatic HTTPS via `Caddyfile` |
+| Service        | Image / Build                             | Role                                                  |
+| -------------- | ----------------------------------------- | ----------------------------------------------------- |
+| `app`          | `Dockerfile` (multi-stage Node 22 Alpine) | Fastify server serving API + static frontend          |
+| `db`           | `postgres:17-alpine`                      | PostgreSQL with persistent volume                     |
+| `storage`      | `minio/minio`                             | S3-compatible object storage                          |
+| `storage-init` | `minio/mc` (one-shot)                     | Creates the default bucket on first start, then exits |
+| `caddy`        | `caddy:2-alpine`                          | Reverse proxy, automatic HTTPS via `Caddyfile`        |
 
 Local development uses `docker-compose.dev.yml` for database and storage only; app runs via `npm run dev` (Vite + tsx watch).
 
 ### CI/CD Pipeline
 
-Two GitHub Actions workflows:
+One GitHub Actions workflow, one on-VPS script.
 
-**CI** (`.github/workflows/ci.yml`) -- runs on push/PR to `main` and `iteration/**`:
+**CI** (`.github/workflows/ci.yml`) — runs on push/PR to `main` and `iteration/**`:
+
 ```
 npm audit -> lint -> format check -> type check -> test:coverage -> build
+  \-> (on push) build-and-push app image to GHCR, tagged sha-<commit> and <branch-slug>
 ```
 
-**Deploy** (`.github/workflows/deploy.yml`) -- triggers after CI succeeds on `main`:
+**Deploy** (`scripts/deploy.sh`) — manual, pull-based, run on the VPS over WireGuard:
+
 ```
-SSH to VPS -> git pull -> docker compose build -> docker compose up -d
+sudo -u deploy scripts/deploy.sh [ref]
+  -> git fetch + checkout SHA -> decrypt secrets.env.age (age passphrase)
+     -> docker compose pull app (ghcr.io/vlzware/projekt-manager:sha-<sha>)
+     -> docker compose up -d -> poll /api/health
 ```
+
+No automatic deploy. The operator promotes a CI-built image to production manually. Rationale: [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md). Day-to-day procedure: [docs/ops/manual-deploy.md](docs/ops/manual-deploy.md).
 
 ---
 
 ## Links
 
-| Resource | Location |
-|---|---|
-| Product specification | [docs/spec/](docs/spec/index.md) |
-| Architecture Decision Records | [docs/adr/](docs/adr/index.md) |
-| Contributing guide and workflow | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| Vision and kickoff | [docs/project/kickoff.md](docs/project/kickoff.md) |
-| Project journal | [docs/project/journal.md](docs/project/journal.md) |
+| Resource                        | Location                                           |
+| ------------------------------- | -------------------------------------------------- |
+| Product specification           | [docs/spec/](docs/spec/index.md)                   |
+| Architecture Decision Records   | [docs/adr/](docs/adr/index.md)                     |
+| Contributing guide and workflow | [CONTRIBUTING.md](CONTRIBUTING.md)                 |
+| Vision and kickoff              | [docs/project/kickoff.md](docs/project/kickoff.md) |
+| Project journal                 | [docs/project/journal.md](docs/project/journal.md) |

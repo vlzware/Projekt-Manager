@@ -1,44 +1,134 @@
-# CD Pipeline — GitHub Actions to Hetzner VPS
+# Manual deploy — pull-based over WireGuard
 
-## How It Works
+## How it works
 
 ```
-push to main or iteration/** branch
+developer push to main or iteration/**
   → CI workflow runs (lint, types, tests, build)
     → build-and-push job builds the app image and pushes to GHCR
       (tags: sha-<commit>, <branch-slug>)
-    → on success: Deploy workflow triggers
-      → SSH into VPS as deploy user
-      → git fetch + checkout exact SHA that CI tested
-      → docker compose pull app (image: ghcr.io/vlzware/projekt-manager:sha-<commit>)
-      → docker compose up -d
-      → smoke test: wait for /api/health
+    → STOP. No automatic deploy.
+
+operator (over WireGuard, when ready to deploy):
+  ssh vps                                                    (operator's sudo account)
+  sudo -u deploy /opt/projekt-manager/scripts/deploy.sh [ref]
+    → git fetch + checkout exact SHA
+    → decrypt secrets via `age -d` (prompts for passphrase)
+    → docker compose pull app (image: ghcr.io/vlzware/projekt-manager:sha-<sha>)
+    → docker compose up -d
+    → smoke test: wait for /api/health
 ```
 
-The server is always in **detached HEAD** at a specific commit — it does not track a branch. Every deploy checks out the exact SHA that passed CI. No ambiguity about what's running.
+The server is in **detached HEAD** at a specific commit — it does not track a branch. Every deploy checks out the exact SHA that passed CI. No ambiguity about what's running. Rationale for the pull-based topology: see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). The image-build leg is unchanged from [ADR-0011](../adr/0011-build-images-in-ci-distribute-via-ghcr.md).
 
-The app image is built in GitHub Actions, not on the VPS. See [ADR-0011](../adr/0011-build-images-in-ci-distribute-via-ghcr.md) for the rationale. `deploy.yml` pulls from `ghcr.io/vlzware/projekt-manager` tagged with the exact commit SHA — `APP_IMAGE_TAG=sha-$EXPECTED_SHA` is set in the deploy script so the pull is deterministic and rollback via a previous SHA is a one-line change.
+## Preconditions on the VPS
 
-## Workflow Files
+These are one-time setup items. Most persist across deploys.
 
-| File                           | Trigger                           | Purpose                                                                                 |
-| ------------------------------ | --------------------------------- | --------------------------------------------------------------------------------------- |
-| `.github/workflows/ci.yml`     | Push/PR to `main`, `iteration/**` | Lint, type-check, test, build; on push also builds and pushes the app image to GHCR    |
-| `.github/workflows/deploy.yml` | CI completes successfully         | SSH to VPS, pull new app image from GHCR, `up -d`, smoke test                           |
+| Thing                                                                             | How to verify                                                                                                                                 |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/opt/projekt-manager` is a git clone of `vlzware/Projekt-Manager`                | `sudo -u deploy git -C /opt/projekt-manager remote -v`                                                                                        |
+| `age` is installed                                                                | `command -v age`                                                                                                                              |
+| `deploy` user is logged in to GHCR                                                | `sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main` (should succeed)                                                            |
+| `/opt/projekt-manager/secrets.env.age` exists, owned `deploy:deploy`, mode `0640` | `ls -l /opt/projekt-manager/secrets.env.age`                                                                                                  |
+| `deploy` user has no interactive login path                                       | `getent passwd deploy` shows `/usr/sbin/nologin`; `ls /home/deploy/.ssh/authorized_keys` returns no such file                                 |
+| `deploy` user can still fetch from origin                                         | `sudo -u deploy git -C /opt/projekt-manager fetch --dry-run origin` succeeds (uses the `github_deploy` Deploy Key, untouched by the lockdown) |
 
-## GitHub Secrets
+## Normal deploy
 
-| Secret        | Purpose                                                                                              |
-| ------------- | ---------------------------------------------------------------------------------------------------- |
-| `DEPLOY_HOST` | Server public IP (GitHub runners cannot join the WireGuard tunnel, so deploy SSH uses the public IP) |
-| `DEPLOY_USER` | `deploy`                                                                                             |
-| `DEPLOY_KEY`  | Private SSH key for the deploy user                                                                  |
+From a WireGuard-connected machine, logged in as your sudo account:
 
-## Verifying a Deploy
+```bash
+# Deploy origin/main (default):
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 
-**From GitHub Actions** (audit trail): check the Deploy workflow run — the smoke test step prints the deployed SHA.
+# Deploy a specific iteration branch:
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/iteration/5-consolidation
 
-**From the server** (logged in as admin user):
+# Deploy a specific SHA (rollback or targeted):
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh 3721783abc
+```
+
+The script:
+
+1. Fetches from origin
+2. Resolves the ref to a full SHA and prints `Deploying <ref> -> <sha>`
+3. Checks out the SHA and asserts the checkout landed on it
+4. Prompts for the age passphrase and decrypts `secrets.env.age` into the shell env via process substitution (plaintext never touches disk)
+5. Sets `APP_IMAGE_TAG=sha-<sha>` and runs `docker compose pull app && docker compose up -d`
+6. Polls `/api/health` inside the app container for up to 60 seconds
+7. Prints `Deploy verified — healthy at <short-sha>` on success, or dumps the last 50 lines of container logs and exits non-zero on failure
+
+## Rollback
+
+Rollback is the same interface as forward-deploy, just with an older SHA:
+
+```bash
+# Find the known-good SHA
+sudo -u deploy git -C /opt/projekt-manager log --oneline -20
+
+# Deploy it
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh <sha>
+```
+
+The GHCR image for that SHA must still exist. Retention is the GHCR built-in policy (ADR-0011), which keeps recent SHA tags indefinitely unless explicitly pruned. If the image was pruned, fall back to a forward-rollback: `git revert` the bad commit on the operator's machine, push, wait for CI, then `./deploy.sh origin/main`.
+
+## Secrets
+
+### Layout
+
+The VPS holds exactly one secret artifact: `/opt/projekt-manager/secrets.env.age`. It contains the runtime secrets required by `docker-compose.yml`:
+
+- `POSTGRES_PASSWORD`
+- `MINIO_ROOT_PASSWORD`
+- `STORAGE_SECRET_KEY`
+- `CLOUDFLARE_API_TOKEN`
+
+Format is shell-compatible `KEY='value'` lines, one per secret. `scripts/deploy.sh` runs `source <(age -d secrets.env.age)` under `set -a` so every assigned variable is auto-exported into the environment that `docker compose` reads.
+
+### Rotating a secret
+
+```bash
+# On your workstation (not the VPS):
+cat > /tmp/secrets.env <<'EOF'
+POSTGRES_PASSWORD='new-value'
+MINIO_ROOT_PASSWORD='...'
+STORAGE_SECRET_KEY='...'
+CLOUDFLARE_API_TOKEN='...'
+EOF
+
+age -p -o secrets.env.age /tmp/secrets.env   # enter passphrase
+shred -u /tmp/secrets.env
+
+scp secrets.env.age deploy@vps:/opt/projekt-manager/secrets.env.age
+ssh vps "sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age && sudo chmod 0640 /opt/projekt-manager/secrets.env.age"
+
+# Trigger a deploy so the new value takes effect:
+ssh vps "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
+```
+
+Keep the passphrase in the project's password manager. It is the single unlock for everything on the VPS.
+
+### Passphrase loss — recovery path
+
+The encrypted file is not irreplaceable. If the passphrase is lost:
+
+1. Retrieve or regenerate each secret from its system of record:
+   - `POSTGRES_PASSWORD` — reset via `ALTER USER` from the `postgres` superuser account, or re-provision the container and restore from backup
+   - `MINIO_ROOT_PASSWORD`, `STORAGE_SECRET_KEY` — reset via the MinIO admin console or `mc admin user` after re-provisioning
+   - `CLOUDFLARE_API_TOKEN` — regenerate in the Cloudflare dashboard under the account's API Tokens panel (scope: `Zone:DNS:Edit` + `Zone:Zone:Read` on the managed zone)
+2. Rebuild `secrets.env` with the new values, pick a fresh passphrase, `age -p -o secrets.env.age`, and upload (same as the rotation flow above)
+3. Record the new passphrase in the project password manager
+
+### GHCR pull authentication
+
+The `deploy` user holds a GHCR personal access token (classic, scoped `read:packages`) via `docker login`. Treat as a key:
+
+- **Location**: `~deploy/.docker/config.json` on the VPS (base64-encoded)
+- **Rotation**: every 12 months, or immediately if the laptop holding the token is compromised
+- **Re-issue**: generate a new classic PAT with `read:packages` only, then `sudo -u deploy docker login ghcr.io -u vlzware --password-stdin <<< '<new-PAT>'`
+
+## Verifying a deploy
 
 ```bash
 # What commit is running
@@ -61,86 +151,75 @@ echo "exit=$?"  # 0 = healthy
 
 ```bash
 curl -sS https://${DOMAIN}/api/health
-# expect: "ok" (HTTP 200), with a real Let's Encrypt certificate
+# expect: {"status":"ok",...} (HTTP 200), with a real Let's Encrypt certificate
 ```
 
-## What Gets Deployed When
+## Smoke test details
 
-- **During an iteration:** every push to `iteration/N-name` that passes CI triggers a deploy.
-- **After iteration completion:** the iteration branch merges to `main`, which triggers CI → deploy.
-- **Concurrency:** only one deploy runs at a time. If a newer push arrives mid-deploy, the in-progress deploy is cancelled.
-
-## Smoke Test
-
-After `docker compose up -d`, the workflow polls the app container's `/api/health` endpoint for up to 60 seconds by running `node -e fetch(...)` inside the app container via `docker compose exec`. This bypasses Caddy and the TLS chain entirely — the TLS path is not reachable from GitHub runners (Caddy binds to the WireGuard interface only), so the smoke test validates the application stack (app + db + storage) without depending on the network-layer topology. Verification of the full TLS chain is a manual step from a WireGuard client, documented in `docs/ops/server-setup.md` Phase 9.
+After `docker compose up -d`, the deploy script polls the app container's `/api/health` endpoint for up to 60 seconds by running `node -e fetch(...)` inside the app container via `docker compose exec`. This bypasses Caddy and the TLS chain entirely — the TLS path is only reachable from a WG client, so the smoke test validates the application stack (app + db + storage) without depending on the network-layer topology. Verification of the full TLS chain is a manual step from a WireGuard client.
 
 Since #48 the `/api/health` endpoint runs real liveness probes against the DB (`SELECT 1`) and object storage (`HeadBucket`), returning `{status:"ok", checks:{db:"ok", storage:"ok"}}` with HTTP 200 on a fully-healthy stack and `{status:"degraded", ...}` with HTTP 503 when any dependency fails. The smoke test's `r.ok` check correctly interprets 503 as failure.
 
-If the health endpoint does not respond within 60 seconds, the workflow:
+If the health endpoint does not respond within 60 seconds, the script:
 
 1. Dumps the last 50 lines of container logs
-2. Fails the deploy — visible in GitHub Actions
+2. Exits non-zero — the operator sees the failure in the same terminal
 
 The app's Docker Compose healthcheck (`/api/health` via `node -e fetch(...)`) also runs independently every 10 seconds and will restart the container after 3 consecutive failures.
 
-## Rollback
+## What the deploy user can do
 
-**Via GitHub Actions (preferred):**
+- `git fetch` / `git checkout` inside `/opt/projekt-manager` (read-only repo access)
+- `docker compose pull` / `up` / `down` / `logs` / `exec` (member of `docker` group)
+- Read `secrets.env.age` (mode `0640`, owner `deploy:deploy`)
+- **Cannot log in interactively** — shell is `/usr/sbin/nologin`, `~deploy/.ssh/authorized_keys` is removed. The only way to run a command as `deploy` is via `sudo -u deploy` from an account that already holds a session. The `github_deploy` Deploy Key stays in `~deploy/.ssh/` (outbound-only, read-only repo access) so the deploy script can `git fetch origin`.
 
-Go to Actions → Deploy → find the last successful run → Re-run all jobs. This re-deploys the SHA from that run. With ADR-0011 in place, "re-deploy" is a GHCR pull of the already-built image for that SHA — no rebuild, no VPS resource spike.
+The `docker`-group membership is effectively root — see [ADR-0012 §Consequences](../adr/0012-manual-pull-based-deploy-over-wireguard.md#negative--residual-risks) and issue [#72](https://github.com/vlzware/Projekt-Manager/issues/72). This is the residual risk the cutover could not eliminate; the upgrade path is rootless Docker or Podman.
 
-**Manual (emergency):**
+## Bootstrap — first run on a freshly cloned VPS
+
+When a VPS is freshly provisioned (or the deploy script has never been run there before), the script itself does not yet exist at the path the operator wants to invoke. Bootstrap in one session:
 
 ```bash
-ssh -i ~/.ssh/projekt-manager-deploy deploy@<server-ip>
-cd /opt/projekt-manager
-git log --oneline -10          # find the known-good SHA
-git checkout <sha>
-export APP_IMAGE_TAG="sha-<sha>"   # must match the full commit SHA
-docker compose pull app
-docker compose up -d
+# 1. Clone the repo at /opt/projekt-manager (if not already)
+sudo mkdir -p /opt/projekt-manager
+sudo chown deploy:deploy /opt/projekt-manager
+sudo -u deploy git clone https://github.com/vlzware/Projekt-Manager.git /opt/projekt-manager
+
+# 2. Install age
+sudo apt update && sudo apt install -y age
+
+# 3. Log in to GHCR as deploy (use a classic PAT scoped read:packages)
+sudo -u deploy docker login ghcr.io -u vlzware --password-stdin <<< '<PAT>'
+
+# 4. Upload the age-encrypted secrets file (from your workstation)
+#    (see Secrets § Rotating a secret for the exact scp flow)
+
+# 5. Dry-run the new deploy script
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
+
+# 6. Only after (5) succeeds: lock down the deploy user.
+#    Remove ONLY the inbound key (authorized_keys). Keep github_deploy,
+#    github_deploy.pub, config, and known_hosts in place — the deploy
+#    script still needs the github_deploy keypair to `git fetch origin`
+#    (the repo is private and origin is git@github.com:...).
+sudo usermod -s /usr/sbin/nologin deploy
+sudo rm -f /home/deploy/.ssh/authorized_keys
+
+# 7. Prove the locked-down flow by re-running end-to-end
+sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose down'
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 ```
 
-The image for any deployed SHA is retained in GHCR (see ADR-0011 for the retention policy). If the image is no longer available (e.g., pruned), fall back to a forward-rollback: `git revert` the bad commit and push, which triggers a fresh CI build and deploy.
+Step ordering matters. Do not lock down `deploy` (step 6) until step 5 has completed successfully, so the old SSH login path remains available as a fallback if the new flow needs debugging.
 
-## Caveats
+## Common failure modes
 
-- **`workflow_run` uses the workflow file from the default branch.** Changes to `deploy.yml` only take effect when they are on `main`. During iteration work, if the deploy workflow itself needs a change, cherry-pick or commit it to `main` directly.
-- **For a production deployment**, change the `branches` filter in `deploy.yml` to `[main]` only — removing iteration branches restricts deploys to completed, merged work.
-
-## What the Deploy User Can Do
-
-- `git fetch` / `git checkout` (read-only Deploy Key on GitHub)
-- `docker compose pull` / `up` / `down` / `logs` / `exec` (member of `docker` group)
-- `docker compose build` is no longer part of the deploy path — the app image comes from GHCR (ADR-0011). `build` is still available to the user via group membership, but normal operations do not use it.
-- No `sudo`, no write access outside `/opt/projekt-manager`
-
-## Diagram
-
-```
-┌────────────────────┐     ┌──────────────────────┐     ┌───────────┐
-│   Developer push   │────▶│   CI (GitHub runner) │────▶│   GHCR    │
-│                    │     │   lint, test, build, │ push│ sha-<...> │
-│                    │     │   build+push image   │     │ <branch>  │
-└────────────────────┘     └──────────┬───────────┘     └─────┬─────┘
-                                      │ on success             │
-                                      ▼                        │
-                           ┌──────────────────────┐            │
-                           │  Deploy (GH runner)  │            │
-                           │  SSH into VPS        │            │
-                           └──────────┬───────────┘            │
-                                      │                        │
-                                      ▼                        │
-                           ┌──────────────────────┐            │
-                           │  VPS (deploy user)   │            │
-                           │  git checkout <sha>  │◀───────────┘
-                           │  docker compose pull │   pull sha-<sha>
-                           │  docker compose up   │
-                           └──────────┬───────────┘
-                                      │
-                                      ▼
-                           ┌──────────────────────┐
-                           │  Smoke test          │
-                           │  /api/health via exec│
-                           └──────────────────────┘
-```
+| Symptom                                              | Cause                                                                            | Fix                                                                                             |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `git checkout` fails with "unable to update ref"     | Uncommitted changes in the working tree blocking the switch                      | `sudo -u deploy git -C /opt/projekt-manager status`; reset or stash before retrying             |
+| `ERROR: git checkout landed at X, expected Y`        | The post-checkout SHA assertion tripped — working tree is in an unexpected state | Inspect `git status`, clean up, re-run                                                          |
+| `age: failed to read identity` / wrong passphrase    | Typo or wrong passphrase                                                         | Retry. After 3 wrong attempts, verify the passphrase against the password manager.              |
+| `docker pull` fails with `unauthorized`              | GHCR PAT expired or never set                                                    | Re-run `docker login ghcr.io` as `deploy` with a fresh PAT                                      |
+| Smoke test times out after 60s                       | App container failed to come up, or `/api/health` returns 503 (degraded)         | Check `docker compose logs app db storage` — the script dumped the last 50 lines before exiting |
+| `docker compose exec` fails with "no such container" | `docker compose up -d` did not start the `app` service                           | Check `docker compose ps`; verify `APP_IMAGE_TAG` matches an existing GHCR tag                  |
