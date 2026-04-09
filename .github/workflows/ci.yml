@@ -109,3 +109,45 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # Validate the Compose files and build the production app image on every
+  # CI run. This job exists because the `check` job builds the JS but never
+  # touches docker-compose.yml or the Dockerfile — a broken Compose file or
+  # a Dockerfile regression only surfaces at deploy time on the VPS, where
+  # the failure blocks main instead of the feature branch that introduced
+  # it. Runs in parallel with `check` (no `needs:`) for fast feedback.
+  # See #51.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # Variables that appear in docker-compose.yml without a `:-` default.
+      # Values are deliberately dummy — this job validates the Compose file
+      # shape and the Dockerfile build, not runtime secrets.
+      - name: Validate production Compose config
+        run: docker compose -f docker-compose.yml config --quiet
+        env:
+          POSTGRES_PASSWORD: ci-dummy
+          MINIO_ROOT_USER: ci-dummy
+          MINIO_ROOT_PASSWORD: ci-dummy
+          CLOUDFLARE_API_TOKEN: ci-dummy
+
+      - name: Validate dev Compose overlay
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml config --quiet
+        env:
+          POSTGRES_PASSWORD: ci-dummy
+          MINIO_ROOT_USER: ci-dummy
+          MINIO_ROOT_PASSWORD: ci-dummy
+          CLOUDFLARE_API_TOKEN: ci-dummy
+
+      # Actually build the production image. The prod deploy on Hetzner
+      # runs `docker compose build app` on the VPS today; mirroring that
+      # command here catches Dockerfile regressions before they reach main.
+      - name: Build app image
+        run: docker compose -f docker-compose.yml build app
+        env:
+          POSTGRES_PASSWORD: ci-dummy
+          MINIO_ROOT_USER: ci-dummy
+          MINIO_ROOT_PASSWORD: ci-dummy
+          CLOUDFLARE_API_TOKEN: ci-dummy
