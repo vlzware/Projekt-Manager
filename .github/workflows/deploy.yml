@@ -28,9 +28,21 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
+            set -euo pipefail
             cd /opt/projekt-manager
             git fetch origin
             git checkout ${{ github.event.workflow_run.head_sha }}
+            # Assert the checkout landed on the expected SHA. Without this,
+            # a silently-failed checkout (e.g. uncommitted local changes
+            # blocking the switch) would continue past with a stale working
+            # tree and deploy the wrong code — the exact failure mode
+            # hit in iteration 4. See #48 comment 2026-04-08.
+            actual=$(git rev-parse HEAD)
+            expected="${{ github.event.workflow_run.head_sha }}"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::git checkout landed at $actual, expected $expected"
+              exit 1
+            fi
             docker compose build app
             docker compose up -d
 
@@ -41,6 +53,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
           script: |
+            set -euo pipefail
             cd /opt/projekt-manager
             timeout=60
             elapsed=0
