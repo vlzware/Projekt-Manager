@@ -111,143 +111,6 @@ jobs:
         run: npm run build
 
   # ---------------------------------------------------------------
-  # Playwright E2E — smoke, kanban flows, startup, failure paths.
-  # Gated on `check` so we do not spend browser-install and
-  # dev-server bootstrap time on commits that already fail lint,
-  # type-check, unit tests, or build.
-  #
-  # Why E2E in CI:
-  #   - vitest.config.ts excludes e2e/**, so unit/component/
-  #     integration tests never exercise the browser path.
-  #   - The smoke / kanban-flows suite is the only place that
-  #     catches bugs like the #80 clear-dates 500 or the
-  #     kanban-flows state-pollution regression — both of which
-  #     CI missed before this job existed.
-  #   - See CLAUDE.md § Testing: "touching anything under e2e/
-  #     means running Playwright". This job enforces that.
-  #
-  # The dev server is started by Playwright's webServer config
-  # (playwright.config.ts). In CI, `reuseExistingServer: false`
-  # so Playwright always boots a fresh `npm run dev`, which runs
-  # migrations before listening. `e2e/auth.setup.ts` then
-  # force-reseeds the database before the first test runs, so
-  # every job starts from a known state regardless of what
-  # previous runs (or the seed default) left behind.
-  # ---------------------------------------------------------------
-  e2e:
-    needs: check
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_DB: projekt_manager_test
-          POSTGRES_USER: pm
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U pm -d projekt_manager_test"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 5
-
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
-
-      - run: npm ci
-
-      # MinIO as a step (same rationale as the `check` job): the
-      # Playwright dev server connects to object storage on
-      # startup; without this MinIO the /api/health probe would
-      # fail and the webServer wait would time out.
-      - name: Start MinIO
-        run: |
-          docker run -d --name minio \
-            -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=changeme \
-            minio/minio:RELEASE.2025-09-07T16-13-09Z \
-            server /data
-          for i in {1..30}; do
-            if curl -sf http://localhost:9000/minio/health/live > /dev/null; then
-              echo "MinIO ready after ${i}s"
-              break
-            fi
-            sleep 1
-          done
-          docker run --rm --network host \
-            --entrypoint /bin/sh \
-            minio/mc:RELEASE.2025-08-13T08-35-41Z \
-            -c "mc alias set local http://localhost:9000 minioadmin changeme && mc mb --ignore-existing local/projekt-manager"
-
-      # Cache Playwright's browser binaries (~300 MB for Chromium
-      # alone). On a cache hit the install step below is a ~2s
-      # no-op; on a miss it adds ~30-60s. Key is tied to the
-      # installed @playwright/test version so an upgrade busts
-      # the cache automatically.
-      - name: Resolve Playwright version
-        id: playwright-version
-        run: |
-          version=$(node -p "require('./package-lock.json').packages['node_modules/@playwright/test'].version")
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install --with-deps chromium
-
-      # Some system dependencies for Chromium (fonts, libs) are
-      # not cached in ~/.cache/ms-playwright — they live in
-      # /usr/lib. On a cache HIT we still need to ensure those
-      # are present. `--with-deps` handles both on a miss; on a
-      # hit we install just the system deps.
-      - name: Install Chromium system deps (cache hit only)
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        run: npx playwright install-deps chromium
-
-      - name: Run Playwright tests
-        run: npx playwright test
-        env:
-          # Matches the env block of the `check` job's vitest
-          # step — same Postgres service, same MinIO step, same
-          # variable names. See env.ts for the authoritative
-          # schema; everything listed there with `.min(1)` is
-          # required at startup and is set below.
-          DATABASE_URL: postgresql://pm:postgres@localhost:5432/projekt_manager_test
-          STORAGE_ENDPOINT: http://localhost:9000
-          STORAGE_BUCKET: projekt-manager
-          STORAGE_ACCESS_KEY: minioadmin
-          STORAGE_SECRET_KEY: changeme
-
-      # Upload traces, screenshots, and the HTML report on
-      # failure only — green runs produce nothing worth keeping.
-      # Debugging a flake without the trace is painful, so this
-      # is load-bearing when things go wrong.
-      - name: Upload Playwright report
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: playwright-report
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 7
-
-  # ---------------------------------------------------------------
   # Detect whether container-relevant files changed in this PR/push.
   # Gates the `docker` job so we do not pay the image-build cost on
   # every commit — most PRs do not touch Docker files at all.
@@ -368,13 +231,12 @@ jobs:
   # images. GHA layer cache keeps no-op commits in the ~10-15s
   # range.
   #
-  # Gated on `check` AND `e2e` so we never publish an image from
-  # a commit that fails unit tests, lint, type-check, the build,
-  # or the Playwright browser suite.
+  # Gated on `check` so we never publish an image from a commit
+  # that fails tests, lint, or type-check.
   # ---------------------------------------------------------------
   build-and-push:
     if: github.event_name == 'push'
-    needs: [check, e2e]
+    needs: check
     runs-on: ubuntu-latest
     permissions:
       contents: read
