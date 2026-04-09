@@ -139,31 +139,25 @@ describe('Project Operations — Transitions', () => {
   // ---------------------------------------------------------------
   describe('Transition backward (success)', () => {
     it('moves a project from in_arbeit back to geplant', async () => {
-      // Find a project in "in_arbeit" state (AT-9 transitioned one there).
-      // If none exists, transition one forward first to set up state.
+      // Explicit setup: transition a `geplant` project forward to `in_arbeit`
+      // before testing the backward path. This keeps the test independent of
+      // prior test execution — AT-9 and this test no longer share state, so
+      // reordering or `--grep` filtering cannot break this case.
       const listRes = await authGet(token, '/api/projects');
-      const projects = listRes.json().data;
-      let inArbeitProject = projects.find((p: Record<string, unknown>) => p.status === 'in_arbeit');
+      const geplantProject = listRes
+        .json()
+        .data.find((p: Record<string, unknown>) => p.status === 'geplant');
+      expect(geplantProject).toBeDefined();
 
-      // Fallback: if no in_arbeit project exists, create one by transitioning forward
-      if (!inArbeitProject) {
-        const geplantProject = projects.find(
-          (p: Record<string, unknown>) => p.status === 'geplant',
-        );
-        expect(geplantProject).toBeDefined();
-        const fwdRes = await authPost(
-          token,
-          `/api/projects/${geplantProject.id}/transition/forward`,
-        );
-        expect(fwdRes.statusCode).toBe(200);
-        inArbeitProject = fwdRes.json();
-      }
-
+      const fwdRes = await authPost(token, `/api/projects/${geplantProject.id}/transition/forward`);
+      expect(fwdRes.statusCode).toBe(200);
+      const inArbeitProject = fwdRes.json();
       expect(inArbeitProject.status).toBe('in_arbeit');
 
       const originalStatusChangedAt = inArbeitProject.statusChangedAt;
       const originalUpdatedAt = inArbeitProject.updatedAt;
 
+      // Now the actual assertion: backward from in_arbeit returns to geplant.
       const res = await authPost(token, `/api/projects/${inArbeitProject.id}/transition/backward`);
 
       expect(res.statusCode).toBe(200);
