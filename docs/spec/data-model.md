@@ -215,7 +215,7 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 
 - If both `plannedStart` and `plannedEnd` are provided, `plannedEnd` must not be before `plannedStart`.
 - Either date may be null (cleared). Setting only `plannedStart` without `plannedEnd` is valid (renders as single-day block in calendar).
-- Setting only `plannedEnd` without `plannedStart` is not valid — the API rejects this combination.
+- Setting only `plannedEnd` without `plannedStart` is not valid — the API rejects this combination, **and the database enforces the same invariant via the `projects_end_requires_start` CHECK constraint**. This is defense in depth for direct DB writes (seed scripts, migrations, manual SQL) that bypass the route layer.
 - The API rejects all invalid date combinations.
 
 ### 6.9 Soft Deletes
