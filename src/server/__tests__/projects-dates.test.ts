@@ -184,4 +184,24 @@ describe('Project Operations — Dates', () => {
       expect(res.json().code).toBe('NOT_FOUND');
     });
   });
+
+  // ---------------------------------------------------------------
+  // Schema validation: regression guard for the "Fastify schema errors
+  // rewritten as 500" bug. Before the fix the global error handler only
+  // caught AppError + 429, so any schema validation failure fell through
+  // to serverError(). Now ajv failures are mapped to 422 VALIDATION_ERROR.
+  // ---------------------------------------------------------------
+  describe('PATCH dates with malformed body', () => {
+    it('returns 422 VALIDATION_ERROR for wrong type (not 500)', async () => {
+      const listRes = await authGet(token, '/api/projects');
+      const project = listRes.json().data[0];
+
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: 42, // wrong type: number instead of date string
+      });
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+    });
+  });
 });

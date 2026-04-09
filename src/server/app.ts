@@ -15,7 +15,7 @@ import type { Database } from './db/connection.js';
 import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { projectBulkRoutes } from './routes/projects-bulk.js';
-import { AppError, rateLimited, serverError } from './errors.js';
+import { AppError, rateLimited, serverError, validationError } from './errors.js';
 
 export interface AppOptions {
   logger?: boolean;
@@ -37,14 +37,27 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
       return reply.code(error.statusCode).send(error.toResponse());
     }
 
+    const fastifyErr = error as Error & { statusCode?: number; validation?: unknown[] };
+
+    // Fastify's built-in JSON Schema validator (ajv) throws a FastifyError with
+    // a `validation` array when the request body/params/querystring does not
+    // conform to the route schema. Previously these fell through to serverError()
+    // below, so every 400 Bad Request was rewritten as 500 SERVER_ERROR — hiding
+    // the root cause from the client and tripping 5xx alerting on every malformed
+    // request. Map them to a proper 422 VALIDATION_ERROR with the validation
+    // details preserved so callers can display meaningful field-level feedback.
+    if (fastifyErr.validation) {
+      const err = validationError('Ungültige Eingabe.', fastifyErr.validation);
+      return reply.code(err.statusCode).send(err.toResponse());
+    }
+
     // @fastify/rate-limit throws a vanilla Error with statusCode 429 when
     // a limit is exceeded. Without this branch it would fall through to
     // serverError() below and legitimate rate-limit responses would be
     // rewritten as 500 SERVER_ERROR — hiding the real reason from the
     // client and tripping any 5xx alerting. The plugin sets Retry-After
     // before throwing, so reply.code + send preserves the header.
-    const statusCode = (error as Error & { statusCode?: number }).statusCode;
-    if (statusCode === 429) {
+    if (fastifyErr.statusCode === 429) {
       const err = rateLimited();
       return reply.code(err.statusCode).send(err.toResponse());
     }
