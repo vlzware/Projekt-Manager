@@ -119,7 +119,7 @@ All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives h
 
 | Method | Path | Auth | Permission | Rate limit | Purpose |
 |---|---|---|---|---|---|
-| GET | `/api/health` | none | — | none | Liveness probe; does not touch the database |
+| GET | `/api/health` | none | — | none | Liveness probe; runs `SELECT 1` on the DB and a `HeadBucket` on MinIO in parallel. Returns `{status,checks:{db,storage}}`; 503 on any probe failure. See #48 |
 | POST | `/api/auth/login` | none | — | 5 / 1 min | Login; sets HttpOnly `session` cookie |
 | POST | `/api/auth/logout` | session | — | none | Invalidates the current session |
 | GET | `/api/auth/me` | session | — | none | Current user profile |

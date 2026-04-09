@@ -16,8 +16,10 @@ import { buildApp } from './app.js';
 import { bootstrapAdminIfEmpty } from './bootstrap.js';
 import { validateEnv } from './config/env.js';
 import { createDatabase } from './db/connection.js';
+import { probeHealth } from './health.js';
 import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
+import { createStorageClient } from './storage/client.js';
 
 const HOST = '0.0.0.0';
 
@@ -97,9 +99,26 @@ async function start(): Promise<void> {
 
   const app = buildApp({ logger: true, db });
 
-  // Health-check endpoint (outside auth-guarded routes)
+  // Storage client for the health probe. Instantiated once at startup and
+  // reused across health requests. The existing routes do not use storage
+  // yet (walking skeleton), but #48 still wants MinIO liveness surfaced by
+  // /api/health so operational outages show up before they cascade.
+  const storageClient = createStorageClient({
+    endpoint: env.STORAGE_ENDPOINT,
+    bucket: env.STORAGE_BUCKET,
+    accessKey: env.STORAGE_ACCESS_KEY,
+    secretKey: env.STORAGE_SECRET_KEY,
+  });
+
+  // Health-check endpoint (outside auth-guarded routes). Real probe — runs
+  // a trivial DB query and a HeadBucket against MinIO. Returns 503 if
+  // either check fails, so the Docker healthcheck, smoke-test scripts, and
+  // any future load balancer all see the actual state of the app's
+  // dependencies instead of a hard-coded `ok`. See #48.
   app.get('/api/health', async (_request, reply) => {
-    return reply.code(200).send({ status: 'ok' });
+    const health = await probeHealth(pool, storageClient);
+    const code = health.status === 'ok' ? 200 : 503;
+    return reply.code(code).send(health);
   });
 
   // Serve the Vite-built frontend from dist/ (production).

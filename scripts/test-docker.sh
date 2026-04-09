@@ -61,9 +61,15 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-# Verify response body
+# Verify response body. #48 upgraded the health probe to report
+# per-dependency state; the top-level "status":"ok" only surfaces if both
+# the DB and storage liveness checks passed. A degraded state returns 503,
+# which the curl -sf above already rejects, so reaching this line means we
+# got a 200. Tighten the grep to the specific status field so a future
+# schema change that keeps the word "ok" elsewhere cannot mask a
+# regression.
 HEALTH=$(curl -sf http://localhost:3000/api/health)
-if echo "$HEALTH" | grep -q '"ok"'; then
+if echo "$HEALTH" | grep -q '"status":"ok"'; then
   echo "PASS: health endpoint returned ok"
 else
   echo "FAIL: unexpected health response: $HEALTH"
