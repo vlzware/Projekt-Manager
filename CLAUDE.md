@@ -34,3 +34,8 @@ Many details are deliberately left open until their iteration. When work hits so
 1. Stop — do not assume.
 2. Flag what is undefined and why it blocks.
 3. When decided — suggest recording it as an ADR.
+
+## Testing
+- **Touching anything under `e2e/` means running Playwright (`npx playwright test` or `npm run test:e2e`) before declaring done.** `npm run test` / `vitest` does not cover E2E — the vitest config excludes `e2e/**`. A refactor that compiles and type-checks can still fail Playwright (e.g. state pollution between split tests), and CI does not currently run Playwright, so "CI green" is not a substitute. If Playwright cannot run in the current environment, say so explicitly — do not silently skip.
+- Touching anything under `src/` means running `vitest` (via `npm run test` or `npm run test:coverage`) as part of the DoD.
+- Changing a test file is not done until it has been executed. "Written" ≠ "passed".
