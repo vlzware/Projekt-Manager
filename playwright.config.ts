@@ -59,11 +59,14 @@ export default defineConfig({
 
     // 3. Smoke test — intentionally unauthenticated. smoke.spec.ts
     //    exercises the login round-trip itself, so it must start from
-    //    a clean logged-out state. Keeping this as a dedicated project
-    //    (instead of overriding storageState per-file) makes the
-    //    intent explicit and avoids the dependency on the setup job.
+    //    a clean logged-out state (no `storageState` in this project).
+    //    BUT it must still depend on `setup` because setup reseeds the
+    //    database: without the dependency, smoke would run in parallel
+    //    with the TRUNCATE CASCADE in auth.setup.ts and race the user
+    //    it tries to log in as.
     {
       name: 'smoke',
+      dependencies: ['setup'],
       testMatch: /smoke\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
