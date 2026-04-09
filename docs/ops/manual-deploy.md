@@ -77,34 +77,34 @@ The GHCR image for that SHA must still exist. Retention is the GHCR built-in pol
 
 ### Layout
 
-The VPS holds exactly one secret artifact: `/opt/projekt-manager/secrets.env.age`. It contains the runtime secrets required by `docker-compose.yml`:
+The VPS holds exactly one secret artifact: `/opt/projekt-manager/secrets.env.age`. It contains the three shell-env secrets that `docker-compose.yml` substitutes via `${VAR}`:
 
 - `POSTGRES_PASSWORD`
 - `MINIO_ROOT_PASSWORD`
-- `STORAGE_SECRET_KEY`
 - `CLOUDFLARE_API_TOKEN`
+
+**`STORAGE_SECRET_KEY` is intentionally not in this list.** The compose file derives it at container runtime from `MINIO_ROOT_PASSWORD` via `STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}` in `services.app.environment` — so including it in `secrets.env.age` would be dead code. Inside the `app` container, `STORAGE_SECRET_KEY` is present and equal to `MINIO_ROOT_PASSWORD`.
 
 Format is shell-compatible `KEY='value'` lines, one per secret. `scripts/deploy.sh` runs `source <(age -d secrets.env.age)` under `set -a` so every assigned variable is auto-exported into the environment that `docker compose` reads.
 
 ### Rotating a secret
 
 ```bash
-# On your workstation (not the VPS):
+# On your workstation (not the VPS) — age must be installed locally:
 cat > /tmp/secrets.env <<'EOF'
 POSTGRES_PASSWORD='new-value'
 MINIO_ROOT_PASSWORD='...'
-STORAGE_SECRET_KEY='...'
 CLOUDFLARE_API_TOKEN='...'
 EOF
 
 age -p -o secrets.env.age /tmp/secrets.env   # enter passphrase
 shred -u /tmp/secrets.env
 
-scp secrets.env.age deploy@vps:/opt/projekt-manager/secrets.env.age
-ssh vps "sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age && sudo chmod 0640 /opt/projekt-manager/secrets.env.age"
+scp secrets.env.age <your-sudo-user>@vps:/tmp/secrets.env.age
+ssh <your-sudo-user>@vps "sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age && sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age && sudo chmod 0600 /opt/projekt-manager/secrets.env.age"
 
 # Trigger a deploy so the new value takes effect:
-ssh vps "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
+ssh <your-sudo-user>@vps "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
 ```
 
 Keep the passphrase in the project's password manager. It is the single unlock for everything on the VPS.
@@ -115,7 +115,7 @@ The encrypted file is not irreplaceable. If the passphrase is lost:
 
 1. Retrieve or regenerate each secret from its system of record:
    - `POSTGRES_PASSWORD` — reset via `ALTER USER` from the `postgres` superuser account, or re-provision the container and restore from backup
-   - `MINIO_ROOT_PASSWORD`, `STORAGE_SECRET_KEY` — reset via the MinIO admin console or `mc admin user` after re-provisioning
+   - `MINIO_ROOT_PASSWORD` — reset via the MinIO admin console or `mc admin user` after re-provisioning (the app container's `STORAGE_SECRET_KEY` follows automatically — it is derived from `MINIO_ROOT_PASSWORD` in `docker-compose.yml`)
    - `CLOUDFLARE_API_TOKEN` — regenerate in the Cloudflare dashboard under the account's API Tokens panel (scope: `Zone:DNS:Edit` + `Zone:Zone:Read` on the managed zone)
 2. Rebuild `secrets.env` with the new values, pick a fresh passphrase, `age -p -o secrets.env.age`, and upload (same as the rotation flow above)
 3. Record the new passphrase in the project password manager

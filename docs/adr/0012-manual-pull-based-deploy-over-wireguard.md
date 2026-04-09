@@ -45,7 +45,7 @@ The `deploy` user account itself is kept: it still owns `/opt/projekt-manager`, 
 ### What's new
 
 - `scripts/deploy.sh` — committed to the repo, run on the VPS by the operator via `sudo -u deploy`. Takes an optional git ref (`origin/main` default, explicit SHA for rollback). Fetches, checks out, asserts SHA, decrypts secrets, pulls the GHCR image, `docker compose up -d`, polls `/api/health`.
-- `/opt/projekt-manager/secrets.env.age` — age-encrypted (passphrase) environment file holding the four secrets that currently live in `docker-compose.yml`'s `environment:` via host env vars (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `STORAGE_SECRET_KEY`, `CLOUDFLARE_API_TOKEN`). The plaintext file is never written to disk on the VPS; `scripts/deploy.sh` sources the decrypted stream through process substitution (`source <(age -d …)`) so plaintext flows through an anonymous file descriptor the shell reads and discards.
+- `/opt/projekt-manager/secrets.env.age` — age-encrypted (passphrase) environment file holding the three shell-env secrets that `docker-compose.yml` substitutes via `${VAR}`: `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`. Note that `STORAGE_SECRET_KEY` is **not** in this list — the compose file derives it at runtime via `STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}` in `services.app.environment`, so putting it in shell env would be dead code. The plaintext file is never written to disk on the VPS; `scripts/deploy.sh` sources the decrypted stream through process substitution (`source <(age -d …)`) so plaintext flows through an anonymous file descriptor the shell reads and discards.
 
 ### Operator flow
 

@@ -454,26 +454,26 @@ sudo -u deploy git clone <repo-ssh-url> /opt/projekt-manager
 sudo -u deploy cp /opt/projekt-manager/.env.example /opt/projekt-manager/.env
 ```
 
-Edit `/opt/projekt-manager/.env` and set these values. The four secrets marked **[secret]** must **not** live in `.env` after the cutover — they go in `/opt/projekt-manager/secrets.env.age` (see Phase 9 and [manual-deploy.md § Secrets](manual-deploy.md#secrets)). They are listed here only to show how they are generated.
+Edit `/opt/projekt-manager/.env` and set these values. The three secrets marked **[secret]** must **not** live in `.env` after the cutover — they go in `/opt/projekt-manager/secrets.env.age` (see Phase 9 and [manual-deploy.md § Secrets](manual-deploy.md#secrets)). They are listed here only to show how they are generated.
 
-| Variable                       | What to set                                                    | Notes                                                                                                                                 |
-| ------------------------------ | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `POSTGRES_PASSWORD`            | `openssl rand -base64 24`                                      | **[secret]** → `secrets.env.age`                                                                                                      |
-| `DATABASE_URL`                 | `postgresql://pm:${POSTGRES_PASSWORD}@db:5432/projekt_manager` | Non-secret; `docker-compose.yml` composes it from `POSTGRES_PASSWORD` at runtime                                                      |
-| `MINIO_ROOT_USER`              | A username you choose                                          | MinIO admin account (non-secret username)                                                                                             |
-| `MINIO_ROOT_PASSWORD`          | `openssl rand -base64 24`                                      | **[secret]** → `secrets.env.age`                                                                                                      |
-| `STORAGE_ACCESS_KEY`           | Same value as `MINIO_ROOT_USER`                                | Non-secret                                                                                                                            |
-| `STORAGE_SECRET_KEY`           | Same value as `MINIO_ROOT_PASSWORD`                            | **[secret]** → `secrets.env.age`                                                                                                      |
-| `DOMAIN`                       | Fully qualified domain for Caddy / TLS                         | Caddy uses this for TLS certificate provisioning                                                                                      |
-| `CLOUDFLARE_API_TOKEN`         | Scoped Cloudflare API token                                    | **[secret]** → `secrets.env.age`. Permissions: `Zone:Zone:Read` + `Zone:DNS:Edit` on the single managed zone. NOT the Global API Key. |
-| `WG_BIND_IP`                   | `10.213.17.1`                                                  | WireGuard server interface address. Caddy publishes `:443` only on this host IP.                                                      |
-| `NODE_ENV`                     | `production`                                                   | Enables security checks, disables seeding                                                                                             |
-| `SEED`                         | `false`                                                        | Never seed in production                                                                                                              |
-| `BOOTSTRAP_ADMIN_USERNAME`     | Strong admin username                                          | First-deploy only — see Phase 8.1. Leave unset on subsequent deploys.                                                                 |
-| `BOOTSTRAP_ADMIN_PASSWORD`     | `openssl rand -base64 24`                                      | First-deploy only — see Phase 8.1. Must pass the standard password policy.                                                            |
-| `BOOTSTRAP_ADMIN_DISPLAY_NAME` | Human-readable name (optional)                                 | First-deploy only — defaults to the username if unset.                                                                                |
+| Variable                       | What to set                                                    | Notes                                                                                                                                                |
+| ------------------------------ | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD`            | `openssl rand -base64 24`                                      | **[secret]** → `secrets.env.age`                                                                                                                     |
+| `DATABASE_URL`                 | `postgresql://pm:${POSTGRES_PASSWORD}@db:5432/projekt_manager` | Non-secret; `docker-compose.yml` composes it from `POSTGRES_PASSWORD` at runtime                                                                     |
+| `MINIO_ROOT_USER`              | A username you choose                                          | MinIO admin account (non-secret username)                                                                                                            |
+| `MINIO_ROOT_PASSWORD`          | `openssl rand -base64 24`                                      | **[secret]** → `secrets.env.age`                                                                                                                     |
+| `STORAGE_ACCESS_KEY`           | Same value as `MINIO_ROOT_USER`                                | Non-secret                                                                                                                                           |
+| `STORAGE_SECRET_KEY`           | _Do not set in `.env`_                                         | Derived at runtime by `docker-compose.yml` (`STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}` in `services.app.environment`). Dead code if set in `.env`. |
+| `DOMAIN`                       | Fully qualified domain for Caddy / TLS                         | Caddy uses this for TLS certificate provisioning                                                                                                     |
+| `CLOUDFLARE_API_TOKEN`         | Scoped Cloudflare API token                                    | **[secret]** → `secrets.env.age`. Permissions: `Zone:Zone:Read` + `Zone:DNS:Edit` on the single managed zone. NOT the Global API Key.                |
+| `WG_BIND_IP`                   | `10.213.17.1`                                                  | WireGuard server interface address. Caddy publishes `:443` only on this host IP.                                                                     |
+| `NODE_ENV`                     | `production`                                                   | Enables security checks, disables seeding                                                                                                            |
+| `SEED`                         | `false`                                                        | Never seed in production                                                                                                                             |
+| `BOOTSTRAP_ADMIN_USERNAME`     | Strong admin username                                          | First-deploy only — see Phase 8.1. Leave unset on subsequent deploys.                                                                                |
+| `BOOTSTRAP_ADMIN_PASSWORD`     | `openssl rand -base64 24`                                      | First-deploy only — see Phase 8.1. Must pass the standard password policy.                                                                           |
+| `BOOTSTRAP_ADMIN_DISPLAY_NAME` | Human-readable name (optional)                                 | First-deploy only — defaults to the username if unset.                                                                                               |
 
-After the ADR-0012 cutover, `.env` must not contain the four `[secret]` rows above; they live only in `secrets.env.age`. Use Phase 9 to build the encrypted file, then remove the plaintext secret lines from `.env`.
+After the ADR-0012 cutover, `.env` must not contain the three `[secret]` rows above; they live only in `secrets.env.age`. Use Phase 9 to build the encrypted file, then remove the plaintext secret lines from `.env`.
 
 3. Complete Phase 9 to build `secrets.env.age`, then start the stack via the deploy script:
 
@@ -626,26 +626,28 @@ sudo -u deploy docker login ghcr.io -u vlzware --password-stdin <<< '<PAT>'
 sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main
 ```
 
-4. **Create the encrypted secrets file** on your workstation and scp it to the VPS. Keep the passphrase in the password manager.
+4. **Create the encrypted secrets file** on your workstation and scp it to the VPS. Keep the passphrase in the password manager. `age` must be installed locally too.
 
 ```bash
 # Workstation:
+sudo apt install -y age   # if not already installed on your workstation
 cat > /tmp/secrets.env <<'EOF'
 POSTGRES_PASSWORD='...'
 MINIO_ROOT_PASSWORD='...'
-STORAGE_SECRET_KEY='...'
 CLOUDFLARE_API_TOKEN='...'
 EOF
 age -p -o secrets.env.age /tmp/secrets.env   # enter passphrase
 shred -u /tmp/secrets.env
 
-scp secrets.env.age deploy@vps:/tmp/secrets.env.age
+scp secrets.env.age <your-sudo-user>@vps:/tmp/secrets.env.age
 
-# VPS (via sudo account):
+# VPS (via sudo account — deploy has no inbound SSH after the cutover):
 sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
 sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
-sudo chmod 0640 /opt/projekt-manager/secrets.env.age
+sudo chmod 0600 /opt/projekt-manager/secrets.env.age
 ```
+
+Note: `STORAGE_SECRET_KEY` is intentionally not in the secrets file — `docker-compose.yml` derives it from `MINIO_ROOT_PASSWORD` via `STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}` in `services.app.environment`. Including it would be dead code.
 
 5. **Remove the plaintext secrets from `.env`** — the four `[secret]` rows listed in Phase 8 must only exist in `secrets.env.age` going forward.
 
