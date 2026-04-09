@@ -69,6 +69,8 @@ curl -sS https://${DOMAIN}/api/health
 
 After `docker compose up -d`, the workflow polls the app container's `/api/health` endpoint for up to 60 seconds by running `node -e fetch(...)` inside the app container via `docker compose exec`. This bypasses Caddy and the TLS chain entirely — the TLS path is not reachable from GitHub runners (Caddy binds to the WireGuard interface only), so the smoke test validates the application stack (app + db + storage) without depending on the network-layer topology. Verification of the full TLS chain is a manual step from a WireGuard client, documented in `docs/ops/server-setup.md` Phase 9.
 
+Since #48 the `/api/health` endpoint runs real liveness probes against the DB (`SELECT 1`) and object storage (`HeadBucket`), returning `{status:"ok", checks:{db:"ok", storage:"ok"}}` with HTTP 200 on a fully-healthy stack and `{status:"degraded", ...}` with HTTP 503 when any dependency fails. The smoke test's `r.ok` check correctly interprets 503 as failure.
+
 If the health endpoint does not respond within 60 seconds, the workflow:
 
 1. Dumps the last 50 lines of container logs

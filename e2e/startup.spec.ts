@@ -11,7 +11,12 @@ test.describe('AC-1: local dev stack startup', () => {
   test('health endpoint responds', async ({ request }) => {
     const res = await request.get('/api/health');
     expect(res.ok()).toBeTruthy();
-    expect(await res.json()).toEqual({ status: 'ok' });
+    // #48 upgraded the probe: it now reports per-dependency state.
+    // The shape is { status, checks: { db, storage } } — in the local
+    // dev stack both should report `ok`.
+    const body = await res.json();
+    expect(body.status).toBe('ok');
+    expect(body.checks).toEqual({ db: 'ok', storage: 'ok' });
   });
 
   test('seed user can log in', async ({ request }) => {
