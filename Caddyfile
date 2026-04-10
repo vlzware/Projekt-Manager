@@ -19,9 +19,9 @@
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 	}
 
-	# Health check endpoint, served outside the reverse proxy so it works
-	# even if the upstream app is down. Used by the support runbook to let
-	# users self-diagnose "is the tunnel up" vs "is the app up".
+	# Health check endpoint, served directly by Caddy (not proxied to the app)
+	# so it works even if the upstream app is down. Used by the support runbook
+	# to let users self-diagnose "is the tunnel up" vs "is the app up".
 	handle /.well-known/healthz {
 		respond "ok" 200
 	}

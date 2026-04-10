@@ -58,6 +58,12 @@ async function start(): Promise<void> {
   // --- Production safety checks ---
   if (isProduction) {
     rejectDevCredentials();
+    if (env.ALLOW_INSECURE_HTTP === 'true') {
+      throw new Error(
+        'Refusing to start: ALLOW_INSECURE_HTTP=true in production. ' +
+          'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.',
+      );
+    }
   }
 
   if (env.ALLOW_INSECURE_HTTP === 'true') {

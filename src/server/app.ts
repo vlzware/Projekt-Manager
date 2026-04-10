@@ -72,7 +72,8 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   app.register(cookie);
 
   // Security headers — CSP allows only same-origin resources,
-  // HSTS enforces HTTPS, X-Frame-Options blocks framing.
+  // HSTS enforces HTTPS (when TLS is active), X-Frame-Options blocks framing.
+  const insecureHttp = process.env.ALLOW_INSECURE_HTTP === 'true';
   app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
@@ -86,19 +87,24 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
         frameAncestors: ["'none'"],
       },
     },
-    hsts: {
-      // 180 days — helmet's default. The previous value (2 years with
-      // `preload: true`) was chosen with the browser HSTS preload list in
-      // mind, but preload is a one-way commitment: removal from the list
-      // takes months and requires a manual application. The project is
-      // not yet ready for that commitment (LLM-generated code, not yet
-      // independently audited — see ADR-0008). 180 days is long enough
-      // that returning visitors always see HTTPS, short enough that a
-      // future rollback is tractable. See #56 for the decision.
-      maxAge: 15552000,
-      includeSubDomains: true,
-      preload: false,
-    },
+    // Disable HSTS in HTTP-only evaluation mode — the header is meaningless
+    // over plain HTTP and creates browser state conflicts when the same
+    // browser later visits the HTTPS version (or vice versa).
+    hsts: insecureHttp
+      ? false
+      : {
+          // 180 days — helmet's default. The previous value (2 years with
+          // `preload: true`) was chosen with the browser HSTS preload list in
+          // mind, but preload is a one-way commitment: removal from the list
+          // takes months and requires a manual application. The project is
+          // not yet ready for that commitment (LLM-generated code, not yet
+          // independently audited — see ADR-0008). 180 days is long enough
+          // that returning visitors always see HTTPS, short enough that a
+          // future rollback is tractable. See #56 for the decision.
+          maxAge: 15552000,
+          includeSubDomains: true,
+          preload: false,
+        },
     frameguard: { action: 'deny' },
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   });

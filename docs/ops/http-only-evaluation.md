@@ -19,7 +19,7 @@ docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
 
 `.env.example` has dev-ready defaults. The compose override (`docker-compose.http.yml`) replaces the custom Caddy build with stock Caddy on port 80 and sets `NODE_ENV=development` so seeding and dev credentials work.
 
-If the app image is not available from GHCR, compose builds it from source (`build: .` in the override). First build takes a few minutes.
+The HTTP override includes `build: .`, so the first `docker compose up` builds the app image from source locally (no GHCR pull needed). First build takes a few minutes.
 
 ## Remote access
 

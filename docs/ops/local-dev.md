@@ -37,7 +37,9 @@ Open `http://localhost:5173`. Vite proxies `/api/*` to `http://localhost:3000`.
 | `inhaber` | owner | `changeme` |
 | `buero` | office | `changeme` |
 | `arbeiter1` | worker | `changeme` |
+| `arbeiter2` | worker | `changeme` |
 | `buchhalter` | bookkeeper | `changeme` |
+| `deaktiviert` | worker (inactive) | `changeme` |
 
 ## Stop / reset
 
