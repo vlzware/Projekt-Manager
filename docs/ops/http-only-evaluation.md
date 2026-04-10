@@ -9,17 +9,34 @@ See [README § Quick Start](../../README.md#quick-start) for how this fits along
 
 ## Quick start
 
+Both options start with:
+
 ```bash
-cp .env.example .env
-
-docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
-
-# Open http://localhost — login with inhaber / changeme
+cp .env.example .env                  # first time only — dev-ready, no edits needed
 ```
 
 `.env.example` has dev-ready defaults. The compose override (`docker-compose.http.yml`) replaces the custom Caddy build with stock Caddy on port 80 and sets `NODE_ENV=development` so seeding and dev credentials work.
 
-The HTTP override includes `build: .`, so the first `docker compose up` builds the app image from source locally (no GHCR pull needed). First build takes a few minutes.
+### Option A — Pull from GHCR
+
+Uses the pre-built image from GitHub Container Registry. Requires [GHCR authentication](#ghcr-authentication).
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.http.yml pull
+docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
+# Open http://localhost — login with inhaber / changeme
+```
+
+### Option B — Build locally
+
+Builds the app image from source. No registry access needed.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.http.yml up -d --build
+# Open http://localhost — login with inhaber / changeme
+```
+
+First build takes a few minutes.
 
 ## Remote access
 

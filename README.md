@@ -43,13 +43,7 @@ npm run dev                           # starts backend + frontend at http://loca
 
 ### Full stack (HTTP)
 
-Runs the full production stack (app image, Caddy, Postgres, MinIO) in Docker over plain HTTP. See [docs/ops/http-only-evaluation.md](docs/ops/http-only-evaluation.md) for details.
-
-```bash
-cp .env.example .env
-docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
-# Open http://localhost — login with inhaber / changeme
-```
+Runs the full production stack (app image, Caddy, Postgres, MinIO) in Docker over plain HTTP — either by pulling the pre-built image from GHCR or building from source. See [docs/ops/http-only-evaluation.md](docs/ops/http-only-evaluation.md) for setup and the two workflow options.
 
 ### Production
 
