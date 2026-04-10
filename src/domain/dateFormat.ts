@@ -1,5 +1,6 @@
 import { format, parseISO } from 'date-fns';
 import { LOCALE } from '@/config/localeConfig';
+import { STRINGS } from '@/config/strings';
 
 /**
  * Format an ISO date string to German DD.MM.YYYY format.
@@ -19,7 +20,7 @@ export function formatDateShortDE(isoDate: string): string {
  * Format a date range for display. Uses short format for start if same year.
  */
 export function formatDateRange(start?: string, end?: string): string {
-  if (!start && !end) return 'Kein Termin';
+  if (!start && !end) return STRINGS.projects.noDate;
   if (start && !end) return formatDateDE(start);
   if (start && end) {
     const startDate = parseISO(start);
@@ -29,7 +30,7 @@ export function formatDateRange(start?: string, end?: string): string {
     }
     return `${formatDateDE(start)} – ${formatDateDE(end)}`;
   }
-  return 'Kein Termin';
+  return STRINGS.projects.noDate;
 }
 
 /**
