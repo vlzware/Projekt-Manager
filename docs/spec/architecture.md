@@ -1,6 +1,6 @@
 # Architecture, Configuration, NFRs and Security
 
-*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
 
 > **This document is the architectural contract** — what must hold for any code in this repository to be considered correct. For the **navigation guide** (tech stack overview, module map with file paths, request lifecycle, "how to extend" recipes), see [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repo root. The two documents serve different readers: this one is for spec audits, the root one is for finding your way around the code.
 
@@ -23,7 +23,7 @@ The system is organized into six responsibility layers.
 |---|---|
 | **Config** | State definitions, thresholds, colors, company assumptions, role definitions. Imported by other layers, imports nothing. |
 | **Domain** | Pure functions: transition rules, aging calculation, validation, types. Never imports from state, API, storage, or UI. |
-| **Storage** | Encapsulates all database and object storage operations. Exposes a repository-style interface. Imported only by the API layer. |
+| **Storage** | Encapsulates all database and object storage operations. Exposes a repository-style interface. Imported only by the API layer. Note: authentication middleware (`src/server/middleware/`) accesses the session repository directly for session validation. This is architecturally part of the API layer's auth concern, not a layer violation. |
 | **API** | Handles authentication, authorization, request validation, and orchestrates storage operations. Exposes the operations defined in [api.md](api.md). Imports from domain and storage. |
 | **State** | Fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access. |
 | **UI** | Presentation only. May import from domain for types. Dispatches actions to the state layer. |
@@ -41,7 +41,7 @@ The domain layer is shared: both the API (server-side) and the state layer (clie
 
 The state layer is a client-side cache delegating to the API.
 
-**State:** the full project list (fetched from API), the authenticated user, an optional active filter (by workflow state), and the active view (Kanban or calendar).
+**State:** the full project list (fetched from API), the authenticated user, an optional active filter (by workflow state or aged-buffer subset), the active view (Kanban or Kalender), a confirm-dialog store (modal state for transition confirmations), mutation tracking (in-flight flag, error message), selected project ID (detail panel), and session-checked flag.
 
 **Mutations** (all persisted mutations go through the API):
 - Transition a project forward or backward by one state → call API, update local state on success
@@ -56,7 +56,7 @@ The state layer is a client-side cache delegating to the API.
 - Summary: count of projects per action state, count of aged buffer items per state with threshold, count of projects without planned dates
 - Current authenticated user
 
-**Known debt**: state actions mutate silently. Future iterations need middleware or event hooks for audit trail and notification triggers.
+The server-side event bus (`events.ts`) provides the hook mechanism — `project.transitioned` and `project.dates_changed` events are emitted. Remaining: connect actual subscribers (audit logger, notification sender). Client-side state middleware is not yet implemented.
 
 ### 11.4 Object Storage Module
 
@@ -80,14 +80,14 @@ The system must not close doors that later iterations need open.
 | Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently | Kanban and Calendar are coupled to each other |
 | Adding fields to Project | Interface with optional fields; UI tolerates missing data | Components crash on undefined fields |
 | Adding file uploads / attachments | Object storage module implemented and tested; Project model accepts optional attachments | Data layer assumes all project data fits in a single flat object |
-| Adding authentication / roles | Roles and permissions defined in configuration; API enforces authorization on every request | User identity baked into component logic |
-| Adding notifications | State transitions go through a central layer that can be extended with middleware | Transitions are handled inline in UI event handlers |
-| Adding project creation / deletion | API and storage contracts support create operations; front-end state layer can accommodate list changes | API designed only for reads + transitions with no room for new operations |
+| Adding authentication / roles | Implemented: 4 roles (owner, office, worker, bookkeeper) with a permission matrix. API enforces `requirePermission()` on protected routes. | User identity baked into component logic |
+| Adding notifications | Server-side event bus implemented (`events.ts`). Subscribers can be added without changing the transition logic. | Transitions are handled inline in UI event handlers |
+| Adding project creation / deletion | Bulk import endpoint implemented (`POST /api/projects/bulk/import`). Single-item create and delete are the remaining doors. | API designed only for reads + transitions with no room for new operations |
 | Extracting Customer entity | Customer is a nested object in Project, ready to be normalized into a separate table with a foreign key | Customer fields are spread across multiple flat columns with no grouping |
 | Connecting Worker entities to Users | `assignedWorkers` is a separate field; User entity exists with roles | Worker assignment is an unstructured string with no path to a User reference |
 | Adding a second authentication method | Auth logic is behind the API; session model is method-agnostic | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers) |
 | Multi-tenancy / multi-company | Configs are per-instance via environment; data model does not preclude adding tenant scoping later | Company names, branding, or workflow definitions are hardcoded in application code |
-| Multi-language (low priority) | UI strings are grouped in identifiable locations, not scattered | Strings are inline literals spread across dozens of files |
+| Multi-language (low priority) | Currently closed: German UI strings are inline literals spread across component files and server error factories. Extraction to a centralized strings layer is planned. | Currently closed — tracked for extraction in a future iteration |
 
 ### 11.6 Deployment Topology
 
@@ -105,11 +105,11 @@ The deployed demo must exercise the real production topology. The purpose of dep
 
 ### 11.7 Continuous Delivery Pipeline
 
-- **Trigger:** merge to `main`.
-- **Pre-deploy gate:** the pipeline must run the full test suite (lint, type-check, unit, component, integration) and succeed before deploying.
-- **Target:** the hosted environment described in 11.6.
-- A failed deployment must not take down the currently running system. The pipeline should support rolling back to the previous version. Specific rollback mechanisms are ADR decisions.
-- Environment separation (staging vs. production) and pipeline tooling are ADR decisions.
+- **CI trigger:** push or PR to `main` and `iteration/**` branches.
+- **CI gate:** the pipeline runs lint, type-check, format check, unit/component/integration tests, and build. Image is pushed to GHCR on push (not on PRs).
+- **Deploy:** manual, pull-based. The operator promotes a CI-built image to the hosted environment over WireGuard. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
+- A failed deployment must not take down the currently running system. The deploy script polls the health endpoint after container swap.
+- Environment separation and rollback mechanisms are documented in [docs/ops/manual-deploy.md](../../docs/ops/manual-deploy.md).
 
 ---
 
@@ -140,6 +140,8 @@ Values that may differ per customer and must not be hardcoded irreversibly:
 - Initial user and role setup defaults
 - Authentication parameters (session duration, password policy)
 - *Future:* notification recipients, event rules, per-role permission matrices
+
+Current implementation status: app name, branding, footer text, workflow state configuration (labels, colors, thresholds, collapse tiers) are centralized in config modules. Date/locale, authentication parameters, project numbering format, and company profile assumptions are centralized as constants but not yet runtime-configurable — changing them requires a code change and rebuild. Moving to runtime or environment-driven configuration is planned.
 
 ### 12.3 Configuration Requirements
 
@@ -213,7 +215,7 @@ Every new API endpoint must satisfy:
 2. **Authorization**: role-based permission check via `requirePermission()` (see `src/server/config/permissions.ts`).
 3. **Input validation**: Fastify JSON schema on request body and params (see [api.md section 14.2](api.md#142-operations)).
 4. **Error handling**: use `AppError`, no stack traces or DB field names leaked (see `src/server/errors.ts`).
-5. **Rate limiting**: configure on auth and mutation endpoints (see `app.ts` rate-limit setup).
+5. **Rate limiting**: configured on authentication endpoints (login, password change). Mutation endpoints are not rate-limited — at current scale with VPN-only access ([ADR-0008](../adr/0008-vpn-first-network-access.md)), this is a known, accepted limitation.
 6. **CSRF protection**: `SameSite=Strict` cookies + CSP headers (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md)).
 7. **Password handling**: never log or store plaintext (see [ADR-0006](../adr/0006-password-policy-nist-blocklist.md)).
 

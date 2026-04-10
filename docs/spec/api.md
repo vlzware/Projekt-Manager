@@ -1,6 +1,6 @@
 # API Specification
 
-*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
 
 ---
 
@@ -20,6 +20,12 @@ The API is the boundary between the front end and all persistent state. It repla
 ---
 
 ### 14.2 Operations
+
+#### 14.2.0 Health
+
+| Operation | Input | Output | Notes |
+|---|---|---|---|
+| **Health check** | — | status (`ok` or `degraded`), per-component checks (database, storage) | No authentication required. Returns degraded with component-level detail if any probe fails. Used by the deploy script for post-deploy verification. |
 
 #### 14.2.1 Authentication
 
@@ -51,7 +57,7 @@ All project operations require an authenticated session.
 Design notes:
 
 - **Transitions are explicit operations**, not generic field updates. This preserves the workflow rule that only adjacent states are reachable (see [ui.md — State Transitions](ui.md#91-state-transitions)) and makes the business rule enforceable server-side.
-- **No create or delete operations** in this iteration (see [index.md — Scope](index.md#22-out-of-scope)).
+- **Single-item project creation and deletion are deferred.** Bulk import is available (see [§14.2.4](#1424-bulk-operations)).
 - **Full project object returned** after every mutation so the client can update its local state without a separate fetch.
 - **Concurrent edit handling** (e.g., optimistic locking) is deferred. At current scale (1–5 users), last-write-wins is acceptable. A future iteration may introduce conflict detection when multi-user editing becomes frequent.
 - The project object returned by the API uses the shape defined in [data-model.md — Project Entity](data-model.md#51-project-entity), including nested `customer` and `address` objects.
@@ -90,9 +96,16 @@ Design notes:
 
 - All API operations require authentication (valid, active session).
 - User management (change own password) requires the authenticated user to be changing their own password.
-- No role-based restrictions on project operations in this iteration. All authenticated, active users can view all projects and perform transitions and date changes.
+- The system implements a basic role-based permission matrix. All authenticated, active users can view all projects (list, get). Project mutations (transitions, date changes, bulk import) require specific permissions granted by role:
 
-The authorization model is minimal by design. Future iterations will introduce role-based access control; the implementation should use a centralized auth check that can be extended, not scattered per-route checks.
+| Role | Permissions |
+|---|---|
+| owner | project:read, project:transition, project:dates, project:create, auth:change-password |
+| office | project:read, project:transition, project:dates, project:create, auth:change-password |
+| worker | project:read, auth:change-password |
+| bookkeeper | project:read, auth:change-password |
+
+Future iterations will add fine-grained permissions and per-role view restrictions.
 
 Design notes:
 
@@ -110,6 +123,8 @@ Every error response carries two components:
 | **Machine-readable code** | Programmatic handling by the client | `INVALID_CREDENTIALS`, `SESSION_EXPIRED`, `NOT_PERMITTED` |
 | **Human-readable message** | Display to the user (German, **[C]**) | `"Anmeldung fehlgeschlagen"`, `"Sitzung abgelaufen"` |
 
+An optional third component, `details`, may carry structured validation information (e.g., field-level errors from schema validation). Clients should handle its absence gracefully.
+
 #### 14.4.1 Error Categories
 
 The API must distinguish the following error categories. Each category has distinct client-side handling (see [ui.md — Asynchronous Mutation Behavior](ui.md#95-asynchronous-mutation-behavior)).
@@ -121,6 +136,9 @@ The API must distinguish the following error categories. Each category has disti
 | **Validation error** | Request is malformed or violates business rules (e.g., transition from `erledigt`, missing required field, invalid dates). | Show error message. Revert optimistic update if applicable. |
 | **Not found** | The requested entity (project or user ID) does not exist. | Show error message. Re-fetch project list to sync state. |
 | **Server error** | Unexpected internal failure. | Show generic error message. Do not expose internal details. |
+| **Rate limited** | Too many requests in the configured time window. | Show retry message. Back off before retrying. |
+
+The full set of machine-readable error codes: `INVALID_CREDENTIALS`, `UNAUTHENTICATED`, `SESSION_EXPIRED`, `NOT_PERMITTED`, `VALIDATION_ERROR`, `NOT_FOUND`, `RATE_LIMITED`, `SERVER_ERROR`.
 
 #### 14.4.2 Error Principles
 
