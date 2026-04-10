@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { BRANDING } from '@/config/brandingConfig';
+import { STRINGS } from '@/config/strings';
 import styles from './LoginForm.module.css';
 
 export function LoginForm() {
@@ -30,13 +31,13 @@ export function LoginForm() {
     <div className={styles.container}>
       <h1 className={styles.appName}>{BRANDING.appName}</h1>
       <form data-testid="login-form" className={styles.form} onSubmit={handleSubmit}>
-        <h2 className={styles.title}>Anmelden</h2>
+        <h2 className={styles.title}>{STRINGS.auth.loginButton}</h2>
 
         {authError && <div className={styles.error}>{authError}</div>}
 
         <div className={styles.field}>
           <label htmlFor="login-username" className={styles.label}>
-            Benutzername
+            {STRINGS.auth.username}
           </label>
           <input
             data-testid="login-username"
@@ -50,7 +51,7 @@ export function LoginForm() {
 
         <div className={styles.field}>
           <label htmlFor="login-password" className={styles.label}>
-            Passwort
+            {STRINGS.auth.password}
           </label>
           <input
             data-testid="login-password"
@@ -68,7 +69,7 @@ export function LoginForm() {
           className={styles.submitButton}
           disabled={isSubmitting || !username.trim() || !password.trim()}
         >
-          Anmelden
+          {STRINGS.auth.loginButton}
         </button>
       </form>
     </div>

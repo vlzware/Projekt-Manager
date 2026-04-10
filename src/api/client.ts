@@ -8,6 +8,8 @@
  * The store layer calls these functions instead of raw fetch().
  */
 
+import { STRINGS } from '@/config/strings';
+
 export interface ApiError {
   code: string;
   message: string;
@@ -60,8 +62,8 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       error: {
         code: 'NETWORK_ERROR',
         message: isNetwork
-          ? 'Netzwerkfehler. Bitte Verbindung überprüfen.'
-          : 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+          ? STRINGS.errors.networkError
+          : STRINGS.errors.mutationFailed,
       },
       sessionExpired: false,
     };
@@ -73,7 +75,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
     if (res.status === 401 && data.code === 'SESSION_EXPIRED') {
       return {
         ok: false,
-        error: { code: data.code, message: data.message ?? 'Sitzung abgelaufen.' },
+        error: { code: data.code, message: data.message ?? STRINGS.auth.sessionExpired },
         sessionExpired: true,
       };
     }
@@ -82,7 +84,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       ok: false,
       error: {
         code: data.code ?? 'API_ERROR',
-        message: data.message ?? 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+        message: data.message ?? STRINGS.errors.mutationFailed,
       },
       sessionExpired: false,
     };

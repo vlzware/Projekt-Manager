@@ -5,6 +5,7 @@ import { clearStoresOnLogout } from '@/state/store';
 import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
 import type { ViewMode } from '@/domain/types';
 import { BRANDING } from '@/config/brandingConfig';
+import { STRINGS } from '@/config/strings';
 import { SummaryArea } from './SummaryArea';
 import styles from './Header.module.css';
 
@@ -28,8 +29,8 @@ export function Header() {
   }, [dropdownOpen]);
 
   const views: { key: ViewMode; label: string }[] = [
-    { key: 'kanban', label: 'Kanban' },
-    { key: 'kalender', label: 'Kalender' },
+    { key: 'kanban', label: STRINGS.ui.viewKanban },
+    { key: 'kalender', label: STRINGS.ui.viewCalendar },
   ];
 
   const handleLogout = async () => {
@@ -74,7 +75,7 @@ export function Header() {
                 data-testid="logout-button"
                 onClick={handleLogout}
               >
-                Abmelden
+                {STRINGS.auth.logout}
               </button>
             </div>
           )}

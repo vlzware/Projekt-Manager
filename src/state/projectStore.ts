@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 import { flushSync } from 'react-dom';
+import { STRINGS } from '@/config/strings';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Project, SummaryData } from '@/domain/types';
 import { getNextState, getPreviousState } from '@/domain/transitions';
@@ -107,7 +108,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         set((s) => {
           const { [projectId]: _, ...rest } = s.mutationInFlight;
           return {
-            mutationError: 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+            mutationError: STRINGS.errors.mutationFailed,
             mutationInFlight: rest,
           };
         });
@@ -184,7 +185,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
             const { [projectId]: _, ...rest } = s.mutationInFlight;
             return {
               projects: s.projects.map((p) => (p.id === projectId ? originalProject : p)),
-              mutationError: 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+              mutationError: STRINGS.errors.mutationFailed,
               mutationInFlight: rest,
             };
           });

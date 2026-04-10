@@ -4,6 +4,7 @@ import { LOCALE } from '@/config/localeConfig';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { useRouterNav } from '@/hooks/useRouterNav';
+import { STRINGS } from '@/config/strings';
 import { CalendarGrid } from './CalendarGrid';
 import styles from './CalendarView.module.css';
 
@@ -69,7 +70,7 @@ export function CalendarView() {
             if (e.key === 'Enter' || e.key === ' ') handleNoDatesClick();
           }}
         >
-          {summary.projectsWithoutDates} Projekte ohne Termin
+          {STRINGS.ui.projectsNoDates(summary.projectsWithoutDates)}
         </div>
       )}
     </div>

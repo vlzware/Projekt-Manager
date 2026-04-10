@@ -26,6 +26,7 @@
  */
 
 import { create } from 'zustand';
+import { STRINGS } from '@/config/strings';
 
 interface ConfirmState {
   isOpen: boolean;
@@ -44,10 +45,10 @@ interface ConfirmState {
 
 export const useConfirmStore = create<ConfirmState>((set, get) => ({
   isOpen: false,
-  title: 'Bestätigen',
+  title: STRINGS.ui.confirm,
   message: '',
-  confirmLabel: 'OK',
-  cancelLabel: 'Abbrechen',
+  confirmLabel: STRINGS.ui.ok,
+  cancelLabel: STRINGS.ui.cancel,
   resolver: null,
 
   request: (message, options = {}) => {
@@ -60,10 +61,10 @@ export const useConfirmStore = create<ConfirmState>((set, get) => ({
     return new Promise<boolean>((resolve) => {
       set({
         isOpen: true,
-        title: options.title ?? 'Bestätigen',
+        title: options.title ?? STRINGS.ui.confirm,
         message,
-        confirmLabel: options.confirmLabel ?? 'OK',
-        cancelLabel: options.cancelLabel ?? 'Abbrechen',
+        confirmLabel: options.confirmLabel ?? STRINGS.ui.ok,
+        cancelLabel: options.cancelLabel ?? STRINGS.ui.cancel,
         resolver: resolve,
       });
     });

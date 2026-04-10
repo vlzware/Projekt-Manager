@@ -1,4 +1,5 @@
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
+import { STRINGS } from '@/config/strings';
 import type { Project } from '@/domain/types';
 import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
 import { useProjectTransition } from '@/hooks/useProjectTransition';
@@ -49,7 +50,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
             className={styles.closeButton}
             onClick={onClose}
             data-testid="detail-close"
-            aria-label="Schließen"
+            aria-label={STRINGS.ui.close}
           >
             &times;
           </button>
@@ -77,7 +78,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                   onClick={forward}
                   data-testid="detail-forward-button"
                 >
-                  Nächster Schritt
+                  {STRINGS.ui.nextStep}
                 </button>
               )}
               {canBackward && (
@@ -86,7 +87,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                   onClick={backward}
                   data-testid="detail-backward-button"
                 >
-                  Vorheriger Schritt
+                  {STRINGS.ui.prevStep}
                 </button>
               )}
             </div>
@@ -94,7 +95,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
 
           {/* Customer */}
           <div className={styles.section}>
-            <div className={styles.sectionLabel}>Kunde</div>
+            <div className={styles.sectionLabel}>{STRINGS.ui.customer}</div>
             <div className={styles.fieldValue}>{currentProject.customer.name}</div>
             {currentProject.customer.phone && (
               <a className={styles.link} href={`tel:${currentProject.customer.phone}`}>
@@ -111,7 +112,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           {/* Address */}
           {currentProject.address && (
             <div className={styles.section}>
-              <div className={styles.sectionLabel}>Adresse</div>
+              <div className={styles.sectionLabel}>{STRINGS.ui.address}</div>
               <div className={styles.fieldValue}>
                 {currentProject.address.street}
                 <br />
@@ -119,7 +120,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
               </div>
               {mapsUrl && (
                 <a className={styles.link} href={mapsUrl} target="_blank" rel="noopener noreferrer">
-                  In Google Maps öffnen
+                  {STRINGS.ui.openMaps}
                 </a>
               )}
             </div>
@@ -127,10 +128,10 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
 
           {/* Dates */}
           <div className={styles.section}>
-            <div className={styles.sectionLabel}>Termine</div>
+            <div className={styles.sectionLabel}>{STRINGS.ui.dates}</div>
             <div className={styles.dateInputs}>
               <div className={styles.dateField}>
-                <label className={styles.dateLabel}>Beginn</label>
+                <label className={styles.dateLabel}>{STRINGS.ui.dateStart}</label>
                 <input
                   type="date"
                   className={styles.dateInput}
@@ -140,7 +141,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                 />
               </div>
               <div className={styles.dateField}>
-                <label className={styles.dateLabel}>Ende</label>
+                <label className={styles.dateLabel}>{STRINGS.ui.dateEnd}</label>
                 <input
                   type="date"
                   className={styles.dateInput}
@@ -155,7 +156,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           {/* Workers */}
           {currentProject.assignedWorkers && currentProject.assignedWorkers.length > 0 && (
             <div className={styles.section}>
-              <div className={styles.sectionLabel}>Mitarbeiter</div>
+              <div className={styles.sectionLabel}>{STRINGS.ui.workers}</div>
               <div className={styles.workerList}>
                 {currentProject.assignedWorkers.map((w) => (
                   <span key={w} className={styles.workerTag}>
@@ -169,7 +170,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           {/* Estimated value */}
           {currentProject.estimatedValue !== undefined && (
             <div className={styles.section}>
-              <div className={styles.sectionLabel}>Geschätzter Wert</div>
+              <div className={styles.sectionLabel}>{STRINGS.ui.estimatedValue}</div>
               <div className={styles.fieldValue}>
                 {formatCurrencyDE(currentProject.estimatedValue)}
               </div>
@@ -179,16 +180,16 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           {/* Notes */}
           {currentProject.notes && (
             <div className={styles.section}>
-              <div className={styles.sectionLabel}>Notizen</div>
+              <div className={styles.sectionLabel}>{STRINGS.ui.notes}</div>
               <div className={styles.notes}>{currentProject.notes}</div>
             </div>
           )}
 
           {/* Timestamps */}
           <div className={styles.timestamps}>
-            <span>Erstellt: {formatDateDE(currentProject.createdAt)}</span>
-            <span>Aktualisiert: {formatDateDE(currentProject.updatedAt)}</span>
-            <span>Status seit: {formatDateDE(currentProject.statusChangedAt)}</span>
+            <span>{STRINGS.ui.created} {formatDateDE(currentProject.createdAt)}</span>
+            <span>{STRINGS.ui.updated} {formatDateDE(currentProject.updatedAt)}</span>
+            <span>{STRINGS.ui.statusSince} {formatDateDE(currentProject.statusChangedAt)}</span>
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
+import { STRINGS } from '@/config/strings';
 import type { WorkflowState } from '@/config/stateConfig';
 import styles from './SummaryArea.module.css';
 
@@ -51,7 +52,7 @@ export function SummaryArea() {
       ))}
       {anyFilterActive && (
         <button className={styles.clearButton} onClick={clearFilters} data-testid="clear-filter">
-          Filter aufheben
+          {STRINGS.ui.clearFilter}
         </button>
       )}
       {/* Hidden project count for calendar without-dates counter logic */}

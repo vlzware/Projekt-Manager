@@ -12,6 +12,7 @@ import { CalendarView } from '@/ui/calendar/CalendarView';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
+import { STRINGS } from '@/config/strings';
 import styles from './App.module.css';
 
 /**
@@ -108,7 +109,7 @@ export function App() {
               <button
                 className={styles.mutationErrorDismiss}
                 onClick={clearMutationError}
-                aria-label="Fehlermeldung schließen"
+                aria-label={STRINGS.ui.closeError}
               >
                 &#x2715;
               </button>
@@ -126,7 +127,7 @@ export function App() {
   }
 
   if (!sessionChecked) {
-    return <div className={styles.loading}>Laden...</div>;
+    return <div className={styles.loading}>{STRINGS.ui.loading}</div>;
   }
 
   return (

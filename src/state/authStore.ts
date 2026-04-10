@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 import { authApi, type AuthUser } from '@/api/client';
+import { STRINGS } from '@/config/strings';
 
 interface AuthState {
   authUser: AuthUser | null;
@@ -30,7 +31,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     const result = await authApi.login(username, password);
 
     if (!result.ok) {
-      set({ authError: result.error.message || 'Anmeldung fehlgeschlagen' });
+      set({ authError: result.error.message || STRINGS.auth.loginFailed });
       return;
     }
 
@@ -67,7 +68,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   handleSessionExpired: () => {
     set({
       authUser: null,
-      authError: 'Sitzung abgelaufen. Bitte erneut anmelden.',
+      authError: STRINGS.auth.sessionExpiredLogin,
       sessionChecked: true,
     });
   },
