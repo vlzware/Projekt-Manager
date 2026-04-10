@@ -13,7 +13,7 @@ export type ProjectRow = typeof projects.$inferSelect;
 /** Thrown when a project ID does not exist. */
 export class ProjectNotFoundError extends Error {
   constructor() {
-    super(STRINGS.errors.notFound('Projekt'));
+    super(STRINGS.errors.notFound(STRINGS.entities.project));
     this.name = 'ProjectNotFoundError';
   }
 }

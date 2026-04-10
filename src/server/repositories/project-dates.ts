@@ -5,6 +5,7 @@
 import { eq } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { projects } from '../db/schema.js';
+import { STRINGS } from '../../config/strings.js';
 import { toProject, ProjectNotFoundError } from './project-read.js';
 
 /**
@@ -46,11 +47,11 @@ export async function updateDates(
           : (project.plannedEnd ?? null);
 
     if (effectiveEnd && !effectiveStart) {
-      throw new DateValidationError('Enddatum kann nicht ohne Startdatum gesetzt werden.');
+      throw new DateValidationError(STRINGS.projects.endWithoutStart);
     }
 
     if (effectiveEnd && effectiveStart && effectiveEnd < effectiveStart) {
-      throw new DateValidationError('Das Enddatum darf nicht vor dem Startdatum liegen.');
+      throw new DateValidationError(STRINGS.projects.endBeforeStart);
     }
 
     const now = new Date();

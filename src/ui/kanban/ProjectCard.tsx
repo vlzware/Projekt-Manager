@@ -1,4 +1,5 @@
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
+import { STRINGS } from '@/config/strings';
 import type { Project } from '@/domain/types';
 import { formatDateRange, formatDateDE } from '@/domain/dateFormat';
 import { isAgingBold, getAgingText } from '@/domain/aging';
@@ -46,7 +47,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
       <div className={styles.title}>{project.title}</div>
       <div className={styles.customer}>{project.customer.name}</div>
       <div
-        className={dateRange === 'Kein Termin' ? styles.noDates : styles.dates}
+        className={dateRange === STRINGS.projects.noDate ? styles.noDates : styles.dates}
         data-testid={`card-dates-${project.id}`}
       >
         {dateRange}
@@ -70,7 +71,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
             className={styles.forwardButton}
             onClick={handleForwardClick}
             data-testid={`forward-button-${project.id}`}
-            aria-label={`Status weiter: ${config.label}`}
+            aria-label={STRINGS.ui.statusForward(config.label)}
             disabled={inFlight}
           >
             &rarr;

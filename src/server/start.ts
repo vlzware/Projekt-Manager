@@ -148,7 +148,7 @@ async function start(): Promise<void> {
       if (!req.url.startsWith('/api')) {
         return reply.sendFile('index.html');
       }
-      reply.code(404).send({ code: 'NOT_FOUND', message: STRINGS.errors.notFound('Ressource') });
+      reply.code(404).send({ code: 'NOT_FOUND', message: STRINGS.errors.notFound(STRINGS.entities.resource) });
     });
   } else if (isProduction) {
     throw new Error(
@@ -156,7 +156,7 @@ async function start(): Promise<void> {
     );
   } else {
     app.setNotFoundHandler((_req, reply) => {
-      reply.code(404).send({ code: 'NOT_FOUND', message: STRINGS.errors.notFound('Ressource') });
+      reply.code(404).send({ code: 'NOT_FOUND', message: STRINGS.errors.notFound(STRINGS.entities.resource) });
     });
   }
 

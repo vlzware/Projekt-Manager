@@ -58,7 +58,7 @@ export class ProjectService {
 
   async getProject(id: string) {
     const project = await getProjectRepo(this.db, id);
-    if (!project) throw notFound('Projekt');
+    if (!project) throw notFound(STRINGS.entities.project);
     return project;
   }
 
@@ -67,7 +67,7 @@ export class ProjectService {
     try {
       result = await transitionForwardRepo(this.db, projectId, userId);
     } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
       throw err;
     }
@@ -93,7 +93,7 @@ export class ProjectService {
     try {
       result = await transitionBackwardRepo(this.db, projectId, userId);
     } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
       throw err;
     }
@@ -124,7 +124,7 @@ export class ProjectService {
     try {
       updated = await updateDatesRepo(this.db, projectId, userId, dates);
     } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof DateValidationError) throw validationError(err.message);
       throw err;
     }
@@ -193,10 +193,10 @@ export class ProjectService {
    */
   private validateImportItem(item: BulkImportItem): string | null {
     if (typeof item.number !== 'string' || item.number.trim() === '') {
-      return 'number ist erforderlich und muss ein nicht-leerer String sein.';
+      return STRINGS.validation.requiredString('number');
     }
     if (typeof item.title !== 'string' || item.title.trim() === '') {
-      return 'title ist erforderlich und muss ein nicht-leerer String sein.';
+      return STRINGS.validation.requiredString('title');
     }
 
     // Customer validation
@@ -205,41 +205,41 @@ export class ProjectService {
       typeof item.customer !== 'object' ||
       Array.isArray(item.customer)
     ) {
-      return 'customer ist erforderlich und muss ein Objekt sein.';
+      return STRINGS.validation.requiredObject('customer');
     }
     const customer = item.customer as Record<string, unknown>;
     if (typeof customer.name !== 'string' || customer.name.trim() === '') {
-      return 'customer.name ist erforderlich und muss ein nicht-leerer String sein.';
+      return STRINGS.validation.requiredString('customer.name');
     }
     if (
       customer.phone !== undefined &&
       customer.phone !== null &&
       typeof customer.phone !== 'string'
     ) {
-      return 'customer.phone muss ein String sein.';
+      return STRINGS.validation.mustBeString('customer.phone');
     }
     if (
       customer.email !== undefined &&
       customer.email !== null &&
       typeof customer.email !== 'string'
     ) {
-      return 'customer.email muss ein String sein.';
+      return STRINGS.validation.mustBeString('customer.email');
     }
 
     // Address validation (optional, but must be well-formed if present)
     if (item.address !== undefined && item.address !== null) {
       if (typeof item.address !== 'object' || Array.isArray(item.address)) {
-        return 'address muss ein Objekt sein.';
+        return STRINGS.validation.mustBeObject('address');
       }
       const addr = item.address as Record<string, unknown>;
       if (typeof addr.street !== 'string' || addr.street.trim() === '') {
-        return 'address.street ist erforderlich und muss ein nicht-leerer String sein.';
+        return STRINGS.validation.requiredString('address.street');
       }
       if (typeof addr.zip !== 'string' || addr.zip.trim() === '') {
-        return 'address.zip ist erforderlich und muss ein nicht-leerer String sein.';
+        return STRINGS.validation.requiredString('address.zip');
       }
       if (typeof addr.city !== 'string' || addr.city.trim() === '') {
-        return 'address.city ist erforderlich und muss ein nicht-leerer String sein.';
+        return STRINGS.validation.requiredString('address.city');
       }
     }
 
@@ -271,7 +271,7 @@ export class ProjectService {
       item.plannedEnd !== null &&
       (item.plannedStart === undefined || item.plannedStart === null)
     ) {
-      return 'Enddatum kann nicht ohne Startdatum gesetzt werden.';
+      return STRINGS.projects.endWithoutStart;
     }
 
     // Assigned workers validation
@@ -280,14 +280,14 @@ export class ProjectService {
         !Array.isArray(item.assignedWorkers) ||
         !item.assignedWorkers.every((w) => typeof w === 'string')
       ) {
-        return 'assignedWorkers muss ein Array von Strings sein.';
+        return STRINGS.validation.mustBeStringArray('assignedWorkers');
       }
     }
 
     // Estimated value validation (optional, but must be numeric if present)
     if (item.estimatedValue !== undefined && item.estimatedValue !== null) {
       if (typeof item.estimatedValue !== 'string' && typeof item.estimatedValue !== 'number') {
-        return 'estimatedValue muss eine Zahl oder ein numerischer String sein.';
+        return STRINGS.validation.mustBeNumeric('estimatedValue');
       }
       if (isNaN(Number(item.estimatedValue))) {
         return STRINGS.projects.invalidEstimatedValue;
@@ -297,7 +297,7 @@ export class ProjectService {
     // Notes validation (optional, but must be a string if present)
     if (item.notes !== undefined && item.notes !== null) {
       if (typeof item.notes !== 'string') {
-        return 'notes muss ein String sein.';
+        return STRINGS.validation.mustBeString('notes');
       }
     }
 

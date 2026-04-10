@@ -47,7 +47,7 @@ export function SummaryArea() {
           onClick={() => handleFilterClick(state, true)}
           data-testid={`summary-buffer-${state}`}
         >
-          {count} {STATE_CONFIG_MAP[state].label} seit &gt;{thresholdDays} Tagen
+          {STRINGS.aging.agedBuffer(count, STATE_CONFIG_MAP[state].label, thresholdDays)}
         </button>
       ))}
       {anyFilterActive && (

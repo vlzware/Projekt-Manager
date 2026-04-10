@@ -33,6 +33,23 @@ export const STRINGS = {
     notFound: (entity: string) => `${entity} nicht gefunden.`,
   },
 
+  entities: {
+    project: 'Projekt',
+    resource: 'Ressource',
+  },
+
+  states: {
+    anfrage: 'Anfrage',
+    angebot: 'Angebot',
+    beauftragt: 'Beauftragt',
+    geplant: 'Geplant',
+    in_arbeit: 'In Arbeit',
+    abnahme: 'Abnahme',
+    rechnung_faellig: 'Rechnung fällig',
+    abgerechnet: 'Abgerechnet',
+    erledigt: 'Erledigt',
+  },
+
   projects: {
     noDate: 'Kein Termin',
     transitionConfirm: (from: string, to: string) => `Status ändern: ${from} → ${to}?`,
@@ -46,8 +63,21 @@ export const STRINGS = {
     invalidPlannedStart: 'plannedStart muss ein gültiges ISO-Datum sein.',
     invalidPlannedEnd: 'plannedEnd muss ein gültiges ISO-Datum sein.',
     endWithoutStart: 'Enddatum kann nicht ohne Startdatum gesetzt werden.',
+    endBeforeStart: 'Das Enddatum darf nicht vor dem Startdatum liegen.',
     invalidEstimatedValue: 'estimatedValue muss ein gültiger numerischer Wert sein.',
     unknownImportError: 'Unbekannter Fehler beim Import.',
+  },
+
+  validation: {
+    requiredString: (field: string) =>
+      `${field} ist erforderlich und muss ein nicht-leerer String sein.`,
+    requiredObject: (field: string) =>
+      `${field} ist erforderlich und muss ein Objekt sein.`,
+    mustBeString: (field: string) => `${field} muss ein String sein.`,
+    mustBeObject: (field: string) => `${field} muss ein Objekt sein.`,
+    mustBeStringArray: (field: string) => `${field} muss ein Array von Strings sein.`,
+    mustBeNumeric: (field: string) =>
+      `${field} muss eine Zahl oder ein numerischer String sein.`,
   },
 
   password: {
@@ -66,6 +96,7 @@ export const STRINGS = {
     loading: 'Laden...',
     nextStep: 'Nächster Schritt',
     prevStep: 'Vorheriger Schritt',
+    statusForward: (label: string) => `Status weiter: ${label}`,
     projectsNoDates: (n: number) => `${n} Projekte ohne Termin`,
     customer: 'Kunde',
     address: 'Adresse',
@@ -87,5 +118,7 @@ export const STRINGS = {
 
   aging: {
     sinceNDays: (n: number) => `seit ${n} Tagen`,
+    agedBuffer: (count: number, label: string, days: number) =>
+      `${count} ${label} seit >${days} Tagen`,
   },
 } as const;

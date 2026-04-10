@@ -71,12 +71,12 @@ export function validationError(message: string, details?: unknown): AppError {
   return new AppError('VALIDATION_ERROR', message, 422, details);
 }
 
-export function notFound(entity = 'Ressource'): AppError {
+export function notFound(entity: string = STRINGS.entities.resource): AppError {
   return new AppError('NOT_FOUND', STRINGS.errors.notFound(entity), 404);
 }
 
 export function rateLimited(): AppError {
-  return new AppError('RATE_LIMITED', 'Zu viele Anfragen. Bitte später erneut versuchen.', 429);
+  return new AppError('RATE_LIMITED', STRINGS.errors.rateLimited, 429);
 }
 
 export function serverError(): AppError {

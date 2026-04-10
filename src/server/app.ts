@@ -16,6 +16,7 @@ import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { projectBulkRoutes } from './routes/projects-bulk.js';
 import { AppError, rateLimited, serverError, validationError } from './errors.js';
+import { STRINGS } from '../config/strings.js';
 
 export interface AppOptions {
   logger?: boolean;
@@ -47,7 +48,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     // request. Map them to a proper 422 VALIDATION_ERROR with the validation
     // details preserved so callers can display meaningful field-level feedback.
     if (fastifyErr.validation) {
-      const err = validationError('Ungültige Eingabe.', fastifyErr.validation);
+      const err = validationError(STRINGS.errors.invalidInput, fastifyErr.validation);
       return reply.code(err.statusCode).send(err.toResponse());
     }
 
