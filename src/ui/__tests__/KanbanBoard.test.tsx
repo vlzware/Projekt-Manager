@@ -365,8 +365,8 @@ describe('Date Formatting', () => {
 });
 
 describe('Branding', () => {
-  // AC-27: changing branding config changes all instances
-  it('AC-27: header and footer are driven by branding config, not hardcoded', () => {
+  // AC-38: changing branding config changes all instances
+  it('AC-38: header and footer are driven by branding config, not hardcoded', () => {
     const original = { ...BRANDING };
 
     // Override with non-default values — if components were hardcoded this would fail
@@ -382,8 +382,8 @@ describe('Branding', () => {
 });
 
 describe('Responsive Column Collapse', () => {
-  // AC-28: Tier-3 columns collapse — cards hidden, count visible
-  it('AC-28: tier-3 columns show header and count but no cards', () => {
+  // AC-41: Tier-3 columns collapse — cards hidden, count visible
+  it('AC-41: tier-3 columns show header and count but no cards', () => {
     vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(3);
     render(<App />);
 
@@ -412,8 +412,8 @@ describe('Responsive Column Collapse', () => {
     vi.restoreAllMocks();
   });
 
-  // AC-29: Tier-2 columns also collapse
-  it('AC-29: tier-2 and tier-3 columns all collapse, action columns remain', () => {
+  // AC-42: Tier-2 columns also collapse
+  it('AC-42: tier-2 and tier-3 columns all collapse, action columns remain', () => {
     vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(2);
     render(<App />);
 
@@ -435,8 +435,8 @@ describe('Responsive Column Collapse', () => {
     vi.restoreAllMocks();
   });
 
-  // AC-30: Action columns collapse last — at tier 1, everything is collapsed
-  it('AC-30: at tier 1, all columns collapse including action columns', () => {
+  // AC-43: Action columns collapse last — at tier 1, everything is collapsed
+  it('AC-43: at tier 1, all columns collapse including action columns', () => {
     vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(1);
     render(<App />);
 
@@ -460,8 +460,8 @@ describe('Responsive Column Collapse', () => {
     vi.restoreAllMocks();
   });
 
-  // AC-31: Click collapsed column to expand, click header to collapse
-  it('AC-31: clicking a collapsed column expands it, clicking header collapses it', async () => {
+  // AC-44: Click collapsed column to expand, click header to collapse
+  it('AC-44: clicking a collapsed column expands it, clicking header collapses it', async () => {
     const user = userEvent.setup();
     vi.spyOn(collapseTierHook, 'useCollapseTier').mockReturnValue(3);
     render(<App />);
