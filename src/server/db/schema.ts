@@ -68,7 +68,7 @@ export const projects = pgTable(
   'projects',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    number: varchar('number', { length: 20 }).notNull(),
+    number: varchar('number', { length: 20 }).notNull().unique(),
     title: varchar('title', { length: 500 }).notNull(),
     status: varchar('status', { length: 50 }).notNull().default('anfrage'),
     statusChangedAt: timestamp('status_changed_at', { withTimezone: true }).notNull().defaultNow(),
