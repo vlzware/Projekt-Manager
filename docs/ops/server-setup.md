@@ -26,14 +26,19 @@ Admin credentials in password manager. `deploy` is a system account, no password
 - Key-only auth
 - fail2ban: 5 attempts / 10 min / 1 hour ban
 
-## Firewall rules (Hetzner Cloud)
+## Firewall rules
+
+Two layers: ufw on the host (always present, provider-independent) and the cloud provider firewall (Hetzner Cloud Firewall in this setup). Both enforce the same policy — defense in depth.
 
 | Port | Protocol | Status | Purpose |
 |---|---|---|---|
 | 22 | TCP | Open | SSH (admin only) |
 | 51820 | UDP | Open | WireGuard |
+| -- | ICMP | Open | Ping / diagnostics |
 | 80 | TCP | Closed | Not needed (DNS-01 ACME) |
 | 443 | TCP | Closed | Caddy binds only to `wg0` interface |
+
+ICMP is allowed by default in both ufw (`/etc/ufw/before.rules`) and Hetzner Cloud Firewall. No explicit rule needed.
 
 ## Network topology
 
@@ -57,7 +62,7 @@ Admin credentials in password manager. `deploy` is a system account, no password
 
 - Docker Engine + Compose plugin (official repo, pinned versions, apt hold)
 - WireGuard (`wireguard-tools`, kernel module)
-- `qrencode`, fail2ban, `age`, `unattended-upgrades`
+- `ufw`, fail2ban, `qrencode`, `age`, `unattended-upgrades`
 
 ---
 
@@ -169,10 +174,27 @@ sudo -u deploy docker ps      # empty table, not "permission denied"
 
 **Note:** Docker group membership = effective root. See ADR-0012 residual risks.
 
-### Phase 5 -- Brute-force protection
+### Phase 5 -- Host firewall & brute-force protection
+
+Host-level firewall (ufw) mirrors the cloud firewall policy. If the cloud provider has no firewall, or the server moves to a different provider, ufw is the baseline.
 
 ```bash
-sudo apt-get install -y fail2ban
+sudo apt-get install -y ufw fail2ban
+
+# Default deny inbound, allow outbound
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+
+# Allow SSH and WireGuard only
+sudo ufw allow 22/tcp
+sudo ufw allow 51820/udp
+
+sudo ufw enable
+```
+
+**Verify:** `sudo ufw status verbose` -- 22/tcp and 51820/udp ALLOW, default deny incoming.
+
+```bash
 sudo tee /etc/fail2ban/jail.local << 'EOF'
 [sshd]
 enabled = true
