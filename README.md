@@ -28,7 +28,8 @@ Caddy terminates TLS on port 443 and reverse-proxies to the application on port 
 ### Development
 
 ```bash
-cp .env.example .env                  # first time only — edit passwords if desired
+cp .env.example .env                  # first time only
+sed -i 's|http://storage:9000|http://localhost:9000|' .env   # host needs localhost, not Docker DNS
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init
 npm install
 npm run dev                           # starts backend + frontend at http://localhost:5173
