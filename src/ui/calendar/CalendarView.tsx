@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { addMonths, subMonths, format } from 'date-fns';
-import { de } from 'date-fns/locale';
+import { LOCALE } from '@/config/localeConfig';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { useRouterNav } from '@/hooks/useRouterNav';
@@ -15,7 +15,7 @@ export function CalendarView() {
   const { navigateTo } = useRouterNav();
 
   const summary = getSummary();
-  const monthLabel = format(currentMonth, 'MMMM yyyy', { locale: de });
+  const monthLabel = format(currentMonth, 'MMMM yyyy', { locale: LOCALE.dateFns });
 
   const filteredProjects = activeFilter
     ? projects.filter((p) => p.status === activeFilter)
