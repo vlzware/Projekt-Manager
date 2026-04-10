@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
+import { BRANDING } from '@/config/brandingConfig';
 import styles from './LoginForm.module.css';
 
 export function LoginForm() {
@@ -27,8 +28,9 @@ export function LoginForm() {
 
   return (
     <div className={styles.container}>
+      <h1 className={styles.appName}>{BRANDING.appName}</h1>
       <form data-testid="login-form" className={styles.form} onSubmit={handleSubmit}>
-        <h1 className={styles.title}>Anmelden</h1>
+        <h2 className={styles.title}>Anmelden</h2>
 
         {authError && <div className={styles.error}>{authError}</div>}
 

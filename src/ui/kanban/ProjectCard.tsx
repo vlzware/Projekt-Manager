@@ -55,7 +55,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
         className={`${styles.entryDate} ${bold ? styles.entryDateBold : ''}`}
         data-testid={`entry-date-${project.id}`}
       >
-        seit {entryDate}
+        {entryDate}
       </div>
       <div className={styles.bottomRow}>
         {agingText ? (
