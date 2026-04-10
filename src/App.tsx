@@ -4,6 +4,7 @@ import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { viewFromPath } from '@/hooks/useRouterNav';
+import { isInsecureConnection } from '@/config/insecureConnection';
 import { Header } from '@/ui/layout/Header';
 import { Footer } from '@/ui/layout/Footer';
 import { KanbanBoard } from '@/ui/kanban/KanbanBoard';
@@ -47,10 +48,18 @@ export function App() {
   const clearMutationError = useProjectStore((s) => s.clearMutationError);
   const projects = useProjectStore((s) => s.projects);
 
+  const insecure = isInsecureConnection();
+
   const selectedProject = selectedProjectId
     ? (projects.find((p) => p.id === selectedProjectId) ?? null)
     : null;
   const sessionCheckFired = useRef(false);
+
+  useEffect(() => {
+    if (insecure) {
+      document.title = 'UNSICHER \u2013 ' + document.title;
+    }
+  }, [insecure]);
 
   useEffect(() => {
     if (!authUser && !sessionCheckFired.current) {
@@ -85,6 +94,12 @@ export function App() {
     return (
       <div className={styles.app}>
         {hasRouter && <UrlStoreSync />}
+        {insecure && (
+          <div className={styles.insecureBanner} role="alert" data-testid="insecure-banner">
+            UNSICHERER MODUS &mdash; Keine Verschl&uuml;sselung, Zugangsdaten werden im Klartext
+            &uuml;bertragen
+          </div>
+        )}
         <Header />
         <main className={styles.main}>
           {mutationError && (
@@ -114,5 +129,15 @@ export function App() {
     return <div className={styles.loading}>Laden...</div>;
   }
 
-  return <LoginForm />;
+  return (
+    <>
+      {insecure && (
+        <div className={styles.insecureBanner} role="alert" data-testid="insecure-banner">
+          UNSICHERER MODUS &mdash; Keine Verschl&uuml;sselung, Zugangsdaten werden im Klartext
+          &uuml;bertragen
+        </div>
+      )}
+      <LoginForm />
+    </>
+  );
 }

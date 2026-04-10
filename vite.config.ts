@@ -29,6 +29,11 @@ export default defineConfig({
     },
   },
   server: {
+    // Listen on all interfaces so the dev server is reachable via the
+    // machine's IP address — needed for E2E tests that verify the
+    // insecure-connection banner (which triggers on non-localhost HTTP).
+    // Consistent with the Fastify backend which already binds to 0.0.0.0.
+    host: true,
     proxy: {
       '/api': 'http://localhost:3000',
     },
