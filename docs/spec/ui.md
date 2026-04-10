@@ -114,7 +114,7 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 #### 8.3.1 Display
 
 - **Default**: month view of the current month. Navigation to previous/next months.
-- **Week view toggle**: available but secondary.
+- **Week view toggle**: available via Monat/Woche buttons in the calendar navigation bar. Month view is the default; week view shows a single week with date-range label.
 - Projects with `plannedStart` and `plannedEnd` render as **horizontal bars** spanning those dates.
 - Projects with only `plannedStart` (no `plannedEnd`) render as a **single-day block** on the start date.
 - Bar color encodes the workflow state (see 8.6).

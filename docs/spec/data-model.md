@@ -60,6 +60,7 @@ Design notes:
 - `statusChangedAt` is separate from `updatedAt` — editing notes must not reset aging calculations.
 - Customer and address are nested objects for clarity and future extensibility. **Known debt**: `customer` is inline (denormalized). Future iterations will extract to a `Customer` entity for cross-project lookup, deduplication, and LLM email extraction.
 - `assignedWorkers` is `string[]` of display names. **Known debt**: will be replaced by `Worker` entity references for role-based views and worker management.
+- `estimatedValue` is `number` in the API contract. The database stores it as `numeric(12,2)` for precision. The ORM converts between the two representations; clients always receive and send a JSON number.
 - No `priority` field — priority is implicit in state aging and column accumulation.
 - No stored boolean flags for warnings — these are derived from state and timestamps at render time.
 - Internal keys use English; German labels are applied at the UI layer.
@@ -110,11 +111,14 @@ interface UserAccount {
   createdAt: string;           // ISO 8601
   updatedAt: string;           // ISO 8601
   lastLoginAt?: string;        // ISO 8601
+  createdBy?: string;          // UserAccount.id — optional for seeded/bootstrapped records
+  updatedBy?: string;          // UserAccount.id — optional for seeded/bootstrapped records
 }
 ```
 
 Design notes:
 
+- `createdBy` / `updatedBy` follow the audit metadata pattern (section 5.5). **No self-referential FK**: a foreign key from `users.createdBy` back to `users.id` would complicate bootstrapping (the first admin user cannot reference a creator that doesn't exist yet) and deletion cascades, without adding meaningful integrity guarantees. The columns are nullable UUIDs with no constraint.
 - `roles` is an array even if iteration 2 uses only a minimal role set. This keeps the door open for owner, office, worker, bookkeeper, admin, or company-specific roles in later iterations without requiring a schema change.
 - **[C]** `AccountRole` values are internal keys. German display labels (e.g. "Eigentümer", "Büro", "Arbeiter", "Buchhalter") are applied by configuration — the same pattern as workflow state labels.
 - `passwordHash` is included in the entity definition for completeness but is **never** included in API responses or the client-side data model. The hashing algorithm is an infrastructure concern (not specified here).
@@ -207,12 +211,15 @@ At current scale (1–5 users), last-write-wins is acceptable. A future iteratio
 
 ### 6.6 Referential Integrity
 
-- The database enforces foreign keys where relationships exist (e.g., `Session.userId` references `UserAccount.id`).
+- The database enforces foreign keys where relationships exist (e.g., `Session.userId` references `UserAccount.id`, `Project.createdBy`/`updatedBy` reference `UserAccount.id`).
+- **Exception**: `UserAccount.createdBy`/`updatedBy` are nullable UUIDs with no FK constraint. A self-referential FK on the users table would complicate bootstrapping and deletion without adding meaningful integrity (see §5.3 design notes).
 - Orphaned records are not acceptable.
 
 ### 6.7 Timestamps
 
 Timestamp ownership rules are defined in section 5.5. Additionally, `statusChangedAt` is set by the server on state transitions, never by client input.
+
+**Storage vs. API representation**: the database stores timestamps as PostgreSQL `timestamp with time zone`. The API serializes them as ISO 8601 strings (e.g., `"2026-04-10T14:30:00.000Z"`). The client receives and sends ISO 8601 strings; the ORM handles conversion transparently. The spec uses `string` (ISO 8601) in entity type definitions to describe the API contract, not the storage type.
 
 ### 6.8 Date Validation
 

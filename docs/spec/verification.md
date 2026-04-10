@@ -55,7 +55,7 @@ The system is accepted when all of the following are true.
 ### 15.6 Deployment
 
 - **AC-30**: The application is accessible at a public URL over HTTPS. _Note: the "public URL" framing reflects the original goal. If the project settles on a VPN-only topology (see [ADR-0008](../adr/0008-vpn-first-network-access.md) and [#42](https://github.com/vlzware/Projekt-Manager/issues/42)), there may be no public URL at all and this criterion will be reworded. The HTTPS part is non-negotiable in either case — see AC-45._
-- **AC-31**: Merging to `main` triggers an automated deployment to the hosted environment.
+- **AC-31**: A CI-built image can be promoted to the hosted environment via manual, pull-based deploy over WireGuard (see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)).
 - **AC-45**: No request reaches application code over plain HTTP. Port 80 either unconditionally redirects to HTTPS before any application handler runs, or is not bound at all. HTTPS-or-nothing applies in every environment regardless of network topology — see [ADR-0008](../adr/0008-vpn-first-network-access.md) for the rationale that VPN does not substitute for TLS. Implementation tracked by [#47](https://github.com/vlzware/Projekt-Manager/issues/47). **Exception**: non-production evaluation deployments may operate over HTTP per [ADR-0013](../adr/0013-http-only-evaluation-mode.md). The `ALLOW_INSECURE_HTTP` flag is hard-blocked in `NODE_ENV=production` — the server refuses to start.
 - **AC-46**: A failed deployment leaves the previously running version running. The pipeline aborts before swapping containers if the build, smoke test, or health check fails.
 - **AC-47**: A previously deployed commit can be redeployed (rollback) by re-running the deploy workflow against that commit's SHA, without requiring code changes or manual server access.
@@ -158,13 +158,17 @@ These tests run against a real (test) database, not mocks.
 - **AT-15**: Change own password with incorrect current password is rejected.
 - **AT-16**: Object storage module can upload a file, retrieve it, and verify the retrieved contents match the original. Tested against the real (deployed) object storage infrastructure.
 
-### 16.4 E2E Smoke Test
+### 16.4 E2E Tests
 
-One scenario covering the full authenticated end-to-end path:
+The end-to-end path is covered by focused, isolated test files rather than a single monolithic scenario. This improves test isolation, failure diagnostics, and net-zero teardown. The steps below define the required behavioral coverage; the implementation may split them across multiple test files and specs.
 
+**Smoke (login/logout cycle)**:
 1. App loads — login screen is displayed.
 2. User enters credentials and logs in — Kanban view is displayed with 9 columns.
 3. Header shows user's display name.
+16. User clicks "Abmelden" — login screen appears.
+
+**Kanban flows (state transitions, dates, calendar, persistence)**:
 4. Summary area shows `"3× Rechnung fällig"`.
 5. User clicks a summary indicator — view filters to matching projects.
 6. User clicks "Filter aufheben" — full view restored.
@@ -177,8 +181,7 @@ One scenario covering the full authenticated end-to-end path:
 13. User clicks "X Projekte ohne Termin" — switches to filtered Kanban.
 14. Summary area reflects current state counts throughout.
 15. User refreshes the page — changes persist; user remains logged in.
-16. User clicks "Abmelden" — login screen appears.
-17. Pressing browser back button does not show project data.
+17. Pressing browser back button after logout does not show project data.
 
 ### 16.5 Supplementary Tests
 

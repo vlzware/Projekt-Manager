@@ -87,7 +87,7 @@ The system must not close doors that later iterations need open.
 | Connecting Worker entities to Users | `assignedWorkers` is a separate field; User entity exists with roles | Worker assignment is an unstructured string with no path to a User reference |
 | Adding a second authentication method | Auth logic is behind the API; session model is method-agnostic | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers) |
 | Multi-tenancy / multi-company | Configs are per-instance via environment; data model does not preclude adding tenant scoping later | Company names, branding, or workflow definitions are hardcoded in application code |
-| Multi-language (low priority) | Currently closed: German UI strings are inline literals spread across component files and server error factories. Extraction to a centralized strings layer is planned. | Currently closed — tracked for extraction in a future iteration |
+| Multi-language (low priority) | Partially open: German strings are being extracted to `src/config/strings.ts`. Extraction is in progress — some call sites still use inline literals. A full i18n framework is deferred. | Extraction regresses to inline literals; strings.ts is abandoned |
 
 ### 11.6 Deployment Topology
 

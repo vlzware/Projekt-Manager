@@ -46,24 +46,24 @@ The current iteration (5 — Consolidation) focuses on spec-code reconciliation,
 - User authentication (login/logout, session management)
 - Object storage module encapsulating all binary storage operations (prepared for future file uploads — no upload UI in this iteration)
 - Deployment to a hosted environment (application, database, object storage)
-- Continuous delivery pipeline (auto-deploy on merge to main)
+- Continuous delivery pipeline (CI builds image; manual pull-based deploy per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md))
 
 ### 2.2 Deferred from Current Scope
 
 Items listed here are scoped out of the current iteration. They are part of the project vision (see [kickoff](../project/kickoff.md)) and mapped to future iterations in the table below.
 
-- Role-based access control beyond the current permission matrix — basic RBAC (4 roles, differentiated permissions) is implemented; fine-grained permissions and per-role views are deferred to iteration 5+
+- Role-based access control beyond the current permission matrix — basic RBAC (4 roles, differentiated permissions) is implemented; fine-grained permissions and per-role views are deferred to further iterations
 - User self-registration
 - Password reset / forgot-password flow
 - SSO / OAuth / external identity providers
 - Project creation or deletion (UI) — bulk import API exists; UI for single-item create/delete deferred
 - Field editing beyond status and dates (deferred)
 - File uploads (storage module is prepared, but no upload UI)
-- Notifications (email, WhatsApp) (deferred to iteration 6+)
-- Worker view (deferred to iteration 5+), bookkeeper view (deferred to iteration 6+)
+- Notifications (email, WhatsApp) (deferred to a further iteration)
+- Worker view (deferred to a further iteration), bookkeeper view (deferred to a further iteration)
 - Mobile optimization
 - Print or export
-- i18n framework (German only, hardcoded strings are fine)
+- i18n framework — German strings are being extracted to a centralized `strings.ts` config; full i18n framework deferred
 
 ---
 
@@ -168,17 +168,17 @@ Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) t
 | Deployment to hosted environment | Done | 4 |
 | Continuous Delivery pipeline | Done | 4 |
 | End-to-end tests on all integrations (CI) | Done | 4 |
-| LLM-based customer data extraction from emails | Planned | 5+ |
-| All customer and project data managed in central system | Planned | 5+ |
-| Worker view (relevant projects, calendar, object data, GPS) | Planned | 5+ |
-| Worker uploads (notes, photos, Aufmass) | Planned | 5+ |
-| Binary file optimization and space alerts | Planned | 6+ |
-| Configurable event notifications (email, optional WhatsApp) | Planned | 6+ |
-| Modular architecture with open-standard data exchange | Planned | 5+ |
-| Bookkeeper view (invoices, search, grouping, export) | Planned | 6+ |
-| Administrator view (users, groups, rights) | Planned | 5+ |
-| German user manual ("Handbuch") | Planned | 6+ |
-| Tooltips, hints, and in-app help | Planned | 6+ |
+| LLM-based customer data extraction from emails | Planned | Future |
+| All customer and project data managed in central system | Planned | Future |
+| Worker view (relevant projects, calendar, object data, GPS) | Planned | Future |
+| Worker uploads (notes, photos, Aufmass) | Planned | Future |
+| Binary file optimization and space alerts | Planned | Future |
+| Configurable event notifications (email, optional WhatsApp) | Planned | Future |
+| Modular architecture with open-standard data exchange | Planned | Future |
+| Bookkeeper view (invoices, search, grouping, export) | Planned | Future |
+| Administrator view (users, groups, rights) | Planned | Future |
+| German user manual ("Handbuch") | Planned | Future |
+| Tooltips, hints, and in-app help | Planned | Future |
 
 ---
 
@@ -188,11 +188,11 @@ Items marked as "Known debt" across the specification. Each will be resolved or 
 
 | Item | Location | Target Iteration | Issue |
 |------|----------|-----------------|-------|
-| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 5+ | TBD |
-| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 5+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) (reopened) |
-| Minimal role set — basic permission matrix implemented (4 roles). Fine-grained permissions and per-role views remain. | [data-model.md §5.3](data-model.md#53-user-entity) | 5+ | TBD |
-| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 5+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
-| State actions mutate silently — server-side event bus implemented (`events.ts`). Remaining: connect subscribers for audit trail and notifications. | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 5+ | TBD |
+| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | Future | TBD |
+| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | Future | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) (reopened) |
+| Minimal role set — basic permission matrix implemented (4 roles). Fine-grained permissions and per-role views remain. | [data-model.md §5.3](data-model.md#53-user-entity) | Future | TBD |
+| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | Future | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
+| State actions mutate silently — server-side event bus implemented (`events.ts`). Remaining: connect subscribers for audit trail and notifications. | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | Future | TBD |
 
 ---
 
