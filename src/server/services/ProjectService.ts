@@ -19,6 +19,7 @@ import {
 } from '../repositories/project.js';
 import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
+import { STRINGS } from '../../config/strings.js';
 import { notFound, validationError } from '../errors.js';
 import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
@@ -179,7 +180,7 @@ export class ProjectService {
         });
         imported++;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Unbekannter Fehler beim Import.';
+        const msg = err instanceof Error ? err.message : STRINGS.projects.unknownImportError;
         errors.push({ index: i, message: msg });
       }
     }
@@ -245,19 +246,19 @@ export class ProjectService {
     // Status validation
     if (item.status !== undefined && item.status !== null) {
       if (typeof item.status !== 'string' || !VALID_STATES.has(item.status)) {
-        return `status '${String(item.status)}' ist kein gültiger Workflow-Status.`;
+        return STRINGS.projects.invalidStatus(String(item.status));
       }
     }
 
     // Date validation
     if (item.plannedStart !== undefined && item.plannedStart !== null) {
       if (typeof item.plannedStart !== 'string' || isNaN(Date.parse(item.plannedStart))) {
-        return 'plannedStart muss ein gültiges ISO-Datum sein.';
+        return STRINGS.projects.invalidPlannedStart;
       }
     }
     if (item.plannedEnd !== undefined && item.plannedEnd !== null) {
       if (typeof item.plannedEnd !== 'string' || isNaN(Date.parse(item.plannedEnd))) {
-        return 'plannedEnd muss ein gültiges ISO-Datum sein.';
+        return STRINGS.projects.invalidPlannedEnd;
       }
     }
     // #54: same invariant as `updateDates` (project-dates.ts) —
@@ -289,7 +290,7 @@ export class ProjectService {
         return 'estimatedValue muss eine Zahl oder ein numerischer String sein.';
       }
       if (isNaN(Number(item.estimatedValue))) {
-        return 'estimatedValue muss ein gültiger numerischer Wert sein.';
+        return STRINGS.projects.invalidEstimatedValue;
       }
     }
 

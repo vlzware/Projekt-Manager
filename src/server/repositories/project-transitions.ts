@@ -7,6 +7,7 @@ import type { Database } from '../db/connection.js';
 import { projects } from '../db/schema.js';
 import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
+import { STRINGS } from '../../config/strings.js';
 import { toProject, ProjectNotFoundError } from './project-read.js';
 
 /**
@@ -43,9 +44,7 @@ export async function transitionForward(
     const currentIndex = WORKFLOW_ORDER.indexOf(before);
 
     if (currentIndex === -1 || currentIndex === WORKFLOW_ORDER.length - 1) {
-      throw new TransitionError(
-        'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',
-      );
+      throw new TransitionError(STRINGS.projects.cannotAdvanceTerminal);
     }
 
     const nextStatus = WORKFLOW_ORDER[currentIndex + 1]!;
@@ -87,16 +86,12 @@ export async function transitionBackward(
     const currentIndex = WORKFLOW_ORDER.indexOf(before);
 
     if (currentIndex === -1 || currentIndex === 0) {
-      throw new TransitionError(
-        'Projekt kann nicht zurückgestuft werden. Der aktuelle Status ist bereits der erste Status.',
-      );
+      throw new TransitionError(STRINGS.projects.cannotRevertFirst);
     }
 
     // Terminal state also rejects backward
     if (currentIndex === WORKFLOW_ORDER.length - 1) {
-      throw new TransitionError(
-        'Projekt kann nicht zurückgestuft werden. Der aktuelle Status ist ein Endstatus.',
-      );
+      throw new TransitionError(STRINGS.projects.cannotRevertTerminal);
     }
 
     const prevStatus = WORKFLOW_ORDER[currentIndex - 1]!;

@@ -18,6 +18,7 @@ import {
 import { createSession, deleteSession, deleteSessionsByUserId } from '../repositories/session.js';
 import { hashPassword, verifyPassword } from '../password.js';
 import { checkPasswordPolicy } from '../config/password-policy.js';
+import { STRINGS } from '../../config/strings.js';
 import { invalidCredentials, validationError } from '../errors.js';
 import { AUTH_CONFIG } from '../config/index.js';
 import type { ServiceLogger } from './Logger.js';
@@ -103,13 +104,11 @@ export class AuthService {
     if (violation) {
       switch (violation.code) {
         case 'too_short':
-          throw validationError('Neues Passwort ist zu kurz (mindestens 8 Zeichen).');
+          throw validationError(STRINGS.password.tooShort);
         case 'too_long':
-          throw validationError('Neues Passwort ist zu lang.');
+          throw validationError(STRINGS.password.tooLong);
         case 'blocklist':
-          throw validationError(
-            'Dieses Passwort ist zu häufig. Bitte ein sichereres Passwort wählen.',
-          );
+          throw validationError(STRINGS.password.tooCommon);
       }
     }
 

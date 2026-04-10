@@ -6,13 +6,14 @@ import { eq, count } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { projects } from '../db/schema.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
+import { STRINGS } from '../../config/strings.js';
 
 export type ProjectRow = typeof projects.$inferSelect;
 
 /** Thrown when a project ID does not exist. */
 export class ProjectNotFoundError extends Error {
   constructor() {
-    super('Projekt nicht gefunden.');
+    super(STRINGS.errors.notFound('Projekt'));
     this.name = 'ProjectNotFoundError';
   }
 }

@@ -12,6 +12,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fastifyStatic from '@fastify/static';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import { STRINGS } from '../config/strings.js';
 import { buildApp } from './app.js';
 import { bootstrapAdminIfEmpty } from './bootstrap.js';
 import { validateEnv } from './config/env.js';
@@ -147,7 +148,7 @@ async function start(): Promise<void> {
       if (!req.url.startsWith('/api')) {
         return reply.sendFile('index.html');
       }
-      reply.code(404).send({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
+      reply.code(404).send({ code: 'NOT_FOUND', message: STRINGS.errors.notFound('Ressource') });
     });
   } else if (isProduction) {
     throw new Error(
@@ -155,7 +156,7 @@ async function start(): Promise<void> {
     );
   } else {
     app.setNotFoundHandler((_req, reply) => {
-      reply.code(404).send({ code: 'NOT_FOUND', message: 'Nicht gefunden.' });
+      reply.code(404).send({ code: 'NOT_FOUND', message: STRINGS.errors.notFound('Ressource') });
     });
   }
 
