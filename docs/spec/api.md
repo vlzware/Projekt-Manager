@@ -81,7 +81,7 @@ Bulk operations let an administrator (or import flow) submit many items in a sin
 
 | Operation | Input | Output | Notes |
 |---|---|---|---|
-| **Bulk import projects** | array of project items, each with the same fields as a single project (`number`, `title`, `customer`, optional `address`, optional `status`, optional `plannedStart`/`plannedEnd`, optional `assignedWorkers`, optional `estimatedValue`, optional `notes`) | `{ imported: number, errors: { index: number, message: string }[] }` | Each item is validated independently. The endpoint never aborts on the first invalid item — partial success is the expected outcome. Items with `status` omitted default to the first workflow state. Requires the `project:create` permission. |
+| **Bulk import projects** | array of project items, each with the same fields as a single project (`number`, `title`, `customer`, optional `address`, optional `status`, optional `plannedStart`/`plannedEnd`, optional `assignedWorkerIds` (user UUIDs), optional `estimatedValue`, optional `notes`) | `{ imported: number, errors: { index: number, message: string }[] }` | Each item is validated independently. The endpoint never aborts on the first invalid item — partial success is the expected outcome. Items with `status` omitted default to the first workflow state. Requires the `project:create` permission. |
 
 Design notes:
 

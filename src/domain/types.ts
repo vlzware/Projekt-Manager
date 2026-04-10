@@ -22,7 +22,7 @@ export interface Project {
   plannedStart?: string;
   plannedEnd?: string;
 
-  assignedWorkers?: string[];
+  assignedWorkers?: { userId: string; displayName: string }[];
   estimatedValue?: number;
   notes?: string;
 

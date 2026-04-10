@@ -17,6 +17,7 @@ import {
   numeric,
   index,
   check,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 
 // ---------------------------------------------------------------
@@ -88,7 +89,6 @@ export const projects = pgTable(
     plannedStart: timestamp('planned_start', { withTimezone: true }),
     plannedEnd: timestamp('planned_end', { withTimezone: true }),
 
-    assignedWorkers: text('assigned_workers').array(),
     estimatedValue: numeric('estimated_value', { precision: 12, scale: 2 }),
     notes: text('notes'),
 
@@ -113,5 +113,24 @@ export const projects = pgTable(
       'projects_end_requires_start',
       sql`${table.plannedEnd} IS NULL OR ${table.plannedStart} IS NOT NULL`,
     ),
+  ],
+);
+
+// ---------------------------------------------------------------
+// Project–Worker assignments (m:n join table)
+// ---------------------------------------------------------------
+export const projectWorkers = pgTable(
+  'project_workers',
+  {
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.userId] }),
+    index('idx_project_workers_user_id').on(table.userId),
   ],
 );

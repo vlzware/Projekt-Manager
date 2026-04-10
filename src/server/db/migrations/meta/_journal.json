@@ -64,6 +64,13 @@
       "when": 1775854611312,
       "tag": "0008_fantastic_silver_centurion",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1775858269188,
+      "tag": "0009_pink_princess_powerful",
+      "breakpoints": true
     }
   ]
 }

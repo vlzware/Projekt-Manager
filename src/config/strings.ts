@@ -71,13 +71,12 @@ export const STRINGS = {
   validation: {
     requiredString: (field: string) =>
       `${field} ist erforderlich und muss ein nicht-leerer String sein.`,
-    requiredObject: (field: string) =>
-      `${field} ist erforderlich und muss ein Objekt sein.`,
+    requiredObject: (field: string) => `${field} ist erforderlich und muss ein Objekt sein.`,
     mustBeString: (field: string) => `${field} muss ein String sein.`,
     mustBeObject: (field: string) => `${field} muss ein Objekt sein.`,
     mustBeStringArray: (field: string) => `${field} muss ein Array von Strings sein.`,
-    mustBeNumeric: (field: string) =>
-      `${field} muss eine Zahl oder ein numerischer String sein.`,
+    mustBeUuidArray: (field: string) => `${field} muss ein Array von UUIDs sein.`,
+    mustBeNumeric: (field: string) => `${field} muss eine Zahl oder ein numerischer String sein.`,
   },
 
   password: {

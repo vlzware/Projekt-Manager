@@ -164,8 +164,8 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
               <div className={styles.sectionLabel}>{STRINGS.ui.workers}</div>
               <div className={styles.workerList}>
                 {currentProject.assignedWorkers.map((w) => (
-                  <span key={w} className={styles.workerTag}>
-                    {w}
+                  <span key={w.userId} className={styles.workerTag}>
+                    {w.displayName}
                   </span>
                 ))}
               </div>
@@ -192,9 +192,15 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
 
           {/* Timestamps */}
           <div className={styles.timestamps}>
-            <span>{STRINGS.ui.created} {formatDateDE(currentProject.createdAt)}</span>
-            <span>{STRINGS.ui.updated} {formatDateDE(currentProject.updatedAt)}</span>
-            <span>{STRINGS.ui.statusSince} {formatDateDE(currentProject.statusChangedAt)}</span>
+            <span>
+              {STRINGS.ui.created} {formatDateDE(currentProject.createdAt)}
+            </span>
+            <span>
+              {STRINGS.ui.updated} {formatDateDE(currentProject.updatedAt)}
+            </span>
+            <span>
+              {STRINGS.ui.statusSince} {formatDateDE(currentProject.statusChangedAt)}
+            </span>
           </div>
         </div>
       </div>

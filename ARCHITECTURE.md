@@ -165,7 +165,7 @@ The four scenarios below are the most common changes. Each lists exact files to 
 **Pattern to copy**: the existing Kanban view consumes `useProjectStore` independently of the Calendar view. Read `src/ui/kanban/KanbanBoard.tsx` (the view component), `src/state/projectStore.ts:198-200` (the `getProjectsByState` selector), `src/App.tsx:72-77` (route registration), `src/domain/types.ts:45` (the `ViewMode` union).
 
 1. **View type**: add the new view name to the `ViewMode` union in `src/domain/types.ts:45` (e.g., `'worker' | 'bookkeeper'`).
-2. **Component**: create `src/ui/worker/WorkerView.tsx` with its own `WorkerView.module.css`. The component reads from `useProjectStore` and filters in JSX — for example, `projects.filter(p => p.assignedWorkers?.includes(user.displayName))`.
+2. **Component**: create `src/ui/worker/WorkerView.tsx` with its own `WorkerView.module.css`. The component reads from `useProjectStore` and filters in JSX — for example, `projects.filter(p => p.assignedWorkers?.some(w => w.userId === user.id))`.
 3. **Route**: register in `src/App.tsx` next to the existing kanban/calendar routes.
 4. **Navigation**: extend the header dropdown or sidebar so users can switch to the new view.
 5. **Tests**: copy the structure from `src/ui/__tests__/KanbanBoard.test.tsx`.

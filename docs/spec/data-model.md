@@ -44,7 +44,7 @@ interface Project {
   plannedStart?: string;       // ISO 8601 date
   plannedEnd?: string;         // ISO 8601 date
 
-  assignedWorkers?: string[];  // display names — placeholder; future iterations will use Worker entity IDs
+  assignedWorkers?: { userId: string; displayName: string }[];  // references UserAccount via project_workers join table
   estimatedValue?: number;     // EUR net
   notes?: string;
 
@@ -59,7 +59,7 @@ Design notes:
 
 - `statusChangedAt` is separate from `updatedAt` — editing notes must not reset aging calculations.
 - Customer and address are nested objects for clarity and future extensibility. **Known debt**: `customer` is inline (denormalized). Future iterations will extract to a `Customer` entity for cross-project lookup, deduplication, and LLM email extraction.
-- `assignedWorkers` is `string[]` of display names. **Known debt**: will be replaced by `Worker` entity references for role-based views and worker management.
+- `assignedWorkers` references `UserAccount` entries via a `project_workers` join table (m:n). The API returns `{ userId, displayName }` objects; writes accept `assignedWorkerIds: string[]` (user UUIDs).
 - `estimatedValue` is `number` in the API contract. The database stores it as `numeric(12,2)` for precision. The ORM converts between the two representations; clients always receive and send a JSON number.
 - No `priority` field — priority is implicit in state aging and column accumulation.
 - No stored boolean flags for warnings — these are derived from state and timestamps at render time.
@@ -125,7 +125,7 @@ Design notes:
 - `active` allows disabling a user without deleting their records — important for audit trail in later iterations. Users are deactivated, not deleted.
 - `lastLoginAt` is optional; populated on successful authentication.
 - **Known debt**: iteration 2 implements a minimal role set. Future iterations may add fine-grained permissions, per-role view restrictions, or company-specific role definitions. The current array-based model supports this without structural changes.
-- **Known debt**: no link between `UserAccount` and `Project.assignedWorkers`. The worker assignment remains a `string[]` of display names in this iteration. Connecting them is deferred to the iteration that introduces the worker-specific view.
+- Worker assignment is linked to `UserAccount` via the `project_workers` join table.
 
 ### 5.4 Session
 
@@ -183,7 +183,6 @@ The product specification defines persistence behavior, not a concrete database 
 The persistence design must support future extraction of additional entities without rewriting the project UI:
 
 - `Customer` — extracted from inline `Project.customer`
-- `Worker` — extracted from `Project.assignedWorkers`
 - `Attachment` — file references for worker uploads (Aufmaß, photos)
 - `NotificationRule` — event-based notification configuration
 - `Invoice` — invoice tracking for the bookkeeper view

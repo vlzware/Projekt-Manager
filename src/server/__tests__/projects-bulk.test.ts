@@ -11,11 +11,20 @@ import { startApp, stopApp, login, authPost, authGet } from '../../test/api-help
 describe('Bulk Project Import', () => {
   let ownerToken: string;
   let workerToken: string;
+  let worker1Id: string;
+  let worker2Id: string;
 
   beforeAll(async () => {
     await startApp();
     ownerToken = await login('inhaber', 'changeme');
     workerToken = await login('arbeiter1', 'changeme');
+
+    // Look up seeded worker user IDs for assignedWorkerIds tests
+    const w1 = await authGet(workerToken, '/api/auth/me');
+    worker1Id = w1.json().id;
+    const w2Token = await login('arbeiter2', 'changeme');
+    const w2 = await authGet(w2Token, '/api/auth/me');
+    worker2Id = w2.json().id;
   });
 
   afterAll(async () => {
@@ -119,7 +128,7 @@ describe('Bulk Project Import', () => {
             address: { street: 'Teststr. 1', zip: '12345', city: 'Teststadt' },
             plannedStart: '2026-06-01',
             plannedEnd: '2026-06-15',
-            assignedWorkers: ['Monteur A', 'Monteur B'],
+            assignedWorkerIds: [worker1Id, worker2Id],
             estimatedValue: 15000.5,
             notes: 'Testnotiz',
           },

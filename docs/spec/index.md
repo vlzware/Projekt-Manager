@@ -189,9 +189,7 @@ Items marked as "Known debt" across the specification. Each will be resolved or 
 | Item | Location | Target Iteration | Issue |
 |------|----------|-----------------|-------|
 | `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | Future | TBD |
-| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | Future | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) (reopened) |
 | Minimal role set — basic permission matrix implemented (4 roles). Fine-grained permissions and per-role views remain. | [data-model.md §5.3](data-model.md#53-user-entity) | Future | TBD |
-| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | Future | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
 | State actions mutate silently — server-side event bus implemented (`events.ts`). Remaining: connect subscribers for audit trail and notifications. | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | Future | TBD |
 
 ---

@@ -32,7 +32,7 @@ export interface BulkImportItem {
   address?: unknown;
   plannedStart?: unknown;
   plannedEnd?: unknown;
-  assignedWorkers?: unknown;
+  assignedWorkerIds?: unknown;
   estimatedValue?: unknown;
   notes?: unknown;
 }
@@ -172,7 +172,7 @@ export class ProjectService {
           address: item.address as { street: string; zip: string; city: string } | null | undefined,
           plannedStart: item.plannedStart ? new Date(item.plannedStart as string) : null,
           plannedEnd: item.plannedEnd ? new Date(item.plannedEnd as string) : null,
-          assignedWorkers: item.assignedWorkers as string[] | null | undefined,
+          assignedWorkerIds: item.assignedWorkerIds as string[] | null | undefined,
           estimatedValue: item.estimatedValue != null ? String(item.estimatedValue) : null,
           notes: item.notes as string | null | undefined,
           createdBy: userId,
@@ -274,13 +274,17 @@ export class ProjectService {
       return STRINGS.projects.endWithoutStart;
     }
 
-    // Assigned workers validation
-    if (item.assignedWorkers !== undefined && item.assignedWorkers !== null) {
+    // Assigned worker IDs validation
+    if (item.assignedWorkerIds !== undefined && item.assignedWorkerIds !== null) {
       if (
-        !Array.isArray(item.assignedWorkers) ||
-        !item.assignedWorkers.every((w) => typeof w === 'string')
+        !Array.isArray(item.assignedWorkerIds) ||
+        !item.assignedWorkerIds.every(
+          (id: unknown) =>
+            typeof id === 'string' &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+        )
       ) {
-        return STRINGS.validation.mustBeStringArray('assignedWorkers');
+        return STRINGS.validation.mustBeUuidArray('assignedWorkerIds');
       }
     }
 

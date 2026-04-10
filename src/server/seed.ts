@@ -10,7 +10,7 @@
 import { sql } from 'drizzle-orm';
 import { hashPassword } from './password.js';
 import type { Database } from './db/connection.js';
-import { users, projects } from './db/schema.js';
+import { users, projects, projectWorkers } from './db/schema.js';
 
 function daysFromNow(days: number): Date {
   const d = new Date();
@@ -42,7 +42,7 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   // Clear existing data atomically — TRUNCATE CASCADE is faster than
   // individual DELETEs and prevents race conditions when multiple
   // test files seed against the same database in sequence.
-  await db.execute(sql`TRUNCATE TABLE sessions, projects, users CASCADE`);
+  await db.execute(sql`TRUNCATE TABLE project_workers, sessions, projects, users CASCADE`);
 
   // ---------------------------------------------------------------
   // Users (data-model.md §7.2)
@@ -100,7 +100,11 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
     },
   ];
 
-  await db.insert(users).values(userRecords);
+  const insertedUsers = await db
+    .insert(users)
+    .values(userRecords)
+    .returning({ id: users.id, username: users.username });
+  const userByUsername = new Map(insertedUsers.map((u) => [u.username, u.id]));
 
   // ---------------------------------------------------------------
   // Projects (data-model.md §7.1 — 19 projects across all 9 states)
@@ -185,7 +189,6 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
       address: { street: 'Kirchweg 3', zip: '51427', city: 'Bergisch Gladbach' },
       plannedStart: daysFromNow(5),
       plannedEnd: daysFromNow(12),
-      assignedWorkers: ['Jan Nowak', 'Lukas Fischer'],
       estimatedValue: '18500.00',
       createdAt: daysFromNow(-14),
       updatedAt: daysFromNow(-7),
@@ -199,7 +202,6 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
       address: { street: 'Rosenweg 15', zip: '51469', city: 'Bergisch Gladbach' },
       plannedStart: daysFromNow(8),
       plannedEnd: daysFromNow(10),
-      assignedWorkers: ['Jan Nowak'],
       estimatedValue: '4800.00',
       createdAt: daysFromNow(-10),
       updatedAt: daysFromNow(-3),
@@ -215,7 +217,6 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
       address: { street: 'Bahnhofstr. 22', zip: '51427', city: 'Bergisch Gladbach' },
       plannedStart: daysFromNow(-5),
       plannedEnd: daysFromNow(2),
-      assignedWorkers: ['Jan Nowak', 'Lukas Fischer'],
       estimatedValue: '12000.00',
       createdAt: daysFromNow(-18),
       updatedAt: daysFromNow(-5),
@@ -229,7 +230,6 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
       address: { street: 'Lindenallee 5', zip: '51465', city: 'Bergisch Gladbach' },
       plannedStart: daysFromNow(-3),
       plannedEnd: daysFromNow(-1), // slightly past end — edge case
-      assignedWorkers: ['Lukas Fischer'],
       estimatedValue: '2800.00',
       createdAt: daysFromNow(-12),
       updatedAt: daysFromNow(-3),
@@ -243,7 +243,6 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
       address: { street: 'Marktplatz 1', zip: '51429', city: 'Bergisch Gladbach' },
       plannedStart: daysFromNow(-2),
       plannedEnd: daysFromNow(1),
-      assignedWorkers: ['Jan Nowak'],
       estimatedValue: '6500.00',
       createdAt: daysFromNow(-15),
       updatedAt: daysFromNow(-2),
@@ -354,7 +353,36 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
     },
   ];
 
-  await db.insert(projects).values(projectRecords);
+  const insertedProjects = await db
+    .insert(projects)
+    .values(projectRecords)
+    .returning({ id: projects.id, number: projects.number });
+  const projectByNumber = new Map(insertedProjects.map((p) => [p.number, p.id]));
+
+  // ---------------------------------------------------------------
+  // Project–Worker assignments
+  // ---------------------------------------------------------------
+  const arbeiter1 = userByUsername.get('arbeiter1')!;
+  const arbeiter2 = userByUsername.get('arbeiter2')!;
+
+  const assignments: { projectNumber: string; userId: string }[] = [
+    // Geplant
+    { projectNumber: `${year}-007`, userId: arbeiter1 },
+    { projectNumber: `${year}-007`, userId: arbeiter2 },
+    { projectNumber: `${year}-008`, userId: arbeiter1 },
+    // In Arbeit
+    { projectNumber: `${year}-009`, userId: arbeiter1 },
+    { projectNumber: `${year}-009`, userId: arbeiter2 },
+    { projectNumber: `${year}-010`, userId: arbeiter2 },
+    { projectNumber: `${year}-011`, userId: arbeiter1 },
+  ];
+
+  await db.insert(projectWorkers).values(
+    assignments.map((a) => ({
+      projectId: projectByNumber.get(a.projectNumber)!,
+      userId: a.userId,
+    })),
+  );
 
   console.warn(
     '⚠  Seed-Daten geladen. Alle Benutzer haben das Standardpasswort "changeme". ' +
