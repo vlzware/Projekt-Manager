@@ -10,21 +10,21 @@ Deliver a hosted, authenticated system that demonstrates a consolidated preview 
 
 Previous iterations answered two foundational questions (both resolved affirmatively):
 
-> "Can this system persist and retrieve real project data without losing the interaction model validated in iteration 1?" *(answered: iteration 2)*
+> "Can this system persist and retrieve real project data without losing the interaction model validated in iteration 1?" _(answered: iteration 2)_
 
-> "Can access be restricted to authenticated users in a way that supports later role-based views and permissions without forcing a rewrite?" *(answered: iteration 2)*
+> "Can access be restricted to authenticated users in a way that supports later role-based views and permissions without forcing a rewrite?" _(answered: iteration 2)_
 
 The current iteration (5 — Consolidation) focuses on spec-code reconciliation, quality controls, and security review.
 
 ### 1.1 Iteration History
 
-| Iteration | Focus | Status |
-|---|---|---|
-| 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
-| 2 | Persistence (database + API), authentication, object storage | Accepted |
-| 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | Accepted |
-| 4 | Deployment, integration testing, CD pipeline, VPN access | Accepted |
-| 5 | Consolidation — spec-code reconciliation, quality controls, security review | **Current** |
+| Iteration | Focus                                                                          | Status      |
+| --------- | ------------------------------------------------------------------------------ | ----------- |
+| 1         | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted    |
+| 2         | Persistence (database + API), authentication, object storage                   | Accepted    |
+| 3         | Stabilization — structural refactor, maintainability overhaul, test expansion  | Accepted    |
+| 4         | Deployment, integration testing, CD pipeline, VPN access                       | Accepted    |
+| 5         | Consolidation — spec-code reconciliation, quality controls, security review    | **Current** |
 
 ---
 
@@ -73,17 +73,17 @@ The Kanban board reflects the full company workflow. The number and definition o
 
 The current configuration defines 9 states:
 
-| # | State | Type | Description |
-|---|---|---|---|
-| 1 | **Anfrage** | Action | Inquiry received — company must write an offer |
-| 2 | **Angebot** | Buffer | Offer sent — waiting for customer confirmation |
-| 3 | **Beauftragt** | Action | Customer confirmed — company must plan and schedule |
-| 4 | **Geplant** | Buffer | Planned — waiting for its turn on the calendar |
-| 5 | **In Arbeit** | Active | Being executed (incl. Aufmaß, photos, etc.) |
-| 6 | **Abnahme** | Buffer | Execution complete — waiting for customer acceptance |
-| 7 | **Rechnung fällig** | Action | Customer accepted — company must write the invoice |
-| 8 | **Abgerechnet** | Buffer | Invoice sent — waiting for payment |
-| 9 | **Erledigt** | Done | Payment received — project closed |
+| #   | State               | Type   | Description                                          |
+| --- | ------------------- | ------ | ---------------------------------------------------- |
+| 1   | **Anfrage**         | Action | Inquiry received — company must write an offer       |
+| 2   | **Angebot**         | Buffer | Offer sent — waiting for customer confirmation       |
+| 3   | **Beauftragt**      | Action | Customer confirmed — company must plan and schedule  |
+| 4   | **Geplant**         | Buffer | Planned — waiting for its turn on the calendar       |
+| 5   | **In Arbeit**       | Active | Being executed (incl. Aufmaß, photos, etc.)          |
+| 6   | **Abnahme**         | Buffer | Execution complete — waiting for customer acceptance |
+| 7   | **Rechnung fällig** | Action | Customer accepted — company must write the invoice   |
+| 8   | **Abgerechnet**     | Buffer | Invoice sent — waiting for payment                   |
+| 9   | **Erledigt**        | Done   | Payment received — project closed                    |
 
 Three action states, four buffer states, one active, one terminal. The Kanban board makes action states naturally visible — items accumulating in an action column signal that work is falling behind.
 
@@ -97,13 +97,13 @@ All assumptions are candidates for later configuration, marked **[C]**.
 
 ### 4.1 Company Profile
 
-| Attribute | Assumed Value |
-|---|---|
-| Trade | Maler- und Lackiererbetrieb (painter / coating contractor) **[C]** |
-| Employees | Owner, 1 office manager, 4–6 workers, 1 external bookkeeper **[C]** |
-| Concurrent active projects | 10–30 **[C]** |
-| Typical project duration | 1–10 working days **[C]** |
-| Region | Single metropolitan area (~50 km radius) **[C]** |
+| Attribute                  | Assumed Value                                                       |
+| -------------------------- | ------------------------------------------------------------------- |
+| Trade                      | Maler- und Lackiererbetrieb (painter / coating contractor) **[C]**  |
+| Employees                  | Owner, 1 office manager, 4–6 workers, 1 external bookkeeper **[C]** |
+| Concurrent active projects | 10–30 **[C]**                                                       |
+| Typical project duration   | 1–10 working days **[C]**                                           |
+| Region                     | Single metropolitan area (~50 km radius) **[C]**                    |
 
 ### 4.2 Users
 
@@ -112,6 +112,7 @@ The system introduces authenticated access.
 The only fully implemented interactive perspective is the **Owner / Office Manager** operational view. All authenticated users see all projects and can perform the same state and date changes. This is a deliberate simplification, not a statement about the final authorization model.
 
 **Assumptions [C]:**
+
 - Initial deployments may start with a very small user set (e.g. 1–5 named users) **[C]**
 - The system must support migration from simple access rules to role-based authorization later without changing the domain model **[C]**
 - Self-registration is not available — users are created by an administrator (or via seed data for this iteration) **[C]**
@@ -126,14 +127,14 @@ All data is stored in a persistent database, accessed through an API layer. On f
 
 ### 4.5 Authentication
 
-| Attribute | Assumed Value |
-|---|---|
-| Authentication method | Username + password **[C]** |
-| Password policy | Minimum 8 characters **[C]** |
-| Session duration | 24 hours **[C]** |
-| Maximum concurrent sessions per user | Unlimited **[C]** |
-| Default admin account | Environment-variable bootstrap on first run (`BOOTSTRAP_ADMIN_*`) — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
-| Self-registration | Not available **[C]** |
+| Attribute                            | Assumed Value                                                                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Authentication method                | Username + password **[C]**                                                                                                  |
+| Password policy                      | Minimum 8 characters **[C]**                                                                                                 |
+| Session duration                     | 24 hours **[C]**                                                                                                             |
+| Maximum concurrent sessions per user | Unlimited **[C]**                                                                                                            |
+| Default admin account                | Environment-variable bootstrap on first run (`BOOTSTRAP_ADMIN_*`) — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
+| Self-registration                    | Not available **[C]**                                                                                                        |
 
 The system does not implement a user management UI in this iteration. For development, initial users come from seed data (see [data-model.md §7.2](data-model.md#72-seed-users)). For production, the first admin account is created by the first-run bootstrap mechanism (see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md)): set `BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` on first deploy, log in, change the password, remove the env vars, redeploy. Subsequent users are added administratively (direct database write in this iteration). A user management interface is planned for a later iteration (see kickoff: "administrator's view").
 
@@ -143,14 +144,14 @@ The system does not implement a user management UI in this iteration. For develo
 
 This specification is split across multiple files:
 
-| File | Sections | Contents |
-|---|---|---|
-| **[index.md](index.md)** (this file) | 1–4 | Goal, scope, workflow states, assumptions |
-| **[data-model.md](data-model.md)** | 5–7 | Project, User, Session entities; state metadata; persistence principles; seed data |
-| **[ui.md](ui.md)** | 8–10 | Layout, views, interactions, login, async mutation UX |
-| **[architecture.md](architecture.md)** | 11–13 | Responsibility layers, dependencies, extensibility, configuration, NFRs, security |
-| **[api.md](api.md)** | 14 | API design principles, operations, authorization, error handling |
-| **[verification.md](verification.md)** | 15–18 | Acceptance criteria, test specifications, risks, open questions |
+| File                                   | Sections | Contents                                                                           |
+| -------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
+| **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                          |
+| **[data-model.md](data-model.md)**     | 5–7      | Project, User, Session entities; state metadata; persistence principles; seed data |
+| **[ui.md](ui.md)**                     | 8–10     | Layout, views, interactions, login, async mutation UX                              |
+| **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security  |
+| **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                   |
+| **[verification.md](verification.md)** | 15–18    | Acceptance criteria, test specifications, risks, open questions                    |
 
 ---
 
@@ -158,27 +159,27 @@ This specification is split across multiple files:
 
 Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) to their target iteration. Features through iteration 4 are marked Done; future features show their earliest target.
 
-| Feature | Status | Iteration |
-|---------|--------|-----------|
-| Kanban view with state columns and basic interactivity | Done | 1 |
-| Calendar overview for planning | Done | 1 |
-| Persistent data storage (database + API) | Done | 2 |
-| User authentication (login/logout, sessions) | Done | 2 |
-| Object storage module (prepared for uploads) | Done | 2 |
-| Deployment to hosted environment | Done | 4 |
-| Continuous Delivery pipeline | Done | 4 |
-| End-to-end tests on all integrations (CI) | Done | 4 |
-| LLM-based customer data extraction from emails | Planned | Future |
-| All customer and project data managed in central system | Planned | Future |
-| Worker view (relevant projects, calendar, object data, GPS) | Planned | Future |
-| Worker uploads (notes, photos, Aufmass) | Planned | Future |
-| Binary file optimization and space alerts | Planned | Future |
-| Configurable event notifications (email, optional WhatsApp) | Planned | Future |
-| Modular architecture with open-standard data exchange | Planned | Future |
-| Bookkeeper view (invoices, search, grouping, export) | Planned | Future |
-| Administrator view (users, groups, rights) | Planned | Future |
-| German user manual ("Handbuch") | Planned | Future |
-| Tooltips, hints, and in-app help | Planned | Future |
+| Feature                                                     | Status  | Iteration |
+| ----------------------------------------------------------- | ------- | --------- |
+| Kanban view with state columns and basic interactivity      | Done    | 1         |
+| Calendar overview for planning                              | Done    | 1         |
+| Persistent data storage (database + API)                    | Done    | 2         |
+| User authentication (login/logout, sessions)                | Done    | 2         |
+| Object storage module (prepared for uploads)                | Done    | 2         |
+| Deployment to hosted environment                            | Done    | 4         |
+| Continuous Delivery pipeline                                | Done    | 4         |
+| End-to-end tests on all integrations (CI)                   | Done    | 4         |
+| LLM-based customer data extraction from emails              | Planned | Future    |
+| All customer and project data managed in central system     | Planned | Future    |
+| Worker view (relevant projects, calendar, object data, GPS) | Planned | Future    |
+| Worker uploads (notes, photos, Aufmass)                     | Planned | Future    |
+| Binary file optimization and space alerts                   | Planned | Future    |
+| Configurable event notifications (email, optional WhatsApp) | Planned | Future    |
+| Modular architecture with open-standard data exchange       | Planned | Future    |
+| Bookkeeper view (invoices, search, grouping, export)        | Planned | Future    |
+| Administrator view (users, groups, rights)                  | Planned | Future    |
+| German user manual ("Handbuch")                             | Planned | Future    |
+| Tooltips, hints, and in-app help                            | Planned | Future    |
 
 ---
 
@@ -186,12 +187,12 @@ Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) t
 
 Items marked as "Known debt" across the specification. Each will be resolved or re-assessed when its target iteration begins.
 
-| Item | Location | Target Iteration | Issue |
-|------|----------|-----------------|-------|
-| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | Future | TBD |
-| Minimal role set — basic permission matrix implemented (4 roles). Fine-grained permissions and per-role views remain. | [data-model.md §5.3](data-model.md#53-user-entity) | Future | TBD |
-| State actions mutate silently — server-side event bus implemented (`events.ts`). Remaining: connect subscribers for audit trail and notifications. | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | Future | TBD |
+| Item                                                                                                                                               | Location                                                                     | Target Iteration | Issue |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------- | ----- |
+| `customer` is inline (denormalized) — extract to `Customer` entity                                                                                 | [data-model.md §5.1](data-model.md#51-project-entity)                        | Future           | TBD   |
+| Minimal role set — basic permission matrix implemented (4 roles). Fine-grained permissions and per-role views remain.                              | [data-model.md §5.3](data-model.md#53-user-entity)                           | Future           | TBD   |
+| State actions mutate silently — server-side event bus implemented (`events.ts`). Remaining: connect subscribers for audit trail and notifications. | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | Future           | TBD   |
 
 ---
 
-*Living document — updated as each iteration ships. Git history preserves past versions.*
+_Living document — updated as each iteration ships. Git history preserves past versions._

@@ -1,6 +1,6 @@
 # UI Specification
 
-*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
+_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
 
 ## 8. UI Specification
 
@@ -91,11 +91,13 @@ Cards within a column are sorted by `statusChangedAt` ascending (longest-waiting
 Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026"`). The date is displayed as a standalone label (e.g., `15.03.2026`), not prefixed. The `"seit X Tagen"` aging text is a separate indicator that appears below for aged buffer cards. This makes the age of every card visible regardless of state type. For aged buffer cards, the `"seit X Tagen"` text appears below the date label — both are shown.
 
 **Action states**: after a configurable threshold (`agingBoldDays`), the entry date turns **bold** — a subtle but clear flag that this item has been waiting too long. Default thresholds **[C]**:
+
 - Anfrage: 3 days
 - Beauftragt: 5 days
 - Rechnung fällig: 3 days
 
 **Buffer states**: after a configurable threshold (`agingThresholdDays`), the entry date turns bold and the card additionally shows `"seit X Tagen"` as a text indicator. Default thresholds **[C]**:
+
 - Angebot: 14 days
 - Geplant: 21 days
 - Abnahme: 7 days
@@ -132,6 +134,7 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 A **slide-in panel** from the right side (not a modal — the user retains context of the view behind it). Width: ~400px on desktop.
 
 Contents:
+
 - Project number, title (large)
 - Current status with colored badge + German label
 - **"Nächster Schritt" button** → forward transition (same as [→]). Hidden for `Erledigt`.
@@ -165,17 +168,17 @@ Summary values update immediately after any state change.
 
 Each state has an assigned color. Action states use warm tones, buffer states use cool tones.
 
-| State | Type | Suggested Color | Hex |
-|---|---|---|---|
-| Anfrage | Action | Orange | `#F97316` |
-| Angebot | Buffer | Light blue | `#93C5FD` |
-| Beauftragt | Action | Amber | `#F59E0B` |
-| Geplant | Buffer | Blue | `#3B82F6` |
-| In Arbeit | Active | Green | `#22C55E` |
-| Abnahme | Buffer | Teal | `#14B8A6` |
-| Rechnung fällig | Action | Red | `#EF4444` |
-| Abgerechnet | Buffer | Indigo | `#6366F1` |
-| Erledigt | Done | Gray | `#9CA3AF` |
+| State           | Type   | Suggested Color | Hex       |
+| --------------- | ------ | --------------- | --------- |
+| Anfrage         | Action | Orange          | `#F97316` |
+| Angebot         | Buffer | Light blue      | `#93C5FD` |
+| Beauftragt      | Action | Amber           | `#F59E0B` |
+| Geplant         | Buffer | Blue            | `#3B82F6` |
+| In Arbeit       | Active | Green           | `#22C55E` |
+| Abnahme         | Buffer | Teal            | `#14B8A6` |
+| Rechnung fällig | Action | Red             | `#EF4444` |
+| Abgerechnet     | Buffer | Indigo          | `#6366F1` |
+| Erledigt        | Done   | Gray            | `#9CA3AF` |
 
 Colors are configurable via the state configuration (see [Data Model — State Metadata](data-model.md#52-state-metadata)). The warm/cool grouping is the design principle; exact values may be adjusted during implementation.
 
@@ -247,4 +250,4 @@ The Kanban board uses a progressive column collapse to remain usable on narrower
 
 ---
 
-*Cross-references: [index.md](index.md) for workflow states and assumptions, [data-model.md](data-model.md) for entity definitions and state metadata, [api.md](api.md) for API operations, [verification.md](verification.md) for acceptance criteria.*
+_Cross-references: [index.md](index.md) for workflow states and assumptions, [data-model.md](data-model.md) for entity definitions and state metadata, [api.md](api.md) for API operations, [verification.md](verification.md) for acceptance criteria._

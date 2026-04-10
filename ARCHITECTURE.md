@@ -50,24 +50,24 @@ Six responsibility layers. Dependency flows left-to-right only, never reversed. 
 
 ## Module Map
 
-| Directory                  | Owns                                                                                   | Must NOT                                                |
-| -------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions, insecure-connection detection | Import anything outside `src/config/`                   |
-| `src/domain/`              | Types, transition rules, aging calc, summary computation, session expiry, date formatting | Import from state, API, storage, or UI                  |
-| `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)        | Contain business logic or import from layers above      |
-| `src/server/db/`           | Drizzle schema, connection, SQL migrations                                             | Contain business logic                                  |
-| `src/server/services/`     | Business logic orchestration (AuthService, ProjectService), domain events, logger interface | Know about HTTP, Fastify, or request objects            |
-| `src/server/repositories/` | Database queries (project, user, session)                                              | Know about HTTP or contain business rules               |
-| `src/server/storage/`      | S3/MinIO client, upload/download/presign ops                                           | Be called from anywhere except API routes               |
-| `src/server/middleware/`   | Cookie parsing, session auth, request decoration                                       | Contain route handlers or business logic                |
-| `src/server/routes/`       | Route definitions, request validation, response serialization                          | Access repositories directly (must go through services) |
-| `src/server/data/`         | Static data files (e.g. common-passwords list)                                         | Contain logic or import from other modules              |
-| `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), bootstrap, health probe, seed, password hashing, error types | -                                                       |
+| Directory                  | Owns                                                                                                                                | Must NOT                                                |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions, insecure-connection detection                                 | Import anything outside `src/config/`                   |
+| `src/domain/`              | Types, transition rules, aging calc, summary computation, session expiry, date formatting                                           | Import from state, API, storage, or UI                  |
+| `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)                                                     | Contain business logic or import from layers above      |
+| `src/server/db/`           | Drizzle schema, connection, SQL migrations                                                                                          | Contain business logic                                  |
+| `src/server/services/`     | Business logic orchestration (AuthService, ProjectService), domain events, logger interface                                         | Know about HTTP, Fastify, or request objects            |
+| `src/server/repositories/` | Database queries (project, user, session)                                                                                           | Know about HTTP or contain business rules               |
+| `src/server/storage/`      | S3/MinIO client, upload/download/presign ops                                                                                        | Be called from anywhere except API routes               |
+| `src/server/middleware/`   | Cookie parsing, session auth, request decoration                                                                                    | Contain route handlers or business logic                |
+| `src/server/routes/`       | Route definitions, request validation, response serialization                                                                       | Access repositories directly (must go through services) |
+| `src/server/data/`         | Static data files (e.g. common-passwords list)                                                                                      | Contain logic or import from other modules              |
+| `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), bootstrap, health probe, seed, password hashing, error types                     | -                                                       |
 | `src/state/`               | Zustand stores (authStore, projectStore, uiStore, confirmStore), barrel re-export + cross-store reset (store.ts), client-side cache | Access the database or import server code               |
-| `src/api/`                 | Centralized API client, typed fetch wrappers                                           | Contain business logic or UI concerns                   |
-| `src/hooks/`               | Shared React hooks (transitions, routing)                                              | Contain API calls directly (must use stores)            |
-| `src/ui/`                  | React components (kanban, calendar, detail, auth, layout)                              | Contain business logic beyond dispatching to state      |
-| `src/test/`                | Shared test setup, API test helpers, and seed fixtures                                 | Be imported in production code                          |
+| `src/api/`                 | Centralized API client, typed fetch wrappers                                                                                        | Contain business logic or UI concerns                   |
+| `src/hooks/`               | Shared React hooks (transitions, routing)                                                                                           | Contain API calls directly (must use stores)            |
+| `src/ui/`                  | React components (kanban, calendar, detail, auth, layout)                                                                           | Contain business logic beyond dispatching to state      |
+| `src/test/`                | Shared test setup, API test helpers, and seed fixtures                                                                              | Be imported in production code                          |
 
 ---
 
@@ -200,8 +200,8 @@ The four scenarios below are the most common changes. Each lists exact files to 
 
 Five services defined in `docker-compose.yml`:
 
-| Service        | Image / Build                             | Role                                                  |
-| -------------- | ----------------------------------------- | ----------------------------------------------------- |
+| Service        | Image / Build                                        | Role                                                  |
+| -------------- | ---------------------------------------------------- | ----------------------------------------------------- |
 | `app`          | `ghcr.io/vlzware/projekt-manager` (GHCR)             | Fastify server serving API + static frontend          |
 | `db`           | `postgres:17-alpine`                                 | PostgreSQL with persistent volume                     |
 | `storage`      | `minio/minio`                                        | S3-compatible object storage                          |

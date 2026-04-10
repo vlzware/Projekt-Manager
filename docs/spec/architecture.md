@@ -1,6 +1,6 @@
 # Architecture, Configuration, NFRs and Security
 
-*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
+_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
 
 > **This document is the architectural contract** — what must hold for any code in this repository to be considered correct. For the **navigation guide** (tech stack overview, module map with file paths, request lifecycle, "how to extend" recipes), see [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repo root. The two documents serve different readers: this one is for spec audits, the root one is for finding your way around the code.
 
@@ -19,14 +19,14 @@
 
 The system is organized into six responsibility layers.
 
-| Layer | Responsibility |
-|---|---|
-| **Config** | State definitions, thresholds, colors, company assumptions, role definitions. Imported by other layers, imports nothing. |
-| **Domain** | Pure functions: transition rules, aging calculation, validation, types. Never imports from state, API, storage, or UI. |
+| Layer       | Responsibility                                                                                                                                                                                                                                                                                                                                  |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Config**  | State definitions, thresholds, colors, company assumptions, role definitions. Imported by other layers, imports nothing.                                                                                                                                                                                                                        |
+| **Domain**  | Pure functions: transition rules, aging calculation, validation, types. Never imports from state, API, storage, or UI.                                                                                                                                                                                                                          |
 | **Storage** | Encapsulates all database and object storage operations. Exposes a repository-style interface. Imported only by the API layer. Note: authentication middleware (`src/server/middleware/`) accesses the session repository directly for session validation. This is architecturally part of the API layer's auth concern, not a layer violation. |
-| **API** | Handles authentication, authorization, request validation, and orchestrates storage operations. Exposes the operations defined in [api.md](api.md). Imports from domain and storage. |
-| **State** | Fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access. |
-| **UI** | Presentation only. May import from domain for types. Dispatches actions to the state layer. |
+| **API**     | Handles authentication, authorization, request validation, and orchestrates storage operations. Exposes the operations defined in [api.md](api.md). Imports from domain and storage.                                                                                                                                                            |
+| **State**   | Fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access.                                                                                                                                                                                                                                         |
+| **UI**      | Presentation only. May import from domain for types. Dispatches actions to the state layer.                                                                                                                                                                                                                                                     |
 
 **Dependency direction** (no reverse imports):
 
@@ -44,6 +44,7 @@ The state layer is a client-side cache delegating to the API.
 **State:** the full project list (fetched from API), the authenticated user, an optional active filter (by workflow state or aged-buffer subset), the active view (Kanban or Kalender), a confirm-dialog store (modal state for transition confirmations), mutation tracking (in-flight flag, error message), selected project ID (detail panel), and session-checked flag.
 
 **Mutations** (all persisted mutations go through the API):
+
 - Transition a project forward or backward by one state → call API, update local state on success
 - Update a project's planned start/end dates → call API, update local state on success
 - Login / logout → call API, update auth state
@@ -52,6 +53,7 @@ The state layer is a client-side cache delegating to the API.
 - Switch between views (local only — clears active filter)
 
 **Queries** (derived from locally cached data):
+
 - Projects grouped by workflow state
 - Summary: count of projects per action state, count of aged buffer items per state with threshold, count of projects without planned dates
 - Current authenticated user
@@ -63,6 +65,7 @@ The server-side event bus (`events.ts`) provides the hook mechanism — `project
 The object storage module encapsulates all binary/file storage operations. Implemented and tested in this iteration but not connected to UI (see [kickoff](../project/kickoff.md): worker uploads, Aufmass, photos are future iterations). The deployed demo tests this module against real infrastructure.
 
 Capabilities at minimum:
+
 - Upload (key, data, content type) → stored reference
 - Download (key) → data stream
 - Delete (key) → success/failure
@@ -74,30 +77,30 @@ Connecting it to UI later should require only adding an API endpoint and a UI co
 
 The system must not close doors that later iterations need open.
 
-| Door | How it stays open | Closed if... |
-|---|---|---|
-| Adding/removing workflow states | States driven by configuration array, not hardcoded logic | Column count or state names are hardcoded in components |
-| Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently | Kanban and Calendar are coupled to each other |
-| Adding fields to Project | Interface with optional fields; UI tolerates missing data | Components crash on undefined fields |
-| Adding file uploads / attachments | Object storage module implemented and tested; Project model accepts optional attachments | Data layer assumes all project data fits in a single flat object |
-| Adding authentication / roles | Implemented: 4 roles (owner, office, worker, bookkeeper) with a permission matrix. API enforces `requirePermission()` on protected routes. | User identity baked into component logic |
-| Adding notifications | Server-side event bus implemented (`events.ts`). Subscribers can be added without changing the transition logic. | Transitions are handled inline in UI event handlers |
-| Adding project creation / deletion | Bulk import endpoint implemented (`POST /api/projects/bulk/import`). Single-item create and delete are the remaining doors. | API designed only for reads + transitions with no room for new operations |
-| Extracting Customer entity | Customer is a nested object in Project, ready to be normalized into a separate table with a foreign key | Customer fields are spread across multiple flat columns with no grouping |
-| Connecting Worker entities to Users | `project_workers` join table links projects to `UserAccount` with FK constraints | Worker assignment is an unstructured string with no path to a User reference |
-| Adding a second authentication method | Auth logic is behind the API; session model is method-agnostic | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers) |
-| Multi-tenancy / multi-company | Configs are per-instance via environment; data model does not preclude adding tenant scoping later | Company names, branding, or workflow definitions are hardcoded in application code |
-| Multi-language (low priority) | Partially open: German strings are being extracted to `src/config/strings.ts`. Extraction is in progress — some call sites still use inline literals. A full i18n framework is deferred. | Extraction regresses to inline literals; strings.ts is abandoned |
+| Door                                             | How it stays open                                                                                                                                                                        | Closed if...                                                                                  |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Adding/removing workflow states                  | States driven by configuration array, not hardcoded logic                                                                                                                                | Column count or state names are hardcoded in components                                       |
+| Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently                                                                                                                                       | Kanban and Calendar are coupled to each other                                                 |
+| Adding fields to Project                         | Interface with optional fields; UI tolerates missing data                                                                                                                                | Components crash on undefined fields                                                          |
+| Adding file uploads / attachments                | Object storage module implemented and tested; Project model accepts optional attachments                                                                                                 | Data layer assumes all project data fits in a single flat object                              |
+| Adding authentication / roles                    | Implemented: 4 roles (owner, office, worker, bookkeeper) with a permission matrix. API enforces `requirePermission()` on protected routes.                                               | User identity baked into component logic                                                      |
+| Adding notifications                             | Server-side event bus implemented (`events.ts`). Subscribers can be added without changing the transition logic.                                                                         | Transitions are handled inline in UI event handlers                                           |
+| Adding project creation / deletion               | Bulk import endpoint implemented (`POST /api/projects/bulk/import`). Single-item create and delete are the remaining doors.                                                              | API designed only for reads + transitions with no room for new operations                     |
+| Extracting Customer entity                       | Customer is a nested object in Project, ready to be normalized into a separate table with a foreign key                                                                                  | Customer fields are spread across multiple flat columns with no grouping                      |
+| Connecting Worker entities to Users              | `project_workers` join table links projects to `UserAccount` with FK constraints                                                                                                         | Worker assignment is an unstructured string with no path to a User reference                  |
+| Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                                                                                           | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers) |
+| Multi-tenancy / multi-company                    | Configs are per-instance via environment; data model does not preclude adding tenant scoping later                                                                                       | Company names, branding, or workflow definitions are hardcoded in application code            |
+| Multi-language (low priority)                    | Partially open: German strings are being extracted to `src/config/strings.ts`. Extraction is in progress — some call sites still use inline literals. A full i18n framework is deferred. | Extraction regresses to inline literals; strings.ts is abandoned                              |
 
 ### 11.6 Deployment Topology
 
 The deployed system consists of three components:
 
-| Component | Role |
-|---|---|
-| **Application** | Serves the front end and exposes the API. Frontend and backend may be a single deployable unit or separate services — this is an ADR decision. |
-| **Database** | Persistent storage for projects, users, and sessions. |
-| **Object storage** | Binary/file storage for future attachments. |
+| Component          | Role                                                                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Application**    | Serves the front end and exposes the API. Frontend and backend may be a single deployable unit or separate services — this is an ADR decision. |
+| **Database**       | Persistent storage for projects, users, and sessions.                                                                                          |
+| **Object storage** | Binary/file storage for future attachments.                                                                                                    |
 
 These components may run on the same provider or on separate providers. The spec does not prescribe hosting vendors, managed services, container strategies, or network topology — those are ADR decisions.
 
@@ -139,7 +142,7 @@ Values that may differ per customer and must not be hardcoded irreversibly:
 - Date and locale display settings
 - Initial user and role setup defaults
 - Authentication parameters (session duration, password policy)
-- *Future:* notification recipients, event rules, per-role permission matrices
+- _Future:_ notification recipients, event rules, per-role permission matrices
 
 Current implementation status: app name, branding, footer text, workflow state configuration (labels, colors, thresholds, collapse tiers) are centralized in config modules. Date/locale, authentication parameters, project numbering format, and company profile assumptions are centralized as constants but not yet runtime-configurable — changing them requires a code change and rebuild. Moving to runtime or environment-driven configuration is planned.
 
@@ -178,6 +181,7 @@ Current implementation status: app name, branding, footer text, workflow state c
 ### 13.4 Accessibility
 
 Not full compliance, but minimally:
+
 - Sufficient color contrast for state indicators.
 - Warning information not conveyed by color alone (text labels accompany colors).
 - Keyboard navigation for primary interactions where practical.
@@ -185,11 +189,13 @@ Not full compliance, but minimally:
 ### 13.5 Robustness
 
 The UI must tolerate incomplete project data without crashing:
+
 - Missing dates (project appears in Kanban but not calendar).
 - Missing address, phone, email (detail panel shows available fields only).
 - Missing notes (field simply absent).
 
 **The system must handle failure gracefully:**
+
 - **Network errors during API calls display a user-friendly German message and do not corrupt local state.**
 - **Session expiry mid-use redirects to login without data loss** (unsaved changes are inherently impossible — every mutation is sent to the API immediately).
 - **The API rejects malformed requests with clear error codes, never with stack traces or internal details.**
@@ -221,4 +227,4 @@ Every new API endpoint must satisfy:
 
 ---
 
-*Living document — updated as each iteration ships. Git history preserves past versions.*
+_Living document — updated as each iteration ships. Git history preserves past versions._

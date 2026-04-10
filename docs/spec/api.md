@@ -1,6 +1,6 @@
 # API Specification
 
-*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
+_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
 
 ---
 
@@ -23,17 +23,17 @@ The API is the boundary between the front end and all persistent state. It repla
 
 #### 14.2.0 Health
 
-| Operation | Input | Output | Notes |
-|---|---|---|---|
-| **Health check** | — | status (`ok` or `degraded`), per-component checks (database, storage) | No authentication required. Returns degraded with component-level detail if any probe fails. Used by the deploy script for post-deploy verification. |
+| Operation        | Input | Output                                                                | Notes                                                                                                                                                |
+| ---------------- | ----- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Health check** | —     | status (`ok` or `degraded`), per-component checks (database, storage) | No authentication required. Returns degraded with component-level detail if any probe fails. Used by the deploy script for post-deploy verification. |
 
 #### 14.2.1 Authentication
 
-| Operation | Input | Output | Notes |
-|---|---|---|---|
-| **Login** | username, password | session token, user profile (id, username, displayName, roles, email) | Creates a new session. Rejects inactive users (`active = false`). |
-| **Logout** | session token | -- | Invalidates the specific session, not all sessions for the user. |
-| **Get current user** | (session) | user profile (id, username, displayName, roles, email) | Returns the authenticated user's profile. Used on app load to restore session (see [ui.md — Authentication Behavior](ui.md#94-authentication-behavior)). |
+| Operation            | Input              | Output                                                                | Notes                                                                                                                                                    |
+| -------------------- | ------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Login**            | username, password | session token, user profile (id, username, displayName, roles, email) | Creates a new session. Rejects inactive users (`active = false`).                                                                                        |
+| **Logout**           | session token      | --                                                                    | Invalidates the specific session, not all sessions for the user.                                                                                         |
+| **Get current user** | (session)          | user profile (id, username, displayName, roles, email)                | Returns the authenticated user's profile. Used on app load to restore session (see [ui.md — Authentication Behavior](ui.md#94-authentication-behavior)). |
 
 Design notes:
 
@@ -46,13 +46,13 @@ Design notes:
 
 All project operations require an authenticated session.
 
-| Operation | Input | Output | Notes |
-|---|---|---|---|
-| **List projects** | optional: offset, limit | project list, total count | Returns all projects visible to the authenticated user. Pagination optional for this iteration's data volume but the contract must support it. |
-| **Get project** | project ID | single project | Returns the full project object or a not-found error. |
-| **Transition forward** | project ID | updated project | Advances status by one step. Rejects if current state is `erledigt`. Sets `status`, `statusChangedAt`, `updatedAt`, and `updatedBy` server-side. |
-| **Transition backward** | project ID | updated project | Moves status back by one step. Rejects if current state is `anfrage` or `erledigt`. Sets `status`, `statusChangedAt`, `updatedAt`, and `updatedBy` server-side. |
-| **Update dates** | project ID, plannedStart?, plannedEnd? | updated project | Updates date fields. Sets `updatedAt` and `updatedBy` server-side. Does **not** modify `statusChangedAt` — date changes must not reset aging calculations. |
+| Operation               | Input                                  | Output                    | Notes                                                                                                                                                           |
+| ----------------------- | -------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **List projects**       | optional: offset, limit                | project list, total count | Returns all projects visible to the authenticated user. Pagination optional for this iteration's data volume but the contract must support it.                  |
+| **Get project**         | project ID                             | single project            | Returns the full project object or a not-found error.                                                                                                           |
+| **Transition forward**  | project ID                             | updated project           | Advances status by one step. Rejects if current state is `erledigt`. Sets `status`, `statusChangedAt`, `updatedAt`, and `updatedBy` server-side.                |
+| **Transition backward** | project ID                             | updated project           | Moves status back by one step. Rejects if current state is `anfrage` or `erledigt`. Sets `status`, `statusChangedAt`, `updatedAt`, and `updatedBy` server-side. |
+| **Update dates**        | project ID, plannedStart?, plannedEnd? | updated project           | Updates date fields. Sets `updatedAt` and `updatedBy` server-side. Does **not** modify `statusChangedAt` — date changes must not reset aging calculations.      |
 
 Design notes:
 
@@ -64,8 +64,8 @@ Design notes:
 
 #### 14.2.3 User Management
 
-| Operation | Input | Output | Notes |
-|---|---|---|---|
+| Operation               | Input                          | Output          | Notes                                                                                                                                                                                                                         |
+| ----------------------- | ------------------------------ | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Change own password** | current password, new password | success/failure | Any authenticated user can change their own password. Current password must be verified before accepting the change. New password must meet the configured password policy (see [index.md §4.5](index.md#45-authentication)). |
 
 Other user management operations (list, create, update, reset password) are deferred to the iteration that introduces the administrator UI. Until then, user administration is handled via seed data or direct database access.
@@ -79,15 +79,15 @@ Design notes:
 
 Bulk operations let an administrator (or import flow) submit many items in a single request. They follow a uniform shape: each item is validated independently, valid items are persisted, and the response reports both how many succeeded and which ones failed (with the index in the input array and a German error message).
 
-| Operation | Input | Output | Notes |
-|---|---|---|---|
+| Operation                | Input                                                                                                                                                                                                                                                                      | Output                                                               | Notes                                                                                                                                                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Bulk import projects** | array of project items, each with the same fields as a single project (`number`, `title`, `customer`, optional `address`, optional `status`, optional `plannedStart`/`plannedEnd`, optional `assignedWorkerIds` (user UUIDs), optional `estimatedValue`, optional `notes`) | `{ imported: number, errors: { index: number, message: string }[] }` | Each item is validated independently. The endpoint never aborts on the first invalid item — partial success is the expected outcome. Items with `status` omitted default to the first workflow state. Requires the `project:create` permission. |
 
 Design notes:
 
 - **Partial success is intentional.** A 30-row import where 2 rows are malformed should not block the other 28. The response gives the client enough information to render an error report and let the user fix the rejected rows.
 - **Validation runs server-side.** The same shape rules used by single-project creation are applied per item. The validator is a pure function so it can also be reused client-side for an "import preview" UI in a future iteration without round-tripping to the server.
-- **No transactional all-or-nothing semantics.** If a row fails *after* it passed validation (e.g., a unique-key conflict on `number`), the row is reported in `errors` and the others still commit. This matches the import-tool model the kickoff describes.
+- **No transactional all-or-nothing semantics.** If a row fails _after_ it passed validation (e.g., a unique-key conflict on `number`), the row is reported in `errors` and the others still commit. This matches the import-tool model the kickoff describes.
 - **The shape generalizes.** Future bulk operations (bulk update, bulk transition, bulk delete, bulk customer import) follow the same `{ imported|updated|... , errors }` pattern. The client can write a single `BulkResult` handler instead of one per operation.
 
 ---
@@ -98,12 +98,12 @@ Design notes:
 - User management (change own password) requires the authenticated user to be changing their own password.
 - The system implements a basic role-based permission matrix. All authenticated, active users can view all projects (list, get). Project mutations (transitions, date changes, bulk import) require specific permissions granted by role:
 
-| Role | Permissions |
-|---|---|
-| owner | project:read, project:transition, project:dates, project:create, auth:change-password |
-| office | project:read, project:transition, project:dates, project:create, auth:change-password |
-| worker | project:read, auth:change-password |
-| bookkeeper | project:read, auth:change-password |
+| Role       | Permissions                                                                           |
+| ---------- | ------------------------------------------------------------------------------------- |
+| owner      | project:read, project:transition, project:dates, project:create, auth:change-password |
+| office     | project:read, project:transition, project:dates, project:create, auth:change-password |
+| worker     | project:read, auth:change-password                                                    |
+| bookkeeper | project:read, auth:change-password                                                    |
 
 Future iterations will add fine-grained permissions and per-role view restrictions.
 
@@ -118,10 +118,10 @@ Design notes:
 
 Every error response carries two components:
 
-| Component | Purpose | Example |
-|---|---|---|
-| **Machine-readable code** | Programmatic handling by the client | `INVALID_CREDENTIALS`, `SESSION_EXPIRED`, `NOT_PERMITTED` |
-| **Human-readable message** | Display to the user (German, **[C]**) | `"Anmeldung fehlgeschlagen"`, `"Sitzung abgelaufen"` |
+| Component                  | Purpose                               | Example                                                   |
+| -------------------------- | ------------------------------------- | --------------------------------------------------------- |
+| **Machine-readable code**  | Programmatic handling by the client   | `INVALID_CREDENTIALS`, `SESSION_EXPIRED`, `NOT_PERMITTED` |
+| **Human-readable message** | Display to the user (German, **[C]**) | `"Anmeldung fehlgeschlagen"`, `"Sitzung abgelaufen"`      |
 
 An optional third component, `details`, may carry structured validation information (e.g., field-level errors from schema validation). Clients should handle its absence gracefully.
 
@@ -129,14 +129,14 @@ An optional third component, `details`, may carry structured validation informat
 
 The API must distinguish the following error categories. Each category has distinct client-side handling (see [ui.md — Asynchronous Mutation Behavior](ui.md#95-asynchronous-mutation-behavior)).
 
-| Category | Meaning | Client behavior |
-|---|---|---|
-| **Authentication error** | Credentials invalid, session expired, or session absent. | Redirect to login screen. Show expiry message if session was previously valid. |
-| **Authorization error** | User is authenticated but lacks permission for the requested operation (e.g., changing another user's password). | Show error message. Do not redirect to login. |
-| **Validation error** | Request is malformed or violates business rules (e.g., transition from `erledigt`, missing required field, invalid dates). | Show error message. Revert optimistic update if applicable. |
-| **Not found** | The requested entity (project or user ID) does not exist. | Show error message. Re-fetch project list to sync state. |
-| **Server error** | Unexpected internal failure. | Show generic error message. Do not expose internal details. |
-| **Rate limited** | Too many requests in the configured time window. | Show retry message. Back off before retrying. |
+| Category                 | Meaning                                                                                                                    | Client behavior                                                                |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| **Authentication error** | Credentials invalid, session expired, or session absent.                                                                   | Redirect to login screen. Show expiry message if session was previously valid. |
+| **Authorization error**  | User is authenticated but lacks permission for the requested operation (e.g., changing another user's password).           | Show error message. Do not redirect to login.                                  |
+| **Validation error**     | Request is malformed or violates business rules (e.g., transition from `erledigt`, missing required field, invalid dates). | Show error message. Revert optimistic update if applicable.                    |
+| **Not found**            | The requested entity (project or user ID) does not exist.                                                                  | Show error message. Re-fetch project list to sync state.                       |
+| **Server error**         | Unexpected internal failure.                                                                                               | Show generic error message. Do not expose internal details.                    |
+| **Rate limited**         | Too many requests in the configured time window.                                                                           | Show retry message. Back off before retrying.                                  |
 
 The full set of machine-readable error codes: `INVALID_CREDENTIALS`, `UNAUTHENTICATED`, `SESSION_EXPIRED`, `NOT_PERMITTED`, `VALIDATION_ERROR`, `NOT_FOUND`, `RATE_LIMITED`, `SERVER_ERROR`.
 
@@ -148,4 +148,4 @@ The full set of machine-readable error codes: `INVALID_CREDENTIALS`, `UNAUTHENTI
 
 ---
 
-*Cross-references: [index.md](index.md) for scope and assumptions, [data-model.md](data-model.md) for entity definitions, [ui.md](ui.md) for client-side behavior that consumes this API, [architecture.md](architecture.md) for responsibility layers and security requirements, [verification.md](verification.md) for acceptance criteria and API integration tests.*
+_Cross-references: [index.md](index.md) for scope and assumptions, [data-model.md](data-model.md) for entity definitions, [ui.md](ui.md) for client-side behavior that consumes this API, [architecture.md](architecture.md) for responsibility layers and security requirements, [verification.md](verification.md) for acceptance criteria and API integration tests._

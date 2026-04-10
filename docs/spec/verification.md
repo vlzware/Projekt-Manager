@@ -1,6 +1,6 @@
 # Verification
 
-*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
+_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
 
 ---
 
@@ -163,31 +163,20 @@ These tests run against a real (test) database, not mocks.
 The end-to-end path is covered by focused, isolated test files rather than a single monolithic scenario. This improves test isolation, failure diagnostics, and net-zero teardown. The steps below define the required behavioral coverage; the implementation may split them across multiple test files and specs.
 
 **Smoke (login/logout cycle)**:
+
 1. App loads — login screen is displayed.
 2. User enters credentials and logs in — Kanban view is displayed with 9 columns.
 3. Header shows user's display name.
-16. User clicks "Abmelden" — login screen appears.
+4. User clicks "Abmelden" — login screen appears.
 
-**Kanban flows (state transitions, dates, calendar, persistence)**:
-4. Summary area shows `"3× Rechnung fällig"`.
-5. User clicks a summary indicator — view filters to matching projects.
-6. User clicks "Filter aufheben" — full view restored.
-7. User clicks a card in `Geplant` — detail panel opens.
-8. User clicks "Nächster Schritt" — confirmation dialog appears.
-9. User confirms — card moves to `In Arbeit`.
-10. User clicks "Vorheriger Schritt" on the same card — card moves back to `Geplant`.
-11. User changes planned end date via date picker in detail panel.
-12. User switches to calendar view — the project bar reflects the new date.
-13. User clicks "X Projekte ohne Termin" — switches to filtered Kanban.
-14. Summary area reflects current state counts throughout.
-15. User refreshes the page — changes persist; user remains logged in.
-17. Pressing browser back button after logout does not show project data.
+**Kanban flows (state transitions, dates, calendar, persistence)**: 4. Summary area shows `"3× Rechnung fällig"`. 5. User clicks a summary indicator — view filters to matching projects. 6. User clicks "Filter aufheben" — full view restored. 7. User clicks a card in `Geplant` — detail panel opens. 8. User clicks "Nächster Schritt" — confirmation dialog appears. 9. User confirms — card moves to `In Arbeit`. 10. User clicks "Vorheriger Schritt" on the same card — card moves back to `Geplant`. 11. User changes planned end date via date picker in detail panel. 12. User switches to calendar view — the project bar reflects the new date. 13. User clicks "X Projekte ohne Termin" — switches to filtered Kanban. 14. Summary area reflects current state counts throughout. 15. User refreshes the page — changes persist; user remains logged in. 17. Pressing browser back button after logout does not show project data.
 
 ### 16.5 Supplementary Tests
 
 Tests providing coverage beyond the core specification. These are not mapped to specific spec IDs but verify important behaviors.
 
 #### Server-side
+
 - Bootstrap: first-run admin creation via `BOOTSTRAP_ADMIN_*` env vars
 - Bulk import: partial success, validation per item, permission enforcement
 - Events: domain event bus subscribe/emit, error isolation
@@ -198,6 +187,7 @@ Tests providing coverage beyond the core specification. These are not mapped to 
 - Single project GET: by ID, not-found handling
 
 #### Client-side
+
 - API client: typed fetch wrappers, error paths, session expiry detection
 - Project store: optimistic updates, rollback on failure, session delegation
 - Confirm dialog: rendering, accessibility, focus trap
@@ -208,6 +198,7 @@ Tests providing coverage beyond the core specification. These are not mapped to 
 - Insecure connection: HTTP-mode detection
 
 #### E2E
+
 - Kanban flows: summary filter, transitions, date editing, calendar, persistence, back-button protection (covers spec §16.4 steps 4–15, 17 in split tests)
 - Failure paths: network errors, session expiry mid-flow
 - Startup: health endpoint verification, seed login
@@ -217,14 +208,14 @@ Tests providing coverage beyond the core specification. These are not mapped to 
 
 ## 17. Risks and Mitigations
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| 9 Kanban columns too tight on screen | Usability | Horizontal scroll; responsive collapse tiers ([ui.md §10](ui.md#10-responsive-behavior)). |
-| Over-styling action columns | Defeats Kanban principle | Trust board structure; resist decorative urgency. |
+| Risk                                        | Impact                                            | Mitigation                                                                                                                                                                |
+| ------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 9 Kanban columns too tight on screen        | Usability                                         | Horizontal scroll; responsive collapse tiers ([ui.md §10](ui.md#10-responsive-behavior)).                                                                                 |
+| Over-styling action columns                 | Defeats Kanban principle                          | Trust board structure; resist decorative urgency.                                                                                                                         |
 | API latency makes transitions feel sluggish | Users accustomed to instant mock-data transitions | Optimistic UI updates + sub-300ms API target ([architecture.md §13.2](architecture.md#132-performance)). If hosting latency is too high, evaluate edge deployment or CDN. |
-| Session management edge cases | User loses work or sees stale data | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose). |
-| Seed data dates become stale over time | Demo loses impact | Dates are relative to deployment date ([data-model.md §7.4](data-model.md#74-date-range)). A re-seed operation refreshes them. |
-| Hosting cost exceeds expectations | Budget | Research free-tier options first. Define cost ceiling before committing. |
+| Session management edge cases               | User loses work or sees stale data                | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose).                                         |
+| Seed data dates become stale over time      | Demo loses impact                                 | Dates are relative to deployment date ([data-model.md §7.4](data-model.md#74-date-range)). A re-seed operation refreshes them.                                            |
+| Hosting cost exceeds expectations           | Budget                                            | Research free-tier options first. Define cost ceiling before committing.                                                                                                  |
 
 ---
 
@@ -241,4 +232,4 @@ Tests providing coverage beyond the core specification. These are not mapped to 
 
 ---
 
-*Cross-references: [index.md](index.md) for goal, scope, and assumptions; [data-model.md](data-model.md) for entity definitions; [ui.md](ui.md) for UI specification and behavioral rules; [architecture.md](architecture.md) for architectural constraints and NFRs; [api.md](api.md) for API operations.*
+_Cross-references: [index.md](index.md) for goal, scope, and assumptions; [data-model.md](data-model.md) for entity definitions; [ui.md](ui.md) for UI specification and behavioral rules; [architecture.md](architecture.md) for architectural constraints and NFRs; [api.md](api.md) for API operations._

@@ -1,6 +1,6 @@
 # Data Model
 
-*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
+_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
 
 ---
 
@@ -23,35 +23,35 @@ type WorkflowState =
   | 'erledigt';
 
 interface Project {
-  id: string;                  // UUID
-  number: string;              // "2026-042" — year + sequential [C]
-  title: string;               // "Fassadenanstrich Müller"
+  id: string; // UUID
+  number: string; // "2026-042" — year + sequential [C]
+  title: string; // "Fassadenanstrich Müller"
   status: WorkflowState;
-  statusChangedAt: string;     // ISO 8601 — for aging calculations
+  statusChangedAt: string; // ISO 8601 — for aging calculations
 
   customer: {
-    name: string;              // "Familie Müller"
-    phone?: string;            // "+49 221 1234567"
-    email?: string;            // "mueller@example.de"
+    name: string; // "Familie Müller"
+    phone?: string; // "+49 221 1234567"
+    email?: string; // "mueller@example.de"
   };
 
   address?: {
-    street: string;            // "Hauptstr. 12"
-    zip: string;               // "51465"
-    city: string;              // "Bergisch Gladbach"
+    street: string; // "Hauptstr. 12"
+    zip: string; // "51465"
+    city: string; // "Bergisch Gladbach"
   };
 
-  plannedStart?: string;       // ISO 8601 date
-  plannedEnd?: string;         // ISO 8601 date
+  plannedStart?: string; // ISO 8601 date
+  plannedEnd?: string; // ISO 8601 date
 
-  assignedWorkers?: { userId: string; displayName: string }[];  // references UserAccount via project_workers join table
-  estimatedValue?: number;     // EUR net
+  assignedWorkers?: { userId: string; displayName: string }[]; // references UserAccount via project_workers join table
+  estimatedValue?: number; // EUR net
   notes?: string;
 
-  createdAt: string;           // ISO 8601
-  updatedAt: string;           // ISO 8601
-  createdBy?: string;          // UserAccount.id — optional: seeded/imported records may lack a known actor
-  updatedBy?: string;          // UserAccount.id — optional: seeded/imported records may lack a known actor
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+  createdBy?: string; // UserAccount.id — optional: seeded/imported records may lack a known actor
+  updatedBy?: string; // UserAccount.id — optional: seeded/imported records may lack a known actor
 }
 ```
 
@@ -74,13 +74,13 @@ type StateType = 'action' | 'buffer' | 'active' | 'done';
 
 interface StateConfig {
   key: WorkflowState;
-  label: string;               // German display label
+  label: string; // German display label
   type: StateType;
-  order: number;               // position in workflow sequence (1-9)
-  color: string;               // hex color
+  order: number; // position in workflow sequence (1-9)
+  color: string; // hex color
   agingThresholdDays?: number; // days before aging indicator appears [C]
-  agingBoldDays?: number;      // days before date display turns bold [C]
-  collapseTier: 1 | 2 | 3;        // responsive collapse priority (1 = last to collapse) [C]
+  agingBoldDays?: number; // days before date display turns bold [C]
+  collapseTier: 1 | 2 | 3; // responsive collapse priority (1 = last to collapse) [C]
 }
 ```
 
@@ -88,12 +88,12 @@ This configuration drives Kanban column rendering, color coding, and aging indic
 
 **Aging field mapping by state type:**
 
-| State type | `agingBoldDays` | `agingThresholdDays` | Visual effect |
-|---|---|---|---|
-| Action | Used | Ignored | Entry date turns **bold** after threshold |
-| Buffer | Used (equals `agingThresholdDays`) | Used | Entry date turns **bold** at the same threshold + `"seit X Tagen"` text appears |
-| Active | Ignored | Ignored | No aging behavior |
-| Done | Ignored | Ignored | No aging behavior |
+| State type | `agingBoldDays`                    | `agingThresholdDays` | Visual effect                                                                   |
+| ---------- | ---------------------------------- | -------------------- | ------------------------------------------------------------------------------- |
+| Action     | Used                               | Ignored              | Entry date turns **bold** after threshold                                       |
+| Buffer     | Used (equals `agingThresholdDays`) | Used                 | Entry date turns **bold** at the same threshold + `"seit X Tagen"` text appears |
+| Active     | Ignored                            | Ignored              | No aging behavior                                                               |
+| Done       | Ignored                            | Ignored              | No aging behavior                                                               |
 
 ### 5.3 User Entity
 
@@ -101,18 +101,18 @@ This configuration drives Kanban column rendering, color coding, and aging indic
 type AccountRole = string; // internal key — e.g. 'owner', 'office', 'worker', 'bookkeeper' [C]
 
 interface UserAccount {
-  id: string;                  // UUID
-  username: string;            // unique, used for login
-  displayName: string;         // shown in UI, e.g. "Maria Schmidt"
-  passwordHash: string;        // server/DB only — NEVER in API responses or client-side code
-  roles: AccountRole[];        // array — see design notes
+  id: string; // UUID
+  username: string; // unique, used for login
+  displayName: string; // shown in UI, e.g. "Maria Schmidt"
+  passwordHash: string; // server/DB only — NEVER in API responses or client-side code
+  roles: AccountRole[]; // array — see design notes
   email?: string;
-  active: boolean;             // soft-disable without deletion
-  createdAt: string;           // ISO 8601
-  updatedAt: string;           // ISO 8601
-  lastLoginAt?: string;        // ISO 8601
-  createdBy?: string;          // UserAccount.id — optional for seeded/bootstrapped records
-  updatedBy?: string;          // UserAccount.id — optional for seeded/bootstrapped records
+  active: boolean; // soft-disable without deletion
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+  lastLoginAt?: string; // ISO 8601
+  createdBy?: string; // UserAccount.id — optional for seeded/bootstrapped records
+  updatedBy?: string; // UserAccount.id — optional for seeded/bootstrapped records
 }
 ```
 
@@ -133,11 +133,11 @@ The session model is intentionally minimal and mechanism-agnostic. The spec defi
 
 ```typescript
 interface Session {
-  id: string;                  // opaque session identifier
-  userId: string;              // references UserAccount.id
-  token: string;               // cryptographically random lookup key — transport mechanism detail
-  createdAt: string;           // ISO 8601
-  expiresAt: string;           // ISO 8601
+  id: string; // opaque session identifier
+  userId: string; // references UserAccount.id
+  token: string; // cryptographically random lookup key — transport mechanism detail
+  createdAt: string; // ISO 8601
+  expiresAt: string; // ISO 8601
 }
 ```
 
@@ -153,10 +153,10 @@ All persisted entities follow a common audit metadata pattern:
 
 ```typescript
 interface AuditMetadata {
-  createdAt: string;           // ISO 8601 — set on creation, never modified
-  updatedAt: string;           // ISO 8601 — set on every mutation
-  createdBy?: string;          // UserAccount.id — optional for seeded/imported records
-  updatedBy?: string;          // UserAccount.id — optional for seeded/imported records
+  createdAt: string; // ISO 8601 — set on creation, never modified
+  updatedAt: string; // ISO 8601 — set on every mutation
+  createdBy?: string; // UserAccount.id — optional for seeded/imported records
+  updatedBy?: string; // UserAccount.id — optional for seeded/imported records
 }
 ```
 
@@ -244,28 +244,28 @@ The seed operation must be safe to run on an empty database. Re-seeding an exist
 
 **15-20 projects**, distributed to create a realistic snapshot with visible action-state accumulation:
 
-| State | Count | Notes |
-|---|---|---|
-| Anfrage | 2 | Recent, no dates planned. One received yesterday, one 10 days ago (stale). |
-| Angebot | 2 | One sent 3 days ago, one sent 18 days ago (exceeds aging threshold). |
-| Beauftragt | 2 | Confirmed, no dates yet. |
-| Geplant | 2 | Dates assigned, workers assigned. |
-| In Arbeit | 3 | Currently on-site. One slightly past `plannedEnd`. |
-| Abnahme | 1 | Waiting for customer walk-through. |
-| Rechnung fällig | 3 | **Critical accumulation** — demonstrates the core value. |
-| Abgerechnet | 2 | Invoice sent, waiting for payment. |
-| Erledigt | 2 | Recently completed and paid. |
+| State           | Count | Notes                                                                      |
+| --------------- | ----- | -------------------------------------------------------------------------- |
+| Anfrage         | 2     | Recent, no dates planned. One received yesterday, one 10 days ago (stale). |
+| Angebot         | 2     | One sent 3 days ago, one sent 18 days ago (exceeds aging threshold).       |
+| Beauftragt      | 2     | Confirmed, no dates yet.                                                   |
+| Geplant         | 2     | Dates assigned, workers assigned.                                          |
+| In Arbeit       | 3     | Currently on-site. One slightly past `plannedEnd`.                         |
+| Abnahme         | 1     | Waiting for customer walk-through.                                         |
+| Rechnung fällig | 3     | **Critical accumulation** — demonstrates the core value.                   |
+| Abgerechnet     | 2     | Invoice sent, waiting for payment.                                         |
+| Erledigt        | 2     | Recently completed and paid.                                               |
 
 ### 7.2 User Dataset
 
-| Username | Display Name | Roles | Notes |
-|---|---|---|---|
-| `inhaber` | Thomas Berger | owner | Default admin account |
-| `buero` | Maria Schmidt | office | Office manager |
-| `arbeiter1` | Jan Nowak | worker | Field worker |
-| `arbeiter2` | Lukas Fischer | worker | Field worker |
-| `buchhalter` | Petra Weiß | bookkeeper | External bookkeeper |
-| `deaktiviert` | Ehemaliger Mitarbeiter | worker | Inactive — exercises the soft-delete path (§6.9) |
+| Username      | Display Name           | Roles      | Notes                                            |
+| ------------- | ---------------------- | ---------- | ------------------------------------------------ |
+| `inhaber`     | Thomas Berger          | owner      | Default admin account                            |
+| `buero`       | Maria Schmidt          | office     | Office manager                                   |
+| `arbeiter1`   | Jan Nowak              | worker     | Field worker                                     |
+| `arbeiter2`   | Lukas Fischer          | worker     | Field worker                                     |
+| `buchhalter`  | Petra Weiß             | bookkeeper | External bookkeeper                              |
+| `deaktiviert` | Ehemaliger Mitarbeiter | worker     | Inactive — exercises the soft-delete path (§6.9) |
 
 All seed users have a default password: `changeme` **[C]**. The seed loader must log a warning that default passwords are in use and must be changed.
 
@@ -289,4 +289,4 @@ Project titles, customer names, and addresses should be domain-representative fo
 
 ---
 
-*Living document — updated as each iteration ships. Git history preserves past versions.*
+_Living document — updated as each iteration ships. Git history preserves past versions._
