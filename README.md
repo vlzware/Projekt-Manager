@@ -18,12 +18,15 @@ For local development additionally:
 
 ### Production
 
-```bash
-cp .env.production.example .env   # fill in values, see docs/ops/server-setup.md
-docker compose up -d
-```
+Full deployment path (each step links to its runbook):
 
-Caddy terminates TLS on port 443 and reverse-proxies to the application on port 3000.
+1. [Provision the server](docs/ops/server-setup.md) — OS, SSH, deploy user, Docker, fail2ban
+2. [Set up WireGuard](docs/ops/wireguard-setup.md) — VPN server + first peer
+3. [Configure DNS](docs/ops/dns-setup.md) — A record → WireGuard IP (not public IP)
+4. [Bootstrap TLS](docs/ops/caddy-tls-bootstrap.md) — first Let's Encrypt cert via staging
+5. [Deploy](docs/ops/manual-deploy.md) — clone, configure secrets, `scripts/deploy.sh`
+
+**No domain yet?** Use the [HTTP-only evaluation mode](docs/ops/http-only-evaluation.md) to test the app on a bare VPS — skip steps 2-4.
 
 ### Development
 

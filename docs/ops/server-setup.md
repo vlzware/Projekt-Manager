@@ -37,7 +37,7 @@ Admin credentials in password manager. `deploy` is a system account, no password
 
 ## Network topology
 
-- **VPN:** plain WireGuard (kernel module). Server `wg0` at `10.213.17.1/24`, peers at `10.213.17.10+`.
+- **VPN:** plain WireGuard (kernel module). Server `wg0` at `10.213.17.1/24`, peers at `10.213.17.10+`. Setup: see [wireguard-setup.md](wireguard-setup.md).
 - **Application:** `https://${DOMAIN}`, Caddy bound to `10.213.17.1:443`. Clients join WireGuard and resolve `${DOMAIN}` to `10.213.17.1`.
 - **Caddy:** custom xcaddy build (`docker/caddy/Dockerfile`) with `caddy-dns/cloudflare` plugin. DNS-01 ACME via Cloudflare. No public ACME port needed.
 - **HTTPS is mandatory** regardless of VPN -- defense in depth (ADR-0008).
@@ -196,114 +196,7 @@ sudo dpkg-reconfigure -plow unattended-upgrades   # select Yes
 
 ### Phase 6 -- WireGuard
 
-1. Install:
-   ```bash
-   sudo apt-get install -y wireguard-tools qrencode
-   ```
-
-2. Generate server keypair:
-   ```bash
-   sudo mkdir -p /etc/wireguard
-   cd /etc/wireguard
-   sudo sh -c 'umask 077 && wg genkey | tee server.privkey | wg pubkey > server.pubkey'
-   sudo chmod 600 server.privkey
-   ```
-
-3. Create `wg0.conf`:
-   ```bash
-   sudo tee /etc/wireguard/wg0.conf > /dev/null <<EOF
-   [Interface]
-   Address    = 10.213.17.1/24
-   ListenPort = 51820
-   PrivateKey = $(sudo cat /etc/wireguard/server.privkey)
-   EOF
-   sudo chmod 600 /etc/wireguard/wg0.conf
-   ```
-
-4. Systemd drop-in (Docker must wait for `wg0` or Caddy's port bind fails on cold boot):
-   ```bash
-   sudo mkdir -p /etc/systemd/system/docker.service.d
-   sudo tee /etc/systemd/system/docker.service.d/wait-for-wireguard.conf > /dev/null <<'EOF'
-   [Unit]
-   Requires=wg-quick@wg0.service
-   After=wg-quick@wg0.service
-   EOF
-   sudo systemctl daemon-reload
-   ```
-
-5. Enable and start:
-   ```bash
-   sudo systemctl enable --now wg-quick@wg0.service
-   ```
-
-6. Open UDP/51820 in Hetzner Cloud Firewall.
-
-**Verify:**
-```bash
-ip -4 addr show wg0                                                          # inet 10.213.17.1/24
-systemctl is-active wg-quick@wg0.service                                     # active
-systemctl list-dependencies docker.service | grep -F wg-quick@wg0.service    # non-empty
-systemctl list-dependencies --reverse wg-quick@wg0.service | grep -F docker  # non-empty
-sudo ss -ulnp | grep -F :51820                                               # listening
-```
-
-### Phase 6.1 -- Peer onboarding
-
-Per ADR-0008: keys generated server-side, config distributed via Signal or in-person.
-
-For each peer:
-
-```bash
-PEER_NAME="<user-device>"          # e.g. vladimir-pixel
-PEER_IP="10.213.17.10"             # next /32 from 10.213.17.10+
-SERVER_PUB=$(sudo cat /etc/wireguard/server.pubkey)
-SERVER_ENDPOINT="<server-public-ip>:51820"
-
-sudo mkdir -p /etc/wireguard/peers
-cd /etc/wireguard
-sudo sh -c "umask 077 && wg genkey | tee peers/${PEER_NAME}.privkey | wg pubkey > peers/${PEER_NAME}.pubkey"
-
-# Append peer to wg0.conf
-sudo tee -a /etc/wireguard/wg0.conf > /dev/null <<EOF
-
-# ${PEER_NAME} added $(date -I)
-[Peer]
-PublicKey  = $(sudo cat peers/${PEER_NAME}.pubkey)
-AllowedIPs = ${PEER_IP}/32
-EOF
-
-# Reload without interface restart
-sudo wg syncconf wg0 <(sudo wg-quick strip wg0)
-
-# Generate client config
-sudo tee peers/${PEER_NAME}.conf > /dev/null <<EOF
-[Interface]
-PrivateKey = $(sudo cat peers/${PEER_NAME}.privkey)
-Address    = ${PEER_IP}/32
-
-[Peer]
-PublicKey           = ${SERVER_PUB}
-Endpoint            = ${SERVER_ENDPOINT}
-AllowedIPs          = 10.213.17.0/24
-PersistentKeepalive = 25
-EOF
-
-# QR code for mobile
-sudo qrencode -t ansiutf8 < peers/${PEER_NAME}.conf
-```
-
-After user confirms connection:
-```bash
-# Verify handshake (expect Unix timestamp within last 30s)
-sudo wg show wg0 latest-handshakes | grep -F "$(sudo cat /etc/wireguard/peers/${PEER_NAME}.pubkey)"
-
-# Clean up private key material
-sudo shred -u /etc/wireguard/peers/${PEER_NAME}.conf
-sudo shred -u /etc/wireguard/peers/${PEER_NAME}.privkey
-# Keep .pubkey for audit trail
-```
-
-If no handshake within ~5 min: remove the `[Peer]` block from `wg0.conf`, `sudo wg syncconf wg0 <(sudo wg-quick strip wg0)`, regenerate.
+See [wireguard-setup.md](wireguard-setup.md).
 
 ### Phase 7 -- Git access for deploy user
 
