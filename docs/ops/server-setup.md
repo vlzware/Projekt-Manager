@@ -342,23 +342,14 @@ Read-only Deploy Key scoped to this repo (outbound only -- unaffected by ADR-001
    sudo -u deploy git clone <repo-ssh-url> /opt/projekt-manager
    ```
 
-2. Create `.env` (non-secret vars only; secrets go in `secrets.env.age` via Phase 9):
+2. Create `.env` from the production template:
    ```bash
-   sudo -u deploy cp /opt/projekt-manager/.env.example /opt/projekt-manager/.env
+   sudo -u deploy cp /opt/projekt-manager/.env.production.example /opt/projekt-manager/.env
    ```
-   Edit and set:
-
-   | Variable | Value | Notes |
-   |---|---|---|
-   | `DOMAIN` | FQDN for Caddy/TLS | |
-   | `WG_BIND_IP` | `10.213.17.1` | Caddy publishes `:443` on this IP only |
-   | `NODE_ENV` | `production` | |
-   | `SEED` | `false` | Never seed in production |
-   | `MINIO_ROOT_USER` | chosen username | Non-secret |
-   | `DATABASE_URL` | `postgresql://pm:<pw>@db:5432/projekt_manager` | Compose derives from `POSTGRES_PASSWORD` |
+   Fill in `DOMAIN`, `MINIO_ROOT_USER`. Defaults for `WG_BIND_IP` and `SEED` are pre-set.
 
    Secrets (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) go in `secrets.env.age` only -- see Phase 9.
-   `STORAGE_SECRET_KEY` is derived from `MINIO_ROOT_PASSWORD` by `docker-compose.yml` at runtime -- do not set it.
+   `DATABASE_URL` and `STORAGE_*` are hardcoded in `docker-compose.yml` -- do not set them in `.env`.
 
 3. Complete Phase 9, then deploy:
    ```bash

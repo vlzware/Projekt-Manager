@@ -14,7 +14,6 @@ No Caddy, no TLS, plain HTTP on loopback. `http://localhost` is a W3C secure con
 nvm install
 npm install
 cp .env.example .env
-sed -i 's|http://storage:9000|http://localhost:9000|' .env
 ```
 
 The `.env.example` defaults are dev-ready: `NODE_ENV=development`, `SEED=true`, `DOMAIN=localhost`. No Cloudflare token or bootstrap vars needed.
@@ -70,7 +69,7 @@ Integration tests wipe and re-seed per file -- do not run against a database you
 | Symptom | Fix |
 |---|---|
 | Port `5432` already in use | Stop system Postgres (`sudo systemctl stop postgresql`) or change port in `docker-compose.dev.yml` |
-| `getaddrinfo EAI_AGAIN storage` | Set `STORAGE_ENDPOINT=http://localhost:9000` in `.env` |
+| `getaddrinfo EAI_AGAIN storage` | Verify `.env` has `STORAGE_ENDPOINT=http://localhost:9000` (the default in `.env.example`). If you copied from `.env.production.example`, this var is missing — use `.env.example` for dev. |
 | Login fails on fresh DB | Check `npm run dev` output for seed errors; try `SEED=force` |
 | Do NOT run `docker-compose.yml` with `DOMAIN=<prod-domain>` locally | Caddy will mint a real LE cert, burning rate-limit slots uselessly |
 
