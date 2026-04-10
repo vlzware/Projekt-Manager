@@ -52,8 +52,8 @@ Six responsibility layers. Dependency flows left-to-right only, never reversed. 
 
 | Directory                  | Owns                                                                                   | Must NOT                                                |
 | -------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions                   | Import anything outside `src/config/`                   |
-| `src/domain/`              | Types, transition rules, aging calc, validation, date formatting                       | Import from state, API, storage, or UI                  |
+| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions, insecure-connection detection | Import anything outside `src/config/`                   |
+| `src/domain/`              | Types, transition rules, aging calc, summary computation, session expiry, date formatting | Import from state, API, storage, or UI                  |
 | `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)        | Contain business logic or import from layers above      |
 | `src/server/db/`           | Drizzle schema, connection, SQL migrations                                             | Contain business logic                                  |
 | `src/server/services/`     | Business logic orchestration (AuthService, ProjectService), domain events, logger interface | Know about HTTP, Fastify, or request objects            |
@@ -63,7 +63,7 @@ Six responsibility layers. Dependency flows left-to-right only, never reversed. 
 | `src/server/routes/`       | Route definitions, request validation, response serialization                          | Access repositories directly (must go through services) |
 | `src/server/data/`         | Static data files (e.g. common-passwords list)                                         | Contain logic or import from other modules              |
 | `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), bootstrap, health probe, seed, password hashing, error types | -                                                       |
-| `src/state/`               | Zustand stores (authStore, projectStore, uiStore, confirmStore), client-side cache      | Access the database or import server code               |
+| `src/state/`               | Zustand stores (authStore, projectStore, uiStore, confirmStore), barrel re-export + cross-store reset (store.ts), client-side cache | Access the database or import server code               |
 | `src/api/`                 | Centralized API client, typed fetch wrappers                                           | Contain business logic or UI concerns                   |
 | `src/hooks/`               | Shared React hooks (transitions, routing)                                              | Contain API calls directly (must use stores)            |
 | `src/ui/`                  | React components (kanban, calendar, detail, auth, layout)                              | Contain business logic beyond dispatching to state      |
@@ -146,11 +146,11 @@ The four scenarios below are the most common changes. Each lists exact files to 
 
 ### Adding a new entity (e.g., Supplier)
 
-**Pattern to copy**: the `Project` entity. Read `src/server/db/schema.ts:60-99` (table), `src/domain/types.ts:1-33` (interface), `src/server/repositories/project-read.ts` (repo with `toProject` projection), `src/server/repositories/project.ts` (barrel re-export), `src/server/services/ProjectService.ts:49-95` (thin orchestration), `src/server/routes/projects.ts` (routes), `src/state/projectStore.ts` (store).
+**Pattern to copy**: the `Project` entity. Read `src/server/db/schema.ts:60-102` (table), `src/domain/types.ts:1-33` (interface), `src/server/repositories/project-read.ts` (repo with `toProject` projection), `src/server/repositories/project.ts` (barrel re-export), `src/server/services/ProjectService.ts:51-144` (CRUD + transitions; file also includes bulkImport), `src/server/routes/projects.ts` (routes), `src/state/projectStore.ts` (store).
 
 1. **Schema**: add the table in `src/server/db/schema.ts`. Use the same audit-field pattern as `projects` (`createdAt`/`updatedAt`/`createdBy`/`updatedBy`). Generate the migration with `npx drizzle-kit generate`. Never edit an existing migration file — always generate a new one.
 2. **Domain types**: add the TypeScript interface in `src/domain/types.ts`. Keep optional fields optional so the UI tolerates missing data ([spec §13.5](docs/spec/architecture.md#135-robustness)).
-3. **Repository**: create `src/server/repositories/supplier-read.ts`, `…-write.ts`, etc. — split by concern as the project repos do. Re-export through a barrel `supplier.ts`. Add a `toSupplier(row)` projection so Drizzle types do not leak upward.
+3. **Repository**: create `src/server/repositories/supplier-read.ts`, `supplier-transitions.ts`, etc. — split by concern as the project repos do (`project-read.ts`, `project-transitions.ts`, `project-dates.ts`). Re-export through a barrel `supplier.ts`. Add a `toSupplier(row)` projection so Drizzle types do not leak upward.
 4. **Service**: create `src/server/services/SupplierService.ts`. Keep it framework-agnostic — the service layer must not import `fastify` types ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
 5. **Routes**: create `src/server/routes/suppliers.ts`. Register it in `src/server/app.ts` next to the existing `projectRoutes(db)` registration. Always go through the service — never call repositories from a route handler.
 6. **API client**: add a `supplierApi` block in `src/api/client.ts` (same pattern as `projectApi` at lines 128-144). One typed function per operation, ~3 lines each.
@@ -162,7 +162,7 @@ The four scenarios below are the most common changes. Each lists exact files to 
 
 ### Adding a new view (e.g., Worker view)
 
-**Pattern to copy**: the existing Kanban view consumes `useProjectStore` independently of the Calendar view. Read `src/ui/kanban/KanbanBoard.tsx` (the view component), `src/state/projectStore.ts:229-235` (the `getProjectsByState` selector), `src/App.tsx:71-76` (route registration), `src/domain/types.ts:45` (the `ViewMode` union).
+**Pattern to copy**: the existing Kanban view consumes `useProjectStore` independently of the Calendar view. Read `src/ui/kanban/KanbanBoard.tsx` (the view component), `src/state/projectStore.ts:198-200` (the `getProjectsByState` selector), `src/App.tsx:72-77` (route registration), `src/domain/types.ts:45` (the `ViewMode` union).
 
 1. **View type**: add the new view name to the `ViewMode` union in `src/domain/types.ts:45` (e.g., `'worker' | 'bookkeeper'`).
 2. **Component**: create `src/ui/worker/WorkerView.tsx` with its own `WorkerView.module.css`. The component reads from `useProjectStore` and filters in JSX — for example, `projects.filter(p => p.assignedWorkers?.includes(user.displayName))`.
@@ -180,7 +180,7 @@ The four scenarios below are the most common changes. Each lists exact files to 
 2. **Define the schema**: every route uses Fastify's JSON Schema for the request body (see `projects.ts` for examples). This is your input validation — don't validate inside the handler.
 3. **Auth & permission**: apply `createAuthMiddleware(db)` as a `preHandler` for the plugin, and `requirePermission('your:permission')` per route. Add the new permission key to `src/server/config/permissions.ts` if it doesn't exist.
 4. **Delegate to a service method**. Routes never call repositories directly — see [spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries). If the service method doesn't exist yet, add it to the appropriate `*Service.ts`.
-5. **Errors**: throw `notFound(...)`, `validationError(...)`, etc. from `src/server/errors.ts`. Never throw raw `Error` from a route — the global handler in `src/server/app.ts:35-42` only normalizes `AppError`.
+5. **Errors**: throw `notFound(...)`, `validationError(...)`, etc. from `src/server/errors.ts`. Never throw raw `Error` from a route — the global handler in `src/server/app.ts:35-42` normalizes `AppError`, Fastify validation errors, and rate-limit errors — unknown errors are wrapped as a generic server error so internals never leak.
 6. **Register**: add the route plugin in `src/server/app.ts`.
 7. **Tests**: integration test in `src/server/__tests__/` using `api-helpers.ts` (`startApp()`, `login()`, `authPost()`/`authGet()`).
 8. **Spec**: add the operation to `docs/spec/api.md §14.2` and an AC in `docs/spec/verification.md`.
@@ -216,19 +216,19 @@ One GitHub Actions workflow, one on-VPS script.
 
 **CI** (`.github/workflows/ci.yml`) — runs on push/PR to `main` and `iteration/**`:
 
-```
-npm audit -> lint -> format check -> type check -> test:coverage -> build
-  \-> (on push) build-and-push app image to GHCR, tagged sha-<commit> and <branch-slug>
-```
+**CI** (`.github/workflows/ci.yml`) — runs on push and PR to `main` and `iteration/**`. Single `check` job:
+
+1. `npm audit` (with suppressed-advisory handling, see ADR-0007)
+2. Lint, format check, type check
+3. Env drift check (`scripts/check-env-drift.sh` — verifies env.ts vars are forwarded in docker-compose.yml)
+4. Start MinIO service container, run `npm run test:coverage` against real Postgres + MinIO
+5. `npm run build`
 
 **Deploy** (`scripts/deploy.sh`) — manual, pull-based, run on the VPS over WireGuard:
 
-```
-sudo -u deploy scripts/deploy.sh [ref]
-  -> git fetch + checkout SHA -> decrypt secrets.env.age (age passphrase)
-     -> docker compose pull app (ghcr.io/vlzware/projekt-manager:sha-<sha>)
-     -> docker compose up -d -> poll /api/health
-```
+1. SSH to VPS, `git fetch` + checkout the exact commit SHA
+2. `docker compose build app` + `docker compose up -d`
+3. Smoke test: polls the app container's `/api/health` endpoint for up to 60 s
 
 No automatic deploy. The operator promotes a CI-built image to production manually. Rationale: [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md). Day-to-day procedure: [docs/ops/manual-deploy.md](docs/ops/manual-deploy.md).
 
