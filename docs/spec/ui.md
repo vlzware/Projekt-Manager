@@ -1,6 +1,6 @@
 # UI Specification
 
-*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
 
 ## 8. UI Specification
 
@@ -28,7 +28,7 @@ The application has two top-level layout states depending on authentication.
 └──────────────────────────────────────────────────────────┘
 ```
 
-The login screen is minimal: app name/logo, username field, password field, a submit button labeled "Anmelden", and an error area for failed attempts. The error message is generic: `"Anmeldung fehlgeschlagen"` **[C]** — no distinction between "user not found" and "wrong password" to avoid information leakage. No registration link, no password recovery (both out of scope).
+The login screen is minimal: app name/logo, username field, password field, a submit button labeled "Anmelden", and an error area for failed attempts. The server returns a generic error message on failed login — no distinction between "user not found" and "wrong password" to avoid information leakage. The client displays the server-provided message. The generic behavior is enforced server-side, not client-side. No registration link, no password recovery (both out of scope).
 
 The login screen is the **only** view available to unauthenticated users. No project data is accessible without authentication.
 
@@ -88,7 +88,7 @@ Cards within a column are sorted by `statusChangedAt` ascending (longest-waiting
 
 #### 8.2.3 Entry Date and Aging
 
-Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026"`). This makes the age of every card visible regardless of state type. For aged buffer cards, the `"seit X Tagen"` text appears below the date label — both are shown.
+Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026"`). The date is displayed as a standalone label (e.g., `15.03.2026`), not prefixed. The `"seit X Tagen"` aging text is a separate indicator that appears below for aged buffer cards. This makes the age of every card visible regardless of state type. For aged buffer cards, the `"seit X Tagen"` text appears below the date label — both are shown.
 
 **Action states**: after a configurable threshold (`agingBoldDays`), the entry date turns **bold** — a subtle but clear flag that this item has been waiting too long. Default thresholds **[C]**:
 - Anfrage: 3 days
@@ -155,7 +155,7 @@ Displayed in the header. Shows aggregate counts computed from current project da
 - Count of projects in each action state: e.g., `"3× Rechnung fällig"`, `"2× Anfrage"`
 - Count of projects in buffer states exceeding aging thresholds: e.g., `"1 Angebot seit >14 Tagen"`
 
-Clicking an indicator filters the current view to show only the affected projects. For action-state indicators, this filters to all projects in that state. For aged buffer indicators, this filters to only the projects exceeding the threshold (not all projects in that buffer state). Non-matching cards are hidden (not dimmed). A `"Filter aufheben"` (clear filter) button appears in the summary area while a filter is active. Switching views clears the filter.
+Clicking an indicator filters the current view to show only the affected projects. For action-state indicators, this filters to all projects in that state. For aged buffer indicators, this filters to only the projects exceeding the threshold (not all projects in that buffer state). Implementation note: the filter state must distinguish between 'all projects in state X' (action-state filter) and 'only aged projects in state X' (buffer-aging filter). See [#81](https://github.com/vlzware/Projekt-Manager/issues/81). Non-matching cards are hidden (not dimmed). A `"Filter aufheben"` (clear filter) button appears in the summary area while a filter is active. Switching views clears the filter.
 
 Summary values update immediately after any state change.
 
@@ -211,7 +211,7 @@ Thresholds are defined in the state configuration (see [Data Model — State Met
 
 ### 9.3 Date Handling
 
-- All dates displayed in German format: `DD.MM.YYYY` or `DD.MM.` when year is obvious. **[C]**
+- All dates displayed in German format: `DD.MM.YYYY` or `DD.MM.` when year is obvious. **[C]** Display dates (card labels, timestamps, calendar headers) use German format. Date input controls (e.g., date pickers in the detail panel) render in the user's browser locale — the system respects the user's locale settings for interactive inputs.
 - Week starts on **Monday** (ISO 8601 / German convention). **[C]**
 - No time zones — all dates are local calendar dates.
 

@@ -1,6 +1,6 @@
 # Verification
 
-*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
 
 ---
 
@@ -34,7 +34,7 @@ The system is accepted when all of the following are true.
 - **AC-16**: State transitions only allow forward +1 or backward -1. No skipping.
 - **AC-17**: `Erledigt` is terminal — both transition buttons are hidden.
 - **AC-18**: `Anfrage` hides the backward transition button.
-- **AC-19**: All dates display in German format (DD.MM.YYYY). Calendar week starts Monday.
+- **AC-19**: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
 - **AC-20**: UI does not crash on projects with missing optional fields.
 
 ### 15.4 Authentication
@@ -56,7 +56,7 @@ The system is accepted when all of the following are true.
 
 - **AC-30**: The application is accessible at a public URL over HTTPS. _Note: the "public URL" framing reflects the original goal. If the project settles on a VPN-only topology (see [ADR-0008](../adr/0008-vpn-first-network-access.md) and [#42](https://github.com/vlzware/Projekt-Manager/issues/42)), there may be no public URL at all and this criterion will be reworded. The HTTPS part is non-negotiable in either case — see AC-45._
 - **AC-31**: Merging to `main` triggers an automated deployment to the hosted environment.
-- **AC-45**: No request reaches application code over plain HTTP. Port 80 either unconditionally redirects to HTTPS before any application handler runs, or is not bound at all. HTTPS-or-nothing applies in every environment regardless of network topology — see [ADR-0008](../adr/0008-vpn-first-network-access.md) for the rationale that VPN does not substitute for TLS. Implementation tracked by [#47](https://github.com/vlzware/Projekt-Manager/issues/47).
+- **AC-45**: No request reaches application code over plain HTTP. Port 80 either unconditionally redirects to HTTPS before any application handler runs, or is not bound at all. HTTPS-or-nothing applies in every environment regardless of network topology — see [ADR-0008](../adr/0008-vpn-first-network-access.md) for the rationale that VPN does not substitute for TLS. Implementation tracked by [#47](https://github.com/vlzware/Projekt-Manager/issues/47). **Exception**: non-production evaluation deployments may operate over HTTP per [ADR-0013](../adr/0013-http-only-evaluation-mode.md). The `ALLOW_INSECURE_HTTP` flag is hard-blocked in `NODE_ENV=production` — the server refuses to start.
 - **AC-46**: A failed deployment leaves the previously running version running. The pipeline aborts before swapping containers if the build, smoke test, or health check fails.
 - **AC-47**: A previously deployed commit can be redeployed (rollback) by re-running the deploy workflow against that commit's SHA, without requiring code changes or manual server access.
 - **AC-48**: After deploy completes, an automated smoke test verifies that the application responds to a known health-check endpoint. Failure of the smoke test aborts the deploy and reports failure.
@@ -179,6 +179,36 @@ One scenario covering the full authenticated end-to-end path:
 15. User refreshes the page — changes persist; user remains logged in.
 16. User clicks "Abmelden" — login screen appears.
 17. Pressing browser back button does not show project data.
+
+### 16.5 Supplementary Tests
+
+Tests providing coverage beyond the core specification. These are not mapped to specific spec IDs but verify important behaviors.
+
+#### Server-side
+- Bootstrap: first-run admin creation via `BOOTSTRAP_ADMIN_*` env vars
+- Bulk import: partial success, validation per item, permission enforcement
+- Events: domain event bus subscribe/emit, error isolation
+- Health probe: DB and storage liveness checks
+- Permissions: role-based access control matrix (4 roles)
+- Rate limiting: login throttling (429 on excess attempts)
+- DB constraints: CHECK constraint enforcement (`projects_end_requires_start`)
+- Single project GET: by ID, not-found handling
+
+#### Client-side
+- API client: typed fetch wrappers, error paths, session expiry detection
+- Project store: optimistic updates, rollback on failure, session delegation
+- Confirm dialog: rendering, accessibility, focus trap
+- Collapse tier hook: responsive breakpoint calculations
+- Transition hook: canForward/canBackward, confirm flow
+- Router navigation: helper behavior
+- Date input value: normalization for HTML date inputs
+- Insecure connection: HTTP-mode detection
+
+#### E2E
+- Kanban flows: summary filter, transitions, date editing, calendar, persistence, back-button protection (covers spec §16.4 steps 4–15, 17 in split tests)
+- Failure paths: network errors, session expiry mid-flow
+- Startup: health endpoint verification, seed login
+- Insecure banner: HTTP-mode warning display
 
 ---
 
