@@ -85,6 +85,10 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
+        // Helmet defaults to adding upgrade-insecure-requests, which tells
+        // browsers to rewrite every HTTP subresource URL to HTTPS. Over
+        // plain HTTP this silently breaks all asset loads (JS, CSS, images).
+        ...(insecureHttp ? { upgradeInsecureRequests: null } : {}),
       },
     },
     // Disable HSTS in HTTP-only evaluation mode — the header is meaningless
