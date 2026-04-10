@@ -3,7 +3,7 @@
  *
  * All policy-level values that were previously scattered across route handlers
  * and service modules live here. Environment-dependent values are read from
- * process.env at import time (validated separately in env.ts once Zod is added).
+ * process.env at import time (validated separately in env.ts).
  */
 
 // --- Authentication & Sessions -----------------------------------------------
@@ -23,7 +23,7 @@ export const AUTH_CONFIG = {
   dummyHash: '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
 
   /** Whether to set the Secure flag on cookies (HTTPS only). */
-  cookieSecure: process.env.NODE_ENV === 'production',
+  cookieSecure: process.env.NODE_ENV === 'production' && process.env.ALLOW_INSECURE_HTTP !== 'true',
 } as const;
 
 // --- Rate Limiting -----------------------------------------------------------

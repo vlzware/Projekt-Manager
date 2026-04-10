@@ -18,6 +18,10 @@ const envSchema = z.object({
   // optional; validation of the "both or neither" pairing and the password
   // policy happens in src/server/bootstrap.ts where the schema check would
   // be too coarse.
+  // When true, disables the Secure flag on session cookies so login works
+  // over plain HTTP. Intended for evaluation deployments without a domain/TLS.
+  // See docs/ops/http-only-evaluation.md.
+  ALLOW_INSECURE_HTTP: z.enum(['true', 'false']).default('false'),
   BOOTSTRAP_ADMIN_USERNAME: z.string().optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().optional(),
   BOOTSTRAP_ADMIN_DISPLAY_NAME: z.string().optional(),
