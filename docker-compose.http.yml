@@ -1,0 +1,22 @@
+# HTTP-only evaluation mode. DO NOT use for real users or data.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
+#
+# Replaces the custom Caddy (Cloudflare DNS plugin) with stock Caddy on port 80.
+# No domain, no TLS, no Cloudflare token, no WireGuard required.
+# See docs/ops/http-only-evaluation.md.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    build: !reset null
+    ports: !override
+      - '0.0.0.0:80:80'
+    volumes: !override
+      - ./Caddyfile.http:/etc/caddy/Caddyfile:ro
+    environment:
+      DOMAIN: ''
+      CLOUDFLARE_API_TOKEN: ''
+
+  app:
+    environment:
+      ALLOW_INSECURE_HTTP: 'true'
