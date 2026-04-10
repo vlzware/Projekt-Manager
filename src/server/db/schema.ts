@@ -33,6 +33,11 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  // Audit references — nullable for seeded/bootstrapped records (data-model.md §5.5).
+  // No FK back to users.id: self-referential FKs complicate bootstrapping
+  // and deletion without adding meaningful integrity guarantees here.
+  createdBy: uuid('created_by'),
+  updatedBy: uuid('updated_by'),
 });
 
 // ---------------------------------------------------------------
