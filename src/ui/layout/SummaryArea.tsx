@@ -15,8 +15,11 @@ export function SummaryArea() {
   const summary = getSummary();
   const anyFilterActive = activeFilter !== null || filterNoDates;
 
-  const handleFilterClick = (state: WorkflowState) => {
-    setFilter(activeFilter === state ? null : state);
+  const filterAgedOnly = useUIStore((s) => s.filterAgedOnly);
+
+  const handleFilterClick = (state: WorkflowState, agedOnly = false) => {
+    const isSameFilter = activeFilter === state && filterAgedOnly === agedOnly;
+    setFilter(isSameFilter ? null : state, isSameFilter ? false : agedOnly);
   };
 
   // Filter out action states with zero projects
@@ -39,8 +42,8 @@ export function SummaryArea() {
       {summary.agedBufferCounts.map(({ state, count, thresholdDays }) => (
         <button
           key={state}
-          className={`${styles.indicator} ${styles.agedIndicator} ${activeFilter === state ? styles.activeIndicator : ''}`}
-          onClick={() => handleFilterClick(state)}
+          className={`${styles.indicator} ${styles.agedIndicator} ${activeFilter === state && filterAgedOnly ? styles.activeIndicator : ''}`}
+          onClick={() => handleFilterClick(state, true)}
           data-testid={`summary-buffer-${state}`}
         >
           {count} {STATE_CONFIG_MAP[state].label} seit &gt;{thresholdDays} Tagen

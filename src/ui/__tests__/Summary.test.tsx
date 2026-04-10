@@ -120,9 +120,9 @@ describe('Summary Area', () => {
     const bufferIndicator = screen.getByTestId('summary-buffer-angebot');
     await user.click(bufferIndicator);
 
-    // Filter is by state, not by aging status — both p03 (not aged) and p04 (aged) are in angebot
+    // Filter is by state AND aging — only the aged project (p04) should show
     const angebotCount = screen.getByTestId('column-count-angebot');
-    expect(angebotCount).toHaveTextContent('2');
+    expect(angebotCount).toHaveTextContent('1');
 
     // Non-angebot columns should be empty
     const anfragenCount = screen.getByTestId('column-count-anfrage');

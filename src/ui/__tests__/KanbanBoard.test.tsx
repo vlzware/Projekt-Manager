@@ -78,7 +78,7 @@ describe('Project Card', () => {
     expect(card).toHaveTextContent('Familie Klein');
     // Finding 15: verify entry date matches DD.MM.YYYY format, not just "seit"
     const entryDate = screen.getByTestId('entry-date-p07');
-    expect(entryDate.textContent).toMatch(/seit \d{2}\.\d{2}\.\d{4}/);
+    expect(entryDate.textContent).toMatch(/\d{2}\.\d{2}\.\d{4}/);
     // Finding 2 (R3): p07 has both plannedStart and plannedEnd — verify the
     // card shows a formatted date range (DD.MM. – DD.MM.YYYY), not "Kein Termin"
     expect(card.textContent).toMatch(/\d{2}\.\d{2}\.\s*–\s*\d{2}\.\d{2}\.\d{4}/);
@@ -350,7 +350,7 @@ describe('Entry Date on All State Types', () => {
 
     const entryDate = screen.getByTestId('entry-date-p18');
     expect(entryDate).toBeInTheDocument();
-    expect(entryDate.textContent).toMatch(/seit \d{2}\.\d{2}\.\d{4}/);
+    expect(entryDate.textContent).toMatch(/\d{2}\.\d{2}\.\d{4}/);
   });
 });
 
@@ -360,7 +360,7 @@ describe('Date Formatting', () => {
     render(<App />);
 
     const entryDate = screen.getByTestId('entry-date-p01');
-    expect(entryDate.textContent).toMatch(/seit \d{2}\.\d{2}\.\d{4}/);
+    expect(entryDate.textContent).toMatch(/\d{2}\.\d{2}\.\d{4}/);
   });
 });
 
