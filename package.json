@@ -23,7 +23,8 @@
     "prepare": "husky || true"
   },
   "lint-staged": {
-    "src/**/*.{ts,tsx,css}": "prettier --write"
+    "src/**/*.{ts,tsx,css}": "prettier --write",
+    "**/*.md": "prettier --write"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1024.0",
