@@ -61,9 +61,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       ok: false,
       error: {
         code: 'NETWORK_ERROR',
-        message: isNetwork
-          ? STRINGS.errors.networkError
-          : STRINGS.errors.mutationFailed,
+        message: isNetwork ? STRINGS.errors.networkError : STRINGS.errors.mutationFailed,
       },
       sessionExpired: false,
     };

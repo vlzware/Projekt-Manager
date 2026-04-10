@@ -61,21 +61,13 @@ export function CalendarView() {
   return (
     <div className={styles.container} data-testid="calendar-view">
       <div className={styles.navigation}>
-        <button
-          className={styles.navButton}
-          onClick={handlePrev}
-          data-testid="calendar-prev"
-        >
+        <button className={styles.navButton} onClick={handlePrev} data-testid="calendar-prev">
           &larr;
         </button>
         <span className={styles.monthLabel} data-testid="calendar-month-label">
           {navigationLabel}
         </span>
-        <button
-          className={styles.navButton}
-          onClick={handleNext}
-          data-testid="calendar-next"
-        >
+        <button className={styles.navButton} onClick={handleNext} data-testid="calendar-next">
           &rarr;
         </button>
         <div className={styles.viewToggle} data-testid="calendar-view-toggle">

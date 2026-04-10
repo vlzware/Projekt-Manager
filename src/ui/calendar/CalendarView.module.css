@@ -53,7 +53,9 @@
   color: #475569;
   cursor: pointer;
   font-size: 0.8rem;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 .toggleButton:not(:last-child) {
