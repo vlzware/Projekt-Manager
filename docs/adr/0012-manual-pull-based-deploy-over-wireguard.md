@@ -12,15 +12,15 @@ Two forces make the push-based deploy path a liability rather than a convenience
 
 **1. Blast radius is disproportionate to the threat model.**
 
-The `deploy` user is a member of the `docker` group, which is functionally equivalent to root: any member can `docker run -v /:/host --rm alpine chroot /host sh` and walk the host filesystem. This is an accepted Docker architecture quirk (see #72) — not a project bug — but it means the SSH key held in `secrets.DEPLOY_KEY` is a root-equivalent credential. Anything that can read GitHub Actions secrets, inject a workflow step, or publish a malicious Action can execute arbitrary code as effective root on the only production host.
+The `deploy` user is a member of the `docker` group, which is functionally equivalent to root: any member can `docker run -v /:/host --rm alpine chroot /host sh` and walk the host filesystem. This is an accepted Docker architecture quirk — not a project bug — but it means the SSH key held in `secrets.DEPLOY_KEY` is a root-equivalent credential. Anything that can read GitHub Actions secrets, inject a workflow step, or publish a malicious Action can execute arbitrary code as effective root on the only production host.
 
 The realistic threats at pilot scale are data loss and unreliability, not a targeted actor with the capability to subvert the GitHub Actions supply chain. The push-based path optimizes for operator convenience (automatic deploys on green CI) at the cost of handing out a root-equivalent credential to an environment we do not audit for every commit.
 
 **2. LLM-assisted solo workflow cannot reliably audit CD configuration.**
 
-Issue #79 is the concrete incident. The `workflow_run` trigger loads the workflow file from the default branch, not the branch whose CI run fired the event. Three separate `deploy.yml` changes landed on iteration branches during iterations 4 and 5 and were **silently ignored** until the iteration merged. The caveat was documented in `docs/ops/cd-pipeline.md` throughout the period; three independent changes were made anyway. The gotcha is not a knowledge failure the operator can fix by reading docs more carefully — it is a shape that the workflow surface makes easy to get wrong and hard to detect.
+A concrete incident demonstrated the problem. The `workflow_run` trigger loads the workflow file from the default branch, not the branch whose CI run fired the event. Three separate `deploy.yml` changes landed on iteration branches and were **silently ignored** until the iteration merged. The caveat was documented; three independent changes were made anyway. The gotcha is not a knowledge failure the operator can fix by reading docs more carefully — it is a shape that the workflow surface makes easy to get wrong and hard to detect.
 
-The pattern generalizes. CD configuration is security-critical code that runs with root privilege on the production host, and in a solo LLM-assisted workflow the reviewer's attention is saturated by the volume of diffs landing in any one session. Per CLAUDE.md §Principles, "accept and document" is not an acceptable posture for a foundation-level concern, and the only remaining move is to remove the foundation that needs auditing.
+The pattern generalizes. CD configuration is security-critical code that runs with root privilege on the production host, and in a solo LLM-assisted workflow the reviewer's attention is saturated by the volume of diffs landing in any one session. "Accept and document" is not an acceptable posture for a foundation-level concern, and the only remaining move is to remove the foundation that needs auditing.
 
 ## Decision
 
@@ -45,7 +45,7 @@ The `deploy` user account itself is kept: it still owns `/opt/projekt-manager`, 
 ### What's new
 
 - `scripts/deploy.sh` — committed to the repo, run on the VPS by the operator via `sudo -u deploy`. Takes an optional git ref (`origin/main` default, explicit SHA for rollback). Fetches, checks out, asserts SHA, decrypts secrets, pulls the GHCR image, `docker compose up -d`, polls `/api/health`.
-- `/opt/projekt-manager/secrets.env.age` — age-encrypted (passphrase) environment file holding the three shell-env secrets that `docker-compose.yml` substitutes via `${VAR}`: `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`. Note that `STORAGE_SECRET_KEY` is **not** in this list — the compose file derives it at runtime via `STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}` in `services.app.environment`, so putting it in shell env would be dead code. The plaintext file is never written to disk on the VPS; `scripts/deploy.sh` sources the decrypted stream through process substitution (`source <(age -d …)`) so plaintext flows through an anonymous file descriptor the shell reads and discards.
+- `/opt/projekt-manager/secrets.env.age` — age-encrypted (passphrase) environment file holding the three secrets that `docker-compose.yml` substitutes via `${VAR}`: `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`. Non-secret variables (`DOMAIN`, `MINIO_ROOT_USER`, `NODE_ENV`, etc.) live in the plain `.env` file, which docker compose reads automatically. `STORAGE_SECRET_KEY` is **not** in this file — the compose file derives it at runtime via `STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}`. The plaintext is never written to disk on the VPS; `scripts/deploy.sh` sources the decrypted stream through process substitution (`source <(age -d …)`) so plaintext flows through an anonymous file descriptor the shell reads and discards.
 
 ### Operator flow
 
@@ -58,7 +58,7 @@ The `deploy` user account itself is kept: it still owns `/opt/projekt-manager`, 
 
 ### Keep GHA→VPS with tighter scoping
 
-Replace the broad SSH key with OIDC-issued short-lived credentials, or narrow the `deploy` user to a sudoers whitelist of exact `docker compose` subcommands. Rejected: the narrowing does reduce theoretical exposure, but it does not address the root concern — that CD configuration is itself security-critical code running with root privilege, and the LLM-assisted workflow cannot reliably audit it. The workflow_run gotcha of #79 would still apply to a narrowed script. The practical win over fully cutting the remote trust link is small for a solo pilot, and the operational overhead of maintaining an argument-matching sudoers whitelist is meaningful.
+Replace the broad SSH key with OIDC-issued short-lived credentials, or narrow the `deploy` user to a sudoers whitelist of exact `docker compose` subcommands. Rejected: the narrowing does reduce theoretical exposure, but it does not address the root concern — that CD configuration is itself security-critical code running with root privilege, and the LLM-assisted workflow cannot reliably audit it. The `workflow_run` gotcha would still apply to a narrowed script. The practical win over fully cutting the remote trust link is small for a solo pilot, and the operational overhead of maintaining an argument-matching sudoers whitelist is meaningful.
 
 ### Self-hosted GitHub Actions runner inside the WG tunnel
 
@@ -81,7 +81,7 @@ Orchestrate deploys from the operator's laptop via Ansible with a vault for secr
 ### Positive
 
 - **Remote trust link removed.** Compromising a GitHub Actions workflow, an Action publisher's package, or the repo secrets store no longer grants VPS access. The VPS is reachable only over WireGuard by an identity (the operator's personal account) that is independent of the GitHub Actions supply chain.
-- **Issue #79's class of bug is designed out.** No CD workflow file, no workflow_run default-branch gotcha. The deploy script lives in-tree and is reviewed alongside every other code change — the same review surface as any other commit.
+- **The `workflow_run` default-branch class of bug is designed out.** No CD workflow file, no `workflow_run` gotcha. The deploy script lives in-tree and is reviewed alongside every other code change — the same review surface as any other commit.
 - **Secrets move off GitHub and off `docker-compose.yml`'s `environment:` at rest.** A single age passphrase unlocks them at invocation; the plaintext file never exists on the VPS disk. The project's secret surface shrinks to one encrypted file and one passphrase in the operator's password manager.
 - **Rollback interface is the same as forward-deploy.** `./deploy.sh sha-<old>` vs `./deploy.sh origin/main`. No separate "how to roll back" procedure to remember under pressure.
 - **Builds and GHCR are untouched.** ADR-0011's artifact pipeline stays in place; this ADR only replaces the distribution-to-host leg. The two concerns are cleanly separated.
@@ -91,7 +91,7 @@ Orchestrate deploys from the operator's laptop via Ansible with a vault for secr
 
 These are documented and accepted. Each has an upgrade path when the operational cost of the workaround exceeds the cost of the upgrade.
 
-- **`deploy` is still in the `docker` group.** The cutover reduces the _exposure_ of this privilege (no remote key hands it out anymore) but does not eliminate the _posture_. Issue #72 tracks the research to eliminate it; rootless Docker or Podman is the expected direction. Upgrade trigger: whenever the operational cost of migrating to rootless is justified by stack growth, or before the repo/GHCR package is made public.
+- **`deploy` is still in the `docker` group.** The cutover reduces the _exposure_ of this privilege (no remote key hands it out anymore) but does not eliminate the _posture_. Rootless Docker or Podman is the expected direction. Upgrade trigger: whenever the operational cost of migrating to rootless is justified by stack growth, or before the repo/GHCR package is made public.
 - **GHCR PAT on the VPS.** `docker login` on the VPS uses a classic PAT scoped `read:packages`. Treat as a key: location, expiry, rotation cadence recorded in `docs/ops/manual-deploy.md`. A read-only package token is a small exposure compared to what was removed.
 - **VPS reboot requires a manual re-deploy.** The operator has to log in over WG, enter the age passphrase, and re-run the script — the stack does not come back up on its own because the secrets are not on disk. Acceptable for pilot scale and a single operator. Upgrade trigger: when missed-reboot incidents accumulate, move to a VPS-local secrets manager (Docker secrets from a systemd-delivered unseal file, or a minimal KMS backend).
 - **Passphrase loss = regenerate secrets from source systems.** The encrypted file is not irreplaceable data — the underlying secrets live in their systems of record (password manager, Cloudflare dashboard, Postgres / MinIO owner reset paths). Recovery procedure is documented in `docs/ops/manual-deploy.md`.
@@ -103,7 +103,7 @@ These are documented and accepted. Each has an upgrade path when the operational
 The cutover is a principled retreat to a smaller trust surface. The expected progression, in order:
 
 1. **This ADR** — manual pull-based deploy, secrets encrypted at rest, no remote trust link
-2. **Rootless Docker or Podman** (#72) — eliminates the `docker`-group-equals-root residual, enables the next step safely
+2. **Rootless Docker or Podman** — eliminates the `docker`-group-equals-root residual, enables the next step safely
 3. **Pull-based GitOps agent** — reintroduces automation once the trust root is small enough that an always-on agent is not a net expansion of privilege
 4. **Multi-recipient secrets and signed images** — once more than one operator exists or the GHCR package goes public
 
@@ -115,6 +115,3 @@ The artifact pipeline (CI → GHCR, ADR-0011) is compatible with every step abov
 - [ADR-0008: VPN-first network access](0008-vpn-first-network-access.md) — defines the operator's access path
 - [ADR-0009: Pin Docker versions across environments](0009-pin-docker-versions-across-environments.md) — still applies; the deploy script relies on deterministic compose behavior
 - [ADR-0011: Build app images in CI, distribute via GHCR](0011-build-images-in-ci-distribute-via-ghcr.md) — unchanged by this ADR; this ADR only replaces the distribution-to-host leg
-- #72 — Docker-group-as-root research; residual risk and upgrade path defined here
-- #76 — GHCR build-and-push implementation; completed, artifact pipeline is reused unchanged
-- #79 — `workflow_run` default-branch gotcha; resolved by removing the workflow host

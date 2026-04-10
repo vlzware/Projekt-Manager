@@ -82,5 +82,3 @@ This framing is honest about a limitation: Tailscale's clients are also not inde
 - [ADR-0005: Session management — HttpOnly cookies](0005-session-management-httponly-cookies.md) — `Secure` flag requires TLS in all deployments
 - [ADR-0009: Pin Docker versions across environments](0009-pin-docker-versions-across-environments.md) — related dependency-pin tracking problem
 - [docs/ops/server-setup.md](../ops/server-setup.md) — current server configuration and firewall rules
-- Issue #52 — dependency version advisory tracking (Docker, Caddy, WireGuard)
-- Issue #47 — HTTPS enforcement (parent tracking issue for the iteration 4 implementation)

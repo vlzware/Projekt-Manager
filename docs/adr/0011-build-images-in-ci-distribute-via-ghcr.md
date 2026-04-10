@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR-0003 established the deployment topology (VPS + Docker Compose + GitHub Actions) but left the *location* of image builds implicit. In practice, `deploy.yml` runs `docker compose build app` over SSH on the VPS itself, immediately before `docker compose up -d`.
+ADR-0003 established the deployment topology (VPS + Docker Compose + GitHub Actions) but left the *location* of image builds implicit. Previously, images were built directly on the VPS immediately before `docker compose up -d`.
 
 With iteration 4's walking skeleton now live and the deploy path exercised regularly, the resource math of this choice no longer holds:
 
@@ -47,13 +47,13 @@ We will build the production `app` image in GitHub Actions, push it to GitHub Co
 **Tagging:**
 
 - **Immutable**: `ghcr.io/vlzware/projekt-manager:sha-<commit>` — one per commit, the rollback target
-- **Moving**: `ghcr.io/vlzware/projekt-manager:<branch-slug>` — points to the latest commit on each branch, used by `deploy.yml`
+- **Moving**: `ghcr.io/vlzware/projekt-manager:<branch-slug>` — points to the latest commit on each branch, a human-friendly fallback
 
 **Compose topology:**
 
 - `docker-compose.yml` (prod): the `app` service uses `image: ghcr.io/vlzware/projekt-manager:<tag>` with no `build:` directive — it is purely a runtime descriptor
 - `docker-compose.dev.yml` (dev overlay): reintroduces `build: .` so local development still builds from source
-- `deploy.yml`: `docker compose pull app && docker compose up -d` replaces `docker compose build app && docker compose up -d`
+- Deploy: `scripts/deploy.sh` runs `docker compose pull app && docker compose up -d` (see [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md))
 
 **Image visibility:** private, matching the repo. Re-examine if any component needs to be distributed beyond the WG tunnel.
 
@@ -71,7 +71,7 @@ Move to a larger instance (e.g., Hetzner CX32 at 4 vCPU / 8 GB for ~€8/month).
 
 ### Self-hosted GitHub Actions runner inside the WG tunnel
 
-A dedicated machine inside WG hosts a runner, builds the image, and SSHs into the VPS (also inside WG) without needing an external registry. Main advantage: no runtime registry dependency; the whole pipeline lives inside the tunnel. Ruled out because it adds a second host to operate (OS patches, Docker install, security hardening), a self-hosted runner is a security-sensitive component (executes arbitrary workflow code), and the savings over GHCR are zero — GHCR is free and authenticated by a token we already have.
+A dedicated machine inside WG hosts a runner, builds the image, and deploys to the VPS (also inside WG) without needing an external registry. Main advantage: no runtime registry dependency; the whole pipeline lives inside the tunnel. Ruled out because it adds a second host to operate (OS patches, Docker install, security hardening), a self-hosted runner is a security-sensitive component (executes arbitrary workflow code), and the savings over GHCR are zero — GHCR is free and authenticated by a token we already have.
 
 ### Docker Hub instead of GHCR
 
@@ -105,6 +105,4 @@ Store image layers in object storage with a self-run registry front-end. Ruled o
 - [ADR-0003: Deployment infrastructure — VPS, Docker Compose, GitHub Actions](0003-deployment-infrastructure-vps-docker-compose-github-actions.md) — this ADR refines the CI/CD topology that ADR-0003 left open-ended
 - [ADR-0008: VPN-first network access](0008-vpn-first-network-access.md) — defines why a GitHub runner cannot reach the app directly
 - [ADR-0009: Pin Docker Engine and Compose versions across environments](0009-pin-docker-versions-across-environments.md) — defines the pin regime; this ADR introduces a controlled deviation for the CI builder
-- #76 — implementation issue
-- PR #71 — real `/api/health` probe (enabler: the deploy smoke test now distinguishes healthy from degraded stacks)
-- PR #74 — path-filtered Docker CI validation (sibling work; the `build-and-push` job will sit alongside the validation `docker` job)
+- [ADR-0012: Manual pull-based deploy over WireGuard](0012-manual-pull-based-deploy-over-wireguard.md) — replaces the distribution-to-host leg

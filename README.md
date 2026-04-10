@@ -4,13 +4,13 @@ A centralized system for consolidation, control, and viewing of data and process
 
 ## Status
 
-**Iteration 5 — Consolidation**: quality controls across tests, docs, and spec before the next round of feature work. Systematic audit to surface drift, fill gaps, and establish a clean baseline, plus a multi-round independent security review now that the walking skeleton is exposed. Built on iteration 4's production deployment: walking skeleton live at `https://prmng.org` behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME, first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)), 310 tests. Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
+**Iteration 5 — Consolidation**: quality controls across tests, docs, and spec before the next round of feature work. Walking skeleton live at `https://prmng.org` behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME and first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
 
 ## Prerequisites
 
 - Docker and Docker Compose
 
-For local frontend development additionally:
+For local development additionally:
 - Node.js (pinned in `.nvmrc` — use `nvm install`)
 - npm (use the version bundled with that Node release — do not upgrade independently)
 
@@ -23,7 +23,7 @@ cp .env.example .env   # edit secrets before deploying
 docker compose up -d
 ```
 
-The app is served by Caddy on ports 80/443. The application itself listens on port 3000.
+Caddy terminates TLS on port 443 and reverse-proxies to the application on port 3000.
 
 ### Development
 
@@ -34,9 +34,9 @@ npm install
 npm run dev                           # starts backend + frontend at http://localhost:5173
 ```
 
-`storage-init` is a one-shot container that creates the MinIO bucket on first start; it exits after the bucket exists. Skipping it is what causes `NoSuchBucket` failures in the storage tests.
+`storage-init` is a one-shot container that creates the MinIO bucket on first start; it exits after the bucket exists. Skipping it causes `NoSuchBucket` failures in storage tests.
 
-`npm run dev` starts both the Fastify backend (port 3000) and the Vite dev server (port 5173) via `concurrently`. API requests are proxied automatically. To use a custom frontend port: `npm run dev:client -- --port 3005`.
+`npm run dev` starts both the Fastify backend (port 3000) and the Vite dev server (port 5173) via `concurrently`. API requests are proxied automatically.
 
 ### Seed Data
 
@@ -44,11 +44,11 @@ The `SEED` variable in `.env` controls database seeding on backend startup:
 
 | Value | Behavior |
 |---|---|
-| `true` (default) | Seed only if the database is empty. Data you create or change during development survives server restarts. |
+| `true` | Seed only if the database is empty. Data you create or change during development survives server restarts. |
 | `force` | Wipe all data and re-seed. Use when seed data structure changes or you need a clean slate. |
-| `false` / unset | Don't seed. |
+| `false` (default) | Don't seed. |
 
-Seeding is always blocked in production (`NODE_ENV=production`).
+Seeding is always skipped in production (`NODE_ENV=production`).
 
 All seed users share the password **`changeme`**.
 
@@ -64,7 +64,7 @@ All seed users share the password **`changeme`**.
 ### Tests
 
 ```bash
-npm test             # unit + component tests
+npm test             # unit + component tests (vitest)
 npm run test:e2e     # Playwright E2E tests
 ```
 
@@ -72,27 +72,31 @@ First-time Playwright setup requires `npx playwright install` to download browse
 
 ## Documentation
 
+- [Architecture](ARCHITECTURE.md) — onboarding overview, read this first
+- [Contributing conventions](CONTRIBUTING.md) — code style, workflow, branching, issues
+- [Product Spec](docs/spec/index.md) — what the system does (living document)
+- [Architecture Decision Records](docs/adr/index.md) — documented project decisions
 - [Kickoff](docs/project/kickoff.md) — project definition, scope, goals, and boundaries
 - [Plan](docs/project/plan.md) — development plan and iteration strategy
-- [Architecture Decision Records](docs/adr/index.md) — documented project decisions
-- [Product Spec](docs/spec/index.md) — what the system does (living document)
-- [Contributing conventions](CONTRIBUTING.md) — code style, workflow, branching, issues
+- [Operator docs](docs/ops/) — server setup, deployment, TLS bootstrap
 
 ## Project Structure
 
 ```
 src/
-  ui/               React components
-  state/            Zustand stores
-  server/           Fastify backend
-  domain/           Shared domain logic
+  api/              API client
   config/           Configuration
-  data/             Seed data
+  domain/           Shared domain logic
+  hooks/            React hooks
+  server/           Fastify backend (includes seed data)
+  state/            Zustand stores
   test/             Test utilities
+  ui/               React components
 docs/
-  spec/             Living product spec (architecture, API, data model, UI)
-  project/          Foundational project documents (kickoff, plan, journal)
   adr/              Architecture Decision Records
+  ops/              Operator runbooks (deploy, TLS, server setup)
+  project/          Foundational project documents (kickoff, plan, journal)
+  spec/             Living product spec (architecture, API, data model, UI)
 ```
 
 ## License
