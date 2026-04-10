@@ -211,6 +211,49 @@ describe('Detail Panel Fields', () => {
 });
 
 describe('Date Clearing', () => {
+  // Spec §8.4: clearing plannedStart also clears plannedEnd
+  it('clearing start date also clears end date when end is set', async () => {
+    const user = userEvent.setup();
+
+    const p07 = mockProjects.find((p) => p.id === 'p07')!;
+    mockFetchJson(fetchSpy, { ...p07, plannedStart: null, plannedEnd: null });
+
+    render(<App />);
+
+    const card = screen.getByTestId('project-card-p07');
+    await user.click(card);
+
+    // Both dates are initially set
+    const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');
+    expect(project?.plannedStart).toBeDefined();
+    expect(project?.plannedEnd).toBeDefined();
+
+    // Clear the start date
+    const startInput = screen.getByTestId('detail-date-start') as HTMLInputElement;
+    fireEvent.change(startInput, { target: { value: '' } });
+
+    // Both dates should now be cleared
+    const updated = useProjectStore.getState().projects.find((p) => p.id === 'p07');
+    expect(updated?.plannedStart).toBeUndefined();
+    expect(updated?.plannedEnd).toBeUndefined();
+
+    // PATCH should send both as null
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/projects/p07/dates',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: expect.stringContaining('"plannedStart":null'),
+        }),
+      );
+      const body = JSON.parse(
+        (fetchSpy.mock.calls.find((c) => c[0] === '/api/projects/p07/dates')?.[1] as RequestInit)
+          ?.body as string,
+      );
+      expect(body.plannedEnd).toBeNull();
+    });
+  });
+
   // Finding 7 (R2): clearing a date input must actually clear the project's date
   it('clearing a date input removes the date from the project', async () => {
     const user = userEvent.setup();

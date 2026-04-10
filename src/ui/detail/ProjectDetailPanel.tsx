@@ -23,7 +23,12 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
 
   const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
-    updateDates(currentProject.id, val || null, undefined);
+    if (!val && currentProject.plannedEnd) {
+      // Clearing start also clears end (spec §8.4, data-model §6.8)
+      updateDates(currentProject.id, null, null);
+    } else {
+      updateDates(currentProject.id, val || null, undefined);
+    }
   };
 
   const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
