@@ -9,21 +9,21 @@ Conventions for this project. Applies to all contributors (human and AI).
 
 ## Tech Stack
 
-| Concern              | Choice                          | Reference                                                                                |
-| -------------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
-| Language             | TypeScript (strict)             | [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)                    |
-| Framework (frontend) | React 19                        |                                                                                          |
-| Build                | Vite                            |                                                                                          |
-| State                | Zustand                         |                                                                                          |
-| Styling              | CSS Modules (`.module.css`)     |                                                                                          |
-| Date math            | date-fns                        |                                                                                          |
-| Server framework     | Fastify                         | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
-| ORM                  | Drizzle ORM                     | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
-| Database             | PostgreSQL                      | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
-| Object storage       | S3-compatible (MinIO)           | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
-| Deployment           | Docker Compose, manual pull-based deploy | [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md) |
-| Unit/Component tests | Vitest + @testing-library/react |                                                                                          |
-| E2E tests            | Playwright                      |                                                                                          |
+| Concern              | Choice                                   | Reference                                                                                |
+| -------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Language             | TypeScript (strict)                      | [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)                    |
+| Framework (frontend) | React 19                                 |                                                                                          |
+| Build                | Vite                                     |                                                                                          |
+| State                | Zustand                                  |                                                                                          |
+| Styling              | CSS Modules (`.module.css`)              |                                                                                          |
+| Date math            | date-fns                                 |                                                                                          |
+| Server framework     | Fastify                                  | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| ORM                  | Drizzle ORM                              | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| Database             | PostgreSQL                               | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| Object storage       | S3-compatible (MinIO)                    | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
+| Deployment           | Docker Compose, manual pull-based deploy | [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md)                     |
+| Unit/Component tests | Vitest + @testing-library/react          |                                                                                          |
+| E2E tests            | Playwright                               |                                                                                          |
 
 ## Workflow
 

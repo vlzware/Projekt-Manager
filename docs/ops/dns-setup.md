@@ -11,13 +11,13 @@ Conventional deploys point the domain's A record at the server's public IP. This
 
 ### 1. Create the A record
 
-| Field | Value |
-|---|---|
-| Type | A |
-| Name | `@` (or subdomain) |
-| Content | `10.213.17.1` |
+| Field        | Value                                         |
+| ------------ | --------------------------------------------- |
+| Type         | A                                             |
+| Name         | `@` (or subdomain)                            |
+| Content      | `10.213.17.1`                                 |
 | Proxy status | **DNS only** (grey cloud -- orange cloud OFF) |
-| TTL | Auto (or 1 minute for initial testing) |
+| TTL          | Auto (or 1 minute for initial testing)        |
 
 ### 2. Why DNS only (no Cloudflare proxy)
 
@@ -28,10 +28,10 @@ Conventional deploys point the domain's A record at the server's public IP. This
 
 The token serves double duty: Caddy uses it for DNS-01 ACME challenges, and it is the same credential you use to manage the zone.
 
-| Permission | Purpose |
-|---|---|
-| Zone:DNS:Edit | Write `_acme-challenge` TXT records (Caddy) and manage A records |
-| Zone:Zone:Read | Let the API resolve the zone ID from the domain name |
+| Permission     | Purpose                                                          |
+| -------------- | ---------------------------------------------------------------- |
+| Zone:DNS:Edit  | Write `_acme-challenge` TXT records (Caddy) and manage A records |
+| Zone:Zone:Read | Let the API resolve the zone ID from the domain name             |
 
 **Zone resources:** restrict to the single managed zone.
 

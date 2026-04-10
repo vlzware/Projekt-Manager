@@ -6,19 +6,19 @@
 
 ## Context
 
-ADR-0003 established the deployment topology (VPS + Docker Compose + GitHub Actions) but left the *location* of image builds implicit. Previously, images were built directly on the VPS immediately before `docker compose up -d`.
+ADR-0003 established the deployment topology (VPS + Docker Compose + GitHub Actions) but left the _location_ of image builds implicit. Previously, images were built directly on the VPS immediately before `docker compose up -d`.
 
 With iteration 4's walking skeleton now live and the deploy path exercised regularly, the resource math of this choice no longer holds:
 
-| Component | RAM |
-|---|---|
-| `app` container (limit) | 512 MB |
-| `db` container (limit) | 512 MB |
-| `storage` (MinIO) container (limit) | 512 MB |
-| `caddy` container (limit) | 128 MB |
-| Docker daemon | ~200 MB |
-| Kernel + misc | ~500 MB |
-| **Baseline running stack** | **~2.4 GB** |
+| Component                           | RAM         |
+| ----------------------------------- | ----------- |
+| `app` container (limit)             | 512 MB      |
+| `db` container (limit)              | 512 MB      |
+| `storage` (MinIO) container (limit) | 512 MB      |
+| `caddy` container (limit)           | 128 MB      |
+| Docker daemon                       | ~200 MB     |
+| Kernel + misc                       | ~500 MB     |
+| **Baseline running stack**          | **~2.4 GB** |
 
 The VPS is 2 vCPU / 4 GB, leaving ~1.6 GB free at idle. A `docker compose build app` peaks at ~1–1.5 GB (two `npm ci` invocations, `tsc --noEmit` loading the full type graph, and `vite build` running esbuild + rollup). Sum: ~3.6 GB of 4 GB — headroom collapses under any load. The realistic failure modes during a deploy window are:
 
@@ -94,7 +94,7 @@ Store image layers in object storage with a self-run registry front-end. Ruled o
 
 ### Negative
 
-- GHCR becomes a runtime dependency for *deploying* (not for serving — the already-deployed image keeps running if GHCR is unreachable). Mitigated by the observation that GitHub Actions is already our critical path: if GHCR is down, GitHub Actions is probably also down, and we cannot deploy anyway. No new single point of failure in practice.
+- GHCR becomes a runtime dependency for _deploying_ (not for serving — the already-deployed image keeps running if GHCR is unreachable). Mitigated by the observation that GitHub Actions is already our critical path: if GHCR is down, GitHub Actions is probably also down, and we cannot deploy anyway. No new single point of failure in practice.
 - CI cold-build time adds ~1–2 minutes; warm builds (GHA cache hit) are ~10–15 seconds. Net system cost is lower than building on the VPS, but individual CI runs feel slightly slower.
 - Every commit produces a new image even when the delta is small. GHA layer caching absorbs the redundant work; GHCR retention handles the stale tags.
 - Image retention becomes a new operational concern — stale SHA tags accumulate unless the built-in policy is configured.

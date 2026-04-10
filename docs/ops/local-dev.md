@@ -32,13 +32,13 @@ Open `http://localhost:5173`. Vite proxies `/api/*` to `http://localhost:3000`.
 
 ### Seed users
 
-| Username | Role | Password |
-|---|---|---|
-| `inhaber` | owner | `changeme` |
-| `buero` | office | `changeme` |
-| `arbeiter1` | worker | `changeme` |
-| `arbeiter2` | worker | `changeme` |
-| `buchhalter` | bookkeeper | `changeme` |
+| Username      | Role              | Password   |
+| ------------- | ----------------- | ---------- |
+| `inhaber`     | owner             | `changeme` |
+| `buero`       | office            | `changeme` |
+| `arbeiter1`   | worker            | `changeme` |
+| `arbeiter2`   | worker            | `changeme` |
+| `buchhalter`  | bookkeeper        | `changeme` |
 | `deaktiviert` | worker (inactive) | `changeme` |
 
 ## Stop / reset
@@ -68,12 +68,12 @@ Integration tests wipe and re-seed per file -- do not run against a database you
 
 ## Common pitfalls
 
-| Symptom | Fix |
-|---|---|
-| Port `5432` already in use | Stop system Postgres (`sudo systemctl stop postgresql`) or change port in `docker-compose.dev.yml` |
-| `getaddrinfo EAI_AGAIN storage` | Verify `.env` has `STORAGE_ENDPOINT=http://localhost:9000` (the default in `.env.example`). If you copied from `.env.production.example`, this var is missing — use `.env.example` for dev. |
-| Login fails on fresh DB | Check `npm run dev` output for seed errors; try `SEED=force` |
-| Do NOT run `docker-compose.yml` with `DOMAIN=<prod-domain>` locally | Caddy will mint a real LE cert, burning rate-limit slots uselessly |
+| Symptom                                                             | Fix                                                                                                                                                                                         |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Port `5432` already in use                                          | Stop system Postgres (`sudo systemctl stop postgresql`) or change port in `docker-compose.dev.yml`                                                                                          |
+| `getaddrinfo EAI_AGAIN storage`                                     | Verify `.env` has `STORAGE_ENDPOINT=http://localhost:9000` (the default in `.env.example`). If you copied from `.env.production.example`, this var is missing — use `.env.example` for dev. |
+| Login fails on fresh DB                                             | Check `npm run dev` output for seed errors; try `SEED=force`                                                                                                                                |
+| Do NOT run `docker-compose.yml` with `DOMAIN=<prod-domain>` locally | Caddy will mint a real LE cert, burning rate-limit slots uselessly                                                                                                                          |
 
 ## Deploying to a VPS
 

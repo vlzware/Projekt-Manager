@@ -8,6 +8,7 @@
 - [x] consideration of approaching the project as a general solution for a wider audience
 
 **Artifacts**
+
 - [x] Kickoff document
 
 ## Iteration 0.B - Clarification
@@ -17,6 +18,7 @@
 - [x] clarification of data, fields, types and their relations[^1]
 
 **Artifacts**
+
 - [x] definition of a "walking skeleton"
 - [x] detailed specification for the implementation of a "walking skeleton"
 - [x] interactive prototypes (code-based; replaces traditional wireframes — iterating in code is faster for well-established UI patterns like calendar and Kanban)
@@ -27,6 +29,7 @@
 - [x] setting up an environment, coding style, and workflow
 
 **Artifacts**
+
 - [x] Git repository initialized.
 - [x] A GitHub Kanban board set up.
 - [x] CONTRIBUTING.md with conventions, code style, branching strategy
@@ -47,6 +50,7 @@ Environment setup recurs whenever an iteration introduces new technology (e.g., 
 - [x] retrospection → issues for the backlog
 
 **Artifacts**
+
 - [x] a "walking skeleton" (prototype stage — 5 implementations)
 - [x] presentation[^1]
 - [x] production-quality walking skeleton on chosen stack
@@ -64,6 +68,7 @@ Deployment deferred to iteration 3 — security review revealed the codebase was
 Presentation skipped — no visible difference for non-technical users vs the walking skeleton; the massive backend/security work is invisible at the UI level.
 
 **Artifacts**
+
 - realistic app with persistent data and authentication
 - security-hardened foundation for deployment
 
@@ -81,6 +86,7 @@ Structural refactor triggered by code quality analysis that exposed compounding 
 - [x] retrospection → journal entry, workflow learnings (agent isolation, spec-implementation gap as quality signal)
 
 **Artifacts**
+
 - structurally sound codebase ready for production deployment
 - documented architecture and onboarding entry point
 - validated extensibility: config-driven states, independent view composition
@@ -100,12 +106,14 @@ Moved the iteration-3 codebase from test environment into production on Hetzner.
 - [x] retrospection → issues for the backlog
 
 **Beyond plan**
+
 - first-run admin bootstrap from environment variables ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) — the walking skeleton had no way to log in on a fresh production deploy
 - env-drift CI check — regression guard for the bootstrap failure mode (compose ↔ env schema)
 - Docker version pinning across environments ([ADR-0009](../adr/0009-pin-docker-versions-across-environments.md))
 - CD pipeline hardening (#48) partially addressed via the env-drift check; rest deferred to iteration 5
 
 **Artifacts**
+
 - walking skeleton live at `https://prmng.org`, reachable only through WireGuard
 - validated CI/CD pipeline from commit to production (8 successful deploys this iteration)
 - 310 tests (up from 186), new suites for first-run bootstrap and password policy
@@ -124,6 +132,7 @@ Systematic check that the base is aligned and nothing is lagging or missing befo
 **Not planned:** presentation to pilot company — same reason as iteration 4: no visible change for non-technical users. The next iteration with feature work is the natural next demo checkpoint.
 
 **Artifacts**
+
 - quality-controlled test suite, docs, and spec
 - documented baseline after a multi-round independent security review
 - backlog reduced to feature and architectural work
@@ -136,6 +145,5 @@ until all goals, defined in the Definition of Done, are achieved (see [Done when
 ## Time allocation
 
 We plan to use different LLMs in a custom workflow for most of the implementation work. Thus, we expect that the most time-consuming part of the project will be the clarification of goals, definition of the current scope, integration and quality control. We plan to start with a 3-day slot for an iteration cycle, which may be adjusted as needed.
-
 
 [^1]: For this Open-Source repository, no real company data will be used and thus reasonable assumptions are to be made. See [Company specifics](kickoff.md#company-specifics)

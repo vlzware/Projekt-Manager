@@ -20,7 +20,7 @@ There is nothing in between. To test whether the Docker image builds correctly, 
 - Ops documentation ("how to run the stack") cannot be verified by a contributor without VPN access and a domain.
 - The deployment workflow documentation cannot be proclaimed correct without accounting for this scenario.
 
-The HTTPS-everywhere principle was never wrong. But enforcing it *unconditionally* — including for ephemeral evaluation runs against throwaway data — creates friction that pushes integration testing to the end of the pipeline instead of making it routine.
+The HTTPS-everywhere principle was never wrong. But enforcing it _unconditionally_ — including for ephemeral evaluation runs against throwaway data — creates friction that pushes integration testing to the end of the pipeline instead of making it routine.
 
 ## Decision
 
@@ -35,6 +35,7 @@ We will add an opt-in HTTP-only evaluation mode that runs the full production st
   - Logs a startup warning to the console
 
 - **`docker-compose.http.yml`** — a compose override that replaces the custom Caddy build (Cloudflare DNS plugin) with stock Caddy on port 80, sets `NODE_ENV=development` (enabling seed data and dev credentials), and sets `ALLOW_INSECURE_HTTP=true`. Activated by an explicit `-f` flag:
+
   ```
   docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
   ```
@@ -53,7 +54,7 @@ We will add an opt-in HTTP-only evaluation mode that runs the full production st
 
 ### Status quo — require full TLS infrastructure for any Docker-based testing
 
-Main advantage: absolute enforcement of the HTTPS principle with zero exceptions. Ruled out because it pushes integration testing to the end of the deployment pipeline, makes ops documentation unverifiable without production-equivalent infrastructure, and blocks contributors without VPN access from running the full stack at all. The principle is correct for production; making it a precondition for *evaluation* turns a security control into a testing bottleneck.
+Main advantage: absolute enforcement of the HTTPS principle with zero exceptions. Ruled out because it pushes integration testing to the end of the deployment pipeline, makes ops documentation unverifiable without production-equivalent infrastructure, and blocks contributors without VPN access from running the full stack at all. The principle is correct for production; making it a precondition for _evaluation_ turns a security control into a testing bottleneck.
 
 ### Self-signed certificates (Caddy `tls internal`)
 

@@ -5,21 +5,23 @@ See [ADR-0008](../adr/0008-vpn-first-network-access.md).
 
 ## Subnet plan
 
-| Item | Value |
-|---|---|
-| Subnet | `10.213.17.0/24` |
-| Server (`wg0`) | `10.213.17.1` |
-| Peers | `10.213.17.10+` (one `/32` each) |
-| Listen port | `51820/UDP` |
+| Item           | Value                            |
+| -------------- | -------------------------------- |
+| Subnet         | `10.213.17.0/24`                 |
+| Server (`wg0`) | `10.213.17.1`                    |
+| Peers          | `10.213.17.10+` (one `/32` each) |
+| Listen port    | `51820/UDP`                      |
 
 ## Server setup
 
 1. Install:
+
    ```bash
    sudo apt-get install -y wireguard-tools qrencode
    ```
 
 2. Generate server keypair:
+
    ```bash
    sudo mkdir -p /etc/wireguard
    cd /etc/wireguard
@@ -28,6 +30,7 @@ See [ADR-0008](../adr/0008-vpn-first-network-access.md).
    ```
 
 3. Create `wg0.conf`:
+
    ```bash
    sudo tee /etc/wireguard/wg0.conf > /dev/null <<EOF
    [Interface]
@@ -39,6 +42,7 @@ See [ADR-0008](../adr/0008-vpn-first-network-access.md).
    ```
 
 4. Systemd drop-in (Docker must wait for `wg0` or Caddy's port bind fails on cold boot):
+
    ```bash
    sudo mkdir -p /etc/systemd/system/docker.service.d
    sudo tee /etc/systemd/system/docker.service.d/wait-for-wireguard.conf > /dev/null <<'EOF'
@@ -50,6 +54,7 @@ See [ADR-0008](../adr/0008-vpn-first-network-access.md).
    ```
 
 5. Enable and start:
+
    ```bash
    sudo systemctl enable --now wg-quick@wg0.service
    ```
@@ -57,6 +62,7 @@ See [ADR-0008](../adr/0008-vpn-first-network-access.md).
 6. Open UDP/51820 in Hetzner Cloud Firewall.
 
 **Verify:**
+
 ```bash
 ip -4 addr show wg0                                                          # inet 10.213.17.1/24
 systemctl is-active wg-quick@wg0.service                                     # active
@@ -113,6 +119,7 @@ sudo qrencode -t ansiutf8 < peers/${PEER_NAME}.conf
 ```
 
 After user confirms connection:
+
 ```bash
 # Verify handshake (expect Unix timestamp within last 30s)
 sudo wg show wg0 latest-handshakes | grep -F "$(sudo cat /etc/wireguard/peers/${PEER_NAME}.pubkey)"
@@ -141,6 +148,7 @@ If no handshake within ~5 min: remove the `[Peer]` block from `wg0.conf`, `sudo 
 Caddy binds to `10.213.17.1:443`. If Docker starts before `wg-quick@wg0`, the `wg0` interface does not exist yet and the bind fails.
 
 The systemd drop-in at `/etc/systemd/system/docker.service.d/wait-for-wireguard.conf` prevents this:
+
 ```ini
 [Unit]
 Requires=wg-quick@wg0.service
@@ -148,6 +156,7 @@ After=wg-quick@wg0.service
 ```
 
 Verify the dependency is active:
+
 ```bash
 systemctl list-dependencies docker.service | grep -F wg-quick@wg0.service
 ```

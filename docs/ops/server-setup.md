@@ -2,20 +2,20 @@
 
 ## Server
 
-| Property | Value |
-|---|---|
-| Provider | Hetzner Cloud |
-| OS | Ubuntu 24.04 LTS |
-| Tier | CX23 (2 vCPU / 4 GB RAM / 40 GB disk) |
-| Firewall | Hetzner Cloud Firewall |
+| Property | Value                                 |
+| -------- | ------------------------------------- |
+| Provider | Hetzner Cloud                         |
+| OS       | Ubuntu 24.04 LTS                      |
+| Tier     | CX23 (2 vCPU / 4 GB RAM / 40 GB disk) |
+| Firewall | Hetzner Cloud Firewall                |
 
 ## Accounts
 
-| Account | Purpose | SSH | sudo | docker |
-|---|---|---|---|---|
-| `root` | Disabled for SSH | -- | -- | -- |
-| Admin user | Interactive admin | Personal key | Yes (password) | No |
-| `deploy` | Container ops (`sudo -u deploy` only) | None (nologin, no authorized_keys) | No | Yes |
+| Account    | Purpose                               | SSH                                | sudo           | docker |
+| ---------- | ------------------------------------- | ---------------------------------- | -------------- | ------ |
+| `root`     | Disabled for SSH                      | --                                 | --             | --     |
+| Admin user | Interactive admin                     | Personal key                       | Yes (password) | No     |
+| `deploy`   | Container ops (`sudo -u deploy` only) | None (nologin, no authorized_keys) | No             | Yes    |
 
 Admin credentials in password manager. `deploy` is a system account, no password.
 
@@ -30,13 +30,13 @@ Admin credentials in password manager. `deploy` is a system account, no password
 
 Two layers: ufw on the host (always present, provider-independent) and the cloud provider firewall (Hetzner Cloud Firewall in this setup). Both enforce the same policy — defense in depth.
 
-| Port | Protocol | Status | Purpose |
-|---|---|---|---|
-| 22 | TCP | Open | SSH (admin only) |
-| 51820 | UDP | Open | WireGuard |
-| -- | ICMP | Open | Ping / diagnostics |
-| 80 | TCP | Closed | Not needed (DNS-01 ACME) |
-| 443 | TCP | Closed | Caddy binds only to `wg0` interface |
+| Port  | Protocol | Status | Purpose                             |
+| ----- | -------- | ------ | ----------------------------------- |
+| 22    | TCP      | Open   | SSH (admin only)                    |
+| 51820 | UDP      | Open   | WireGuard                           |
+| --    | ICMP     | Open   | Ping / diagnostics                  |
+| 80    | TCP      | Closed | Not needed (DNS-01 ACME)            |
+| 443   | TCP      | Closed | Caddy binds only to `wg0` interface |
 
 ICMP is allowed by default in both ufw (`/etc/ufw/before.rules`) and Hetzner Cloud Firewall. No explicit rule needed.
 
@@ -49,14 +49,14 @@ ICMP is allowed by default in both ufw (`/etc/ufw/before.rules`) and Hetzner Clo
 
 ## Key file locations
 
-| What | Where |
-|---|---|
-| Project directory | `/opt/projekt-manager` |
-| Non-secret env vars | `/opt/projekt-manager/.env` |
-| Encrypted secrets | `/opt/projekt-manager/secrets.env.age` (see [manual-deploy.md](manual-deploy.md#secrets)) |
-| Deploy GitHub key | `/home/deploy/.ssh/github_deploy` |
-| Deploy SSH config | `/home/deploy/.ssh/config` |
-| fail2ban config | `/etc/fail2ban/jail.local` |
+| What                | Where                                                                                     |
+| ------------------- | ----------------------------------------------------------------------------------------- |
+| Project directory   | `/opt/projekt-manager`                                                                    |
+| Non-secret env vars | `/opt/projekt-manager/.env`                                                               |
+| Encrypted secrets   | `/opt/projekt-manager/secrets.env.age` (see [manual-deploy.md](manual-deploy.md#secrets)) |
+| Deploy GitHub key   | `/home/deploy/.ssh/github_deploy`                                                         |
+| Deploy SSH config   | `/home/deploy/.ssh/config`                                                                |
+| fail2ban config     | `/etc/fail2ban/jail.local`                                                                |
 
 ## Software
 
@@ -126,15 +126,16 @@ sudo chmod 700 /home/deploy/.ssh
 
 Pinned versions (ADR-0009):
 
-| Package | Version |
-|---|---|
-| `docker-ce` | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `docker-ce-cli` | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `containerd.io` | `2.2.2-1~ubuntu.24.04~noble` |
-| `docker-buildx-plugin` | `0.33.0-1~ubuntu.24.04~noble` |
-| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble` |
+| Package                 | Version                         |
+| ----------------------- | ------------------------------- |
+| `docker-ce`             | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `docker-ce-cli`         | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `containerd.io`         | `2.2.2-1~ubuntu.24.04~noble`    |
+| `docker-buildx-plugin`  | `0.33.0-1~ubuntu.24.04~noble`   |
+| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble`    |
 
 1. Add Docker apt repository:
+
    ```bash
    sudo apt-get install -y ca-certificates curl
    sudo install -m 0755 -d /etc/apt/keyrings
@@ -147,6 +148,7 @@ Pinned versions (ADR-0009):
    ```
 
 2. Install pinned versions:
+
    ```bash
    sudo apt-get install -y \
      docker-ce=5:29.3.1-1~ubuntu.24.04~noble \
@@ -163,6 +165,7 @@ Pinned versions (ADR-0009):
    ```
 
 **Verify:**
+
 ```bash
 docker --version              # 29.3.1
 docker compose version        # v5.1.1
@@ -209,6 +212,7 @@ sudo systemctl start fail2ban
 ```
 
 Confirm unattended-upgrades:
+
 ```bash
 sudo apt-get install -y unattended-upgrades
 sudo dpkg-reconfigure -plow unattended-upgrades   # select Yes
@@ -225,12 +229,14 @@ See [wireguard-setup.md](wireguard-setup.md).
 Read-only Deploy Key scoped to this repo (outbound only -- unaffected by ADR-0012 cutover).
 
 1. Generate keypair:
+
    ```bash
    sudo -u deploy ssh-keygen -t ed25519 -C "deploy-git@projekt-manager" \
      -f /home/deploy/.ssh/github_deploy -N ""
    ```
 
 2. Configure SSH:
+
    ```bash
    sudo tee /home/deploy/.ssh/config << 'EOF'
    Host github.com
@@ -251,6 +257,7 @@ Read-only Deploy Key scoped to this repo (outbound only -- unaffected by ADR-001
 ### Phase 8 -- Application
 
 1. Clone:
+
    ```bash
    sudo mkdir -p /opt/projekt-manager
    sudo chown deploy:deploy /opt/projekt-manager
@@ -258,9 +265,11 @@ Read-only Deploy Key scoped to this repo (outbound only -- unaffected by ADR-001
    ```
 
 2. Create `.env` from the production template:
+
    ```bash
    sudo -u deploy cp /opt/projekt-manager/.env.production.example /opt/projekt-manager/.env
    ```
+
    Fill in `DOMAIN`, `MINIO_ROOT_USER`. Defaults for `WG_BIND_IP` and `SEED` are pre-set.
 
    Secrets (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) go in `secrets.env.age` only -- see Phase 9.
@@ -272,6 +281,7 @@ Read-only Deploy Key scoped to this repo (outbound only -- unaffected by ADR-001
    ```
 
 **Verify:**
+
 ```bash
 sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps
 sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
@@ -287,6 +297,7 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 1. Confirm stack is running (Phase 8 verify).
 
 2. Verify empty users table:
+
    ```bash
    sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
      exec -T db psql -U pm -d projekt_manager -c 'SELECT count(*) FROM users;'
@@ -294,25 +305,30 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
    ```
 
 3. Set bootstrap vars in `.env`:
+
    ```bash
    openssl rand -base64 24   # generate password
    sudo -u deploy nano /opt/projekt-manager/.env
    ```
+
    Set `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_ADMIN_DISPLAY_NAME` (optional).
    Password policy: >=8 chars, <=72 UTF-8 bytes, not in common-password blocklist.
 
 4. Restart app:
+
    ```bash
    sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml up -d --force-recreate app
    ```
 
 5. Confirm bootstrap:
+
    ```bash
    sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
      logs app --tail=30 | grep -F 'Bootstrap admin user'
    ```
 
 6. From WireGuard client: log in at `https://${DOMAIN}`, then rotate password immediately:
+
    ```bash
    NEW_PW="$(openssl rand -base64 24)"
    echo "$NEW_PW"   # save to password manager NOW
@@ -333,6 +349,7 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 7. Scrub bootstrap vars from `.env` (delete or comment out all three `BOOTSTRAP_ADMIN_*` lines).
 
 8. Restart app, confirm no bootstrap warning:
+
    ```bash
    sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml up -d --force-recreate app
    sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
@@ -346,21 +363,25 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 Sets up `scripts/deploy.sh` with encrypted secrets. See [manual-deploy.md](manual-deploy.md#bootstrap--first-run-on-a-freshly-cloned-vps) for the authoritative procedure.
 
 1. Install `age`:
+
    ```bash
    sudo apt update && sudo apt install -y age
    ```
 
 2. GHCR login (classic PAT, `read:packages`):
+
    ```bash
    sudo -u deploy docker login ghcr.io -u vlzware --password-stdin <<< '<PAT>'
    ```
 
 3. Verify pull:
+
    ```bash
    sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main
    ```
 
 4. Create and upload `secrets.env.age` (on workstation):
+
    ```bash
    cat > /tmp/secrets.env <<'EOF'
    POSTGRES_PASSWORD='...'
@@ -372,7 +393,9 @@ Sets up `scripts/deploy.sh` with encrypted secrets. See [manual-deploy.md](manua
 
    scp secrets.env.age <sudo-user>@vps:/tmp/secrets.env.age
    ```
+
    On VPS:
+
    ```bash
    sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
    sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
@@ -382,11 +405,13 @@ Sets up `scripts/deploy.sh` with encrypted secrets. See [manual-deploy.md](manua
 5. Remove plaintext secrets from `.env`.
 
 6. First deploy:
+
    ```bash
    sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
    ```
 
 7. Lock down deploy user (ONLY after step 6 succeeds):
+
    ```bash
    sudo usermod -s /usr/sbin/nologin deploy
    sudo rm -f /home/deploy/.ssh/authorized_keys
@@ -399,12 +424,14 @@ Sets up `scripts/deploy.sh` with encrypted secrets. See [manual-deploy.md](manua
    ```
 
 **Verify from WireGuard client:**
+
 ```bash
 curl -v --resolve "${DOMAIN}:443:10.213.17.1" "https://${DOMAIN}/api/health"
 # 200 OK with real Let's Encrypt cert (for initial cert, see caddy-tls-bootstrap.md)
 ```
 
 **Verify from outside VPN:**
+
 ```bash
 curl --connect-timeout 5 "https://<server-public-ip>/api/health"
 # expect: timeout (443 not bound on public interface)

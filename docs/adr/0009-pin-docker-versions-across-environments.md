@@ -23,13 +23,13 @@ We will pin Docker Engine, Docker CLI, containerd, BuildKit plugin, and Compose 
 
 **Pinned versions (as of 2026-04-07):**
 
-| Package | Version |
-|---|---|
-| `docker-ce` | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `docker-ce-cli` | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `containerd.io` | `2.2.2-1~ubuntu.24.04~noble` |
-| `docker-buildx-plugin` | `0.33.0-1~ubuntu.24.04~noble` |
-| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble` |
+| Package                 | Version                         |
+| ----------------------- | ------------------------------- |
+| `docker-ce`             | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `docker-ce-cli`         | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `containerd.io`         | `2.2.2-1~ubuntu.24.04~noble`    |
+| `docker-buildx-plugin`  | `0.33.0-1~ubuntu.24.04~noble`   |
+| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble`    |
 
 **Source of truth:** the production VPS is authoritative. Local environments match the VPS, not the other way around — so that developer environments reproduce production behaviour rather than leading it.
 

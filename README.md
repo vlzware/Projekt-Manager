@@ -11,6 +11,7 @@ A centralized system for consolidation, control, and viewing of data and process
 - Docker and Docker Compose
 
 For local development additionally:
+
 - Node.js (pinned in `.nvmrc` — use `nvm install`)
 - npm (use the version bundled with that Node release — do not upgrade independently)
 
@@ -18,15 +19,15 @@ For local development additionally:
 
 Three ways to run the app:
 
-| | [Local dev](#development) | [Full stack (HTTP)](#full-stack-http) | [Full stack (HTTPS)](#production) |
-|---|---|---|---|
-| App | Node process (`npm run dev`) | Docker container | Docker container |
-| Reverse proxy | None (Vite proxies `/api/*`) | Caddy on port 80 | Caddy on port 443 (TLS) |
-| DB + storage | Docker | Docker | Docker |
-| Domain | No | No | Yes |
-| TLS | No (localhost = secure context) | No | Yes (DNS-01 ACME) |
-| VPN | No | No | Yes (WireGuard) |
-| Use case | Day-to-day development | Evaluate the full stack | Production |
+|               | [Local dev](#development)       | [Full stack (HTTP)](#full-stack-http) | [Full stack (HTTPS)](#production) |
+| ------------- | ------------------------------- | ------------------------------------- | --------------------------------- |
+| App           | Node process (`npm run dev`)    | Docker container                      | Docker container                  |
+| Reverse proxy | None (Vite proxies `/api/*`)    | Caddy on port 80                      | Caddy on port 443 (TLS)           |
+| DB + storage  | Docker                          | Docker                                | Docker                            |
+| Domain        | No                              | No                                    | Yes                               |
+| TLS           | No (localhost = secure context) | No                                    | Yes (DNS-01 ACME)                 |
+| VPN           | No                              | No                                    | Yes (WireGuard)                   |
+| Use case      | Day-to-day development          | Evaluate the full stack               | Production                        |
 
 ### Development
 
@@ -59,23 +60,23 @@ Full deployment path (each step links to its runbook):
 
 The `SEED` variable in `.env` controls database seeding on backend startup:
 
-| Value | Behavior |
-|---|---|
-| `true` | Seed only if the database is empty. Data you create or change during development survives server restarts. |
-| `force` | Wipe all data and re-seed. Use when seed data structure changes or you need a clean slate. |
-| `false` (default) | Don't seed. |
+| Value             | Behavior                                                                                                   |
+| ----------------- | ---------------------------------------------------------------------------------------------------------- |
+| `true`            | Seed only if the database is empty. Data you create or change during development survives server restarts. |
+| `force`           | Wipe all data and re-seed. Use when seed data structure changes or you need a clean slate.                 |
+| `false` (default) | Don't seed.                                                                                                |
 
 Seeding is always skipped in production (`NODE_ENV=production`).
 
 All seed users share the password **`changeme`**.
 
-| Username | Display Name | Role |
-|---|---|---|
-| `inhaber` | Thomas Berger | owner |
-| `buero` | Maria Schmidt | office |
-| `arbeiter1` | Jan Nowak | worker |
-| `arbeiter2` | Lukas Fischer | worker |
-| `buchhalter` | Petra Weiß | bookkeeper |
+| Username      | Display Name           | Role              |
+| ------------- | ---------------------- | ----------------- |
+| `inhaber`     | Thomas Berger          | owner             |
+| `buero`       | Maria Schmidt          | office            |
+| `arbeiter1`   | Jan Nowak              | worker            |
+| `arbeiter2`   | Lukas Fischer          | worker            |
+| `buchhalter`  | Petra Weiß             | bookkeeper        |
 | `deaktiviert` | Ehemaliger Mitarbeiter | worker (inactive) |
 
 ### Tests

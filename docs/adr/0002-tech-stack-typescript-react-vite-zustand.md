@@ -8,13 +8,13 @@
 
 The walking skeleton spec (iteration 0) deliberately left the tech stack open. During iteration 1, five parallel prototypes were built by independent agents in isolated worktrees, each implementing the full 26 acceptance criteria:
 
-| Prototype | Stack | Page weight | Source LOC | Build time |
-|---|---|---|---|---|
-| A | React 19 + FullCalendar + shadcn/ui + Tailwind | 257 kB | 1,950 | 11.7 min |
-| B | React 19 + Custom Calendar + Zustand + CSS Modules | 240 kB | 2,306 | 11.7 min |
-| C | Svelte 5 + Custom Calendar + Runes | 247 kB | 2,603 | 15.2 min |
-| D | Vue 3 + Pinia + Custom Calendar + CSS Modules | 237 kB | 2,557 | 15.6 min |
-| E | PHP 8 + Vanilla JS + Sessions | 95 kB | 2,498 | 14.7 min |
+| Prototype | Stack                                              | Page weight | Source LOC | Build time |
+| --------- | -------------------------------------------------- | ----------- | ---------- | ---------- |
+| A         | React 19 + FullCalendar + shadcn/ui + Tailwind     | 257 kB      | 1,950      | 11.7 min   |
+| B         | React 19 + Custom Calendar + Zustand + CSS Modules | 240 kB      | 2,306      | 11.7 min   |
+| C         | Svelte 5 + Custom Calendar + Runes                 | 247 kB      | 2,603      | 15.2 min   |
+| D         | Vue 3 + Pinia + Custom Calendar + CSS Modules      | 237 kB      | 2,557      | 15.6 min   |
+| E         | PHP 8 + Vanilla JS + Sessions                      | 95 kB       | 2,498      | 14.7 min   |
 
 Page weight measured via browser "Save As" (total resources). Build time is agent wall-clock time for the full spec. All page weights are well within acceptable range — this was not a differentiator.
 

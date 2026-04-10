@@ -73,11 +73,11 @@ curl -v --resolve "<domain>:443:10.213.17.1" "https://<domain>/api/health"
 
 ## Container restart reference
 
-| Command | Behavior |
-|---|---|
-| `docker compose restart caddy` | SIGTERM only. `.env` and bind-mount changes **ignored**. Never use after editing `.env`. |
-| `docker compose up -d caddy` | Compares config hash. Recreates if `.env` or compose file changed. Does NOT detect Caddyfile changes. |
-| `docker compose up -d --force-recreate caddy` | Always recreates. **Use after Caddyfile edits.** |
+| Command                                       | Behavior                                                                                              |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `docker compose restart caddy`                | SIGTERM only. `.env` and bind-mount changes **ignored**. Never use after editing `.env`.              |
+| `docker compose up -d caddy`                  | Compares config hash. Recreates if `.env` or compose file changed. Does NOT detect Caddyfile changes. |
+| `docker compose up -d --force-recreate caddy` | Always recreates. **Use after Caddyfile edits.**                                                      |
 
 ## Force re-issuance
 

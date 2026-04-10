@@ -15,14 +15,14 @@ operator (over WireGuard):                                        v
 
 ## Preconditions
 
-| Requirement | Verify |
-|---|---|
-| `/opt/projekt-manager` is a git clone | `sudo -u deploy git -C /opt/projekt-manager remote -v` |
-| `age` installed | `command -v age` |
-| `deploy` logged in to GHCR | `sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main` |
-| `secrets.env.age` exists, owned `deploy:deploy` | `ls -l /opt/projekt-manager/secrets.env.age` |
-| `deploy` has no interactive login | `getent passwd deploy` shows `/usr/sbin/nologin` |
-| `deploy` can fetch from origin | `sudo -u deploy git -C /opt/projekt-manager fetch --dry-run origin` |
+| Requirement                                     | Verify                                                              |
+| ----------------------------------------------- | ------------------------------------------------------------------- |
+| `/opt/projekt-manager` is a git clone           | `sudo -u deploy git -C /opt/projekt-manager remote -v`              |
+| `age` installed                                 | `command -v age`                                                    |
+| `deploy` logged in to GHCR                      | `sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main`   |
+| `secrets.env.age` exists, owned `deploy:deploy` | `ls -l /opt/projekt-manager/secrets.env.age`                        |
+| `deploy` has no interactive login               | `getent passwd deploy` shows `/usr/sbin/nologin`                    |
+| `deploy` can fetch from origin                  | `sudo -u deploy git -C /opt/projekt-manager fetch --dry-run origin` |
 
 ## Deploy
 
@@ -145,11 +145,11 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 
 ## Failure modes
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `git checkout` fails | Uncommitted changes in working tree | `git status`, reset or stash |
-| `git checkout landed at X, expected Y` | Post-checkout SHA assertion | Inspect `git status`, clean up |
-| `age: failed to read identity` | Wrong passphrase | Retry; verify against password manager after 3 attempts |
-| `docker pull` unauthorized | GHCR PAT expired | `docker login ghcr.io` as `deploy` with fresh PAT |
-| Smoke test timeout (60s) | App container failed or `/api/health` returning 503 | Check `docker compose logs app db storage` |
-| `no such container` on exec | `docker compose up -d` did not start `app` | Check `docker compose ps`; verify `APP_IMAGE_TAG` matches a GHCR tag |
+| Symptom                                | Cause                                               | Fix                                                                  |
+| -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------- |
+| `git checkout` fails                   | Uncommitted changes in working tree                 | `git status`, reset or stash                                         |
+| `git checkout landed at X, expected Y` | Post-checkout SHA assertion                         | Inspect `git status`, clean up                                       |
+| `age: failed to read identity`         | Wrong passphrase                                    | Retry; verify against password manager after 3 attempts              |
+| `docker pull` unauthorized             | GHCR PAT expired                                    | `docker login ghcr.io` as `deploy` with fresh PAT                    |
+| Smoke test timeout (60s)               | App container failed or `/api/health` returning 503 | Check `docker compose logs app db storage`                           |
+| `no such container` on exec            | `docker compose up -d` did not start `app`          | Check `docker compose ps`; verify `APP_IMAGE_TAG` matches a GHCR tag |

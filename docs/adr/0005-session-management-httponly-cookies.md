@@ -34,6 +34,7 @@ No additional CSRF token (synchronizer pattern, double-submit cookie) is used.
 `Lax` allows the cookie on top-level GET navigations from external sites, preserving the "click link from email → arrive logged in" experience. Requires an explicit CSRF token for state-changing requests.
 
 Ruled out because:
+
 - The external-link benefit is irrelevant for a VPN-internal tool
 - The CSRF token adds complexity (token generation, storage, validation, frontend wiring) without proportional security benefit over `Strict`
 
