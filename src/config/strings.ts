@@ -81,6 +81,8 @@ export const STRINGS = {
     openMaps: 'In Google Maps öffnen',
     viewKanban: 'Kanban',
     viewCalendar: 'Kalender',
+    viewMonth: 'Monat',
+    viewWeek: 'Woche',
   },
 
   aging: {

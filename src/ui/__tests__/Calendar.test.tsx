@@ -213,6 +213,40 @@ describe('Calendar View', () => {
     expect(panel).toHaveTextContent('Malerarbeiten Bürokomplex Weber');
   });
 
+  // Spec §8.3.1: week view toggle is available
+  it('week view toggle is present and switches to week view', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByTestId('view-toggle-kalender'));
+
+    // Toggle buttons are present
+    const monthBtn = screen.getByTestId('calendar-toggle-month');
+    const weekBtn = screen.getByTestId('calendar-toggle-week');
+    expect(monthBtn).toHaveTextContent('Monat');
+    expect(weekBtn).toHaveTextContent('Woche');
+
+    // Default is month view — grid has multiple week rows
+    const grid = screen.getByTestId('calendar-grid');
+    const weekRows = grid.querySelectorAll('.weekRow');
+    expect(weekRows.length).toBeGreaterThan(1);
+
+    // Switch to week view — grid has exactly one week row
+    await user.click(weekBtn);
+    const weekGrid = screen.getByTestId('calendar-grid');
+    const singleWeekRows = weekGrid.querySelectorAll('.weekRow');
+    expect(singleWeekRows).toHaveLength(1);
+
+    // Label shows date range instead of month name
+    const label = screen.getByTestId('calendar-month-label');
+    expect(label.textContent).toMatch(/\d{2}\.\d{2}\.\s*–\s*\d{2}\.\d{2}\.\d{4}/);
+
+    // Switch back to month view
+    await user.click(monthBtn);
+    const monthGrid = screen.getByTestId('calendar-grid');
+    expect(monthGrid.querySelectorAll('.weekRow').length).toBeGreaterThan(1);
+  });
+
   // AC-19: Calendar week starts on Monday
   it('AC-19: calendar grid week starts on Monday', async () => {
     const user = userEvent.setup();

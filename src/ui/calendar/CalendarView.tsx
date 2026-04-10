@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { addMonths, subMonths, format } from 'date-fns';
+import { addMonths, subMonths, addWeeks, subWeeks, startOfWeek, endOfWeek, format } from 'date-fns';
 import { LOCALE } from '@/config/localeConfig';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
@@ -8,15 +8,29 @@ import { STRINGS } from '@/config/strings';
 import { CalendarGrid } from './CalendarGrid';
 import styles from './CalendarView.module.css';
 
+type CalendarViewMode = 'month' | 'week';
+
 export function CalendarView() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
+  const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
   const projects = useProjectStore((s) => s.projects);
   const activeFilter = useUIStore((s) => s.activeFilter);
   const getSummary = useProjectStore((s) => s.getSummary);
   const { navigateTo } = useRouterNav();
 
   const summary = getSummary();
-  const monthLabel = format(currentMonth, 'MMMM yyyy', { locale: LOCALE.dateFns });
+
+  let navigationLabel: string;
+  if (viewMode === 'week') {
+    const weekStart = startOfWeek(currentMonth, { weekStartsOn: 1 });
+    const weekEnd = endOfWeek(currentMonth, { weekStartsOn: 1 });
+    const startStr = format(weekStart, 'dd.MM.', { locale: LOCALE.dateFns });
+    const endStr = format(weekEnd, 'dd.MM.yyyy', { locale: LOCALE.dateFns });
+    navigationLabel = `${startStr} – ${endStr}`;
+  } else {
+    const label = format(currentMonth, 'MMMM yyyy', { locale: LOCALE.dateFns });
+    navigationLabel = label.charAt(0).toUpperCase() + label.slice(1);
+  }
 
   const filteredProjects = activeFilter
     ? projects.filter((p) => p.status === activeFilter)
@@ -37,28 +51,51 @@ export function CalendarView() {
     setFilterNoDates(true);
   };
 
+  const handlePrev = () => {
+    setCurrentMonth(viewMode === 'week' ? subWeeks(currentMonth, 1) : subMonths(currentMonth, 1));
+  };
+  const handleNext = () => {
+    setCurrentMonth(viewMode === 'week' ? addWeeks(currentMonth, 1) : addMonths(currentMonth, 1));
+  };
+
   return (
     <div className={styles.container} data-testid="calendar-view">
       <div className={styles.navigation}>
         <button
           className={styles.navButton}
-          onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
+          onClick={handlePrev}
           data-testid="calendar-prev"
         >
           &larr;
         </button>
         <span className={styles.monthLabel} data-testid="calendar-month-label">
-          {monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1)}
+          {navigationLabel}
         </span>
         <button
           className={styles.navButton}
-          onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+          onClick={handleNext}
           data-testid="calendar-next"
         >
           &rarr;
         </button>
+        <div className={styles.viewToggle} data-testid="calendar-view-toggle">
+          <button
+            className={`${styles.toggleButton} ${viewMode === 'month' ? styles.toggleActive : ''}`}
+            onClick={() => setViewMode('month')}
+            data-testid="calendar-toggle-month"
+          >
+            {STRINGS.ui.viewMonth}
+          </button>
+          <button
+            className={`${styles.toggleButton} ${viewMode === 'week' ? styles.toggleActive : ''}`}
+            onClick={() => setViewMode('week')}
+            data-testid="calendar-toggle-week"
+          >
+            {STRINGS.ui.viewWeek}
+          </button>
+        </div>
       </div>
-      <CalendarGrid month={currentMonth} projects={calendarProjects} />
+      <CalendarGrid month={currentMonth} projects={calendarProjects} view={viewMode} />
       {summary.projectsWithoutDates > 0 && (
         <div
           className={styles.noDatesCounter}
