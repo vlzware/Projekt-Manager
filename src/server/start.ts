@@ -58,13 +58,13 @@ async function start(): Promise<void> {
   // --- Production safety checks ---
   if (isProduction) {
     rejectDevCredentials();
+  }
 
-    if (env.ALLOW_INSECURE_HTTP === 'true') {
-      throw new Error(
-        'Refusing to start: ALLOW_INSECURE_HTTP=true is not allowed in production. ' +
-          'This flag is for evaluation deployments only. See docs/ops/http-only-evaluation.md.',
-      );
-    }
+  if (env.ALLOW_INSECURE_HTTP === 'true') {
+    console.warn(
+      'WARNING: ALLOW_INSECURE_HTTP=true — cookie Secure flag is OFF. ' +
+        'Do not use with real users or real data. See docs/ops/http-only-evaluation.md.',
+    );
   }
 
   const { db, pool } = createDatabase();

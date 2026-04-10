@@ -3,47 +3,23 @@
 > **WARNING:** No TLS. Login credentials and session cookies travel in cleartext.
 > **Never use this for real users or real data.**
 
-## Three ways to run
+Runs the full production stack (app image, Caddy, Postgres, MinIO) in Docker over plain HTTP. Unlike [local development](local-dev.md) (`npm run dev` with Node directly), this mode exercises the Docker image and the Caddy reverse proxy -- the same components that run in production, minus TLS and VPN.
 
-| | Local dev | Full stack (HTTP) | Full stack (HTTPS) |
-|---|---|---|---|
-| App | Node process (`npm run dev`) | Docker container | Docker container |
-| Reverse proxy | None (Vite proxies `/api/*`) | Caddy on port 80 | Caddy on port 443 (TLS) |
-| DB + storage | Docker | Docker | Docker |
-| Domain | No | No | Yes |
-| TLS | No (localhost = secure context) | No | Yes (DNS-01 ACME) |
-| VPN | No | No | Yes (WireGuard) |
-| Use case | Day-to-day development | Evaluate full stack | Production |
-
-Setup for local dev: [local-dev.md](local-dev.md). Setup for production: [README § Production](../../README.md#production).
-
-This document covers **full stack (HTTP)** -- the middle column.
+See [README § Quick Start](../../README.md#quick-start) for how this fits alongside local dev and production.
 
 ## Quick start
 
 ```bash
-# From a fresh clone:
-cat > .env << 'EOF'
-POSTGRES_PASSWORD=evaluationpw
-MINIO_ROOT_USER=evaluationadmin
-MINIO_ROOT_PASSWORD=evaluationpw
-SEED=true
-EOF
+cp .env.example .env
 
 docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
 
-curl http://localhost/api/health
-# Open http://localhost in a browser
+# Open http://localhost — login with inhaber / changeme
 ```
 
-The compose override (`docker-compose.http.yml`):
-- Replaces the custom Caddy build with stock Caddy on port 80
-- Sets `ALLOW_INSECURE_HTTP=true` so the cookie Secure flag is off
-- Adds `build: .` so the app image is built from source when not available from GHCR
+`.env.example` has dev-ready defaults. The compose override (`docker-compose.http.yml`) replaces the custom Caddy build with stock Caddy on port 80 and sets `NODE_ENV=development` so seeding and dev credentials work.
 
-`docker-compose.yml` hardcodes DATABASE_URL, STORAGE_*, NODE_ENV, and PORT inside the container -- the `.env` above only needs credentials and seed preference.
-
-Note: `MINIO_ROOT_USER` cannot be `minioadmin` -- the app rejects known dev defaults in production mode.
+If the app image is not available from GHCR, compose builds it from source (`build: .` in the override). First build takes a few minutes.
 
 ## Remote access
 
@@ -51,9 +27,16 @@ When running on a remote server, open port 80/TCP in ufw (`sudo ufw allow 80/tcp
 
 For VPS provisioning (OS hardening, Docker install), see [server-setup.md](server-setup.md).
 
-## Seed users
+## GHCR authentication
 
-All seed users share the password `changeme`. See [README](../../README.md#seed-data) for the full list.
+The app image is hosted on GitHub Container Registry. Public packages pull without authentication. For private packages, authenticate first:
+
+1. Create a classic Personal Access Token at `https://github.com/settings/tokens` with the `read:packages` scope
+2. Log in:
+   ```bash
+   docker login ghcr.io -u <github-username>
+   ```
+   Paste the token at the password prompt.
 
 ## Stop / clean up
 

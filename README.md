@@ -16,17 +16,17 @@ For local development additionally:
 
 ## Quick Start
 
-### Production
+Three ways to run the app:
 
-Full deployment path (each step links to its runbook):
-
-1. [Provision the server](docs/ops/server-setup.md) — OS, SSH, deploy user, Docker, fail2ban
-2. [Set up WireGuard](docs/ops/wireguard-setup.md) — VPN server + first peer
-3. [Configure DNS](docs/ops/dns-setup.md) — A record → WireGuard IP (not public IP)
-4. [Bootstrap TLS](docs/ops/caddy-tls-bootstrap.md) — first Let's Encrypt cert via staging
-5. [Deploy](docs/ops/manual-deploy.md) — clone, configure secrets, `scripts/deploy.sh`
-
-**No domain yet?** Use the [HTTP-only evaluation mode](docs/ops/http-only-evaluation.md) to test the app on a bare VPS — skip steps 2-4.
+| | [Local dev](#development) | [Full stack (HTTP)](#full-stack-http) | [Full stack (HTTPS)](#production) |
+|---|---|---|---|
+| App | Node process (`npm run dev`) | Docker container | Docker container |
+| Reverse proxy | None (Vite proxies `/api/*`) | Caddy on port 80 | Caddy on port 443 (TLS) |
+| DB + storage | Docker | Docker | Docker |
+| Domain | No | No | Yes |
+| TLS | No (localhost = secure context) | No | Yes (DNS-01 ACME) |
+| VPN | No | No | Yes (WireGuard) |
+| Use case | Day-to-day development | Evaluate the full stack | Production |
 
 ### Development
 
@@ -40,6 +40,26 @@ npm run dev                           # starts backend + frontend at http://loca
 `storage-init` is a one-shot container that creates the MinIO bucket on first start; it exits after the bucket exists. Skipping it causes `NoSuchBucket` failures in storage tests.
 
 `npm run dev` starts both the Fastify backend (port 3000) and the Vite dev server (port 5173) via `concurrently`. API requests are proxied automatically.
+
+### Full stack (HTTP)
+
+Runs the full production stack (app image, Caddy, Postgres, MinIO) in Docker over plain HTTP. See [docs/ops/http-only-evaluation.md](docs/ops/http-only-evaluation.md) for details.
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
+# Open http://localhost — login with inhaber / changeme
+```
+
+### Production
+
+Full deployment path (each step links to its runbook):
+
+1. [Provision the server](docs/ops/server-setup.md) — OS, SSH, deploy user, Docker, fail2ban, ufw
+2. [Set up WireGuard](docs/ops/wireguard-setup.md) — VPN server + first peer
+3. [Configure DNS](docs/ops/dns-setup.md) — A record → WireGuard IP (not public IP)
+4. [Bootstrap TLS](docs/ops/caddy-tls-bootstrap.md) — first Let's Encrypt cert via staging
+5. [Deploy](docs/ops/manual-deploy.md) — clone, configure secrets, `scripts/deploy.sh`
 
 ### Seed Data
 

@@ -20,4 +20,5 @@ services:
   app:
     build: .
     environment:
+      NODE_ENV: development
       ALLOW_INSECURE_HTTP: 'true'
