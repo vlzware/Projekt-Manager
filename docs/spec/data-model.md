@@ -1,6 +1,6 @@
 # Data Model
 
-*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
+*Iteration 5 — April 2026 | Living document — updated as each iteration ships.*
 
 ---
 
@@ -97,7 +97,7 @@ This configuration drives Kanban column rendering, color coding, and aging indic
 ### 5.3 User Entity
 
 ```typescript
-type AccountRole = string; // internal key — e.g. 'office', 'worker', 'bookkeeper', 'admin' [C]
+type AccountRole = string; // internal key — e.g. 'owner', 'office', 'worker', 'bookkeeper' [C]
 
 interface UserAccount {
   id: string;                  // UUID
@@ -131,14 +131,17 @@ The session model is intentionally minimal and mechanism-agnostic. The spec defi
 interface Session {
   id: string;                  // opaque session identifier
   userId: string;              // references UserAccount.id
+  token: string;               // cryptographically random lookup key — transport mechanism detail
   createdAt: string;           // ISO 8601
   expiresAt: string;           // ISO 8601
 }
 ```
 
+Design note: The `token` field is the value delivered to the client (e.g., via cookie). It is cryptographically random and opaque. The delivery mechanism (HttpOnly cookie vs. bearer token) is an ADR decision.
+
 Session validation must verify that the referenced user is still active (`active = true`). If the user has been deactivated, the session is treated as invalid regardless of its `expiresAt`.
 
-**Known debt**: changing a password does not currently invalidate existing sessions. A future iteration should add session invalidation on password change for security hardening.
+Password changes invalidate all other sessions for the affected user (`AuthService.changePassword()`).
 
 ### 5.5 Audit Metadata
 
@@ -256,6 +259,7 @@ The seed operation must be safe to run on an empty database. Re-seeding an exist
 | `arbeiter1` | Jan Nowak | worker | Field worker |
 | `arbeiter2` | Lukas Fischer | worker | Field worker |
 | `buchhalter` | Petra Weiß | bookkeeper | External bookkeeper |
+| `deaktiviert` | Ehemaliger Mitarbeiter | worker | Inactive — exercises the soft-delete path (§6.9) |
 
 All seed users have a default password: `changeme` **[C]**. The seed loader must log a warning that default passwords are in use and must be changed.
 

@@ -8,11 +8,13 @@
 
 Deliver a hosted, authenticated system that demonstrates a consolidated preview of the state of all projects across the main company workflow. The system persists data in a database, authenticates users, serves the front end through a backend API, and stores binary assets in object storage. It provides two complementary views — a **Kanban board** and a **Calendar** — with basic interactivity.
 
-This iteration must answer two questions:
+Previous iterations answered two foundational questions (both resolved affirmatively):
 
-> "Can this system persist and retrieve real project data without losing the interaction model validated in iteration 1?"
+> "Can this system persist and retrieve real project data without losing the interaction model validated in iteration 1?" *(answered: iteration 2)*
 
-> "Can access be restricted to authenticated users in a way that supports later role-based views and permissions without forcing a rewrite?"
+> "Can access be restricted to authenticated users in a way that supports later role-based views and permissions without forcing a rewrite?" *(answered: iteration 2)*
+
+The current iteration (5 — Consolidation) focuses on spec-code reconciliation, quality controls, and security review.
 
 ### 1.1 Iteration History
 
@@ -21,7 +23,8 @@ This iteration must answer two questions:
 | 1 | Walking skeleton — front-end prototype with mock data, Kanban + Calendar views | Accepted |
 | 2 | Persistence (database + API), authentication, object storage | Accepted |
 | 3 | Stabilization — structural refactor, maintainability overhaul, test expansion | Accepted |
-| 4 | Deployment, integration testing, CD pipeline, VPN access | **Current** |
+| 4 | Deployment, integration testing, CD pipeline, VPN access | Accepted |
+| 5 | Consolidation — spec-code reconciliation, quality controls, security review | **Current** |
 
 ---
 
@@ -45,17 +48,19 @@ This iteration must answer two questions:
 - Deployment to a hosted environment (application, database, object storage)
 - Continuous delivery pipeline (auto-deploy on merge to main)
 
-### 2.2 Out of Scope
+### 2.2 Deferred from Current Scope
 
-- Role-based access control beyond basic authenticated/unauthenticated distinction
+Items listed here are scoped out of the current iteration. They are part of the project vision (see [kickoff](../project/kickoff.md)) and mapped to future iterations in the table below.
+
+- Role-based access control beyond the current permission matrix — basic RBAC (4 roles, differentiated permissions) is implemented; fine-grained permissions and per-role views are deferred to iteration 5+
 - User self-registration
 - Password reset / forgot-password flow
 - SSO / OAuth / external identity providers
-- Project creation or deletion (UI)
-- Field editing beyond status and dates
+- Project creation or deletion (UI) — bulk import API exists; UI for single-item create/delete deferred
+- Field editing beyond status and dates (deferred)
 - File uploads (storage module is prepared, but no upload UI)
-- Notifications (email, WhatsApp)
-- Worker view, bookkeeper view
+- Notifications (email, WhatsApp) (deferred to iteration 6+)
+- Worker view (deferred to iteration 5+), bookkeeper view (deferred to iteration 6+)
 - Mobile optimization
 - Print or export
 - i18n framework (German only, hardcoded strings are fine)
@@ -82,7 +87,7 @@ The current configuration defines 9 states:
 
 Three action states, four buffer states, one active, one terminal. The Kanban board makes action states naturally visible — items accumulating in an action column signal that work is falling behind.
 
-**[C]** The state set (names, types, order, count) is configurable per company. Adding or removing states must not require code changes beyond updating the configuration.
+**[C]** The state set (names, types, order, count) is defined in a single configuration array. The `WorkflowState` type is derived from this array. Adding or removing states requires updating the configuration array, adjusting boundary-state references in the domain layer (first/last state checks), and a database migration if the default status changes. This is deliberately simple but is not a zero-code-change operation — improving this toward true zero-change configurability is tracked as a goal.
 
 ---
 
@@ -151,7 +156,7 @@ This specification is split across multiple files:
 
 ## Iteration Scope vs. Vision
 
-Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) to their target iteration. Iteration 2 features are marked Done; future features show their earliest target.
+Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) to their target iteration. Features through iteration 4 are marked Done; future features show their earliest target.
 
 | Feature | Status | Iteration |
 |---------|--------|-----------|
@@ -160,10 +165,9 @@ Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) t
 | Persistent data storage (database + API) | Done | 2 |
 | User authentication (login/logout, sessions) | Done | 2 |
 | Object storage module (prepared for uploads) | Done | 2 |
-| Structural refactor and maintainability overhaul | Done | 3 |
-| Deployment to hosted environment | Planned | 4 |
-| Continuous Delivery pipeline | Planned | 4 |
-| End-to-end tests on all integrations (CI) | Planned | 4 |
+| Deployment to hosted environment | Done | 4 |
+| Continuous Delivery pipeline | Done | 4 |
+| End-to-end tests on all integrations (CI) | Done | 4 |
 | LLM-based customer data extraction from emails | Planned | 5+ |
 | All customer and project data managed in central system | Planned | 5+ |
 | Worker view (relevant projects, calendar, object data, GPS) | Planned | 5+ |
@@ -184,12 +188,11 @@ Items marked as "Known debt" across the specification. Each will be resolved or 
 
 | Item | Location | Target Iteration | Issue |
 |------|----------|-----------------|-------|
-| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | TBD |
-| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 4+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
-| Minimal role set — add fine-grained permissions and per-role view restrictions | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | TBD |
-| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 4+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
-| Password change does not invalidate existing sessions | [data-model.md §5.4](data-model.md#54-session) | 4+ | TBD |
-| State actions mutate silently — need middleware or event hooks for audit trail and notifications | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 4+ | TBD |
+| `customer` is inline (denormalized) — extract to `Customer` entity | [data-model.md §5.1](data-model.md#51-project-entity) | 5+ | TBD |
+| `assignedWorkers` is `string[]` of display names — replace with `Worker` entity references | [data-model.md §5.1](data-model.md#51-project-entity) | 5+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) (reopened) |
+| Minimal role set — basic permission matrix implemented (4 roles). Fine-grained permissions and per-role views remain. | [data-model.md §5.3](data-model.md#53-user-entity) | 5+ | TBD |
+| No link between `UserAccount` and `Project.assignedWorkers` | [data-model.md §5.3](data-model.md#53-user-entity) | 5+ | [#53](https://github.com/vlzware/Projekt-Manager/issues/53) |
+| State actions mutate silently — server-side event bus implemented (`events.ts`). Remaining: connect subscribers for audit trail and notifications. | [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) | 5+ | TBD |
 
 ---
 
