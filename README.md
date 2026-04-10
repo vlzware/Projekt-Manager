@@ -80,6 +80,8 @@ All seed users share the password **`changeme`**.
 
 ### Tests
 
+Tests require the [development](#development) setup (DB and MinIO exposed on host ports). They do not run against the full-stack Docker variants.
+
 ```bash
 npm test             # unit + component tests (vitest)
 npm run test:e2e     # Playwright E2E tests
