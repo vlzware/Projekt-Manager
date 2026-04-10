@@ -28,3 +28,11 @@ services:
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # MinIO console
+
+  caddy:
+    # Caddy requires CLOUDFLARE_API_TOKEN for DNS-01 TLS — not available
+    # in dev. Gate it behind a profile so it never starts when the dev
+    # overlay is active. Production uses docker-compose.yml alone (no
+    # overlay), so Caddy starts normally there.
+    profiles:
+      - production
