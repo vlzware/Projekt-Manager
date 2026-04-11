@@ -96,16 +96,16 @@ Structural refactor triggered by code quality analysis that exposed compounding 
 Moved the iteration-3 codebase from test environment into production on Hetzner. Focus ended up on the network and TLS architecture: HTTPS over WireGuard via DNS-01 ACME, Caddy bound to the VPN interface only, no cleartext exposure outside Docker internals, external surface limited to trusted audited open-source (SSH, WireGuard). No application features moved; everything around them did.
 
 - [x] deploy to Hetzner VPS (Docker Compose, Caddy with real domain + TLS)
-- [ ] object storage: evaluate Cloudflare R2 vs Hetzner Object Storage — deferred (#45); MinIO in Docker is sufficient for the walking skeleton
+- ~~object storage: evaluate Cloudflare R2 vs Hetzner Object Storage~~ — deferred (#45)
 - [x] VPN setup (plain WireGuard, [ADR-0008](../adr/0008-vpn-first-network-access.md)) — all access behind VPN initially
 - [x] validate full deployment path: push to main → CI green → auto-deploy → app running
 - [x] integration/smoke tests against the deployed environment
-- [ ] backup strategy for PostgreSQL and object storage — deferred (#46); needed before real customer data, not before walking skeleton
-- [ ] monitoring: at minimum, health check pings and container restart alerting — deferred (#46)
-- [ ] seed with representative fake data, demo to pilot company[^1] — skipped; no visible change for non-technical users vs iteration 3
+- ~~backup strategy for PostgreSQL and object storage~~ — deferred (#46)
+- ~~monitoring: at minimum, health check pings and container restart alerting~~ — deferred (#46)
+- ~~seed with representative fake data, demo to pilot company[^1]~~ — skipped; no visible change for non-technical users vs iteration 3
 - [x] retrospection → issues for the backlog
 
-**Beyond plan**
+**Unplanned work**
 
 - first-run admin bootstrap from environment variables ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) — the walking skeleton had no way to log in on a fresh production deploy
 - env-drift CI check — regression guard for the bootstrap failure mode (compose ↔ env schema)
@@ -122,20 +122,38 @@ Moved the iteration-3 codebase from test environment into production on Hetzner.
 
 Systematic check that the base is aligned and nothing is lagging or missing before adding features. The walking skeleton is online; the next iterations will add flesh to the bones. Constant readjustments like this are the expected rhythm in an LLM-driven project, where drift between ideal and reality accumulates quickly and compounds into tech debt if left unchecked.
 
-- [ ] test suite QC — coverage gaps, fragile assertions, tautological tests, redundant/repeating tests, test-spec drift
-- [ ] documentation QC and reorganization — audit ADRs, dev docs, admin docs, user docs; reorganize the docs tree; fill gaps
-- [ ] spec ↔ code drift reconciliation — realign the spec against current code, cleanup stale claims
-- [ ] multi-round independent security review — systematic audit across backend, frontend, infrastructure, deployment, data handling
-- [ ] cleanup of open non-architectural, non-feature issues — tracked via the iteration 5 milestone
-- [ ] retrospection → issues for the backlog
+- [x] test suite QC — coverage gaps, fragile assertions, tautological tests, redundant/repeating tests, test-spec drift
+- [x] documentation QC and reorganization — audit ADRs, dev docs, admin docs, user docs; reorganize the docs tree; fill gaps
+- [x] spec ↔ code drift reconciliation — realign the spec against current code, cleanup stale claims
+- ~~security review — systematic audit across backend, frontend, infrastructure, deployment, data handling~~ — deferred to iteration 6 (#63)
+- [x] cleanup of open non-architectural, non-feature issues — tracked via the iteration 5 milestone.
+- [x] retrospection → issues for the backlog
 
 **Not planned:** presentation to pilot company — same reason as iteration 4: no visible change for non-technical users. The next iteration with feature work is the natural next demo checkpoint.
+
+**Unplanned work**
+
+- support for HTTP in testing/evaluating mode with very perceptible warnings
+- CD pipeline cutover to manual pull-based deploy (ADR-0012), GHCR build (#76)
+- i18n reconciliation — compounding debt that was producing spec contradictions
 
 **Artifacts**
 
 - quality-controlled test suite, docs, and spec
-- documented baseline after a multi-round independent security review
+- ~~security review~~ deferred until next iteration
 - backlog reduced to feature and architectural work
+
+## Iteration 6 - Specification expansion
+
+- [ ] security review (deferred from iteration 5)
+- [ ] spec expansion — API and UI for: data import/export, user management, project management, customer management
+
+**Artifacts**
+
+- new spec sections regarding the above
+- ACs for the above
+
+Next presentation checkpoint: iteration 7 or 8, once at least one feature vertical (e.g., import/export or user management) has a working UI.
 
 ## Next iterations
 

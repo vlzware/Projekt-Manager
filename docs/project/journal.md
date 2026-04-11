@@ -1,67 +1,130 @@
 # Project Journal
 
-Concise remarks about: (1) the workflow, (2) readjustments to the workflow, and (3) the motivation behind those readjustments. Not what was built (git log) or why a technology was chosen (ADRs).
+## Living notes
 
-## 2026-04-06 — Iteration 4: deployment and post-session audit
+### Principles
 
-### Workflow: agent output needs verification before closing issues
+#### Truth
 
-The deployment session produced working infrastructure but the agent closed issues with zero checklist boxes ticked, wrote docs as command dumps, and deployed over HTTP despite the app requiring HTTPS. Follow-up audit caught it: branch squashed from 22 commits to 4, #42 reopened, docs rewritten, TLS enforcement tracked in #47, CD hardening in #48.
+The ultimate sources of truth are the documents strictly controlled by me - Kickoff, Plan, Journal, the ADRs. Because Claude is using my credentials, it appears that everything it reads is written by me, seemingly has to be trusted. The adversarial framing gets relaxed and problems appear and propagate.
 
-**Readjustment:** verify agent output against the issue checklist before closing. Tick boxes individually.
+#### Data loss _will_ happen, prepare for it
 
-### Workflow: defense in depth is not negotiable
+There is no way to "guarantee" that no data loss will occur, especially not in an LLM-driven project. The way to go would be, again, to realize the risks and work around them. A basic back-up system would go a long way and is orders of magnitude easier to get right than to achieve the dreamed-of confidence that the app is completely reliable. Thus, I added a line about it in the kickoff, as it is now part of the app.
 
-VPN encryption was treated as sufficient, skipping TLS. This left authentication broken and the API exposed over plain HTTP.
+#### Security model
 
-**Readjustment:** HTTPS is mandatory in every deployment, regardless of network layer. No assumptions about what sits in front of the app.
+There are no completely secure systems - only layers upon layers of defense. Each one adding security, as well as complexity and operational issues. Instead of focusing on making the app "secure" against targeted attacks, which I consider unrealistic, it should be protected against the common threats using the standard practices - i.e. avoiding being the lowest hanging fruit. Realize the risks and prepare for failure - the backup/recovery thing once more.
 
-**Why:** one failing layer should never leave customer data unprotected.
+Two categories identified:
 
-## 2026-04-06 — Iteration 3: structural refactor
+- everything LLM-related: the code, configs, etc. is treated insecure, period. Stays in the protected VPN bubble.
+- established, battle-tested and even audited open source projects - like SSH, Wireguard, Linux kernel, etc. - are treated as trusted.
 
-### Workflow: periodic structural audits as a hard gate
+So, in this regard, the VPN stays. HTTPS stays as well, but it is not "enough".
 
-Multi-angle analysis (5 parallel agents) found the architecture was sound but the implementation had drifted — duplicated logic, god objects, hardcoded types the spec claimed were configurable. Decision: halt features and restructure.
+#### Nothing is fixed
 
-**Readjustment:** structural audit before each complexity threshold. Compare spec claims against actual code to catch drift early.
+I need to remind agents, that nothing should be taken as a given, except the very requirements from the project itself (kickoff). Heck, even these got refined a couple of times. So, instead of going to great lengths to solve a problem in a certain way, just ditch the whole implementation/tool/process/whatever and try something else which might be more suited from the beginning.
 
-**Why:** AI-generated code optimizes locally — each feature lands cleanly in isolation, but cross-file coupling degrades silently. Invisible until you trace a change across the full call graph.
+### Operational
 
-### Workflow: spec extensibility claims need smoke tests
+#### Claude settings
 
-"States driven by configuration" was false — the type was hardcoded.
+Continuously testing and improving Claude's settings, skills, plugins, memory - this seems to be more of an ongoing activity than a single setup.
 
-**Readjustment:** include "extensibility door" tests that verify the spec's promises compile and run.
+#### Agents
 
-## 2026-04-05 — Iteration 2: security foundation
+LLMs are better at critiquing than creating (whom they got this from I wonder...), so the workflow can be designed in this way - brainstorm, gather "opinions", criticize them, repeat with fresh agents until some convergence emerges.
 
-### Workflow: make security review explicit in the workflow definition
+There is also the "adversarial framing" thing - "This document was made by an AI agent which I do not trust. I have every reason to believe it contains multiple errors, help me find them" or similar.
 
-Security reviews were run as soon as there was a baseline to review against. The review found 42 issues (6 critical), deployment deferred, iteration rescoped to "secure foundation." The reviews worked — but security wasn't listed as an explicit step in CONTRIBUTING.md.
+It seems there is emerging research about agents' "behavior", like for example [this fun read](https://gail.wharton.upenn.edu/research-and-insights/call-me-a-jerk-persuading-ai/), basically concluding that the agents exhibit a lot of human-like quirks, like biases or agreement tendency, or framing, etc. Acknowledging this may allow to work around these instead of fighting them.
 
-**Readjustment:** add security review as a named workflow step so it's visible and not implicit.
+#### Impressive knowledge
 
-**Why:** running reviews at the right time is not enough if the workflow definition doesn't reflect it. New contributors (or agents) following the written workflow would skip it.
+A danger exists when interacting with top-notch models - they possess a _vast_ amount of knowledge, it is simply ridiculous. No way to keep up. The danger is that this leads to the very human reaction of being "impressed", thus holding the impressive object in high regard. While this might work well with humans, it is just bad in LLM interactions - the vastly knowledgeable model can provide awesome insights and a second later propose something completely nonsensical. The guard should always stay up.
 
-### Workflow: adversarial review scales
+#### "Let me just have Claude fix these issues..."
 
-Parallel adversarial reviewers (5 domain-specific agents) followed by parallel fixers followed by a cross-cutting second wave. The pattern works. Each iteration improves the codebase measurably — the squashed commit history reflects logical grouping, not big-bang development.
+A recipe for disaster. I still don't get it how people are bragging of having models run unattended for hours - just can't imagine a quality product can come out of this. The drift is real, the slips happen, constant readjustment needed, or it all compounds. Or maybe I am having unrealistic goals?
 
-## 2026-04-03 — Iteration 0/1: bootstrap
+#### We are done!
 
-### Workflow: parallel generation + adversarial review + synthesis
+Claude Opus has currently 1M context limit. Yet, after some exchanges it starts nagging about ending the session cause "all is done", even below 20% context. I have a feeling this depends more on the count of exchange rounds - prompt/answer/prompt/answer... than the context usage. First tried to fight it by setting up instructions to not annoy me, then realized this is actually a very good thing, as its attention and focus drop a lot, forcing new, additional rounds for recovery from the mess.
 
-5 spec proposals evaluated against 8 criteria by independent agents. Best elements synthesized. Two rounds of adversarial review (9+10 agents). Established the core pattern.
+#### A night owl
 
-### Workflow: parallel prototyping replaces speculation
+It happens over and over and I am still open to the possibility that I am imagining it, but it seems Claude is much smarter outside of working hours. Having "API overloaded" errors strangely is always on the same sessions where it disappoints me the most. Further investigation might be warranted, as this might just lead to more effective sessions.
 
-5 tech stacks prototyped in parallel in isolated worktrees. Showed all to pilot company — validated information architecture before choosing a stack. Stack decision deferred to iteration 1, where empirical evidence could inform it (ADR-0002).
+---
 
-### UX insight: board structure IS the visibility mechanism
+## Timeline
 
-Action-column accumulation signals falling behind. Not per-card decoration.
+### 2026-04-11
 
-## 2026-04-02 — Project bootstrap
+#### "Human-only" documents
 
-Parallel agent teams for spec preparation (8 agents) and framework evaluation (6 agents). Open items tracked as GitHub Issues from day one.
+There are some documents, where I just can't get Claude to write for me in a way that I like - like this one. I guess at some point it boils down to consciousness. Thus, this document, as well as [plan.md](plan.md), [kickoff.md](kickoff.md) (and maybe the [README](../../README.md)) I would lock to only edit myself, as they are so critical for all workflows. In the end it is quicker than having 10 iterations over each sentence. So, I rewrote this from scratch today based on my own notes and memory.
+
+The ADRs I scrutinize very carefully already. The decisions and rationale are all mine, some of the prose is Claude's though.
+
+The critical importance of these couple documents is that they are the ultimate source of truth in all workflows - if I frame everything as "untrusted", the agents can't have a starting point. Large, detailed, deliberate prompts can only do so much. And repeating the same thing over and over is just not practical.
+
+#### The power of good-enough
+
+Convergence is definitely noticeable, but never achieved. When analysing, Claude sorts the findings in Critical/High/Medium/Low - fixing the "Low" is always a bad idea as the agents introduce new errors, which might very well be above "Low". The "Medium" is actually the same - needs at least deciding on a per-case basis. Playing _with_ statistics again, instead of fighting.
+
+I think I overdid this again, as the current iteration was focused on "Consolidation" - in other words revisiting the done work until I am happy with the results. Turns out, perfection is unachievable (who would have thought). A reminder on some of the main principles again - accept and recognize the limitations, work around them.
+
+#### Goodbye CD
+
+The CD, as sweet as it is, is still a contradiction to my security model - the configs are written by agents, I control but can't guarantee anything. Additionally, the `deploy` user is part of the Docker group, which makes leaking the GH credentials basically leaking root access. There were also multiple issues with the project's CD using older config - the standard is that CD gets triggered from everywhere, but uses the config from `main` (a security feature). This led to a couple of _very_ ugly cherry-picking commits, which screwed my nice git history in main.
+
+Thus, a switch to pull-based deployment - login to the VPS, use `sudo -u deploy`, pull, run docker. The risks are that now the deploy is entirely dependent on me, so any outage means it stays this way until I log in. This had nice side effect bonuses: I ditched the shell from `deploy` and also introduced [age](https://github.com/FiloSottile/age) so that secrets are never on the disk.
+
+I spent a lot of time in research and discussions about "the proper way" to deploy automatically, without satisfying results. The way to do all this _properly_ requires manpower and infrastructure which I just don't have.
+
+#### i18n
+
+This came up again by reviewing the spec - should we, should we not. It was compounding debt, so procrastinating wouldn't help and I accepted the deviation from the plan. Even if we never switch to internationalization, having hard-coded strings in the code just does not feel right.
+
+### 2026-04-08
+
+#### Domain
+
+Bought a simple domain at Cloudflare. Spent the whole day deciding and implementing the security model of accessing the app on the VPS. My gut didn't let me expose LLM-generated code to the open world, so I found a way of containing it all behind the VPN - set local WG IPs in the DNS, the only open ports remain SSH and Wireguard. Peace of mind.
+
+#### Tailscale -> Wireguard (and generally PaaS -> VPS)
+
+Tailscale might be nice, but not for me. I like the contained approach with Wireguard. Same reason why I went with full stack on a VPS instead of using couple different PaaS providers. There are drawbacks, yes - single point of failure, maintenance, reliability, doing it all on my own... Still, more fun this way. Full freedom, full control. And last but not least - much cheaper.
+
+### 2026-04-06
+
+#### --dangerously-skip-permissions
+
+Wherever I look, this seems like a standard these days, lol. I can clearly understand the motivation - even when allowing all operations on a folder, some commands are chained, or contain escape sequences, so there is really no way to properly distinguish the danger of complex commands. Anthropic took the safe way (understandable), so one has to constantly confirm harmless operations. Then it is only a matter of time until one decides "now enough". Both options unpleasant for me.
+
+So, I spent the good part of the day setting up a VM - mostly fighting with my worst-case configuration of stable (like in "old") software and Nvidia graphics. If the VM does not look and feel comfortable, I am aware it won't last. In the end I got it and Claude can now run freely inside.
+
+#### Hetzner
+
+Purchased a small VPS on Hetzner. Very good impressions so far. Feels completely different than my earlier provider, where things were... "mehr schein als sein" as the Germans say.
+
+### 2026-04-03
+
+#### init
+
+Repo initialized. Private - don't feel confident about it yet. The only way I see forward in terms of sensitive data is never to discuss it or even to have it lying around. Instructions for Claude "DO NOT DISCLOSE" are just nonsense, can't rely on that. The default presumption should be that everything I ever discussed or any data that was reachable, should be regarded as "leaked". Can't bother scanning the repo for secrets either, this is too fragile.
+
+#### First draft of the spec
+
+Made a very deliberate, large prompt about the spec for the first iteration, included the kickoff and the plan and made a couple iterations with different LLMs through OpenRouter. A clear brainstorming phase.
+
+### 2026-03-31
+
+#### A vision, clearly defined
+
+Made the first draft of the Kickoff upon lots of reflection, gathering of real world data and discussion. It is very clear that this document would be the guiding light of the whole project.
+
+Multiple iterations over the draft followed. Its importance can't be overstated.

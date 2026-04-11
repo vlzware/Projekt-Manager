@@ -66,9 +66,10 @@ Reasonable assumptions will be made in regards of all company-specific details. 
 - An administrator's view is available, where users, groups and rights can be set and changed;
 - All internals and developer information is in English, all user facing information - in German;
 - End-to-End tests are defined and executed on all integrations (CI);
-- Continuous Delivery (CD) is set up with the target hosting;
+- ~~Continuous Delivery (CD) is set up with the target hosting;~~ replaced with a pull system from GHCR
 - A detailed "Handbuch" in German is provided, describing in detail and with the help of screenshots, diagrams, etc. the functions of the system in a user-friendly way;
-- Tooltips, hints, help information and others as needed are provided in the UI as well.
+- Tooltips, hints, help information and others as needed are provided in the UI as well;
+- The company's data from the database is backed up automatically at regular intervals.
 
 ## Not Doing
 
@@ -76,7 +77,7 @@ Reasonable assumptions will be made in regards of all company-specific details. 
 - AI features beyond extracting data from emails
 - Extraction of data from the software currently in use
 - No sysadmin work
-- A backup concept and a backup system
+- A backup concept and a backup system beyond the defined in the section above
 - Disk space management (notifications are planned when reaching a threshold, cleanup is up to the users)
 - General replacement of WhatsApp
 - Bookkeeping software
