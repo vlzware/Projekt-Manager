@@ -72,7 +72,11 @@ export function authRoutes(db: Database) {
     // ---------------------------------------------------------------
     app.get('/api/auth/me', { preHandler: authenticate }, async (request, reply) => {
       const { id, username, displayName, roles, email } = request.user!;
-      return reply.code(200).send({ id, username, displayName, roles, email });
+      // Enveloped under `user` to match POST /api/auth/login — both
+      // endpoints return the same user profile shape, so a single
+      // `{ user: AuthUser }` contract lets typed clients share types.
+      // See iteration-5 consolidation review E F-7.
+      return reply.code(200).send({ user: { id, username, displayName, roles, email } });
     });
 
     // ---------------------------------------------------------------

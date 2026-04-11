@@ -176,10 +176,12 @@ export async function createExpiredSession(userId: string): Promise<string> {
  *
  * Used by AT-7 to simulate the "logged-in user gets deactivated" flow:
  * login normally, deactivate the account, then assert the existing token
- * is rejected on the next request.
+ * is rejected on the next request. Tests pass actorId=null because no
+ * human admin exists in this iteration — the audit pattern allows
+ * updatedBy to be null for system/test-fixture actions (data-model.md §5.5).
  */
 export async function deactivateUser(userId: string): Promise<void> {
-  return deactivateUserRepo(db, userId);
+  return deactivateUserRepo(db, userId, null);
 }
 
 /**

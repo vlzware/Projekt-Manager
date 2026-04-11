@@ -21,10 +21,10 @@ describe('Bulk Project Import', () => {
 
     // Look up seeded worker user IDs for assignedWorkerIds tests
     const w1 = await authGet(workerToken, '/api/auth/me');
-    worker1Id = w1.json().id;
+    worker1Id = w1.json().user.id;
     const w2Token = await login('arbeiter2', 'changeme');
     const w2 = await authGet(w2Token, '/api/auth/me');
-    worker2Id = w2.json().id;
+    worker2Id = w2.json().user.id;
   });
 
   afterAll(async () => {

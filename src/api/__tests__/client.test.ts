@@ -383,24 +383,29 @@ describe('authApi — request shape and return value', () => {
     }
   });
 
-  it('me GETs /api/auth/me and returns the user directly', async () => {
-    const user = {
-      id: 'u1',
-      username: 'alice',
-      displayName: 'Alice',
-      roles: ['user'],
-      email: null,
+  it('me GETs /api/auth/me and returns the enveloped user', async () => {
+    // /me returns `{ user: AuthUser }` — same envelope as /login, so
+    // a typed client can share one response type. Consolidation
+    // review E F-7.
+    const payload = {
+      user: {
+        id: 'u1',
+        username: 'alice',
+        displayName: 'Alice',
+        roles: ['user'],
+        email: null,
+      },
     };
-    fetchMock.mockResolvedValue(jsonResponse(user));
+    fetchMock.mockResolvedValue(jsonResponse(payload));
 
     const result = await authApi.me();
 
     expect(fetchMock).toHaveBeenCalledWith('/api/auth/me', expect.any(Object));
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.id).toBe('u1');
-      expect(result.data.email).toBeNull();
-      expect(result.data.roles).toEqual(['user']);
+      expect(result.data.user.id).toBe('u1');
+      expect(result.data.user.email).toBeNull();
+      expect(result.data.user.roles).toEqual(['user']);
     }
   });
 

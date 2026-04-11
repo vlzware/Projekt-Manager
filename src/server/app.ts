@@ -29,7 +29,14 @@ export interface AppOptions {
 export function buildApp(opts: AppOptions = {}): FastifyInstance {
   const app = Fastify({
     logger: opts.logger ?? false,
-    trustProxy: true,
+    // Trust exactly one proxy hop — Caddy in production (terminating
+    // TLS and forwarding to the app container), nothing in dev. With
+    // trustProxy: true, Fastify would accept any X-Forwarded-For header
+    // from any upstream, which would let a client spoof the rate-limit
+    // key or the log-visible IP by setting X-Forwarded-For directly.
+    // One hop is the tightest value that still gives the real client
+    // IP through the Caddy → app chain. See consolidation review G F-4.
+    trustProxy: 1,
   });
 
   // Global error handler — catches unhandled exceptions and wraps them

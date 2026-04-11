@@ -90,7 +90,7 @@ describe('Project Operations — Dates', () => {
       expect(project).toBeDefined();
 
       const meRes = await authGet(token, '/api/auth/me');
-      const me = meRes.json();
+      const me = meRes.json().user;
 
       const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
         plannedStart: '2026-07-01',

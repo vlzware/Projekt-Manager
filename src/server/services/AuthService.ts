@@ -112,9 +112,12 @@ export class AuthService {
       }
     }
 
-    // Hash and store
+    // Hash and store — pass user.id as the actor so updatedBy reflects
+    // the self-service password change (data-model.md §5.5 audit
+    // metadata contract). A future admin-reset endpoint would pass the
+    // admin's id instead.
     const newHash = await hashPassword(newPassword);
-    await changePasswordRepo(this.db, user.id, newHash);
+    await changePasswordRepo(this.db, user.id, newHash, user.id);
 
     // Invalidate all other sessions (keep the current one alive)
     await deleteSessionsByUserId(this.db, user.id, currentToken);

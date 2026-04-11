@@ -112,4 +112,62 @@ describe('Login rate limiting (end-to-end)', () => {
     // fresh 500 response).
     expect(sixth.headers['retry-after']).toBeDefined();
   });
+
+  // The change-password limit is `{ max: 5, timeWindow: '1 minute' }` per IP,
+  // declared the same way as the login limit (see RATE_LIMIT.passwordChange in
+  // src/server/config/index.ts). Before this test the limit was wired but
+  // unverified — a regression that dropped the config from the route would
+  // slip through login-only coverage. We use a distinct remoteAddress so the
+  // login-test limiter key and this test's limiter key don't collide.
+  it('returns 429 on the 6th change-password attempt within the 1-minute window', async () => {
+    // Log in first so we have a session cookie — change-password requires
+    // authentication, and we want the rate limiter to fire BEFORE the
+    // business-logic check rejects the wrong current password.
+    const loginRes = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { username: SEED_USERS.owner.username, password: 'changeme' },
+      remoteAddress: '10.0.0.2',
+    });
+    expect(loginRes.statusCode).toBe(200);
+    const setCookie = loginRes.headers['set-cookie'];
+    const cookieStr = Array.isArray(setCookie) ? setCookie[0]! : setCookie!;
+    const match = cookieStr.match(/session=([^;]+)/);
+    expect(match).not.toBeNull();
+    const token = match![1]!;
+
+    const payload = { currentPassword: 'wrong', newPassword: 'alsowrong1234567' };
+    const remoteAddress = '10.0.0.2';
+
+    // First 5 attempts should hit the business-logic path (401 invalid
+    // credentials) but NOT 429.
+    const statuses: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/change-password',
+        headers: { cookie: `session=${token}` },
+        payload,
+        remoteAddress,
+      });
+      statuses.push(res.statusCode);
+    }
+    expect(statuses.every((s) => s !== 429)).toBe(true);
+
+    // 6th attempt inside the same 1-minute window must be 429.
+    const sixth = await app.inject({
+      method: 'POST',
+      url: '/api/auth/change-password',
+      headers: { cookie: `session=${token}` },
+      payload,
+      remoteAddress,
+    });
+    expect(sixth.statusCode).toBe(429);
+
+    const body = sixth.json();
+    expect(body.code).toBe('RATE_LIMITED');
+    expect(typeof body.message).toBe('string');
+    expect(body.message.length).toBeGreaterThan(0);
+    expect(sixth.headers['retry-after']).toBeDefined();
+  });
 });

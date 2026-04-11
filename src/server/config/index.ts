@@ -12,12 +12,24 @@ import { getEnv } from './env.js';
 
 // --- Authentication & Sessions -----------------------------------------------
 
-export const AUTH_CONFIG = {
-  /** How long a session cookie stays valid. */
-  sessionDurationMs: 24 * 60 * 60 * 1000, // 24 hours
+// Session duration is the single source of truth — cookieMaxAgeSec
+// derives from it, so the cookie Max-Age and the server-side session
+// expiry cannot drift apart silently. Before this change the two values
+// were hand-synchronized with a "must match" comment, which is exactly
+// the kind of invariant that breaks during a routine refactor.
+// See consolidation review F F-4 / round-2 F M-3.
+const SESSION_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours [C]
 
-  /** Cookie maxAge in seconds (must match sessionDurationMs). */
-  cookieMaxAgeSec: 86_400, // 24 hours
+export const AUTH_CONFIG = {
+  /** How long a session cookie stays valid (canonical). */
+  sessionDurationMs: SESSION_DURATION_MS,
+
+  /**
+   * Cookie maxAge in seconds — derived from sessionDurationMs so the
+   * browser-side cookie lifetime and the server-side session row expiry
+   * always match. Asserted in src/server/__tests__/auth.test.ts.
+   */
+  cookieMaxAgeSec: SESSION_DURATION_MS / 1000,
 
   /**
    * Pre-computed bcrypt hash used to equalise timing when user is not found.

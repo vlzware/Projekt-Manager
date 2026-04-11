@@ -214,7 +214,11 @@ export const authApi = {
 
   logout: () => apiCall<{ success: boolean }>('/api/auth/logout', { method: 'POST' }),
 
-  me: () => apiCall<AuthUser>('/api/auth/me'),
+  // Same `{ user: AuthUser }` envelope as login — see consolidation
+  // review E F-7. Kept as LoginResponse rather than renaming to a
+  // neutral AuthEnvelope because both endpoints are the only consumers
+  // and the shape is already documented alongside login below.
+  me: () => apiCall<LoginResponse>('/api/auth/me'),
 };
 
 export const projectApi = {

@@ -491,13 +491,17 @@ describe('Session Restoration on App Load', () => {
   // With HttpOnly cookies the browser sends the session cookie automatically —
   // checkSession simply calls /api/auth/me and lets the server validate.
   it('restores session when GET /api/auth/me returns a valid user', async () => {
-    // Mock: GET /api/auth/me returns a valid user profile
+    // Mock: GET /api/auth/me returns a valid user profile.
+    // The response is enveloped as `{ user: { ... } }` to match the
+    // /login shape — see consolidation review E F-7.
     mockFetchSuccess({
-      id: 'u1',
-      username: 'testuser',
-      displayName: 'Max Mustermann',
-      roles: ['owner'],
-      email: 'max@example.com',
+      user: {
+        id: 'u1',
+        username: 'testuser',
+        displayName: 'Max Mustermann',
+        roles: ['owner'],
+        email: 'max@example.com',
+      },
     });
 
     // Simulate a page refresh: no user in store, cookie handled by browser

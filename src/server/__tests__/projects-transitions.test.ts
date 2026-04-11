@@ -63,7 +63,7 @@ describe('Project Operations — Transitions', () => {
 
       // Get the authenticated user's ID
       const meRes = await authGet(token, '/api/auth/me');
-      const me = meRes.json();
+      const me = meRes.json().user;
 
       const res = await authPost(token, `/api/projects/${project.id}/transition/forward`);
 
@@ -95,8 +95,8 @@ describe('Project Operations — Transitions', () => {
       // Look up seeded worker user IDs via /api/auth/me for each.
       const worker1Token = await login('arbeiter1', 'changeme');
       const worker2Token = await login('arbeiter2', 'changeme');
-      const w1 = (await authGet(worker1Token, '/api/auth/me')).json();
-      const w2 = (await authGet(worker2Token, '/api/auth/me')).json();
+      const w1 = (await authGet(worker1Token, '/api/auth/me')).json().user;
+      const w2 = (await authGet(worker2Token, '/api/auth/me')).json().user;
       workerIds = [w1.id, w2.id];
 
       // Bulk-import a fresh project with two assigned workers — avoids
@@ -280,7 +280,7 @@ describe('Project Operations — Transitions', () => {
 
       // Get the authenticated user's ID
       const meRes = await authGet(token, '/api/auth/me');
-      const me = meRes.json();
+      const me = meRes.json().user;
 
       // Backward: beauftragt -> angebot
       const bwdRes = await authPost(

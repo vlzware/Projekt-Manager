@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
-import { clearStoresOnLogout } from '@/state/store';
 import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
 import type { ViewMode } from '@/domain/types';
 import { BRANDING } from '@/config/brandingConfig';
@@ -35,8 +34,10 @@ export function Header() {
 
   const handleLogout = async () => {
     setDropdownOpen(false);
+    // authStore.logout() now clears downstream project/UI state itself
+    // so the session-expired path and the interactive logout path
+    // cannot diverge (consolidation review C F-6).
     await logout();
-    clearStoresOnLogout();
   };
 
   return (

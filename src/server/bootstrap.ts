@@ -83,11 +83,28 @@ export async function bootstrapAdminIfEmpty(
   logger: BootstrapAdminLogger,
 ): Promise<BootstrapAdminResult> {
   // ---------------------------------------------------------------
-  // Step 1: non-empty DB short-circuit [AC-B2].
+  // Step 1: non-empty DB short-circuit [AC-B2]. If the DB is already
+  // populated AND the operator left BOOTSTRAP_ADMIN_* env vars set,
+  // emit a warning: the first-run ritual in ADR-0010 explicitly
+  // requires removing the vars after the initial login + password
+  // change, and leftover vars would otherwise persist silently across
+  // every deploy. The short-circuit itself still happens — we never
+  // re-insert — but the warning reminds the operator to clean up.
+  // See consolidation review G F-6.
   // ---------------------------------------------------------------
   const [countRow] = await db.select({ count: sql<number>`cast(count(*) as int)` }).from(users);
   const initialCount = countRow?.count ?? 0;
   if (initialCount > 0) {
+    const leftoverUsername = (config.username?.trim() ?? '').length > 0;
+    const leftoverPassword = (config.password ?? '').length > 0;
+    if (leftoverUsername || leftoverPassword) {
+      logger.warn(
+        'BOOTSTRAP_ADMIN_* env vars are still set but the users table is not empty. ' +
+          'Remove BOOTSTRAP_ADMIN_USERNAME, BOOTSTRAP_ADMIN_PASSWORD, and ' +
+          'BOOTSTRAP_ADMIN_DISPLAY_NAME from the deploy environment to prevent ' +
+          'leftover credentials persisting across deploys (see ADR-0010).',
+      );
+    }
     return { inserted: false };
   }
 
