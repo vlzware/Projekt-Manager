@@ -6,9 +6,17 @@ import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { mockProjects } from '@/test/fixtures/mockProjects';
 import { mockConfirmAccept, mockConfirmReject } from '@/test/confirmHelpers';
+import { installFailingFetch, mockFetchJson, type FetchSpy } from '@/test/fetchMock';
 import { App } from '@/App';
 
+// Each test that triggers a mutation (transitions, updateDates, ...) must
+// configure fetchSpy explicitly. The src/test/setup.ts default now fails
+// loudly on unconfigured calls — see src/ui/__tests__/auth.test.tsx for the
+// gold-standard pattern.
+let fetchSpy: FetchSpy;
+
 beforeEach(() => {
+  fetchSpy = installFailingFetch();
   useAuthStore.setState({
     ...useAuthStore.getInitialState(),
     authUser: {
@@ -32,6 +40,10 @@ describe('Detail Panel Transitions', () => {
     const user = userEvent.setup();
     const confirmSpy = mockConfirmAccept();
 
+    // Mock the successful backward transition response.
+    const p07 = mockProjects.find((p) => p.id === 'p07')!;
+    mockFetchJson(fetchSpy, { ...p07, status: 'beauftragt' });
+
     render(<App />);
 
     // p07 is in 'geplant' — click to open detail
@@ -54,6 +66,12 @@ describe('Detail Panel Transitions', () => {
       const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');
       expect(project?.status).toBe('beauftragt');
     });
+
+    // Hedge: verify the store called the correct backward endpoint.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/projects/p07/transition/backward',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   // Finding 3 (R3): backward transition dialog cancellation — project must NOT
@@ -193,9 +211,60 @@ describe('Detail Panel Fields', () => {
 });
 
 describe('Date Clearing', () => {
+  // Spec §8.4: clearing plannedStart also clears plannedEnd
+  it('clearing start date also clears end date when end is set', async () => {
+    const user = userEvent.setup();
+
+    const p07 = mockProjects.find((p) => p.id === 'p07')!;
+    mockFetchJson(fetchSpy, { ...p07, plannedStart: null, plannedEnd: null });
+
+    render(<App />);
+
+    const card = screen.getByTestId('project-card-p07');
+    await user.click(card);
+
+    // Both dates are initially set
+    const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');
+    expect(project?.plannedStart).toBeDefined();
+    expect(project?.plannedEnd).toBeDefined();
+
+    // Clear the start date
+    const startInput = screen.getByTestId('detail-date-start') as HTMLInputElement;
+    fireEvent.change(startInput, { target: { value: '' } });
+
+    // Both dates should now be cleared
+    const updated = useProjectStore.getState().projects.find((p) => p.id === 'p07');
+    expect(updated?.plannedStart).toBeNull();
+    expect(updated?.plannedEnd).toBeNull();
+
+    // PATCH should send both as null
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/projects/p07/dates',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: expect.stringContaining('"plannedStart":null'),
+        }),
+      );
+      const body = JSON.parse(
+        (fetchSpy.mock.calls.find((c) => c[0] === '/api/projects/p07/dates')?.[1] as RequestInit)
+          ?.body as string,
+      );
+      expect(body.plannedEnd).toBeNull();
+    });
+  });
+
   // Finding 7 (R2): clearing a date input must actually clear the project's date
   it('clearing a date input removes the date from the project', async () => {
     const user = userEvent.setup();
+
+    // Mock a successful PATCH for the date clear. The store applies an
+    // optimistic update before awaiting the API, but mocking is still needed
+    // so the pending promise resolves cleanly and doesn't revert the state
+    // after the assertions run.
+    const p07 = mockProjects.find((p) => p.id === 'p07')!;
+    mockFetchJson(fetchSpy, { ...p07, plannedEnd: null });
+
     render(<App />);
 
     // p07 has both plannedStart and plannedEnd — open detail
@@ -210,12 +279,25 @@ describe('Date Clearing', () => {
     const endInput = screen.getByTestId('detail-date-end') as HTMLInputElement;
     fireEvent.change(endInput, { target: { value: '' } });
 
-    // The project's plannedEnd should now be undefined (cleared)
+    // The project's plannedEnd should now be null (cleared)
     const updated = useProjectStore.getState().projects.find((p) => p.id === 'p07');
-    expect(updated?.plannedEnd).toBeUndefined();
+    expect(updated?.plannedEnd).toBeNull();
 
     // Start date should remain unchanged
     expect(updated?.plannedStart).toBe(project?.plannedStart);
+
+    // Wait for the PATCH to land — otherwise the pending promise leaks into
+    // the next test's lifecycle. The clearer-side assertion is that the
+    // store called the endpoint with plannedEnd: null (explicit clear).
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/projects/p07/dates',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: expect.stringContaining('"plannedEnd":null'),
+        }),
+      );
+    });
   });
 });
 
@@ -223,6 +305,15 @@ describe('AC-7 Kanban Side', () => {
   // Finding 11: after date change in detail panel, Kanban card shows updated date
   it('AC-7: date change in detail panel is reflected on the Kanban card', async () => {
     const user = userEvent.setup();
+
+    // Mock the successful PATCH response. The store is optimistic for
+    // updateDates — it applies the new dates locally immediately, then
+    // reverts on failure. Without a successful mock, the audit's new
+    // fail-fast default would reject fetch and the store would revert the
+    // date, masking the behavior the test is trying to verify.
+    const p07 = mockProjects.find((p) => p.id === 'p07')!;
+    mockFetchJson(fetchSpy, { ...p07, plannedEnd: '2026-04-25' });
+
     render(<App />);
 
     // p07 is in geplant with existing dates — open detail
@@ -239,5 +330,66 @@ describe('AC-7 Kanban Side', () => {
     // Verify the Kanban card now shows the new date (25.04.2026)
     const kanbanCard = screen.getByTestId('project-card-p07');
     expect(kanbanCard).toHaveTextContent('25.04.2026');
+
+    // Hedge: verify the store called the right endpoint with the right payload.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/projects/p07/dates',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.stringContaining('"plannedEnd":"2026-04-25"'),
+      }),
+    );
+  });
+});
+
+describe('Date Update Error Handling (Optimistic Revert)', () => {
+  // CT-23 (dates): updateDates is optimistic — the store applies the new
+  // date immediately, then the API call races to confirm or revert. On
+  // failure the UI must show an error and roll back to the original date.
+  it('CT-23 (dates): date update failure shows error and reverts local state', async () => {
+    const user = userEvent.setup();
+
+    // Mock fetch to reject — simulates network failure during the PATCH.
+    fetchSpy.mockRejectedValueOnce(new Error('simulated network failure'));
+
+    render(<App />);
+
+    // p07 has both plannedStart and plannedEnd — capture original value.
+    const originalProject = useProjectStore.getState().projects.find((p) => p.id === 'p07');
+    const originalEnd = originalProject?.plannedEnd;
+    expect(originalEnd).toBeDefined();
+
+    // Open detail and change the end date to something new.
+    const card = screen.getByTestId('project-card-p07');
+    await user.click(card);
+
+    const endInput = screen.getByTestId('detail-date-end') as HTMLInputElement;
+    fireEvent.change(endInput, { target: { value: '2026-05-15' } });
+
+    // The optimistic update should have applied synchronously before the
+    // rejection settles — intermediate state has the new end date.
+    expect(useProjectStore.getState().projects.find((p) => p.id === 'p07')?.plannedEnd).toBe(
+      '2026-05-15',
+    );
+
+    // Error banner appears after the rejection settles.
+    const banner = await screen.findByTestId('mutation-error-banner');
+    expect(banner).toBeVisible();
+    expect(banner).toHaveTextContent('Änderung fehlgeschlagen. Bitte erneut versuchen.');
+
+    // Store state reverted to the original value.
+    await waitFor(() => {
+      const reverted = useProjectStore.getState().projects.find((p) => p.id === 'p07');
+      expect(reverted?.plannedEnd).toBe(originalEnd);
+    });
+
+    // And the correct endpoint was hit.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/projects/p07/dates',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: expect.stringContaining('"plannedEnd":"2026-05-15"'),
+      }),
+    );
   });
 });

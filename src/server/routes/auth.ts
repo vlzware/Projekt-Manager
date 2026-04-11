@@ -8,8 +8,8 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
-import { createAuthMiddleware } from '../middleware/auth.js';
-import { AUTH_CONFIG, RATE_LIMIT } from '../config/index.js';
+import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
+import { AUTH_CONFIG, RATE_LIMIT, getCookieSecure } from '../config/index.js';
 import { AuthService } from '../services/AuthService.js';
 
 export function authRoutes(db: Database) {
@@ -48,7 +48,7 @@ export function authRoutes(db: Database) {
 
         reply.setCookie('session', result.token, {
           httpOnly: true,
-          secure: AUTH_CONFIG.cookieSecure,
+          secure: getCookieSecure(),
           sameSite: 'strict',
           path: '/',
           maxAge: AUTH_CONFIG.cookieMaxAgeSec,
@@ -72,7 +72,11 @@ export function authRoutes(db: Database) {
     // ---------------------------------------------------------------
     app.get('/api/auth/me', { preHandler: authenticate }, async (request, reply) => {
       const { id, username, displayName, roles, email } = request.user!;
-      return reply.code(200).send({ id, username, displayName, roles, email });
+      // Enveloped under `user` to match POST /api/auth/login — both
+      // endpoints return the same user profile shape, so a single
+      // `{ user: AuthUser }` contract lets typed clients share types.
+      // See iteration-5 consolidation review E F-7.
+      return reply.code(200).send({ user: { id, username, displayName, roles, email } });
     });
 
     // ---------------------------------------------------------------
@@ -81,7 +85,7 @@ export function authRoutes(db: Database) {
     app.post(
       '/api/auth/change-password',
       {
-        preHandler: authenticate,
+        preHandler: [authenticate, requirePermission('auth:change-password')],
         schema: {
           body: {
             type: 'object',

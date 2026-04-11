@@ -18,6 +18,7 @@ import {
 import { createSession, deleteSession, deleteSessionsByUserId } from '../repositories/session.js';
 import { hashPassword, verifyPassword } from '../password.js';
 import { checkPasswordPolicy } from '../config/password-policy.js';
+import { STRINGS } from '../../config/strings.js';
 import { invalidCredentials, validationError } from '../errors.js';
 import { AUTH_CONFIG } from '../config/index.js';
 import type { ServiceLogger } from './Logger.js';
@@ -103,19 +104,20 @@ export class AuthService {
     if (violation) {
       switch (violation.code) {
         case 'too_short':
-          throw validationError('Neues Passwort ist zu kurz (mindestens 8 Zeichen).');
+          throw validationError(STRINGS.password.tooShort);
         case 'too_long':
-          throw validationError('Neues Passwort ist zu lang.');
+          throw validationError(STRINGS.password.tooLong);
         case 'blocklist':
-          throw validationError(
-            'Dieses Passwort ist zu häufig. Bitte ein sichereres Passwort wählen.',
-          );
+          throw validationError(STRINGS.password.tooCommon);
       }
     }
 
-    // Hash and store
+    // Hash and store — pass user.id as the actor so updatedBy reflects
+    // the self-service password change (data-model.md §5.5 audit
+    // metadata contract). A future admin-reset endpoint would pass the
+    // admin's id instead.
     const newHash = await hashPassword(newPassword);
-    await changePasswordRepo(this.db, user.id, newHash);
+    await changePasswordRepo(this.db, user.id, newHash, user.id);
 
     // Invalidate all other sessions (keep the current one alive)
     await deleteSessionsByUserId(this.db, user.id, currentToken);

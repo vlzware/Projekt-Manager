@@ -1,7 +1,5 @@
 # UI Specification
 
-*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
-
 ## 8. UI Specification
 
 ### 8.1 Layout
@@ -28,7 +26,7 @@ The application has two top-level layout states depending on authentication.
 └──────────────────────────────────────────────────────────┘
 ```
 
-The login screen is minimal: app name/logo, username field, password field, a submit button labeled "Anmelden", and an error area for failed attempts. The error message is generic: `"Anmeldung fehlgeschlagen"` **[C]** — no distinction between "user not found" and "wrong password" to avoid information leakage. No registration link, no password recovery (both out of scope).
+The login screen is minimal: app name/logo, username field, password field, a submit button labeled "Anmelden", and an error area for failed attempts. The server returns a generic error message on failed login — no distinction between "user not found" and "wrong password" to avoid information leakage. The client displays the server-provided message. The generic behavior is enforced server-side, not client-side. No registration link, no password recovery (both out of scope).
 
 The login screen is the **only** view available to unauthenticated users. No project data is accessible without authentication.
 
@@ -36,8 +34,12 @@ The login screen is the **only** view available to unauthenticated users. No pro
 
 ```
 ┌──────────────────────────────────────────────────────────┐
+│ [Insecure banner — only when ALLOW_INSECURE_HTTP]        │
+├──────────────────────────────────────────────────────────┤
 │  Header: App Name  |  [Kanban] [Kalender]  |  Summary    │
 │                                    [Maria Schmidt ▾]     │
+├──────────────────────────────────────────────────────────┤
+│ [Mutation error banner — only when a mutation failed]    │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │                     Active View                          │
@@ -48,11 +50,13 @@ The login screen is the **only** view available to unauthenticated users. No pro
 └──────────────────────────────────────────────────────────┘
 ```
 
+- **Insecure banner**: full-width red alert (`#dc2626`, white text, bold) shown only when the page loaded over plain HTTP on a non-localhost host. Text: `"UNSICHERER MODUS — Keine Verschlüsselung, Zugangsdaten werden im Klartext übertragen"`. Not dismissible, covers both the login screen and the authenticated layout, detected client-side via [`src/config/insecureConnection.ts`](../../src/config/insecureConnection.ts). See [AC-45](verification.md#156-deployment) and [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
 - **Header**: app name **[C]**, view toggle (Kanban / Kalender), summary indicators.
 - **User indicator**: displays the authenticated user's `displayName`. Clicking reveals a minimal dropdown with a single entry: "Abmelden" (logout).
+- **Mutation error banner**: appears at the top of the main area whenever the most recent mutation failed. Carries a German message from the API error category (see [§9.5](#95-asynchronous-mutation-behavior)) and a dismiss button. Cleared on the next successful mutation or by dismissal.
 - **Default view**: Kanban (the primary overview tool). Toggling switches between views.
-- **Footer**: text driven by branding config **[C]**. Default: `"Projekt-Manager"` **[C]**. No longer says "Walking Skeleton · Mockdaten".
-- **Responsive target**: 1920×1080 desktop monitor and tablet (1024×768 minimum). Mobile is out of scope.
+- **Footer**: text driven by branding config **[C]**. Default: `"Projekt-Manager"` **[C]**.
+- **Responsive target** (Kanban and Calendar views): 1920×1080 desktop monitor and tablet (1024×768 minimum). The Kanban board and Calendar are office-role views; mobile-specific worker views are a separate concern (see [kickoff — Done when](../project/kickoff.md#done-when-final-product): "worker view … on a calendar view … option to add notes and upload pictures") and are not part of this specification.
 
 ---
 
@@ -88,14 +92,16 @@ Cards within a column are sorted by `statusChangedAt` ascending (longest-waiting
 
 #### 8.2.3 Entry Date and Aging
 
-Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026"`). This makes the age of every card visible regardless of state type. For aged buffer cards, the `"seit X Tagen"` text appears below the date label — both are shown.
+Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026"`). The date is displayed as a standalone label (e.g., `15.03.2026`), not prefixed. The `"seit X Tagen"` aging text is a separate indicator that appears below for aged buffer cards. This makes the age of every card visible regardless of state type. For aged buffer cards, the `"seit X Tagen"` text appears below the date label — both are shown.
 
 **Action states**: after a configurable threshold (`agingBoldDays`), the entry date turns **bold** — a subtle but clear flag that this item has been waiting too long. Default thresholds **[C]**:
+
 - Anfrage: 3 days
 - Beauftragt: 5 days
 - Rechnung fällig: 3 days
 
-**Buffer states**: after a configurable threshold (`agingThresholdDays`), the entry date turns bold and the card additionally shows `"seit X Tagen"` as a text indicator. Default thresholds **[C]**:
+**Buffer states**: after a configurable threshold, the entry date turns bold AND the card additionally shows `"seit X Tagen"` as a text indicator. The state config carries **two** fields for buffer states — `agingBoldDays` controls when the entry date switches to bold, and `agingThresholdDays` controls when the `"seit X Tagen"` text appears. The fields are kept separate so the two effects can be staggered (e.g., bold at 14 days, "seit X Tagen" at 18) via configuration; in the default config both values match so the effects transition together. See [data-model.md §5.2](data-model.md#52-state-metadata) for the field mapping. Default thresholds **[C]**:
+
 - Angebot: 14 days
 - Geplant: 21 days
 - Abnahme: 7 days
@@ -114,16 +120,16 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 #### 8.3.1 Display
 
 - **Default**: month view of the current month. Navigation to previous/next months.
-- **Week view toggle**: available but secondary.
+- **Week view toggle**: available via Monat/Woche buttons in the calendar navigation bar. Month view is the default; week view shows a single week with date-range label.
 - Projects with `plannedStart` and `plannedEnd` render as **horizontal bars** spanning those dates.
 - Projects with only `plannedStart` (no `plannedEnd`) render as a **single-day block** on the start date.
 - Bar color encodes the workflow state (see 8.6).
-- Projects without planned dates do **not** appear. A counter below the calendar reads: `"X Projekte ohne Termin"` — clicking it switches to Kanban view.
+- Projects without planned dates do **not** appear. A counter below the calendar reads: `"X Projekte ohne Termin"` — clicking it switches to Kanban view AND applies a "no dates" filter so only the undated projects are visible. A `"Filter aufheben"` button clears the filter, and switching views also clears it.
 
 #### 8.3.2 Interactivity
 
 - **Click on a project bar** → opens the Project Detail Panel (8.4).
-- **Date editing** is done via the Project Detail Panel (8.4). Calendar drag-to-resize is deferred.
+- **Date editing** is done via the Project Detail Panel (8.4). Calendar drag-to-resize is out of scope.
 
 ---
 
@@ -132,6 +138,7 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 A **slide-in panel** from the right side (not a modal — the user retains context of the view behind it). Width: ~400px on desktop.
 
 Contents:
+
 - Project number, title (large)
 - Current status with colored badge + German label
 - **"Nächster Schritt" button** → forward transition (same as [→]). Hidden for `Erledigt`.
@@ -155,7 +162,7 @@ Displayed in the header. Shows aggregate counts computed from current project da
 - Count of projects in each action state: e.g., `"3× Rechnung fällig"`, `"2× Anfrage"`
 - Count of projects in buffer states exceeding aging thresholds: e.g., `"1 Angebot seit >14 Tagen"`
 
-Clicking an indicator filters the current view to show only the affected projects. For action-state indicators, this filters to all projects in that state. For aged buffer indicators, this filters to only the projects exceeding the threshold (not all projects in that buffer state). Non-matching cards are hidden (not dimmed). A `"Filter aufheben"` (clear filter) button appears in the summary area while a filter is active. Switching views clears the filter.
+Clicking an indicator filters the current view to show only the affected projects. For action-state indicators, this filters to all projects in that state. For aged buffer indicators, this filters to only the projects exceeding the threshold — not all projects in that buffer state. The filter state must distinguish between "all projects in state X" (action-state filter) and "only aged projects in state X" (buffer-aging filter). Non-matching cards are hidden (not dimmed). A `"Filter aufheben"` (clear filter) button appears in the summary area while a filter is active. Switching views clears the filter.
 
 Summary values update immediately after any state change.
 
@@ -165,17 +172,17 @@ Summary values update immediately after any state change.
 
 Each state has an assigned color. Action states use warm tones, buffer states use cool tones.
 
-| State | Type | Suggested Color | Hex |
-|---|---|---|---|
-| Anfrage | Action | Orange | `#F97316` |
-| Angebot | Buffer | Light blue | `#93C5FD` |
-| Beauftragt | Action | Amber | `#F59E0B` |
-| Geplant | Buffer | Blue | `#3B82F6` |
-| In Arbeit | Active | Green | `#22C55E` |
-| Abnahme | Buffer | Teal | `#14B8A6` |
-| Rechnung fällig | Action | Red | `#EF4444` |
-| Abgerechnet | Buffer | Indigo | `#6366F1` |
-| Erledigt | Done | Gray | `#9CA3AF` |
+| State           | Type   | Suggested Color | Hex       |
+| --------------- | ------ | --------------- | --------- |
+| Anfrage         | Action | Orange          | `#F97316` |
+| Angebot         | Buffer | Light blue      | `#93C5FD` |
+| Beauftragt      | Action | Amber           | `#F59E0B` |
+| Geplant         | Buffer | Blue            | `#3B82F6` |
+| In Arbeit       | Active | Green           | `#22C55E` |
+| Abnahme         | Buffer | Teal            | `#14B8A6` |
+| Rechnung fällig | Action | Red             | `#EF4444` |
+| Abgerechnet     | Buffer | Indigo          | `#6366F1` |
+| Erledigt        | Done   | Gray            | `#9CA3AF` |
 
 Colors are configurable via the state configuration (see [Data Model — State Metadata](data-model.md#52-state-metadata)). The warm/cool grouping is the design principle; exact values may be adjusted during implementation.
 
@@ -193,9 +200,7 @@ Colors are configurable via the state configuration (see [Data Model — State M
 
 Every transition shows a confirmation dialog in German before executing: `"Status ändern: {current} → {target}?"` with OK / Abbrechen.
 
-Enforcement happens both server-side (API rejects invalid transitions) and client-side (buttons hidden as before). Server-side enforcement is authoritative.
-
-Design note: `Erledigt` is terminal — no backward transition. Reversal (e.g., for bounced payments) is deferred to the iteration that introduces real payment tracking.
+Enforcement happens both server-side (API rejects invalid transitions) and client-side (buttons hidden). Server-side enforcement is authoritative.
 
 ### 9.2 Inaction Visibility
 
@@ -211,8 +216,8 @@ Thresholds are defined in the state configuration (see [Data Model — State Met
 
 ### 9.3 Date Handling
 
-- All dates displayed in German format: `DD.MM.YYYY` or `DD.MM.` when year is obvious. **[C]**
-- Week starts on **Monday** (ISO 8601 / German convention). **[C]**
+- All dates displayed in German format: `DD.MM.YYYY` or `DD.MM.` when year is obvious. **[C]** Display dates (card labels, timestamps, calendar headers) use German format. Date input controls (e.g., date pickers in the detail panel) render in the user's browser locale — the system respects the user's locale settings for interactive inputs.
+- Week starts on **Monday** (ISO 8601 / German convention).
 - No time zones — all dates are local calendar dates.
 
 Date and locale display settings are company-configurable (see [architecture.md §12.2](architecture.md#122-company-configurable-settings)).
@@ -247,4 +252,4 @@ The Kanban board uses a progressive column collapse to remain usable on narrower
 
 ---
 
-*Cross-references: [index.md](index.md) for workflow states and assumptions, [data-model.md](data-model.md) for entity definitions and state metadata, [api.md](api.md) for API operations, [verification.md](verification.md) for acceptance criteria.*
+_Cross-references: [index.md](index.md) for workflow states and assumptions, [data-model.md](data-model.md) for entity definitions and state metadata, [api.md](api.md) for API operations, [verification.md](verification.md) for acceptance criteria._

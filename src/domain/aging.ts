@@ -1,4 +1,5 @@
 import { differenceInCalendarDays } from 'date-fns';
+import { STRINGS } from '@/config/strings';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import type { WorkflowState } from '@/config/stateConfig';
 
@@ -41,7 +42,7 @@ export function getAgingText(
   if (config.agingThresholdDays === undefined) return null;
   const days = getDaysInState(statusChangedAt, now);
   if (days < config.agingThresholdDays) return null;
-  return `seit ${days} Tagen`;
+  return STRINGS.aging.sinceNDays(days);
 }
 
 /**

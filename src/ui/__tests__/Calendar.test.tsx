@@ -1,13 +1,19 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { mockProjects } from '@/test/fixtures/mockProjects';
+import { installFailingFetch, mockFetchJson, type FetchSpy } from '@/test/fetchMock';
 import { App } from '@/App';
 
+// Tests that trigger mutations must configure fetchSpy explicitly. See the
+// src/ui/__tests__/auth.test.tsx pattern and the src/test/setup.ts comment.
+let fetchSpy: FetchSpy;
+
 beforeEach(() => {
+  fetchSpy = installFailingFetch();
   useAuthStore.setState({
     ...useAuthStore.getInitialState(),
     authUser: {
@@ -70,10 +76,12 @@ describe('Calendar View', () => {
 
     // Finding 1 (R3): verify the actual count, not just the label text.
     // Mock data has 4 projects without dates: p01, p02, p05, p06.
-    // NOTE (Finding 4/R3): the summary counts projects missing BOTH dates
-    // (!plannedStart && !plannedEnd), while the calendar filters on plannedStart
-    // alone. A project with only plannedEnd would be invisible in the calendar
-    // but not counted here. This is a spec/design question, not a test fix.
+    // The summary counts projects missing BOTH dates (!plannedStart && !plannedEnd),
+    // while the calendar filters on plannedStart alone. The gap would only surface
+    // for a project with plannedEnd but no plannedStart — which the API rejects
+    // (project-dates.ts) AND the DB rejects via the projects_end_requires_start
+    // CHECK constraint (#54, migration 0006). The state is unreachable, so the
+    // divergent filters are internally consistent against valid data.
     const counter = screen.getByTestId('no-dates-counter');
     expect(counter).toBeInTheDocument();
     expect(counter).toHaveTextContent('4 Projekte ohne Termin');
@@ -130,12 +138,20 @@ describe('Calendar View', () => {
   // color is the point of CT-17; exact segment count is fragile.
   it('CT-17: changing dates in detail panel is reflected in calendar view', async () => {
     const user = userEvent.setup();
-    render(<App />);
 
     // Compute a relative end date 14 days from now (guarantees multi-week span)
     const endDate = new Date();
     endDate.setDate(endDate.getDate() + 14);
     const endDateStr = endDate.toISOString().split('T')[0];
+
+    // Mock the successful PATCH response. Without this the audit's new
+    // fail-fast default would reject fetch and the store would revert the
+    // optimistic update, making the "new end date shows up in the calendar"
+    // assertion meaningless — the calendar would render the old bars.
+    const p07 = mockProjects.find((p) => p.id === 'p07')!;
+    mockFetchJson(fetchSpy, { ...p07, plannedEnd: endDateStr });
+
+    render(<App />);
 
     // Open detail for p07 (geplant, has dates starting daysFromNow(3))
     const card = screen.getByTestId('project-card-p07');
@@ -145,9 +161,24 @@ describe('Calendar View', () => {
     const endInput = screen.getByTestId('detail-date-end') as HTMLInputElement;
     fireEvent.change(endInput, { target: { value: endDateStr } });
 
-    // Verify store updated
+    // Verify store updated (optimistic).
     const project = useProjectStore.getState().projects.find((p) => p.id === 'p07');
     expect(project?.plannedEnd).toBe(endDateStr);
+
+    // Wait for the PATCH to complete so the optimistic value is confirmed,
+    // not subsequently reverted by a pending rejection.
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/api/projects/p07/dates',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: expect.stringContaining(`"plannedEnd":"${endDateStr}"`),
+        }),
+      );
+    });
+    expect(useProjectStore.getState().projects.find((p) => p.id === 'p07')?.plannedEnd).toBe(
+      endDateStr,
+    );
 
     // Close detail panel
     await user.click(screen.getByTestId('detail-close'));
@@ -180,6 +211,40 @@ describe('Calendar View', () => {
     expect(panel).toBeInTheDocument();
     expect(panel).toHaveTextContent('2026-028');
     expect(panel).toHaveTextContent('Malerarbeiten Bürokomplex Weber');
+  });
+
+  // Spec §8.3.1: week view toggle is available
+  it('week view toggle is present and switches to week view', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByTestId('view-toggle-kalender'));
+
+    // Toggle buttons are present
+    const monthBtn = screen.getByTestId('calendar-toggle-month');
+    const weekBtn = screen.getByTestId('calendar-toggle-week');
+    expect(monthBtn).toHaveTextContent('Monat');
+    expect(weekBtn).toHaveTextContent('Woche');
+
+    // Default is month view — grid has multiple week rows
+    const grid = screen.getByTestId('calendar-grid');
+    const weekRows = grid.querySelectorAll('.weekRow');
+    expect(weekRows.length).toBeGreaterThan(1);
+
+    // Switch to week view — grid has exactly one week row
+    await user.click(weekBtn);
+    const weekGrid = screen.getByTestId('calendar-grid');
+    const singleWeekRows = weekGrid.querySelectorAll('.weekRow');
+    expect(singleWeekRows).toHaveLength(1);
+
+    // Label shows date range instead of month name
+    const label = screen.getByTestId('calendar-month-label');
+    expect(label.textContent).toMatch(/\d{2}\.\d{2}\.\s*–\s*\d{2}\.\d{2}\.\d{4}/);
+
+    // Switch back to month view
+    await user.click(monthBtn);
+    const monthGrid = screen.getByTestId('calendar-grid');
+    expect(monthGrid.querySelectorAll('.weekRow').length).toBeGreaterThan(1);
   });
 
   // AC-19: Calendar week starts on Monday

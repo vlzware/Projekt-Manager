@@ -1,7 +1,5 @@
 # Verification
 
-*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
-
 ---
 
 ## 15. Acceptance Criteria
@@ -34,8 +32,9 @@ The system is accepted when all of the following are true.
 - **AC-16**: State transitions only allow forward +1 or backward -1. No skipping.
 - **AC-17**: `Erledigt` is terminal — both transition buttons are hidden.
 - **AC-18**: `Anfrage` hides the backward transition button.
-- **AC-19**: All dates display in German format (DD.MM.YYYY). Calendar week starts Monday.
+- **AC-19**: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
 - **AC-20**: UI does not crash on projects with missing optional fields.
+- **AC-53**: A failed mutation displays a German error message and reverts the optimistic UI update.
 
 ### 15.4 Authentication
 
@@ -47,6 +46,7 @@ The system is accepted when all of the following are true.
 - **AC-26**: After logout, pressing the browser back button does not reveal project data.
 - **AC-27**: A session that expires while the app is open redirects to login with an expiry message.
 - **AC-28**: A request with a valid session token for a deactivated user is rejected with an authentication error.
+- **AC-52**: An authenticated user can change their own password. A change attempt with an incorrect current password is rejected.
 
 ### 15.5 Multi-User
 
@@ -54,15 +54,19 @@ The system is accepted when all of the following are true.
 
 ### 15.6 Deployment
 
-- **AC-30**: The application is accessible at a public URL over HTTPS. _Note: the "public URL" framing reflects the original goal. If the project settles on a VPN-only topology (see [ADR-0008](../adr/0008-vpn-first-network-access.md) and [#42](https://github.com/vlzware/Projekt-Manager/issues/42)), there may be no public URL at all and this criterion will be reworded. The HTTPS part is non-negotiable in either case — see AC-45._
-- **AC-31**: Merging to `main` triggers an automated deployment to the hosted environment.
-- **AC-45**: No request reaches application code over plain HTTP. Port 80 either unconditionally redirects to HTTPS before any application handler runs, or is not bound at all. HTTPS-or-nothing applies in every environment regardless of network topology — see [ADR-0008](../adr/0008-vpn-first-network-access.md) for the rationale that VPN does not substitute for TLS. Implementation tracked by [#47](https://github.com/vlzware/Projekt-Manager/issues/47).
-- **AC-46**: A failed deployment leaves the previously running version running. The pipeline aborts before swapping containers if the build, smoke test, or health check fails.
-- **AC-47**: A previously deployed commit can be redeployed (rollback) by re-running the deploy workflow against that commit's SHA, without requiring code changes or manual server access.
-- **AC-48**: After deploy completes, an automated smoke test verifies that the application responds to a known health-check endpoint. Failure of the smoke test aborts the deploy and reports failure.
-- **AC-49**: Network access to the hosted environment is restricted to authorized clients (initially via VPN per [ADR-0008](../adr/0008-vpn-first-network-access.md)). The application is not reachable from the public internet without VPN credentials.
+- **AC-30**: The application is reachable by authorized clients over HTTPS. HTTPS is non-negotiable (see AC-45). Network reachability is scoped by [ADR-0008](../adr/0008-vpn-first-network-access.md); see also AC-49.
+- **AC-31**: A CI-built image can be promoted to the hosted environment via manual, pull-based deploy over WireGuard (see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)).
+- **AC-45**: HTTPS is the default transport. HTTP is never a silent fallback — it is an explicit, deliberately ugly opt-in used only in environments where TLS is unavailable (see [ADR-0013](../adr/0013-http-only-evaluation-mode.md) — VPN does not substitute for TLS, per [ADR-0008](../adr/0008-vpn-first-network-access.md)). The opt-in has four parts that must all hold together:
+  1. **Default**: port 80 redirects to HTTPS before any application handler runs, or is not bound at all. No server route ever runs over plain HTTP in the default configuration.
+  2. **Opt-in**: HTTP mode is selected only when `ALLOW_INSECURE_HTTP=true` AND `NODE_ENV` is not `production`. Neither flag alone is sufficient. In HTTP mode the server disables the `Secure` cookie flag and relaxes CSP — operators must understand that credentials travel in cleartext.
+  3. **Visible**: when HTTP mode is active, the UI renders a red, non-dismissible full-width banner on every page reading `"UNSICHERER MODUS — Keine Verschlüsselung, Zugangsdaten werden im Klartext übertragen"`, and the browser tab title is prefixed with `UNSICHER –`. The banner covers both the login screen and the authenticated layout.
+  4. **Production refusal**: `ALLOW_INSECURE_HTTP=true` with `NODE_ENV=production` causes the server to refuse to start. `NODE_ENV` defaults to `production` in the validated environment schema so an unset value hits the safer branch.
+- **AC-46**: A failed deployment leaves the previously running version running. `scripts/deploy.sh` aborts before swapping containers if the image pull, the compose-up, or the health-check loop fails; the operator sees a loud failure and the current containers keep serving traffic.
+- **AC-47**: A previously deployed commit can be redeployed (rollback) by the operator invoking `scripts/deploy.sh <sha>` on the VPS over WireGuard, where `<sha>` is any previously built image tag in GHCR. No code change and no workflow re-run are required — only operator presence on the host per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). The operator is also the only party who can decrypt the age-wrapped secrets the script needs, so rollback authority is tied to WireGuard + passphrase rather than a GitHub credential.
+- **AC-48**: After every `scripts/deploy.sh` invocation, an automated smoke test polls `/api/health` against the freshly started container. Failure of the smoke test aborts the deploy and surfaces the failure to the operator.
+- **AC-49**: Network access to the hosted environment is restricted to authorized clients via VPN per [ADR-0008](../adr/0008-vpn-first-network-access.md). The application is not reachable from the public internet without VPN credentials.
 - **AC-50**: Database and object storage data persist across application container restarts and redeploys. A redeploy of the application containers does not wipe project, user, or session data.
-- **AC-51**: Deployments use a specific commit SHA, not a moving tag. The deployed version is reproducible and traceable to a single commit in the iteration branch.
+- **AC-51**: Deployments use a specific commit SHA, not a moving tag. The deployed version is reproducible and traceable to a single commit.
 
 ### 15.7 Engineering
 
@@ -71,7 +75,10 @@ The system is accepted when all of the following are true.
 - **AC-34**: State configuration (labels, colors, thresholds) is centralized in `config/`.
 - **AC-35**: Dependency direction ([architecture.md §11.2](architecture.md#112-responsibility-boundaries)) is enforced — no reverse imports.
 - **AC-36**: Linting and formatting pass.
-- **AC-37**: Tests defined in section 16 pass.
+- **AC-37**: Tests defined in section 16 pass. Coverage is split across two execution surfaces so the push/PR gate stays fast:
+  - **Push/PR gate**: unit tests (§16.1), component tests (§16.2), API integration tests (§16.3), and the server-side supplementary tests (§16.5) run on every push and PR to protected branches. A failing test at this layer blocks merge.
+  - **On-demand E2E gate**: Playwright §16.4 + the E2E supplementary tests from §16.5 run on a manual trigger, typically before a manual deploy per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). Playwright is not part of the push/PR gate (see [architecture.md §11.7](architecture.md#117-continuous-delivery-pipeline) for the CI topology).
+  - **Local dev**: `npm run test` and `npm run test:e2e` run locally and are part of the Definition of Done for any change that touches their respective code paths.
 
 ### 15.8 Configurability
 
@@ -158,54 +165,60 @@ These tests run against a real (test) database, not mocks.
 - **AT-15**: Change own password with incorrect current password is rejected.
 - **AT-16**: Object storage module can upload a file, retrieve it, and verify the retrieved contents match the original. Tested against the real (deployed) object storage infrastructure.
 
-### 16.4 E2E Smoke Test
+### 16.4 E2E Tests
 
-One scenario covering the full authenticated end-to-end path:
+The end-to-end path is covered by focused, isolated test files rather than a single monolithic scenario. This improves test isolation, failure diagnostics, and net-zero teardown. The steps below define the required behavioral coverage; the implementation may split them across multiple test files and specs.
+
+**Smoke (login/logout cycle)**:
 
 1. App loads — login screen is displayed.
 2. User enters credentials and logs in — Kanban view is displayed with 9 columns.
 3. Header shows user's display name.
-4. Summary area shows `"3× Rechnung fällig"`.
-5. User clicks a summary indicator — view filters to matching projects.
-6. User clicks "Filter aufheben" — full view restored.
-7. User clicks a card in `Geplant` — detail panel opens.
-8. User clicks "Nächster Schritt" — confirmation dialog appears.
-9. User confirms — card moves to `In Arbeit`.
-10. User clicks "Vorheriger Schritt" on the same card — card moves back to `Geplant`.
-11. User changes planned end date via date picker in detail panel.
-12. User switches to calendar view — the project bar reflects the new date.
-13. User clicks "X Projekte ohne Termin" — switches to filtered Kanban.
-14. Summary area reflects current state counts throughout.
-15. User refreshes the page — changes persist; user remains logged in.
-16. User clicks "Abmelden" — login screen appears.
-17. Pressing browser back button does not show project data.
+4. User clicks "Abmelden" — login screen appears.
+
+**Kanban flows (state transitions, dates, calendar, persistence)**: 4. Summary area shows `"3× Rechnung fällig"`. 5. User clicks a summary indicator — view filters to matching projects. 6. User clicks "Filter aufheben" — full view restored. 7. User clicks a card in `Geplant` — detail panel opens. 8. User clicks "Nächster Schritt" — confirmation dialog appears. 9. User confirms — card moves to `In Arbeit`. 10. User clicks "Vorheriger Schritt" on the same card — card moves back to `Geplant`. 11. User changes planned end date via date picker in detail panel. 12. User switches to calendar view — the project bar reflects the new date. 13. User clicks "X Projekte ohne Termin" — switches to filtered Kanban. 14. Summary area reflects current state counts throughout. 15. User refreshes the page — changes persist; user remains logged in. 17. Pressing browser back button after logout does not show project data.
+
+### 16.5 Supplementary Tests
+
+Tests providing coverage beyond the core specification. These are not mapped to specific spec IDs but verify important behaviors.
+
+#### Server-side
+
+- Bootstrap: first-run admin creation via `BOOTSTRAP_ADMIN_*` env vars
+- Bulk import: partial success, validation per item, permission enforcement
+- Events: domain event bus subscribe/emit, error isolation
+- Health probe: DB and storage liveness checks
+- Permissions: role-based access control matrix (4 roles)
+- Rate limiting: login throttling (429 on excess attempts)
+- DB constraints: CHECK constraint enforcement (`projects_end_requires_start`)
+- Single project GET: by ID, not-found handling
+
+#### Client-side
+
+- API client: typed fetch wrappers, error paths, session expiry detection
+- Project store: optimistic updates, rollback on failure, session delegation
+- Confirm dialog: rendering, accessibility, focus trap
+- Collapse tier hook: responsive breakpoint calculations
+- Transition hook: canForward/canBackward, confirm flow
+- Router navigation: helper behavior
+- Date input value: normalization for HTML date inputs
+- Insecure connection: HTTP-mode detection
+
+#### E2E
+
+- Kanban flows: summary filter, transitions, date editing, calendar, persistence, back-button protection (covers spec §16.4 steps 4–15, 17 in split tests)
+- Failure paths: network errors, session expiry mid-flow
+- Startup: health endpoint verification, seed login
+- Insecure banner: HTTP-mode warning display
 
 ---
 
 ## 17. Risks and Mitigations
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| 9 Kanban columns too tight on screen | Usability | Horizontal scroll; responsive collapse tiers ([ui.md §10](ui.md#10-responsive-behavior)). |
-| Over-styling action columns | Defeats Kanban principle | Trust board structure; resist decorative urgency. |
-| API latency makes transitions feel sluggish | Users accustomed to instant mock-data transitions | Optimistic UI updates + sub-300ms API target ([architecture.md §13.2](architecture.md#132-performance)). If hosting latency is too high, evaluate edge deployment or CDN. |
-| Session management edge cases | User loses work or sees stale data | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose). |
-| Seed data dates become stale over time | Demo loses impact | Dates are relative to deployment date ([data-model.md §7.4](data-model.md#74-date-range)). A re-seed operation refreshes them. |
-| Hosting cost exceeds expectations | Budget | Research free-tier options first. Define cost ceiling before committing. |
-
----
-
-## 18. Open Questions
-
-### 18.1 Carried Forward
-
-1. **`Erledigt` reversal**: currently terminal with no way back. If a payment bounces, should the project be able to return to `Abgerechnet`? Deferred to the iteration that introduces real payment tracking. See also the design note in [ui.md §9.1](ui.md#91-state-transitions).
-2. **Object storage provider**: S3-compatible API is assumed ([ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md)). Evaluate Cloudflare R2 vs Hetzner Object Storage during deployment.
-
-### 18.2 Open
-
-3. **Bundle size budget**: no page weight budget is currently enforced. Revisit if page weight becomes a concern.
-
----
-
-*Cross-references: [index.md](index.md) for goal, scope, and assumptions; [data-model.md](data-model.md) for entity definitions; [ui.md](ui.md) for UI specification and behavioral rules; [architecture.md](architecture.md) for architectural constraints and NFRs; [api.md](api.md) for API operations.*
+| Risk                                        | Impact                             | Mitigation                                                                                                                        |
+| ------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 9 Kanban columns too tight on screen        | Usability                          | Horizontal scroll; responsive collapse tiers ([ui.md §10](ui.md#10-responsive-behavior)).                                         |
+| Over-styling action columns                 | Defeats Kanban principle           | Trust board structure; resist decorative urgency.                                                                                 |
+| API latency makes transitions feel sluggish | Interaction feels unresponsive     | Optimistic UI updates + sub-300ms API target ([architecture.md §13.2](architecture.md#132-performance)).                          |
+| Session management edge cases               | User loses work or sees stale data | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose). |
+| Seed data dates become stale over time      | Demo loses impact                  | Dates are relative to deployment date ([data-model.md §7.4](data-model.md#74-date-range)). A re-seed operation refreshes them.    |

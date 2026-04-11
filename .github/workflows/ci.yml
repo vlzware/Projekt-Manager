@@ -26,9 +26,9 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version-file: '.nvmrc'
           cache: 'npm'
@@ -109,3 +109,180 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # ---------------------------------------------------------------
+  # Detect whether container-relevant files changed in this PR/push.
+  # Gates the `docker` job so we do not pay the image-build cost on
+  # every commit — most PRs do not touch Docker files at all.
+  # ---------------------------------------------------------------
+  changes:
+    runs-on: ubuntu-latest
+    # dorny/paths-filter calls the Pulls API to list changed files on
+    # pull_request events. The default GITHUB_TOKEN in this repo does
+    # not grant `pull-requests: read`, which surfaces as "Resource not
+    # accessible by integration". Grant it explicitly for this job
+    # only — `contents: read` stays as the default for everything else.
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: filter
+        with:
+          filters: |
+            docker:
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'docker/**'
+              - 'docker-compose.yml'
+              - 'docker-compose.*.yml'
+              - 'package.json'
+              - 'package-lock.json'
+              # Self-validation: changes to this workflow (the docker
+              # job itself, the drift check, or the cache config) must
+              # exercise the docker job once so regressions are caught
+              # on the PR that introduces them, not on the next
+              # Docker-touching PR.
+              - '.github/workflows/ci.yml'
+
+  # ---------------------------------------------------------------
+  # Docker validation — only runs when container-relevant files
+  # changed, and only on pull requests. On push (merge) events the
+  # `build-and-push` job below does the same build for real (and
+  # actually publishes), so running both would just double-build
+  # the same layers. See ADR-0011 for the split rationale.
+  # ---------------------------------------------------------------
+  docker:
+    needs: changes
+    if: needs.changes.outputs.docker == 'true' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # `docker compose config --quiet` exits 0 even when a
+      # referenced `${VAR}` has no default — it only prints a stderr
+      # warning. Capture combined output and fail on
+      # "variable is not set" so a newly-referenced `${FOO}` without
+      # a `:-` default cannot sail through CI. Carried over from the
+      # closed PR #67.
+      - name: Validate Compose file references
+        env:
+          # Placeholders for the four variables that have no default
+          # in docker-compose.yml. These cover the current drift
+          # surface; any NEW required variable will trip the grep.
+          POSTGRES_PASSWORD: placeholder
+          MINIO_ROOT_USER: placeholder
+          MINIO_ROOT_PASSWORD: placeholder
+          CLOUDFLARE_API_TOKEN: placeholder
+        run: |
+          set -euo pipefail
+          check() {
+            local label=$1
+            shift
+            local out
+            if ! out=$(docker compose "$@" config --quiet 2>&1); then
+              echo "::error::$label: docker compose config failed"
+              echo "$out"
+              exit 1
+            fi
+            if echo "$out" | grep -q 'variable is not set'; then
+              echo "::error::$label: compose references an unset variable without a default"
+              echo "$out" | grep 'variable is not set'
+              exit 1
+            fi
+          }
+          check "prod compose" -f docker-compose.yml
+          check "prod + dev overlay" -f docker-compose.yml -f docker-compose.dev.yml
+          echo "Compose files validated."
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      # Build the production app image with layer caching. Caddy
+      # has its own build context (./docker/caddy) with a custom
+      # xcaddy + pinned plugin SHA that adds ~60s of Go compile and
+      # rarely changes — documented accepted gap. If a Caddy build
+      # regression slips through, the deploy workflow's image build
+      # on the VPS is the backstop.
+      - name: Build app image
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: false
+          tags: projekt-manager-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------------------------------------------------------------
+  # Build and push the production app image to GHCR on every push
+  # to main/iteration branches. See ADR-0011 for the rationale
+  # (short version: 2 vCPU / 4 GB VPS cannot host both the running
+  # stack and a build peak without risking OOM during deploys).
+  #
+  # Runs on every push regardless of which files changed — a pure
+  # TypeScript commit still changes the image because `COPY . .`
+  # bakes `src/**` in, so path-filtering would silently ship stale
+  # images. GHA layer cache keeps no-op commits in the ~10-15s
+  # range.
+  #
+  # Gated on `check` so we never publish an image from a commit
+  # that fails tests, lint, or type-check.
+  # ---------------------------------------------------------------
+  build-and-push:
+    if: github.event_name == 'push'
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # Compute both tags we want to push in one place so the diff
+      # is obvious if we ever change the scheme. The SHA tag is the
+      # immutable rollback target used by scripts/deploy.sh; the
+      # branch-slug tag is the moving "latest on this branch"
+      # pointer kept as a human-friendly fallback (scripts/deploy.sh
+      # always resolves to a SHA, so it is not on the hot path).
+      # See ADR-0012 for the manual pull-based deploy flow.
+      - name: Compute image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          sha_tag="sha-${GITHUB_SHA}"
+          # Slugify the branch name for Docker tag legality:
+          # lowercase, replace '/' with '-', strip anything not in
+          # [a-z0-9._-].
+          branch_slug=$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]/' '[:lower:]-' | sed 's/[^a-z0-9._-]/-/g')
+          {
+            echo "tags<<TAGS_EOF"
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/projekt-manager:${sha_tag}"
+            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/projekt-manager:${branch_slug}"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - name: Build and push
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

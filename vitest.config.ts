@@ -27,9 +27,16 @@ export default defineConfig({
       provider: 'v8',
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/**/__tests__/**', 'src/test/**', 'src/main.tsx', 'src/vite-env.d.ts'],
+      // Conservative per-metric floors. Branches start 15pp below statements
+      // because branch coverage is inherently lower than statement coverage
+      // (ternaries, short-circuits, optional-chain paths). Revisit with real
+      // measurements after a few clean coverage runs.
       thresholds: {
-        'src/domain/**': { statements: 80 },
-        'src/config/**': { statements: 80 },
+        'src/domain/**': { statements: 80, branches: 65, functions: 80, lines: 80 },
+        'src/config/**': { statements: 80, branches: 65, functions: 80, lines: 80 },
+        'src/server/**': { statements: 70, branches: 55, functions: 70, lines: 70 },
+        'src/state/**': { statements: 60, branches: 45, functions: 60, lines: 60 },
+        'src/hooks/**': { statements: 60, branches: 45, functions: 60, lines: 60 },
       },
     },
     projects: [
@@ -42,6 +49,7 @@ export default defineConfig({
           environment: 'jsdom',
           setupFiles: ['./src/test/setup.ts'],
           include: [
+            'src/config/__tests__/**/*.test.ts',
             'src/domain/__tests__/**/*.test.ts',
             'src/ui/__tests__/**/*.test.{ts,tsx}',
             'src/ui/*/__tests__/**/*.test.ts',

@@ -9,6 +9,12 @@
 
 services:
   app:
+    # Build from source in dev instead of pulling the prod image
+    # from GHCR (see ADR-0011). Compose merges this with the base
+    # file, so the `image:` tag from docker-compose.yml becomes the
+    # local build's output name — harmless, since the tag stays on
+    # the developer's machine.
+    build: .
     ports:
       - "${PORT:-3000}:3000"
 
@@ -22,3 +28,11 @@ services:
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # MinIO console
+
+  caddy:
+    # Caddy requires CLOUDFLARE_API_TOKEN for DNS-01 TLS — not available
+    # in dev. Gate it behind a profile so it never starts when the dev
+    # overlay is active. Production uses docker-compose.yml alone (no
+    # overlay), so Caddy starts normally there.
+    profiles:
+      - production

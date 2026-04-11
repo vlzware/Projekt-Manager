@@ -1,3 +1,5 @@
+import { STRINGS } from './strings.js';
+
 export type StateType = 'action' | 'buffer' | 'active' | 'done';
 
 export type CollapseTier = 1 | 2 | 3;
@@ -35,7 +37,7 @@ export interface StateConfig {
 export const STATE_CONFIGS: StateConfig[] = [
   {
     key: 'anfrage',
-    label: 'Anfrage',
+    label: STRINGS.states.anfrage,
     type: 'action',
     order: 1,
     color: '#F97316',
@@ -44,7 +46,7 @@ export const STATE_CONFIGS: StateConfig[] = [
   },
   {
     key: 'angebot',
-    label: 'Angebot',
+    label: STRINGS.states.angebot,
     type: 'buffer',
     order: 2,
     color: '#93C5FD',
@@ -54,7 +56,7 @@ export const STATE_CONFIGS: StateConfig[] = [
   },
   {
     key: 'beauftragt',
-    label: 'Beauftragt',
+    label: STRINGS.states.beauftragt,
     type: 'action',
     order: 3,
     color: '#F59E0B',
@@ -63,7 +65,7 @@ export const STATE_CONFIGS: StateConfig[] = [
   },
   {
     key: 'geplant',
-    label: 'Geplant',
+    label: STRINGS.states.geplant,
     type: 'buffer',
     order: 4,
     color: '#3B82F6',
@@ -73,7 +75,7 @@ export const STATE_CONFIGS: StateConfig[] = [
   },
   {
     key: 'in_arbeit',
-    label: 'In Arbeit',
+    label: STRINGS.states.in_arbeit,
     type: 'active',
     order: 5,
     color: '#22C55E',
@@ -81,7 +83,7 @@ export const STATE_CONFIGS: StateConfig[] = [
   },
   {
     key: 'abnahme',
-    label: 'Abnahme',
+    label: STRINGS.states.abnahme,
     type: 'buffer',
     order: 6,
     color: '#14B8A6',
@@ -91,7 +93,7 @@ export const STATE_CONFIGS: StateConfig[] = [
   },
   {
     key: 'rechnung_faellig',
-    label: 'Rechnung fällig',
+    label: STRINGS.states.rechnung_faellig,
     type: 'action',
     order: 7,
     color: '#EF4444',
@@ -100,7 +102,7 @@ export const STATE_CONFIGS: StateConfig[] = [
   },
   {
     key: 'abgerechnet',
-    label: 'Abgerechnet',
+    label: STRINGS.states.abgerechnet,
     type: 'buffer',
     order: 8,
     color: '#6366F1',
@@ -110,7 +112,7 @@ export const STATE_CONFIGS: StateConfig[] = [
   },
   {
     key: 'erledigt',
-    label: 'Erledigt',
+    label: STRINGS.states.erledigt,
     type: 'done',
     order: 9,
     color: '#9CA3AF',

@@ -15,7 +15,7 @@ The trust wrapper's components must be auditable open-source with an active main
 
 **VPN implementation: plain WireGuard** (Linux kernel module, mainlined since kernel 5.6).
 
-**TLS terminates at Caddy regardless of VPN status.** Defense in depth: the VPN restricts *who* can reach the server, TLS protects *what* they transmit once they do. The two are independent controls and neither substitutes for the other. Caddy obtains a real Let's Encrypt certificate via DNS-01 ACME using the Cloudflare provider, so no public port is required for certificate issuance.
+**TLS terminates at Caddy regardless of VPN status.** Defense in depth: the VPN restricts _who_ can reach the server, TLS protects _what_ they transmit once they do. The two are independent controls and neither substitutes for the other. Caddy obtains a real Let's Encrypt certificate via DNS-01 ACME using the Cloudflare provider, so no public port is required for certificate issuance.
 
 **Client scope: Android and desktop Linux.** Android is the primary pilot client platform per the project kickoff. Desktop Linux is supported via the official WireGuard client. **iOS, macOS, and Windows are out of project scope** — the official `wireguard-apple` client has received no upstream commits since 2023-02-15 and the project classifies the repository as "complete" (feature-frozen). A frozen client has no patch path for a future CVE and is therefore not a viable trust foundation.
 
@@ -82,5 +82,3 @@ This framing is honest about a limitation: Tailscale's clients are also not inde
 - [ADR-0005: Session management — HttpOnly cookies](0005-session-management-httponly-cookies.md) — `Secure` flag requires TLS in all deployments
 - [ADR-0009: Pin Docker versions across environments](0009-pin-docker-versions-across-environments.md) — related dependency-pin tracking problem
 - [docs/ops/server-setup.md](../ops/server-setup.md) — current server configuration and firewall rules
-- Issue #52 — dependency version advisory tracking (Docker, Caddy, WireGuard)
-- Issue #47 — HTTPS enforcement (parent tracking issue for the iteration 4 implementation)

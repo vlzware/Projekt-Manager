@@ -41,8 +41,16 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     status: 'geplant',
     statusChangedAt: '2026-04-01T10:00:00.000Z',
     customer: { name: 'Test' },
+    address: null,
+    plannedStart: null,
+    plannedEnd: null,
+    assignedWorkers: null,
+    estimatedValue: null,
+    notes: null,
     createdAt: '2026-03-30T10:00:00.000Z',
     updatedAt: '2026-03-30T10:00:00.000Z',
+    createdBy: null,
+    updatedBy: null,
     ...overrides,
   };
 }

@@ -6,15 +6,21 @@
  *   - worker / bookkeeper: can read, cannot transition or update dates
  *   - owner / office: can read, transition, and update dates
  *
- * Seed users (from seed.ts):
- *   - inhaber / changeme  — owner
- *   - buero / changeme    — office
- *   - arbeiter1 / changeme — worker
- *   - buchhalter / changeme — bookkeeper
+ * Seed users referenced via SEED_USERS from `../../test/seedAssumptions.js`
+ * (see that file for the single source of truth on usernames / passwords).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startApp, stopApp, login, authGet, authPost, authPatch } from '../../test/api-helpers.js';
+import {
+  startApp,
+  stopApp,
+  login,
+  authGet,
+  authPost,
+  authPatch,
+  createTestUserSession,
+} from '../../test/api-helpers.js';
+import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 
 /** Helper: find the first project in a given status from the list endpoint. */
 async function findProjectByStatus(
@@ -37,10 +43,10 @@ describe('Role-based Permission Enforcement', () => {
   beforeAll(async () => {
     await startApp();
     [workerToken, bookkeeperToken, ownerToken, officeToken] = await Promise.all([
-      login('arbeiter1', 'changeme'),
-      login('buchhalter', 'changeme'),
-      login('inhaber', 'changeme'),
-      login('buero', 'changeme'),
+      login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD),
+      login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD),
+      login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD),
+      login(SEED_USERS.office.username, SEED_DEFAULT_PASSWORD),
     ]);
   });
 
@@ -49,39 +55,61 @@ describe('Role-based Permission Enforcement', () => {
   });
 
   // ---------------------------------------------------------------
-  // Worker — restricted role
+  // Restricted roles — worker (SEED_USERS.worker1) and bookkeeper
+  // (SEED_USERS.bookkeeper) share the same permission model (read-only:
+  // cannot transition or update dates). Parametrized so adding/removing
+  // a restricted role is a one-line change and assertions never drift
+  // between the two roles.
+  //
+  // Tokens are looked up by role name inside each test because `it.each`
+  // evaluates its table at describe-collection time, before `beforeAll`
+  // has assigned the module-scoped token variables.
   // ---------------------------------------------------------------
-  describe('Worker (arbeiter1)', () => {
-    it('cannot transition forward — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(workerToken, 'geplant');
+  describe('Restricted roles (read-only)', () => {
+    type RestrictedRole = 'worker' | 'bookkeeper';
+    const restrictedRoles: RestrictedRole[] = ['worker', 'bookkeeper'];
+    const tokenFor = (role: RestrictedRole): string =>
+      role === 'worker' ? workerToken : bookkeeperToken;
 
-      const res = await authPost(workerToken, `/api/projects/${project.id}/transition/forward`);
+    it.each(restrictedRoles)(
+      '%s cannot transition forward — returns 403 NOT_PERMITTED',
+      async (role) => {
+        const token = tokenFor(role);
+        const project = await findProjectByStatus(token, 'geplant');
 
-      expect(res.statusCode).toBe(403);
+        const res = await authPost(token, `/api/projects/${project.id}/transition/forward`);
 
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
+        expect(res.statusCode).toBe(403);
 
-    it('cannot transition backward — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(workerToken, 'in_arbeit');
+        const body = res.json();
+        expect(body.code).toBe('NOT_PERMITTED');
+        expect(typeof body.message).toBe('string');
+        expect(body.message.length).toBeGreaterThan(0);
+      },
+    );
 
-      const res = await authPost(workerToken, `/api/projects/${project.id}/transition/backward`);
+    it.each(restrictedRoles)(
+      '%s cannot transition backward — returns 403 NOT_PERMITTED',
+      async (role) => {
+        const token = tokenFor(role);
+        const project = await findProjectByStatus(token, 'in_arbeit');
 
-      expect(res.statusCode).toBe(403);
+        const res = await authPost(token, `/api/projects/${project.id}/transition/backward`);
 
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
+        expect(res.statusCode).toBe(403);
 
-    it('cannot update dates — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(workerToken, 'geplant');
+        const body = res.json();
+        expect(body.code).toBe('NOT_PERMITTED');
+        expect(typeof body.message).toBe('string');
+        expect(body.message.length).toBeGreaterThan(0);
+      },
+    );
 
-      const res = await authPatch(workerToken, `/api/projects/${project.id}/dates`, {
+    it.each(restrictedRoles)('%s cannot update dates — returns 403 NOT_PERMITTED', async (role) => {
+      const token = tokenFor(role);
+      const project = await findProjectByStatus(token, 'geplant');
+
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
         plannedStart: '2026-10-01',
         plannedEnd: '2026-10-15',
       });
@@ -94,68 +122,8 @@ describe('Role-based Permission Enforcement', () => {
       expect(body.message.length).toBeGreaterThan(0);
     });
 
-    it('CAN read projects — returns 200', async () => {
-      const res = await authGet(workerToken, '/api/projects');
-
-      expect(res.statusCode).toBe(200);
-
-      const body = res.json();
-      expect(Array.isArray(body.data)).toBe(true);
-      expect(body.data.length).toBeGreaterThan(0);
-    });
-  });
-
-  // ---------------------------------------------------------------
-  // Bookkeeper — restricted role
-  // ---------------------------------------------------------------
-  describe('Bookkeeper (buchhalter)', () => {
-    it('cannot transition forward — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(bookkeeperToken, 'geplant');
-
-      const res = await authPost(bookkeeperToken, `/api/projects/${project.id}/transition/forward`);
-
-      expect(res.statusCode).toBe(403);
-
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
-
-    it('cannot transition backward — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(bookkeeperToken, 'in_arbeit');
-
-      const res = await authPost(
-        bookkeeperToken,
-        `/api/projects/${project.id}/transition/backward`,
-      );
-
-      expect(res.statusCode).toBe(403);
-
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
-
-    it('cannot update dates — returns 403 NOT_PERMITTED', async () => {
-      const project = await findProjectByStatus(bookkeeperToken, 'geplant');
-
-      const res = await authPatch(bookkeeperToken, `/api/projects/${project.id}/dates`, {
-        plannedStart: '2026-10-01',
-        plannedEnd: '2026-10-15',
-      });
-
-      expect(res.statusCode).toBe(403);
-
-      const body = res.json();
-      expect(body.code).toBe('NOT_PERMITTED');
-      expect(typeof body.message).toBe('string');
-      expect(body.message.length).toBeGreaterThan(0);
-    });
-
-    it('CAN read projects — returns 200', async () => {
-      const res = await authGet(bookkeeperToken, '/api/projects');
+    it.each(restrictedRoles)('%s CAN read projects — returns 200', async (role) => {
+      const res = await authGet(tokenFor(role), '/api/projects');
 
       expect(res.statusCode).toBe(200);
 
@@ -168,7 +136,7 @@ describe('Role-based Permission Enforcement', () => {
   // ---------------------------------------------------------------
   // Owner — full access
   // ---------------------------------------------------------------
-  describe('Owner (inhaber)', () => {
+  describe(`Owner (${SEED_USERS.owner.username})`, () => {
     it('can transition forward — returns 200', async () => {
       const project = await findProjectByStatus(ownerToken, 'abnahme');
 
@@ -185,7 +153,7 @@ describe('Role-based Permission Enforcement', () => {
   // ---------------------------------------------------------------
   // Office — full access
   // ---------------------------------------------------------------
-  describe('Office (buero)', () => {
+  describe(`Office (${SEED_USERS.office.username})`, () => {
     it('can transition forward — returns 200', async () => {
       // Use a project that hasn't been transitioned by the owner test above.
       // anfrage -> angebot is safe since seed has 2 anfrage projects.
@@ -198,6 +166,58 @@ describe('Role-based Permission Enforcement', () => {
       const updated = res.json();
       expect(updated.id).toBe(project.id);
       expect(updated.status).toBe('angebot');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Users with no permissions — guards against regressions where a
+  // protected route is registered without a `requirePermission` check.
+  // The four seed roles all carry `project:read` and `auth:change-password`,
+  // so prior to explicit enforcement these endpoints would silently allow
+  // anyone with a valid session — including a future role added without
+  // those permissions, or a programmatic user with roles: [].
+  //
+  // We mint the session directly (createTestUserSession) rather than
+  // adding a seed user, so the test surfaces the enforcement contract
+  // without depending on seed data shape.
+  // ---------------------------------------------------------------
+  describe('User with no permissions (roles: [])', () => {
+    let noPermsToken: string;
+
+    beforeAll(async () => {
+      const session = await createTestUserSession({ roles: [] });
+      noPermsToken = session.token;
+    });
+
+    it('cannot list projects — returns 403 NOT_PERMITTED', async () => {
+      const res = await authGet(noPermsToken, '/api/projects');
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('cannot get a project by id — returns 403 NOT_PERMITTED', async () => {
+      // A project id obtained via an authorized user — the id itself is not
+      // authorization-sensitive; the check is role-based.
+      const project = await findProjectByStatus(ownerToken, 'anfrage');
+      const res = await authGet(noPermsToken, `/api/projects/${project.id}`);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('cannot change own password — returns 403 NOT_PERMITTED', async () => {
+      const res = await authPost(noPermsToken, '/api/auth/change-password', {
+        currentPassword: 'irrelevant',
+        newPassword: 'irrelevant-too',
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('cannot transition a project — returns 403 NOT_PERMITTED', async () => {
+      const project = await findProjectByStatus(ownerToken, 'anfrage');
+      const res = await authPost(noPermsToken, `/api/projects/${project.id}/transition/forward`);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
     });
   });
 });

@@ -21,15 +21,22 @@ const WEEKDAY_LABELS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 interface CalendarGridProps {
   month: Date;
   projects: Project[];
+  view?: 'month' | 'week';
 }
 
-export function CalendarGrid({ month, projects }: CalendarGridProps) {
+export function CalendarGrid({ month, projects, view = 'month' }: CalendarGridProps) {
   const monthStart = startOfMonth(month);
   const monthEnd = endOfMonth(month);
-  const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 });
-  const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
 
-  const weeks = eachWeekOfInterval({ start: calendarStart, end: calendarEnd }, { weekStartsOn: 1 });
+  let weeks: Date[];
+  if (view === 'week') {
+    // In week view, show only the week containing the reference date
+    weeks = [startOfWeek(month, { weekStartsOn: 1 })];
+  } else {
+    const calendarStart = startOfWeek(monthStart, { weekStartsOn: 1 });
+    const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
+    weeks = eachWeekOfInterval({ start: calendarStart, end: calendarEnd }, { weekStartsOn: 1 });
+  }
 
   // Build project placement per week
   const getProjectsForWeek = (weekStart: Date) => {

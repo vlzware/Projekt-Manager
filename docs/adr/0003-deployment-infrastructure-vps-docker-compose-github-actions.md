@@ -17,15 +17,15 @@ Key forces:
 
 ## Decision
 
-We will deploy all services on a single VPS using Docker Compose, with GitHub Actions handling CI and triggering deploys via SSH.
+We will deploy all services on a single VPS using Docker Compose, with GitHub Actions handling CI. Images are built in CI and distributed via GHCR; deploys are manual pull-based operations over WireGuard (see [ADR-0011](0011-build-images-in-ci-distribute-via-ghcr.md), [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md)).
 
 **Infrastructure:**
 
-- **VPS** as the deployment target (2 vCPU / 2 GB RAM / 20 GB disk recommended; e.g., Hetzner CX22 at ~€4–6/month).
+- **VPS** as the deployment target (e.g., Hetzner CX23 at 2 vCPU / 4 GB RAM / 40 GB disk, ~€4–6/month).
 - **Docker Compose** declares the full stack: application, PostgreSQL, MinIO, and Caddy reverse proxy. The compose file is the single source of truth for what runs and how.
 - **PostgreSQL** runs as a Docker container with a mounted volume for persistence. Swappable for any managed PostgreSQL (Supabase, RDS, etc.) by changing the connection string.
 - **MinIO** provides S3-compatible object storage as a Docker container. Swappable for Cloudflare R2, AWS S3, or any S3-compatible provider by changing endpoint and credentials.
-- **Caddy** serves as reverse proxy with automatic HTTPS via Let's Encrypt. Zero-configuration TLS.
+- **Caddy** serves as reverse proxy with HTTPS via Let's Encrypt DNS-01 ACME (Cloudflare provider). See [ADR-0008](0008-vpn-first-network-access.md).
 
 **Deployment pattern:**
 
@@ -33,9 +33,9 @@ We will deploy all services on a single VPS using Docker Compose, with GitHub Ac
 
 **CI/CD pipeline:**
 
-- **GitHub Actions** runs the full test suite on GitHub's free runners on every push to `main`. The VPS never runs tests.
-- **On green:** the action SSHs into the VPS and triggers a pull-and-restart sequence. A dedicated deploy user with restricted permissions holds the SSH key stored as a GitHub secret.
-- **Rollback:** re-deploy a previous commit via the same pipeline, or manually on the VPS via `git checkout <sha>` and container restart.
+- **GitHub Actions** runs the full test suite on GitHub's free runners on every push to `main` and `iteration/**` branches. The VPS never runs tests.
+- **On green:** CI builds and pushes the app image to GHCR. The operator deploys manually on the VPS via `scripts/deploy.sh` over WireGuard.
+- **Rollback:** re-deploy a previous SHA-tagged image via the same script.
 
 **Portability contract:**
 
@@ -54,7 +54,7 @@ Fewer abstractions — `apt install` each dependency directly. Ruled out because
 
 ### Webhook-based CD (server self-deploys on GitHub webhook)
 
-The server listens for push events and pulls new code itself — no SSH key in GitHub needed. Ruled out for three reasons: tests would run on the VPS (competing with production workload and risking deploys of broken code), the webhook listener is custom infrastructure to write and maintain, and the exposed endpoint adds attack surface. GitHub Actions provides a test gate, execution environment, and log visibility that the webhook approach would need to replicate manually.
+The server listens for push events and pulls new code itself. Ruled out for three reasons: tests would run on the VPS (competing with production workload and risking deploys of broken code), the webhook listener is custom infrastructure to write and maintain, and the exposed endpoint adds attack surface. GitHub Actions provides a test gate, execution environment, and log visibility that the webhook approach would need to replicate manually.
 
 ### Split deployment (frontend and backend on separate hosts)
 
@@ -75,11 +75,13 @@ Frontend on a static host (Vercel, Netlify), backend on a separate service. Rule
 - The operator is the ops team: OS security patches, firewall rules, and monitoring are manual responsibilities (`unattended-upgrades` covers most, not all)
 - No redundancy — single server means downtime during hardware failures or maintenance windows
 - Database backups must be implemented manually (scheduled `pg_dump` to off-server storage)
-- Initial server setup (SSH hardening, Docker, DNS, Caddy) takes longer than a PaaS first deploy
+- Initial server setup (firewall rules, Docker, DNS, Caddy) takes longer than a PaaS first deploy
 
 ## References
 
 - [ADR-0001: Generalized system with configurable customer specifics](0001-generalized-system-with-configurable-customer-specifics.md)
 - [ADR-0002: Tech Stack — TypeScript, React 19, Vite, Zustand](0002-tech-stack-typescript-react-vite-zustand.md)
+- [ADR-0011: Build app images in CI, distribute via GHCR](0011-build-images-in-ci-distribute-via-ghcr.md) — refines the image-build topology
+- [ADR-0012: Manual pull-based deploy over WireGuard](0012-manual-pull-based-deploy-over-wireguard.md) — replaces the deploy leg
 - [Product Spec](../spec/index.md)
 - [Architecture — Responsibility layers](../spec/architecture.md)

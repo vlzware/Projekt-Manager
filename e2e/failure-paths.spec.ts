@@ -18,10 +18,12 @@ import { test, expect } from '@playwright/test';
 
 test.describe('E2E failure paths', () => {
   test.beforeEach(async ({ page }) => {
+    // Auth comes from the shared storageState (see auth.setup.ts);
+    // the tests in this file exercise transition-time failures, not
+    // login-time failures, so they start from an authenticated board.
+    // The "session expiry" test still simulates server-side invalidation
+    // via route mocking — that's unrelated to client-side auth state.
     await page.goto('/');
-    await page.getByTestId('login-username').fill('inhaber');
-    await page.getByTestId('login-password').fill('changeme');
-    await page.getByTestId('login-submit').click();
     await expect(page.getByTestId('kanban-board')).toBeVisible();
   });
 
@@ -48,9 +50,12 @@ test.describe('E2E failure paths', () => {
     // The error banner appears (German, no stack trace). Use the dedicated
     // testid instead of a fuzzy text regex — a regex that matches "Netzwerk"
     // would happily match any other element on the page that mentions it.
+    // The banner is only rendered when `mutationError` is truthy (see
+    // src/App.tsx), so visibility alone is a reliable signal. We deliberately
+    // do not assert on the German copy so this test is not coupled to
+    // translation tweaks.
     const errorBanner = page.getByTestId('mutation-error-banner');
     await expect(errorBanner).toBeVisible();
-    await expect(errorBanner).toContainText(/fehlgeschlagen|Netzwerk/i);
 
     // State is unchanged: the project is still in geplant, not in_arbeit.
     await page.getByTestId('detail-close').click();

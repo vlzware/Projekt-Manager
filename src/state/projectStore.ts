@@ -7,6 +7,7 @@
 
 import { create } from 'zustand';
 import { flushSync } from 'react-dom';
+import { STRINGS } from '@/config/strings';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Project, SummaryData } from '@/domain/types';
 import { getNextState, getPreviousState } from '@/domain/transitions';
@@ -79,6 +80,14 @@ export const useProjectStore = create<ProjectState>((set, get) => {
               mutationInFlight: rest,
             };
           });
+          // NOT_FOUND on a mutation means the local cache is out of sync
+          // with the server (the project was deleted or never existed).
+          // Refetch the list so the stale card disappears and the user
+          // sees the real state. Matches api.md §14.4.1's Client behavior
+          // column for the Not Found category.
+          if (result.category === 'not_found') {
+            void get().fetchProjects();
+          }
           return;
         }
 
@@ -107,7 +116,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         set((s) => {
           const { [projectId]: _, ...rest } = s.mutationInFlight;
           return {
-            mutationError: 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+            mutationError: STRINGS.errors.mutationFailed,
             mutationInFlight: rest,
           };
         });
@@ -145,8 +154,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
           if (p.id !== projectId) return p;
           return {
             ...p,
-            plannedStart: start === null ? undefined : start !== undefined ? start : p.plannedStart,
-            plannedEnd: end === null ? undefined : end !== undefined ? end : p.plannedEnd,
+            plannedStart: start === null ? null : (start ?? p.plannedStart),
+            plannedEnd: end === null ? null : (end ?? p.plannedEnd),
             updatedAt: new Date().toISOString(),
           };
         }),
@@ -171,6 +180,12 @@ export const useProjectStore = create<ProjectState>((set, get) => {
                 mutationInFlight: rest,
               };
             });
+            // NOT_FOUND on a date edit: the project disappeared from the
+            // server. Refetch to drop the stale card from the local list
+            // (see note in runTransition).
+            if (result.category === 'not_found') {
+              void get().fetchProjects();
+            }
             return;
           }
 
@@ -184,7 +199,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
             const { [projectId]: _, ...rest } = s.mutationInFlight;
             return {
               projects: s.projects.map((p) => (p.id === projectId ? originalProject : p)),
-              mutationError: 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+              mutationError: STRINGS.errors.mutationFailed,
               mutationInFlight: rest,
             };
           });

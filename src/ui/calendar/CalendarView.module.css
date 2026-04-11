@@ -37,6 +37,44 @@
   text-align: center;
 }
 
+.viewToggle {
+  display: flex;
+  gap: 0;
+  margin-left: 16px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.toggleButton {
+  padding: 4px 10px;
+  border: none;
+  background: #f8fafc;
+  color: #475569;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.toggleButton:not(:last-child) {
+  border-right: 1px solid #cbd5e1;
+}
+
+.toggleButton:hover {
+  background: #e2e8f0;
+}
+
+.toggleActive {
+  background: #3b82f6;
+  color: #ffffff;
+}
+
+.toggleActive:hover {
+  background: #2563eb;
+}
+
 .noDatesCounter {
   margin-top: 10px;
   text-align: center;

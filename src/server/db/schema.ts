@@ -5,6 +5,7 @@
  * See data-model.md for entity definitions.
  */
 
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
@@ -15,6 +16,8 @@ import {
   jsonb,
   numeric,
   index,
+  check,
+  primaryKey,
 } from 'drizzle-orm/pg-core';
 
 // ---------------------------------------------------------------
@@ -31,6 +34,11 @@ export const users = pgTable('users', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  // Audit references — nullable for seeded/bootstrapped records (data-model.md §5.5).
+  // No FK back to users.id: self-referential FKs complicate bootstrapping
+  // and deletion without adding meaningful integrity guarantees here.
+  createdBy: uuid('created_by'),
+  updatedBy: uuid('updated_by'),
 });
 
 // ---------------------------------------------------------------
@@ -61,7 +69,7 @@ export const projects = pgTable(
   'projects',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    number: varchar('number', { length: 20 }).notNull(),
+    number: varchar('number', { length: 20 }).notNull().unique(),
     title: varchar('title', { length: 500 }).notNull(),
     status: varchar('status', { length: 50 }).notNull().default('anfrage'),
     statusChangedAt: timestamp('status_changed_at', { withTimezone: true }).notNull().defaultNow(),
@@ -81,7 +89,6 @@ export const projects = pgTable(
     plannedStart: timestamp('planned_start', { withTimezone: true }),
     plannedEnd: timestamp('planned_end', { withTimezone: true }),
 
-    assignedWorkers: text('assigned_workers').array(),
     estimatedValue: numeric('estimated_value', { precision: 12, scale: 2 }),
     notes: text('notes'),
 
@@ -98,5 +105,32 @@ export const projects = pgTable(
     index('idx_projects_status').on(table.status),
     // Used by future "recently changed" and aging threshold queries.
     index('idx_projects_status_changed_at').on(table.statusChangedAt),
+    // Invariant: an end date cannot exist without a start date.
+    // The API already rejects this combination in project-dates.ts; the
+    // constraint is defense in depth against direct DB writes (migrations,
+    // seed scripts, manual SQL) that bypass the route layer. See #54.
+    check(
+      'projects_end_requires_start',
+      sql`${table.plannedEnd} IS NULL OR ${table.plannedStart} IS NOT NULL`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------
+// Project–Worker assignments (m:n join table)
+// ---------------------------------------------------------------
+export const projectWorkers = pgTable(
+  'project_workers',
+  {
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.projectId, table.userId] }),
+    index('idx_project_workers_user_id').on(table.userId),
   ],
 );

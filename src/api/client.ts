@@ -8,10 +8,29 @@
  * The store layer calls these functions instead of raw fetch().
  */
 
+import { STRINGS } from '@/config/strings';
+
 export interface ApiError {
   code: string;
   message: string;
 }
+
+/**
+ * Error categories from `docs/spec/api.md §14.4.1`. The client classifies
+ * every failure into one of these so the state/UI layers can branch on
+ * category rather than on individual error codes. This closes the gap
+ * where only SESSION_EXPIRED was handled specially and every other code
+ * collapsed into the same generic path. See consolidation review H-3 / E F-1.
+ */
+export type ErrorCategory =
+  | 'authentication' // INVALID_CREDENTIALS, UNAUTHENTICATED, SESSION_EXPIRED
+  | 'authorization' // NOT_PERMITTED
+  | 'validation' // VALIDATION_ERROR
+  | 'not_found' // NOT_FOUND
+  | 'rate_limited' // RATE_LIMITED
+  | 'server_error' // SERVER_ERROR, unknown server codes
+  | 'network' // NETWORK_ERROR (client-side, fetch rejection)
+  | 'invalid_response'; // INVALID_RESPONSE (client-side, malformed 2xx body)
 
 export interface ApiSuccess<T> {
   ok: true;
@@ -21,10 +40,45 @@ export interface ApiSuccess<T> {
 export interface ApiFailure {
   ok: false;
   error: ApiError;
+  category: ErrorCategory;
+  /**
+   * True iff the failure indicates the user must return to the login
+   * screen — `SESSION_EXPIRED` (the session existed but aged out) or
+   * `UNAUTHENTICATED` (no cookie at all on a protected endpoint). The
+   * `INVALID_CREDENTIALS` sub-case of authentication is NOT included
+   * because it only reaches the client from the login screen itself,
+   * where a redirect would be a no-op.
+   */
   sessionExpired: boolean;
 }
 
 export type ApiResult<T> = ApiSuccess<T> | ApiFailure;
+
+function classifyCode(code: string): ErrorCategory {
+  switch (code) {
+    case 'INVALID_CREDENTIALS':
+    case 'UNAUTHENTICATED':
+    case 'SESSION_EXPIRED':
+      return 'authentication';
+    case 'NOT_PERMITTED':
+      return 'authorization';
+    case 'VALIDATION_ERROR':
+      return 'validation';
+    case 'NOT_FOUND':
+      return 'not_found';
+    case 'RATE_LIMITED':
+      return 'rate_limited';
+    case 'NETWORK_ERROR':
+      return 'network';
+    case 'INVALID_RESPONSE':
+      return 'invalid_response';
+    case 'SERVER_ERROR':
+    default:
+      // Unknown codes fall into server_error so the UI shows a generic
+      // message — never leak an unknown-code string to the user.
+      return 'server_error';
+  }
+}
 
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
@@ -59,37 +113,75 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       ok: false,
       error: {
         code: 'NETWORK_ERROR',
-        message: isNetwork
-          ? 'Netzwerkfehler. Bitte Verbindung überprüfen.'
-          : 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+        message: isNetwork ? STRINGS.errors.networkError : STRINGS.errors.mutationFailed,
       },
+      category: 'network',
       sessionExpired: false,
     };
   }
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({ code: 'UNKNOWN', message: '' }));
+    const rawCode = (data.code as string | undefined) ?? 'API_ERROR';
+    const category = classifyCode(rawCode);
 
-    if (res.status === 401 && data.code === 'SESSION_EXPIRED') {
-      return {
-        ok: false,
-        error: { code: data.code, message: data.message ?? 'Sitzung abgelaufen.' },
-        sessionExpired: true,
-      };
-    }
+    // Authentication-category with a *pre-existing* session context
+    // (SESSION_EXPIRED or UNAUTHENTICATED) means the user must be bounced
+    // to the login screen. INVALID_CREDENTIALS is authentication-category
+    // but only reaches the client from the login screen itself, so we
+    // deliberately do NOT flag it as sessionExpired.
+    const sessionExpired = rawCode === 'SESSION_EXPIRED' || rawCode === 'UNAUTHENTICATED';
+
+    // Rate-limited and generic server errors get the canonical German
+    // message from strings.ts if the server didn't supply one — the
+    // handlers above try to always supply one, but a reverse-proxy
+    // intercept (e.g., Caddy returning an HTML 503) might not. Never
+    // show the user a raw code or an empty string.
+    let fallbackMessage: string = STRINGS.errors.mutationFailed;
+    if (category === 'rate_limited') fallbackMessage = STRINGS.errors.rateLimited;
+    else if (category === 'server_error') fallbackMessage = STRINGS.errors.serverError;
+    else if (sessionExpired) fallbackMessage = STRINGS.auth.sessionExpired;
+    else if (category === 'authorization') fallbackMessage = STRINGS.auth.notPermitted;
 
     return {
       ok: false,
       error: {
-        code: data.code ?? 'API_ERROR',
-        message: data.message ?? 'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+        code: rawCode,
+        message: (data.message as string | undefined) || fallbackMessage,
       },
-      sessionExpired: false,
+      category,
+      sessionExpired,
     };
   }
 
-  const data = await res.json().catch(() => null);
-  return { ok: true, data: data as T };
+  // Success path.
+  //
+  // We distinguish three cases that previously all collapsed to `data=null`:
+  //   1. 204 No Content (or explicit Content-Length: 0) — legitimately empty.
+  //      res.json() would throw; short-circuit to `{ ok: true, data: null }`.
+  //   2. 2xx with a JSON body that parses — return the parsed value, including
+  //      a literal `null` payload (JSON.parse("null") is valid JSON).
+  //   3. 2xx with a body that FAILS to parse — this is an error, not success.
+  //      Surface it as ok=false with code INVALID_RESPONSE so callers can
+  //      distinguish a malformed response from a legitimately null payload.
+  if (res.status === 204 || res.headers.get('Content-Length') === '0') {
+    return { ok: true, data: null as T };
+  }
+
+  try {
+    const data = (await res.json()) as T;
+    return { ok: true, data };
+  } catch {
+    return {
+      ok: false,
+      error: {
+        code: 'INVALID_RESPONSE',
+        message: STRINGS.errors.invalidResponse,
+      },
+      category: 'invalid_response',
+      sessionExpired: false,
+    };
+  }
 }
 
 // --- Typed API functions -----------------------------------------------------
@@ -122,7 +214,11 @@ export const authApi = {
 
   logout: () => apiCall<{ success: boolean }>('/api/auth/logout', { method: 'POST' }),
 
-  me: () => apiCall<AuthUser>('/api/auth/me'),
+  // Same `{ user: AuthUser }` envelope as login — see consolidation
+  // review E F-7. Kept as LoginResponse rather than renaming to a
+  // neutral AuthEnvelope because both endpoints are the only consumers
+  // and the shape is already documented alongside login below.
+  me: () => apiCall<LoginResponse>('/api/auth/me'),
 };
 
 export const projectApi = {

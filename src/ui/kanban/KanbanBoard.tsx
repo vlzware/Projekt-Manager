@@ -3,6 +3,7 @@ import { STATE_CONFIGS } from '@/config/stateConfig';
 import type { WorkflowState } from '@/config/stateConfig';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
+import { isBufferAged } from '@/domain/aging';
 import { useCollapseTier } from './useCollapseTier';
 import { KanbanColumn } from './KanbanColumn';
 import styles from './KanbanBoard.module.css';
@@ -10,6 +11,7 @@ import styles from './KanbanBoard.module.css';
 export function KanbanBoard() {
   const projects = useProjectStore((s) => s.projects);
   const activeFilter = useUIStore((s) => s.activeFilter);
+  const filterAgedOnly = useUIStore((s) => s.filterAgedOnly);
   const filterNoDates = useUIStore((s) => s.filterNoDates);
   const activeTier = useCollapseTier();
   const [expanded, setExpanded] = useState<Set<WorkflowState>>(new Set());
@@ -30,7 +32,11 @@ export function KanbanBoard() {
   const filteredProjects = filterNoDates
     ? projects.filter((p) => !p.plannedStart && !p.plannedEnd)
     : activeFilter
-      ? projects.filter((p) => p.status === activeFilter)
+      ? projects.filter(
+          (p) =>
+            p.status === activeFilter &&
+            (!filterAgedOnly || isBufferAged(p.status, p.statusChangedAt)),
+        )
       : projects;
 
   return (

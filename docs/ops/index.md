@@ -1,0 +1,18 @@
+# Ops Docs
+
+## Setup (one-time)
+
+| Document                                         | Purpose                                                  |
+| ------------------------------------------------ | -------------------------------------------------------- |
+| [server-setup.md](server-setup.md)               | VPS provisioning: OS, SSH, deploy user, Docker, fail2ban |
+| [wireguard-setup.md](wireguard-setup.md)         | WireGuard VPN server and peer onboarding                 |
+| [dns-setup.md](dns-setup.md)                     | Domain DNS configuration (A record → WireGuard IP)       |
+| [caddy-tls-bootstrap.md](caddy-tls-bootstrap.md) | First-time TLS certificate provisioning via LE staging   |
+
+## Operations (repeatable)
+
+| Document                                           | Purpose                                |
+| -------------------------------------------------- | -------------------------------------- |
+| [manual-deploy.md](manual-deploy.md)               | Deploy, rollback, secrets management   |
+| [local-dev.md](local-dev.md)                       | Local development environment          |
+| [http-only-evaluation.md](http-only-evaluation.md) | Domain-less HTTP testing on a bare VPS |

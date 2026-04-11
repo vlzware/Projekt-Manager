@@ -1,7 +1,5 @@
 # Data Model
 
-*Iteration 4 — April 2026 | Living document — updated as each iteration ships.*
-
 ---
 
 ## 5. Data Model
@@ -23,43 +21,44 @@ type WorkflowState =
   | 'erledigt';
 
 interface Project {
-  id: string;                  // UUID
-  number: string;              // "2026-042" — year + sequential [C]
-  title: string;               // "Fassadenanstrich Müller"
+  id: string; // UUID
+  number: string; // "2026-042" — year + sequential [C]
+  title: string; // "Fassadenanstrich Müller"
   status: WorkflowState;
-  statusChangedAt: string;     // ISO 8601 — for aging calculations
+  statusChangedAt: string; // ISO 8601 — for aging calculations
 
   customer: {
-    name: string;              // "Familie Müller"
-    phone?: string;            // "+49 221 1234567"
-    email?: string;            // "mueller@example.de"
+    name: string; // "Familie Müller"
+    phone?: string; // "+49 221 1234567"
+    email?: string; // "mueller@example.de"
   };
 
   address?: {
-    street: string;            // "Hauptstr. 12"
-    zip: string;               // "51465"
-    city: string;              // "Bergisch Gladbach"
+    street: string; // "Hauptstr. 12"
+    zip: string; // "51465"
+    city: string; // "Bergisch Gladbach"
   };
 
-  plannedStart?: string;       // ISO 8601 date
-  plannedEnd?: string;         // ISO 8601 date
+  plannedStart?: string; // ISO 8601 date
+  plannedEnd?: string; // ISO 8601 date
 
-  assignedWorkers?: string[];  // display names — placeholder; future iterations will use Worker entity IDs
-  estimatedValue?: number;     // EUR net
+  assignedWorkers?: { userId: string; displayName: string }[]; // references UserAccount via project_workers join table
+  estimatedValue?: number; // EUR net
   notes?: string;
 
-  createdAt: string;           // ISO 8601
-  updatedAt: string;           // ISO 8601
-  createdBy?: string;          // UserAccount.id — optional: seeded/imported records may lack a known actor
-  updatedBy?: string;          // UserAccount.id — optional: seeded/imported records may lack a known actor
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+  createdBy?: string; // UserAccount.id — optional: seeded/imported records may lack a known actor
+  updatedBy?: string; // UserAccount.id — optional: seeded/imported records may lack a known actor
 }
 ```
 
 Design notes:
 
 - `statusChangedAt` is separate from `updatedAt` — editing notes must not reset aging calculations.
-- Customer and address are nested objects for clarity and future extensibility. **Known debt**: `customer` is inline (denormalized). Future iterations will extract to a `Customer` entity for cross-project lookup, deduplication, and LLM email extraction.
-- `assignedWorkers` is `string[]` of display names. **Known debt**: will be replaced by `Worker` entity references for role-based views and worker management.
+- Customer and address are nested objects. `customer` is stored inline (denormalized) as part of the Project entity; the nesting keeps extraction into a separate `Customer` entity cheap (see §6.2).
+- `assignedWorkers` references `UserAccount` entries via a `project_workers` join table (m:n). The API returns `{ userId, displayName }` objects; writes accept `assignedWorkerIds: string[]` (user UUIDs).
+- `estimatedValue` is `number` in the API contract. The database stores it as `numeric(12,2)` for precision. The ORM converts between the two representations; clients always receive and send a JSON number.
 - No `priority` field — priority is implicit in state aging and column accumulation.
 - No stored boolean flags for warnings — these are derived from state and timestamps at render time.
 - Internal keys use English; German labels are applied at the UI layer.
@@ -73,13 +72,13 @@ type StateType = 'action' | 'buffer' | 'active' | 'done';
 
 interface StateConfig {
   key: WorkflowState;
-  label: string;               // German display label
+  label: string; // German display label
   type: StateType;
-  order: number;               // position in workflow sequence (1-9)
-  color: string;               // hex color
+  order: number; // position in workflow sequence (1-9)
+  color: string; // hex color
   agingThresholdDays?: number; // days before aging indicator appears [C]
-  agingBoldDays?: number;      // days before date display turns bold [C]
-  collapseTier: 1 | 2 | 3;        // responsive collapse priority (1 = last to collapse) [C]
+  agingBoldDays?: number; // days before date display turns bold [C]
+  collapseTier: 1 | 2 | 3; // responsive collapse priority (1 = last to collapse) [C]
 }
 ```
 
@@ -87,41 +86,43 @@ This configuration drives Kanban column rendering, color coding, and aging indic
 
 **Aging field mapping by state type:**
 
-| State type | `agingBoldDays` | `agingThresholdDays` | Visual effect |
-|---|---|---|---|
-| Action | Used | Ignored | Entry date turns **bold** after threshold |
-| Buffer | Used (equals `agingThresholdDays`) | Used | Entry date turns **bold** at the same threshold + `"seit X Tagen"` text appears |
-| Active | Ignored | Ignored | No aging behavior |
-| Done | Ignored | Ignored | No aging behavior |
+| State type | `agingBoldDays`                    | `agingThresholdDays` | Visual effect                                                                   |
+| ---------- | ---------------------------------- | -------------------- | ------------------------------------------------------------------------------- |
+| Action     | Used                               | Ignored              | Entry date turns **bold** after threshold                                       |
+| Buffer     | Used (equals `agingThresholdDays`) | Used                 | Entry date turns **bold** at the same threshold + `"seit X Tagen"` text appears |
+| Active     | Ignored                            | Ignored              | No aging behavior                                                               |
+| Done       | Ignored                            | Ignored              | No aging behavior                                                               |
 
 ### 5.3 User Entity
 
 ```typescript
-type AccountRole = string; // internal key — e.g. 'office', 'worker', 'bookkeeper', 'admin' [C]
+type AccountRole = string; // internal key — e.g. 'owner', 'office', 'worker', 'bookkeeper' [C]
 
 interface UserAccount {
-  id: string;                  // UUID
-  username: string;            // unique, used for login
-  displayName: string;         // shown in UI, e.g. "Maria Schmidt"
-  passwordHash: string;        // server/DB only — NEVER in API responses or client-side code
-  roles: AccountRole[];        // array — see design notes
+  id: string; // UUID
+  username: string; // unique, used for login
+  displayName: string; // shown in UI, e.g. "Maria Schmidt"
+  passwordHash: string; // server/DB only — NEVER in API responses or client-side code
+  roles: AccountRole[]; // array — see design notes
   email?: string;
-  active: boolean;             // soft-disable without deletion
-  createdAt: string;           // ISO 8601
-  updatedAt: string;           // ISO 8601
-  lastLoginAt?: string;        // ISO 8601
+  active: boolean; // soft-disable without deletion
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+  lastLoginAt?: string; // ISO 8601
+  createdBy?: string; // UserAccount.id — optional for seeded/bootstrapped records
+  updatedBy?: string; // UserAccount.id — optional for seeded/bootstrapped records
 }
 ```
 
 Design notes:
 
-- `roles` is an array even if iteration 2 uses only a minimal role set. This keeps the door open for owner, office, worker, bookkeeper, admin, or company-specific roles in later iterations without requiring a schema change.
+- `createdBy` / `updatedBy` follow the audit metadata pattern (section 5.5). **No self-referential FK**: a foreign key from `users.createdBy` back to `users.id` would complicate bootstrapping (the first admin user cannot reference a creator that doesn't exist yet) and deletion cascades, without adding meaningful integrity guarantees. The columns are nullable UUIDs with no constraint.
+- `roles` is an array. This supports multi-role assignments (owner, office, worker, bookkeeper, admin, or company-specific roles) without schema changes. The default role set is configurable **[C]**.
 - **[C]** `AccountRole` values are internal keys. German display labels (e.g. "Eigentümer", "Büro", "Arbeiter", "Buchhalter") are applied by configuration — the same pattern as workflow state labels.
 - `passwordHash` is included in the entity definition for completeness but is **never** included in API responses or the client-side data model. The hashing algorithm is an infrastructure concern (not specified here).
-- `active` allows disabling a user without deleting their records — important for audit trail in later iterations. Users are deactivated, not deleted.
+- `active` allows disabling a user without deleting their records, preserving referential integrity for historical project assignments. Users are deactivated, not deleted.
 - `lastLoginAt` is optional; populated on successful authentication.
-- **Known debt**: iteration 2 implements a minimal role set. Future iterations may add fine-grained permissions, per-role view restrictions, or company-specific role definitions. The current array-based model supports this without structural changes.
-- **Known debt**: no link between `UserAccount` and `Project.assignedWorkers`. The worker assignment remains a `string[]` of display names in this iteration. Connecting them is deferred to the iteration that introduces the worker-specific view.
+- Worker assignment is linked to `UserAccount` via the `project_workers` join table.
 
 ### 5.4 Session
 
@@ -129,16 +130,19 @@ The session model is intentionally minimal and mechanism-agnostic. The spec defi
 
 ```typescript
 interface Session {
-  id: string;                  // opaque session identifier
-  userId: string;              // references UserAccount.id
-  createdAt: string;           // ISO 8601
-  expiresAt: string;           // ISO 8601
+  id: string; // opaque session identifier
+  userId: string; // references UserAccount.id
+  token: string; // cryptographically random lookup key — transport mechanism detail
+  createdAt: string; // ISO 8601
+  expiresAt: string; // ISO 8601
 }
 ```
 
+Design note: The `token` field is the value delivered to the client (e.g., via cookie). It is cryptographically random and opaque. The delivery mechanism (HttpOnly cookie vs. bearer token) is an ADR decision.
+
 Session validation must verify that the referenced user is still active (`active = true`). If the user has been deactivated, the session is treated as invalid regardless of its `expiresAt`.
 
-**Known debt**: changing a password does not currently invalidate existing sessions. A future iteration should add session invalidation on password change for security hardening.
+Password changes invalidate all other sessions for the affected user (`AuthService.changePassword()`).
 
 ### 5.5 Audit Metadata
 
@@ -146,10 +150,10 @@ All persisted entities follow a common audit metadata pattern:
 
 ```typescript
 interface AuditMetadata {
-  createdAt: string;           // ISO 8601 — set on creation, never modified
-  updatedAt: string;           // ISO 8601 — set on every mutation
-  createdBy?: string;          // UserAccount.id — optional for seeded/imported records
-  updatedBy?: string;          // UserAccount.id — optional for seeded/imported records
+  createdAt: string; // ISO 8601 — set on creation, never modified
+  updatedAt: string; // ISO 8601 — set on every mutation
+  createdBy?: string; // UserAccount.id — optional for seeded/imported records
+  updatedBy?: string; // UserAccount.id — optional for seeded/imported records
 }
 ```
 
@@ -173,16 +177,15 @@ The product specification defines persistence behavior, not a concrete database 
 
 ### 6.2 Future Entity Extraction
 
-The persistence design must support future extraction of additional entities without rewriting the project UI:
+The persistence design must support extraction of additional entities without rewriting the project UI:
 
 - `Customer` — extracted from inline `Project.customer`
-- `Worker` — extracted from `Project.assignedWorkers`
 - `Attachment` — file references for worker uploads (Aufmaß, photos)
 - `NotificationRule` — event-based notification configuration
 - `Invoice` — invoice tracking for the bookkeeper view
 - `CompanySettings` — per-company configuration
 
-The current iteration may store some data denormalized for simplicity, but must not make later normalization prohibitively expensive.
+Some data may be stored denormalized for simplicity, but the storage shape must not make normalization prohibitively expensive.
 
 ### 6.3 Record Identity
 
@@ -191,9 +194,7 @@ The current iteration may store some data denormalized for simplicity, but must 
 
 ### 6.4 Concurrency
 
-Low write concurrency is assumed, but the design must tolerate multiple concurrent users accessing the system simultaneously.
-
-At current scale (1–5 users), last-write-wins is acceptable. A future iteration may introduce optimistic concurrency control (e.g., `updatedAt`-based conflict detection) when multi-user editing becomes frequent. The chosen conflict handling strategy should be documented in an ADR.
+Low write concurrency is assumed, but the design must tolerate multiple concurrent users accessing the system simultaneously. Conflict handling is last-write-wins. Optimistic concurrency control is not part of this specification.
 
 ### 6.5 Schema Evolution
 
@@ -204,24 +205,27 @@ At current scale (1–5 users), last-write-wins is acceptable. A future iteratio
 
 ### 6.6 Referential Integrity
 
-- The database enforces foreign keys where relationships exist (e.g., `Session.userId` references `UserAccount.id`).
+- The database enforces foreign keys where relationships exist (e.g., `Session.userId` references `UserAccount.id`, `Project.createdBy`/`updatedBy` reference `UserAccount.id`).
+- **Exception**: `UserAccount.createdBy`/`updatedBy` are nullable UUIDs with no FK constraint. A self-referential FK on the users table would complicate bootstrapping and deletion without adding meaningful integrity (see §5.3 design notes).
 - Orphaned records are not acceptable.
 
 ### 6.7 Timestamps
 
 Timestamp ownership rules are defined in section 5.5. Additionally, `statusChangedAt` is set by the server on state transitions, never by client input.
 
+**Storage vs. API representation**: the database stores timestamps as PostgreSQL `timestamp with time zone`. The API serializes them as ISO 8601 strings (e.g., `"2026-04-10T14:30:00.000Z"`). The client receives and sends ISO 8601 strings; the ORM handles conversion transparently. The spec uses `string` (ISO 8601) in entity type definitions to describe the API contract, not the storage type.
+
 ### 6.8 Date Validation
 
 - If both `plannedStart` and `plannedEnd` are provided, `plannedEnd` must not be before `plannedStart`.
 - Either date may be null (cleared). Setting only `plannedStart` without `plannedEnd` is valid (renders as single-day block in calendar).
-- Setting only `plannedEnd` without `plannedStart` is not valid — the API rejects this combination.
+- Setting only `plannedEnd` without `plannedStart` is not valid — the API rejects this combination, **and the database enforces the same invariant via the `projects_end_requires_start` CHECK constraint**. This is defense in depth for direct DB writes (seed scripts, migrations, manual SQL) that bypass the route layer.
 - The API rejects all invalid date combinations.
 
 ### 6.9 Soft Deletes
 
-- Users are deactivated (`active = false`), not deleted. This preserves referential integrity and supports audit trail in later iterations.
-- Projects do not support deletion in this iteration.
+- Users are deactivated (`active = false`), not deleted. This preserves referential integrity and supports audit trail.
+- Project deletion is not part of this specification.
 
 ---
 
@@ -235,27 +239,28 @@ The seed operation must be safe to run on an empty database. Re-seeding an exist
 
 **15-20 projects**, distributed to create a realistic snapshot with visible action-state accumulation:
 
-| State | Count | Notes |
-|---|---|---|
-| Anfrage | 2 | Recent, no dates planned. One received yesterday, one 10 days ago (stale). |
-| Angebot | 2 | One sent 3 days ago, one sent 18 days ago (exceeds aging threshold). |
-| Beauftragt | 2 | Confirmed, no dates yet. |
-| Geplant | 2 | Dates assigned, workers assigned. |
-| In Arbeit | 3 | Currently on-site. One slightly past `plannedEnd`. |
-| Abnahme | 1 | Waiting for customer walk-through. |
-| Rechnung fällig | 3 | **Critical accumulation** — demonstrates the core value. |
-| Abgerechnet | 2 | Invoice sent, waiting for payment. |
-| Erledigt | 2 | Recently completed and paid. |
+| State           | Count | Notes                                                                      |
+| --------------- | ----- | -------------------------------------------------------------------------- |
+| Anfrage         | 2     | Recent, no dates planned. One received yesterday, one 10 days ago (stale). |
+| Angebot         | 2     | One sent 3 days ago, one sent 18 days ago (exceeds aging threshold).       |
+| Beauftragt      | 2     | Confirmed, no dates yet.                                                   |
+| Geplant         | 2     | Dates assigned, workers assigned.                                          |
+| In Arbeit       | 3     | Currently on-site. One slightly past `plannedEnd`.                         |
+| Abnahme         | 1     | Waiting for customer walk-through.                                         |
+| Rechnung fällig | 3     | **Critical accumulation** — demonstrates the core value.                   |
+| Abgerechnet     | 2     | Invoice sent, waiting for payment.                                         |
+| Erledigt        | 2     | Recently completed and paid.                                               |
 
 ### 7.2 User Dataset
 
-| Username | Display Name | Roles | Notes |
-|---|---|---|---|
-| `inhaber` | Thomas Berger | owner | Default admin account |
-| `buero` | Maria Schmidt | office | Office manager |
-| `arbeiter1` | Jan Nowak | worker | Field worker |
-| `arbeiter2` | Lukas Fischer | worker | Field worker |
-| `buchhalter` | Petra Weiß | bookkeeper | External bookkeeper |
+| Username      | Display Name           | Roles      | Notes                                            |
+| ------------- | ---------------------- | ---------- | ------------------------------------------------ |
+| `inhaber`     | Thomas Berger          | owner      | Default admin account                            |
+| `buero`       | Maria Schmidt          | office     | Office manager                                   |
+| `arbeiter1`   | Jan Nowak              | worker     | Field worker                                     |
+| `arbeiter2`   | Lukas Fischer          | worker     | Field worker                                     |
+| `buchhalter`  | Petra Weiß             | bookkeeper | External bookkeeper                              |
+| `deaktiviert` | Ehemaliger Mitarbeiter | worker     | Inactive — exercises the soft-delete path (§6.9) |
 
 All seed users have a default password: `changeme` **[C]**. The seed loader must log a warning that default passwords are in use and must be changed.
 
@@ -276,7 +281,3 @@ The overall range covers roughly the past 4 weeks to the coming 4 weeks, providi
 ### 7.5 Realism
 
 Project titles, customer names, and addresses should be domain-representative for a German Handwerker company (see [index.md, section 4.1](index.md#41-company-profile)). Example: "Fassadenanstrich Müller", "Treppenhaussanierung Schmidt", "Malerarbeiten Bürokomplex Weber".
-
----
-
-*Living document — updated as each iteration ships. Git history preserves past versions.*

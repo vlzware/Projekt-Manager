@@ -311,8 +311,16 @@ describe('Mutation Error Handling', () => {
           status: 'geplant',
           statusChangedAt: '2026-03-15T10:00:00Z',
           customer: { name: 'Test Customer' },
+          address: null,
+          plannedStart: null,
+          plannedEnd: null,
+          assignedWorkers: null,
+          estimatedValue: null,
+          notes: null,
           createdAt: '2026-03-01T10:00:00Z',
           updatedAt: '2026-03-15T10:00:00Z',
+          createdBy: null,
+          updatedBy: null,
         },
       ],
     });
@@ -392,8 +400,16 @@ describe('Double-Submit Prevention', () => {
           status: 'geplant',
           statusChangedAt: '2026-03-15T10:00:00Z',
           customer: { name: 'Test Customer' },
+          address: null,
+          plannedStart: null,
+          plannedEnd: null,
+          assignedWorkers: null,
+          estimatedValue: null,
+          notes: null,
           createdAt: '2026-03-01T10:00:00Z',
           updatedAt: '2026-03-15T10:00:00Z',
+          createdBy: null,
+          updatedBy: null,
         },
       ],
     });
@@ -453,8 +469,16 @@ describe('Session Expiry Mid-Use', () => {
           status: 'geplant',
           statusChangedAt: '2026-03-15T10:00:00Z',
           customer: { name: 'Test Customer' },
+          address: null,
+          plannedStart: null,
+          plannedEnd: null,
+          assignedWorkers: null,
+          estimatedValue: null,
+          notes: null,
           createdAt: '2026-03-01T10:00:00Z',
           updatedAt: '2026-03-15T10:00:00Z',
+          createdBy: null,
+          updatedBy: null,
         },
       ],
     });
@@ -491,13 +515,17 @@ describe('Session Restoration on App Load', () => {
   // With HttpOnly cookies the browser sends the session cookie automatically —
   // checkSession simply calls /api/auth/me and lets the server validate.
   it('restores session when GET /api/auth/me returns a valid user', async () => {
-    // Mock: GET /api/auth/me returns a valid user profile
+    // Mock: GET /api/auth/me returns a valid user profile.
+    // The response is enveloped as `{ user: { ... } }` to match the
+    // /login shape — see consolidation review E F-7.
     mockFetchSuccess({
-      id: 'u1',
-      username: 'testuser',
-      displayName: 'Max Mustermann',
-      roles: ['owner'],
-      email: 'max@example.com',
+      user: {
+        id: 'u1',
+        username: 'testuser',
+        displayName: 'Max Mustermann',
+        roles: ['owner'],
+        email: 'max@example.com',
+      },
     });
 
     // Simulate a page refresh: no user in store, cookie handled by browser

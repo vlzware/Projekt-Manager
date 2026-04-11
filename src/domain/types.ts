@@ -13,23 +13,23 @@ export interface Project {
     email?: string;
   };
 
-  address?: {
+  address: {
     street: string;
     zip: string;
     city: string;
-  };
+  } | null;
 
-  plannedStart?: string;
-  plannedEnd?: string;
+  plannedStart: string | null;
+  plannedEnd: string | null;
 
-  assignedWorkers?: string[];
-  estimatedValue?: number;
-  notes?: string;
+  assignedWorkers: { userId: string; displayName: string }[] | null;
+  estimatedValue: number | null;
+  notes: string | null;
 
   createdAt: string;
   updatedAt: string;
-  createdBy?: string;
-  updatedBy?: string;
+  createdBy: string | null;
+  updatedBy: string | null;
 }
 
 export interface SummaryData {

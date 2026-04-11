@@ -138,7 +138,39 @@ describe('AC-B1: happy path on empty DB', () => {
 // AC-B2 — Idempotent on non-empty DB
 // -----------------------------------------------------------------------
 describe('AC-B2: idempotent on non-empty DB', () => {
-  it('is a no-op when users table has one or more rows, regardless of env vars', async () => {
+  it('is a silent no-op when users table has rows and env vars are unset (post-ritual state)', async () => {
+    // After the first-run ritual the operator has removed the
+    // BOOTSTRAP_ADMIN_* env vars. Subsequent restarts with a
+    // non-empty DB and no env vars must be a completely silent no-op
+    // — no insert, no warn.
+    await db.insert(users).values({
+      username: 'existing-user',
+      displayName: 'Existing',
+      passwordHash: PLACEHOLDER_HASH,
+      roles: ['owner'],
+    });
+
+    const logger = makeLogger();
+    const result = await bootstrapAdminIfEmpty(
+      db,
+      { username: undefined, password: undefined, displayName: undefined },
+      logger,
+    );
+
+    expect(result.inserted).toBe(false);
+    const rows = await db.select().from(users);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.username).toBe('existing-user');
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+
+  it('warns when users table has rows BUT BOOTSTRAP_ADMIN_* are still set (cleanup reminder)', async () => {
+    // The operator forgot to remove the env vars after the first-run
+    // ritual (ADR-0010). The short-circuit must still happen — no
+    // new user — but the logger must emit a single warn reminding
+    // the operator to clean up the deploy environment. Without this
+    // warning, leftover credentials persist silently across every
+    // deploy (consolidation review G F-6).
     await db.insert(users).values({
       username: 'existing-user',
       displayName: 'Existing',
@@ -157,7 +189,12 @@ describe('AC-B2: idempotent on non-empty DB', () => {
     const rows = await db.select().from(users);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.username).toBe('existing-user');
-    expect(logger.warn).not.toHaveBeenCalled();
+
+    // Exactly one warn, and it names the env vars so operator can grep.
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const [msg] = (logger.warn as unknown as { mock: { calls: [string][] } }).mock.calls[0]!;
+    expect(msg).toContain('BOOTSTRAP_ADMIN_');
+    expect(msg).toContain('ADR-0010');
   });
 
   it('skips even when env vars violate the password policy', async () => {
@@ -382,7 +419,11 @@ describe('AC-B6: username edge cases', () => {
     // Covers the "in practice" half of AC-B6: if a user already exists with
     // the same username as the bootstrap request, the count() check takes
     // over before the INSERT — the function must not throw a unique-violation
-    // error because it must not even reach the INSERT.
+    // error because it must not even reach the INSERT. The leftover-vars
+    // warning is expected here (G F-6) because BOOTSTRAP_ADMIN_* are set
+    // while the table is non-empty, so we assert the warn happens AND that
+    // the pre-existing user was not touched. The "silent" version of this
+    // assertion is in AC-B2 with undefined vars.
     await db.insert(users).values({
       username: 'admin-b6c',
       displayName: 'Pre-existing',
@@ -396,11 +437,17 @@ describe('AC-B6: username edge cases', () => {
       logger,
     );
     expect(result.inserted).toBe(false);
-    expect(logger.warn).not.toHaveBeenCalled();
     // And the pre-existing user's display_name is untouched.
     const rows = await db.select().from(users);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.displayName).toBe('Pre-existing');
+    // The leftover-vars warn is expected (G F-6) because env vars are
+    // still set on a non-empty DB. Exactly one warn, and it must NOT
+    // be the success warn (no username mention).
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    const leftoverMsg = logger.warn.mock.calls[0]![0];
+    expect(leftoverMsg).toContain('BOOTSTRAP_ADMIN_');
+    expect(leftoverMsg).not.toContain('admin-b6c');
   });
 });
 
@@ -513,7 +560,12 @@ describe('AC-B9: loud warning on success, silent on skip', () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it('does not emit the warning when bootstrap is skipped due to non-empty DB', async () => {
+  it('does not emit the success warning when bootstrap is skipped due to non-empty DB', async () => {
+    // The non-empty-DB short-circuit emits a DIFFERENT warn (leftover-vars
+    // reminder from G F-6) when BOOTSTRAP_ADMIN_* are still set. This test
+    // verifies the SUCCESS-path warn (username mention, rotation
+    // instructions) does not fire; the leftover-vars warn is asserted
+    // separately in AC-B2.
     await db.insert(users).values({
       username: 'pre-existing',
       displayName: 'Pre',
@@ -526,6 +578,13 @@ describe('AC-B9: loud warning on success, silent on skip', () => {
       { username: 'admin-b9b', password: 'SecurePass2026!', displayName: undefined },
       logger,
     );
-    expect(logger.warn).not.toHaveBeenCalled();
+    // At most one warn, and it must be the leftover-vars warn — it must
+    // NOT name the attempted bootstrap user (which would imply the
+    // success branch ran).
+    const warnCalls = logger.warn.mock.calls;
+    for (const call of warnCalls) {
+      const msg = call[0];
+      expect(msg).not.toContain('admin-b9b');
+    }
   });
 });

@@ -5,7 +5,8 @@
 import { eq } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { projects } from '../db/schema.js';
-import { toProject, ProjectNotFoundError } from './project-read.js';
+import { STRINGS } from '../../config/strings.js';
+import { toProject, fetchWorkersForProject, ProjectNotFoundError } from './project-read.js';
 
 /**
  * Update planned dates on a project.
@@ -16,9 +17,9 @@ export async function updateDates(
   db: Database,
   id: string,
   userId: string,
-  dates: { plannedStart?: string; plannedEnd?: string },
+  dates: { plannedStart?: string | null; plannedEnd?: string | null },
 ): Promise<ReturnType<typeof toProject>> {
-  return db.transaction(async (tx) => {
+  const updatedRow = await db.transaction(async (tx) => {
     const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
 
     if (rows.length === 0) {
@@ -46,11 +47,11 @@ export async function updateDates(
           : (project.plannedEnd ?? null);
 
     if (effectiveEnd && !effectiveStart) {
-      throw new DateValidationError('Enddatum kann nicht ohne Startdatum gesetzt werden.');
+      throw new DateValidationError(STRINGS.projects.endWithoutStart);
     }
 
     if (effectiveEnd && effectiveStart && effectiveEnd < effectiveStart) {
-      throw new DateValidationError('Das Enddatum darf nicht vor dem Startdatum liegen.');
+      throw new DateValidationError(STRINGS.projects.endBeforeStart);
     }
 
     const now = new Date();
@@ -77,8 +78,14 @@ export async function updateDates(
       .where(eq(projects.id, id))
       .returning();
 
-    return toProject(updated[0]!);
+    return updated[0]!;
   });
+
+  // Hydrate assignedWorkers into the response — date edits do not
+  // touch project_workers, so reading outside the transaction is safe.
+  // Consolidation review B F-1.
+  const workers = await fetchWorkersForProject(db, id);
+  return toProject(updatedRow, workers);
 }
 
 /** Thrown when date validation fails. */

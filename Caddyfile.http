@@ -1,0 +1,12 @@
+# HTTP-only reverse proxy for evaluation. No TLS.
+# See docs/ops/http-only-evaluation.md.
+
+:80 {
+    handle /.well-known/healthz {
+        respond "ok" 200
+    }
+
+    handle {
+        reverse_proxy app:3000
+    }
+}

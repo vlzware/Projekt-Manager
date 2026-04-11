@@ -6,9 +6,16 @@ import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { mockProjects } from '@/test/fixtures/mockProjects';
 import { mockConfirmAccept } from '@/test/confirmHelpers';
+import { installFailingFetch, mockFetchJson, type FetchSpy } from '@/test/fetchMock';
 import { App } from '@/App';
 
+// Each test that triggers a mutation must configure fetchSpy explicitly.
+// The src/test/setup.ts default now fails loudly on unconfigured calls — see
+// src/ui/__tests__/auth.test.tsx for the gold-standard pattern.
+let fetchSpy: FetchSpy;
+
 beforeEach(() => {
+  fetchSpy = installFailingFetch();
   useAuthStore.setState({
     ...useAuthStore.getInitialState(),
     authUser: {
@@ -61,6 +68,10 @@ describe('Summary Area', () => {
     const user = userEvent.setup();
     mockConfirmAccept();
 
+    // Mock the successful transition — p13 (rechnung_faellig) → abgerechnet.
+    const p13 = mockProjects.find((p) => p.id === 'p13')!;
+    mockFetchJson(fetchSpy, { ...p13, status: 'abgerechnet' });
+
     render(<App />);
 
     // Initially: 3 Rechnung fällig
@@ -75,6 +86,12 @@ describe('Summary Area', () => {
     await waitFor(() => {
       expect(rechnungIndicator).toHaveTextContent('2');
     });
+
+    // Hedge: verify the store called the forward endpoint for p13.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/projects/p13/transition/forward',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   // CT-14: Clicking a summary indicator filters the Kanban to matching projects
@@ -103,9 +120,9 @@ describe('Summary Area', () => {
     const bufferIndicator = screen.getByTestId('summary-buffer-angebot');
     await user.click(bufferIndicator);
 
-    // Filter is by state, not by aging status — both p03 (not aged) and p04 (aged) are in angebot
+    // Filter is by state AND aging — only the aged project (p04) should show
     const angebotCount = screen.getByTestId('column-count-angebot');
-    expect(angebotCount).toHaveTextContent('2');
+    expect(angebotCount).toHaveTextContent('1');
 
     // Non-angebot columns should be empty
     const anfragenCount = screen.getByTestId('column-count-anfrage');
@@ -120,6 +137,12 @@ describe('Summary Area', () => {
     const user = userEvent.setup();
     mockConfirmAccept();
 
+    // Mock two successful forward transitions — p01 and p02 both leave anfrage.
+    const p01 = mockProjects.find((p) => p.id === 'p01')!;
+    const p02 = mockProjects.find((p) => p.id === 'p02')!;
+    mockFetchJson(fetchSpy, { ...p01, status: 'angebot' });
+    mockFetchJson(fetchSpy, { ...p02, status: 'angebot' });
+
     render(<App />);
 
     // Initially anfrage has 2 projects (p01, p02)
@@ -133,6 +156,16 @@ describe('Summary Area', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('summary-action-anfrage')).not.toBeInTheDocument();
     });
+
+    // Verify both endpoints were hit.
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/projects/p01/transition/forward',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/projects/p02/transition/forward',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   // CT-15: "Filter aufheben" button clears the filter

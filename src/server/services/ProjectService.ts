@@ -19,9 +19,63 @@ import {
 } from '../repositories/project.js';
 import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
+import { STRINGS } from '../../config/strings.js';
 import { notFound, validationError } from '../errors.js';
 import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
+
+/**
+ * Translate a database-layer error (typically a `pg` error) into a
+ * user-facing German message that does NOT leak constraint names, table
+ * names, column names, SQLSTATE codes, or English SQL fragments. The
+ * raw error is expected to be logged by the caller. See consolidation
+ * review C-5.
+ *
+ * Drizzle wraps `pg` errors in its own error class and exposes the
+ * original via `err.cause` (db-constraints.test.ts explicitly documents
+ * this), while a direct `pg.Pool.query` throws with `.code` at the top
+ * level. This walker accepts both shapes — a depth cap keeps the walk
+ * bounded in the face of pathological cause chains.
+ */
+function extractSqlState(err: unknown): string | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (!(current instanceof Error)) break;
+    const withCode = current as Error & { code?: string };
+    // PostgreSQL SQLSTATE is a 5-character string — node's system
+    // errors (ECONNREFUSED, EACCES, ...) have alphanumeric codes and
+    // would not match this shape.
+    if (typeof withCode.code === 'string' && /^[0-9A-Z]{5}$/.test(withCode.code)) {
+      return withCode.code;
+    }
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+function translatePgError(err: unknown): string {
+  const code = extractSqlState(err);
+  switch (code) {
+    // 23505 unique_violation — the only unique index on `projects` is on
+    // `number`, so this maps to the duplicate-number case. If we add more
+    // unique indexes later, this branch will need constraint-name
+    // discrimination before it can safely name the field.
+    case '23505':
+      return STRINGS.projects.duplicateNumber;
+    // 23503 foreign_key_violation — likely an assignedWorkerIds entry
+    // referencing a user UUID that does not exist, or created_by/updated_by
+    // pointing at a missing user.
+    case '23503':
+      return STRINGS.projects.foreignKeyViolation;
+    // 23514 check_violation — projects_end_requires_start is the only
+    // CHECK constraint on the table; validation normally catches this
+    // before insert, but the DB-level rejection is defense in depth.
+    case '23514':
+      return STRINGS.projects.dateConstraintViolation;
+    default:
+      return STRINGS.projects.unknownImportError;
+  }
+}
 
 export interface BulkImportItem {
   number?: unknown;
@@ -31,7 +85,7 @@ export interface BulkImportItem {
   address?: unknown;
   plannedStart?: unknown;
   plannedEnd?: unknown;
-  assignedWorkers?: unknown;
+  assignedWorkerIds?: unknown;
   estimatedValue?: unknown;
   notes?: unknown;
 }
@@ -57,7 +111,7 @@ export class ProjectService {
 
   async getProject(id: string) {
     const project = await getProjectRepo(this.db, id);
-    if (!project) throw notFound('Projekt');
+    if (!project) throw notFound(STRINGS.entities.project);
     return project;
   }
 
@@ -66,7 +120,7 @@ export class ProjectService {
     try {
       result = await transitionForwardRepo(this.db, projectId, userId);
     } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
       throw err;
     }
@@ -92,7 +146,7 @@ export class ProjectService {
     try {
       result = await transitionBackwardRepo(this.db, projectId, userId);
     } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
       throw err;
     }
@@ -116,14 +170,14 @@ export class ProjectService {
   async updateDates(
     projectId: string,
     userId: string,
-    dates: { plannedStart?: string; plannedEnd?: string },
+    dates: { plannedStart?: string | null; plannedEnd?: string | null },
     log: ServiceLogger,
   ) {
     let updated;
     try {
       updated = await updateDatesRepo(this.db, projectId, userId, dates);
     } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound('Projekt');
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof DateValidationError) throw validationError(err.message);
       throw err;
     }
@@ -146,8 +200,18 @@ export class ProjectService {
   /**
    * Bulk-import projects. Each item is validated independently.
    * Successfully validated items are inserted; failures are collected as errors.
+   *
+   * Database-layer errors are translated via translatePgError() so the
+   * client-facing `errors[].message` never contains constraint names,
+   * table names, SQLSTATE codes, or English SQL fragments. The raw error
+   * is logged server-side with the row index for debugging.
+   * See consolidation review C-5.
    */
-  async bulkImport(items: BulkImportItem[], userId: string): Promise<BulkImportResult> {
+  async bulkImport(
+    items: BulkImportItem[],
+    userId: string,
+    log: ServiceLogger,
+  ): Promise<BulkImportResult> {
     const errors: BulkImportError[] = [];
     let imported = 0;
 
@@ -171,7 +235,7 @@ export class ProjectService {
           address: item.address as { street: string; zip: string; city: string } | null | undefined,
           plannedStart: item.plannedStart ? new Date(item.plannedStart as string) : null,
           plannedEnd: item.plannedEnd ? new Date(item.plannedEnd as string) : null,
-          assignedWorkers: item.assignedWorkers as string[] | null | undefined,
+          assignedWorkerIds: item.assignedWorkerIds as string[] | null | undefined,
           estimatedValue: item.estimatedValue != null ? String(item.estimatedValue) : null,
           notes: item.notes as string | null | undefined,
           createdBy: userId,
@@ -179,8 +243,8 @@ export class ProjectService {
         });
         imported++;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Unbekannter Fehler beim Import.';
-        errors.push({ index: i, message: msg });
+        log.error({ err, index: i }, 'Bulk import row failed');
+        errors.push({ index: i, message: translatePgError(err) });
       }
     }
 
@@ -192,10 +256,10 @@ export class ProjectService {
    */
   private validateImportItem(item: BulkImportItem): string | null {
     if (typeof item.number !== 'string' || item.number.trim() === '') {
-      return 'number ist erforderlich und muss ein nicht-leerer String sein.';
+      return STRINGS.validation.requiredString('number');
     }
     if (typeof item.title !== 'string' || item.title.trim() === '') {
-      return 'title ist erforderlich und muss ein nicht-leerer String sein.';
+      return STRINGS.validation.requiredString('title');
     }
 
     // Customer validation
@@ -204,87 +268,115 @@ export class ProjectService {
       typeof item.customer !== 'object' ||
       Array.isArray(item.customer)
     ) {
-      return 'customer ist erforderlich und muss ein Objekt sein.';
+      return STRINGS.validation.requiredObject('customer');
     }
     const customer = item.customer as Record<string, unknown>;
     if (typeof customer.name !== 'string' || customer.name.trim() === '') {
-      return 'customer.name ist erforderlich und muss ein nicht-leerer String sein.';
+      return STRINGS.validation.requiredString('customer.name');
     }
     if (
       customer.phone !== undefined &&
       customer.phone !== null &&
       typeof customer.phone !== 'string'
     ) {
-      return 'customer.phone muss ein String sein.';
+      return STRINGS.validation.mustBeString('customer.phone');
     }
     if (
       customer.email !== undefined &&
       customer.email !== null &&
       typeof customer.email !== 'string'
     ) {
-      return 'customer.email muss ein String sein.';
+      return STRINGS.validation.mustBeString('customer.email');
     }
 
     // Address validation (optional, but must be well-formed if present)
     if (item.address !== undefined && item.address !== null) {
       if (typeof item.address !== 'object' || Array.isArray(item.address)) {
-        return 'address muss ein Objekt sein.';
+        return STRINGS.validation.mustBeObject('address');
       }
       const addr = item.address as Record<string, unknown>;
       if (typeof addr.street !== 'string' || addr.street.trim() === '') {
-        return 'address.street ist erforderlich und muss ein nicht-leerer String sein.';
+        return STRINGS.validation.requiredString('address.street');
       }
       if (typeof addr.zip !== 'string' || addr.zip.trim() === '') {
-        return 'address.zip ist erforderlich und muss ein nicht-leerer String sein.';
+        return STRINGS.validation.requiredString('address.zip');
       }
       if (typeof addr.city !== 'string' || addr.city.trim() === '') {
-        return 'address.city ist erforderlich und muss ein nicht-leerer String sein.';
+        return STRINGS.validation.requiredString('address.city');
       }
     }
 
     // Status validation
     if (item.status !== undefined && item.status !== null) {
       if (typeof item.status !== 'string' || !VALID_STATES.has(item.status)) {
-        return `status '${String(item.status)}' ist kein gültiger Workflow-Status.`;
+        return STRINGS.projects.invalidStatus(String(item.status));
       }
     }
 
     // Date validation
     if (item.plannedStart !== undefined && item.plannedStart !== null) {
       if (typeof item.plannedStart !== 'string' || isNaN(Date.parse(item.plannedStart))) {
-        return 'plannedStart muss ein gültiges ISO-Datum sein.';
+        return STRINGS.projects.invalidPlannedStart;
       }
     }
     if (item.plannedEnd !== undefined && item.plannedEnd !== null) {
       if (typeof item.plannedEnd !== 'string' || isNaN(Date.parse(item.plannedEnd))) {
-        return 'plannedEnd muss ein gültiges ISO-Datum sein.';
+        return STRINGS.projects.invalidPlannedEnd;
+      }
+    }
+    // #54: same invariant as `updateDates` (project-dates.ts) —
+    // plannedEnd cannot exist without plannedStart. The DB now enforces
+    // this too via the projects_end_requires_start CHECK constraint, but
+    // surface a structured German message at validation time so the
+    // bulk-import error report is actionable instead of a raw PG error.
+    if (
+      item.plannedEnd !== undefined &&
+      item.plannedEnd !== null &&
+      (item.plannedStart === undefined || item.plannedStart === null)
+    ) {
+      return STRINGS.projects.endWithoutStart;
+    }
+    // Ordering invariant — matches the updateDates route path
+    // (project-dates.ts: DateValidationError). The DB CHECK constraint
+    // does NOT enforce ordering, only "end requires start", so the
+    // bulk-import path has to catch it in application code or else
+    // rows with end < start slip through silently.
+    if (typeof item.plannedStart === 'string' && typeof item.plannedEnd === 'string') {
+      const start = new Date(item.plannedStart);
+      const end = new Date(item.plannedEnd);
+      if (end.getTime() < start.getTime()) {
+        return STRINGS.projects.endBeforeStart;
       }
     }
 
-    // Assigned workers validation
-    if (item.assignedWorkers !== undefined && item.assignedWorkers !== null) {
+    // Assigned worker IDs validation
+    if (item.assignedWorkerIds !== undefined && item.assignedWorkerIds !== null) {
       if (
-        !Array.isArray(item.assignedWorkers) ||
-        !item.assignedWorkers.every((w) => typeof w === 'string')
+        !Array.isArray(item.assignedWorkerIds) ||
+        !item.assignedWorkerIds.every(
+          (id: unknown) =>
+            typeof id === 'string' &&
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
+        )
       ) {
-        return 'assignedWorkers muss ein Array von Strings sein.';
+        return STRINGS.validation.mustBeUuidArray('assignedWorkerIds');
       }
     }
 
     // Estimated value validation (optional, but must be numeric if present)
     if (item.estimatedValue !== undefined && item.estimatedValue !== null) {
       if (typeof item.estimatedValue !== 'string' && typeof item.estimatedValue !== 'number') {
-        return 'estimatedValue muss eine Zahl oder ein numerischer String sein.';
+        return STRINGS.validation.mustBeNumeric('estimatedValue');
       }
       if (isNaN(Number(item.estimatedValue))) {
-        return 'estimatedValue muss ein gültiger numerischer Wert sein.';
+        return STRINGS.projects.invalidEstimatedValue;
       }
     }
 
     // Notes validation (optional, but must be a string if present)
     if (item.notes !== undefined && item.notes !== null) {
       if (typeof item.notes !== 'string') {
-        return 'notes muss ein String sein.';
+        return STRINGS.validation.mustBeString('notes');
       }
     }
 

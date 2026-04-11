@@ -7,7 +7,8 @@ import type { Database } from '../db/connection.js';
 import { projects } from '../db/schema.js';
 import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
-import { toProject, ProjectNotFoundError } from './project-read.js';
+import { STRINGS } from '../../config/strings.js';
+import { toProject, fetchWorkersForProject, ProjectNotFoundError } from './project-read.js';
 
 /**
  * Result of a transition: both the previous status and the updated project,
@@ -31,7 +32,7 @@ export async function transitionForward(
   id: string,
   userId: string,
 ): Promise<TransitionResult> {
-  return db.transaction(async (tx) => {
+  const txResult = await db.transaction(async (tx) => {
     const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
 
     if (rows.length === 0) {
@@ -43,9 +44,7 @@ export async function transitionForward(
     const currentIndex = WORKFLOW_ORDER.indexOf(before);
 
     if (currentIndex === -1 || currentIndex === WORKFLOW_ORDER.length - 1) {
-      throw new TransitionError(
-        'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',
-      );
+      throw new TransitionError(STRINGS.projects.cannotAdvanceTerminal);
     }
 
     const nextStatus = WORKFLOW_ORDER[currentIndex + 1]!;
@@ -62,8 +61,14 @@ export async function transitionForward(
       .where(eq(projects.id, id))
       .returning();
 
-    return { before, project: toProject(updated[0]!) };
+    return { before, row: updated[0]! };
   });
+
+  // Hydrate assignedWorkers into the API response. Transitions do not
+  // touch project_workers, so reading outside the transaction is safe
+  // and lets us keep a narrower tx scope. See consolidation review B F-1.
+  const workers = await fetchWorkersForProject(db, id);
+  return { before: txResult.before, project: toProject(txResult.row, workers) };
 }
 
 /**
@@ -75,7 +80,7 @@ export async function transitionBackward(
   id: string,
   userId: string,
 ): Promise<TransitionResult> {
-  return db.transaction(async (tx) => {
+  const txResult = await db.transaction(async (tx) => {
     const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
 
     if (rows.length === 0) {
@@ -87,16 +92,12 @@ export async function transitionBackward(
     const currentIndex = WORKFLOW_ORDER.indexOf(before);
 
     if (currentIndex === -1 || currentIndex === 0) {
-      throw new TransitionError(
-        'Projekt kann nicht zurückgestuft werden. Der aktuelle Status ist bereits der erste Status.',
-      );
+      throw new TransitionError(STRINGS.projects.cannotRevertFirst);
     }
 
     // Terminal state also rejects backward
     if (currentIndex === WORKFLOW_ORDER.length - 1) {
-      throw new TransitionError(
-        'Projekt kann nicht zurückgestuft werden. Der aktuelle Status ist ein Endstatus.',
-      );
+      throw new TransitionError(STRINGS.projects.cannotRevertTerminal);
     }
 
     const prevStatus = WORKFLOW_ORDER[currentIndex - 1]!;
@@ -113,8 +114,13 @@ export async function transitionBackward(
       .where(eq(projects.id, id))
       .returning();
 
-    return { before, project: toProject(updated[0]!) };
+    return { before, row: updated[0]! };
   });
+
+  // Hydrate assignedWorkers into the API response — see note in
+  // transitionForward above. Consolidation review B F-1.
+  const workers = await fetchWorkersForProject(db, id);
+  return { before: txResult.before, project: toProject(txResult.row, workers) };
 }
 
 /** Thrown when a state transition is invalid. */

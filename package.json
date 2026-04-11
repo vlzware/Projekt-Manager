@@ -9,17 +9,22 @@
   "scripts": {
     "dev": "concurrently -k -n server,client -c blue,green \"npm:dev:server\" \"npm:dev:client\"",
     "dev:client": "vite",
-    "dev:server": "tsx watch --env-file=.env src/server/start.ts",
+    "dev:server": "tsx watch --env-file-if-exists=.env src/server/start.ts",
     "build": "tsc --noEmit && vite build && npm run build:server",
     "build:server": "esbuild src/server/start.ts --bundle --platform=node --outdir=dist/server --format=esm --packages=external",
     "preview": "vite preview",
     "lint": "eslint src/",
-    "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"**/*.md\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"**/*.md\"",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "prepare": "husky || true"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,tsx,css}": "prettier --write",
+    "**/*.md": "prettier --write"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1024.0",
@@ -57,7 +62,9 @@
     "eslint": "^9.39.4",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
+    "husky": "^9.1.7",
     "jsdom": "^29.0.1",
+    "lint-staged": "^16.4.0",
     "prettier": "^3.8.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",

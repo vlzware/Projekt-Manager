@@ -15,11 +15,12 @@ import type { ViewMode } from '@/domain/types';
 
 interface UIState {
   activeFilter: WorkflowState | null;
+  filterAgedOnly: boolean;
   filterNoDates: boolean;
   activeView: ViewMode;
   selectedProjectId: string | null;
 
-  setFilter: (state: WorkflowState | null) => void;
+  setFilter: (state: WorkflowState | null, agedOnly?: boolean) => void;
   setFilterNoDates: (value: boolean) => void;
   clearFilters: () => void;
   setView: (view: ViewMode) => void;
@@ -28,24 +29,25 @@ interface UIState {
 
 export const useUIStore = create<UIState>((set) => ({
   activeFilter: null,
+  filterAgedOnly: false,
   filterNoDates: false,
   activeView: 'kanban',
   selectedProjectId: null,
 
-  setFilter: (filterState: WorkflowState | null) => {
-    set({ activeFilter: filterState, filterNoDates: false });
+  setFilter: (filterState: WorkflowState | null, agedOnly = false) => {
+    set({ activeFilter: filterState, filterAgedOnly: agedOnly, filterNoDates: false });
   },
 
   setFilterNoDates: (value: boolean) => {
-    set({ filterNoDates: value, activeFilter: null });
+    set({ filterNoDates: value, activeFilter: null, filterAgedOnly: false });
   },
 
   clearFilters: () => {
-    set({ activeFilter: null, filterNoDates: false });
+    set({ activeFilter: null, filterAgedOnly: false, filterNoDates: false });
   },
 
   setView: (view: ViewMode) => {
-    set({ activeView: view, activeFilter: null, filterNoDates: false });
+    set({ activeView: view, activeFilter: null, filterAgedOnly: false, filterNoDates: false });
   },
 
   selectProject: (projectId: string | null) => {

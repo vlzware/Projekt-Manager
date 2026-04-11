@@ -9,21 +9,21 @@ Conventions for this project. Applies to all contributors (human and AI).
 
 ## Tech Stack
 
-| Concern              | Choice                          | Reference                                                                                |
-| -------------------- | ------------------------------- | ---------------------------------------------------------------------------------------- |
-| Language             | TypeScript (strict)             | [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)                    |
-| Framework (frontend) | React 19                        |                                                                                          |
-| Build                | Vite                            |                                                                                          |
-| State                | Zustand                         |                                                                                          |
-| Styling              | CSS Modules (`.module.css`)     |                                                                                          |
-| Date math            | date-fns                        |                                                                                          |
-| Server framework     | Fastify                         | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
-| ORM                  | Drizzle ORM                     | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
-| Database             | PostgreSQL                      | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
-| Object storage       | S3-compatible (MinIO)           | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
-| Deployment           | Docker Compose, GitHub Actions  | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
-| Unit/Component tests | Vitest + @testing-library/react |                                                                                          |
-| E2E tests            | Playwright                      |                                                                                          |
+| Concern              | Choice                                   | Reference                                                                                |
+| -------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Language             | TypeScript (strict)                      | [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)                    |
+| Framework (frontend) | React 19                                 |                                                                                          |
+| Build                | Vite                                     |                                                                                          |
+| State                | Zustand                                  |                                                                                          |
+| Styling              | CSS Modules (`.module.css`)              |                                                                                          |
+| Date math            | date-fns                                 |                                                                                          |
+| Server framework     | Fastify                                  | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| ORM                  | Drizzle ORM                              | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| Database             | PostgreSQL                               | [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md)                 |
+| Object storage       | S3-compatible (MinIO)                    | [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) |
+| Deployment           | Docker Compose, manual pull-based deploy | [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md)                     |
+| Unit/Component tests | Vitest + @testing-library/react          |                                                                                          |
+| E2E tests            | Playwright                               |                                                                                          |
 
 ## Workflow
 
@@ -48,7 +48,7 @@ Each test references the criterion it covers (e.g., `// AC-3: Projects in "Anfra
 2. Maps each to its test(s)
 3. Flags unmapped criteria as gaps
 
-Gaps block implementation (step 4). The reviewer must be different from the test author.
+Gaps block implementation (step 4). The reviewer must be different from the test author. The maintained map lives in [docs/testing/traceability.md](docs/testing/traceability.md).
 
 ### Security audit
 
@@ -73,6 +73,11 @@ The audit uses adversarial framing — reviewers with a security-specific lens, 
 - **CSS Modules.** One `.module.css` per component. No inline styles for layout, no global CSS except a minimal reset.
 - **No `any`.** TypeScript strict mode. Use proper types or `unknown`.
 - **Imports.** Absolute from `src/` root where the bundler supports it, relative within the same module.
+- **Formatting is enforced by two git hooks, not just one.**
+  - **pre-commit** (`.husky/pre-commit`): `husky` + `lint-staged` run `prettier --write` on staged files — both `src/**/*.{ts,tsx,css}` source files and `**/*.md` documentation. The hook installs on `npm install` via the `prepare` script — no extra setup. Files are auto-formatted and re-staged before the commit is recorded.
+  - **pre-push** (`.husky/pre-push`): runs `npm run format:check` across the whole repo as a belt-and-braces gate. This catches the cases where a commit lands changes that lint-staged did not rewrite (e.g., a file added via `git add -p` that bypassed the staged-file watcher, or a hand-edited commit via `git commit --amend --no-verify`). If pre-push fails, run `npm run format` and amend/recommit before retrying the push.
+  - **CI** (`ci.yml`, step `Format check`) runs the same `npm run format:check` — three layers of defense, all running the identical command.
+  - To bypass in an emergency: `git commit --no-verify` skips pre-commit, `git push --no-verify` skips pre-push. CI's `format:check` will still catch the drift at PR time. Avoid using either flag outside a genuine emergency — the hooks are there because format drift blocks merges under the pre-push gate.
 
 ## Branching Strategy
 

@@ -4,6 +4,7 @@ import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { viewFromPath } from '@/hooks/useRouterNav';
+import { isInsecureConnection } from '@/config/insecureConnection';
 import { Header } from '@/ui/layout/Header';
 import { Footer } from '@/ui/layout/Footer';
 import { KanbanBoard } from '@/ui/kanban/KanbanBoard';
@@ -11,6 +12,7 @@ import { CalendarView } from '@/ui/calendar/CalendarView';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
+import { STRINGS } from '@/config/strings';
 import styles from './App.module.css';
 
 /**
@@ -47,10 +49,28 @@ export function App() {
   const clearMutationError = useProjectStore((s) => s.clearMutationError);
   const projects = useProjectStore((s) => s.projects);
 
+  const insecure = isInsecureConnection();
+
   const selectedProject = selectedProjectId
     ? (projects.find((p) => p.id === selectedProjectId) ?? null)
     : null;
   const sessionCheckFired = useRef(false);
+
+  useEffect(() => {
+    if (!insecure) return;
+    // Snapshot the current title and restore it on cleanup. Without the
+    // restore, React 19 StrictMode's double-mount in dev produces
+    // "UNSICHER – UNSICHER – Projekt-Manager" because the effect runs
+    // twice without reverting between runs (consolidation review
+    // round-2 C M-2). The cleanup also handles the case where `insecure`
+    // flips false at runtime (would never happen in practice, but
+    // writing it correctly costs nothing).
+    const previous = document.title;
+    document.title = 'UNSICHER \u2013 ' + previous;
+    return () => {
+      document.title = previous;
+    };
+  }, [insecure]);
 
   useEffect(() => {
     if (!authUser && !sessionCheckFired.current) {
@@ -85,6 +105,12 @@ export function App() {
     return (
       <div className={styles.app}>
         {hasRouter && <UrlStoreSync />}
+        {insecure && (
+          <div className={styles.insecureBanner} role="alert" data-testid="insecure-banner">
+            UNSICHERER MODUS &mdash; Keine Verschl&uuml;sselung, Zugangsdaten werden im Klartext
+            &uuml;bertragen
+          </div>
+        )}
         <Header />
         <main className={styles.main}>
           {mutationError && (
@@ -93,7 +119,7 @@ export function App() {
               <button
                 className={styles.mutationErrorDismiss}
                 onClick={clearMutationError}
-                aria-label="Fehlermeldung schließen"
+                aria-label={STRINGS.ui.closeError}
               >
                 &#x2715;
               </button>
@@ -111,8 +137,18 @@ export function App() {
   }
 
   if (!sessionChecked) {
-    return <div className={styles.loading}>Laden...</div>;
+    return <div className={styles.loading}>{STRINGS.ui.loading}</div>;
   }
 
-  return <LoginForm />;
+  return (
+    <>
+      {insecure && (
+        <div className={styles.insecureBanner} role="alert" data-testid="insecure-banner">
+          UNSICHERER MODUS &mdash; Keine Verschl&uuml;sselung, Zugangsdaten werden im Klartext
+          &uuml;bertragen
+        </div>
+      )}
+      <LoginForm />
+    </>
+  );
 }

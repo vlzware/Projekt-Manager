@@ -1,0 +1,109 @@
+name: E2E (manual)
+
+# Playwright end-to-end tests, triggered manually from the Actions tab
+# ("Run workflow" button). Rationale:
+#
+#   Iteration 5 consolidation review (H-1) found that CI does not run
+#   Playwright, despite the spec's AC-37 claiming "tests in §16 pass".
+#   Adding Playwright to the push/PR ci.yml gate would slow every PR by
+#   several minutes and add a retry-flakiness surface that the project
+#   cannot afford to debug while shipping features. At the same time
+#   leaving E2E as local-only means only the developer sees whether the
+#   suite still passes — a regression goes unnoticed until the next
+#   local run.
+#
+#   The compromise is this workflow: Playwright stays out of the push/PR
+#   gate but is one click away in the Actions tab when an operator wants
+#   to validate a commit against the full suite before a manual deploy.
+#   See architecture.md §11.7 and verification.md AC-37 for the
+#   spec-side description of this topology.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch or SHA to test (default: current branch)'
+        required: false
+        type: string
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+
+    # Same postgres service container as ci.yml's `check` job — the
+    # same env values. Kept in sync by hand for now; a shared reusable
+    # workflow would be the next cleanup but is out of scope here.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: projekt_manager_test
+          POSTGRES_USER: pm
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pm -d projekt_manager_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+
+    env:
+      # Playwright starts `npm run dev` via playwright.config.ts's
+      # `webServer` block, which reads these at startup.
+      DATABASE_URL: postgresql://pm:postgres@localhost:5432/projekt_manager_test
+      STORAGE_ENDPOINT: http://localhost:9000
+      STORAGE_BUCKET: projekt-manager
+      STORAGE_ACCESS_KEY: minioadmin
+      STORAGE_SECRET_KEY: changeme
+      # NODE_ENV=test matches what vitest uses; the env schema accepts it
+      # and the safety checks in assertProductionSafe() do NOT fire.
+      NODE_ENV: test
+      # Force a clean seed on every run so each invocation starts from
+      # the same snapshot regardless of lingering state from a previous run.
+      SEED: force
+      # Playwright's `CI` env var governs retries, worker count, and
+      # `forbidOnly` (see playwright.config.ts).
+      CI: 'true'
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - run: npm ci
+
+      # MinIO runs as a docker container started from the runner (not a
+      # service container) because GitHub service containers cannot
+      # override `command`, and minio/minio needs `server /data` as its
+      # argv. Versions are pinned to match docker-compose.yml (ADR-0009).
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=changeme \
+            minio/minio:RELEASE.2025-09-07T16-13-09Z \
+            server /data
+          for i in {1..30}; do
+            if curl -sf http://localhost:9000/minio/health/live > /dev/null; then
+              echo "MinIO ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          docker run --rm --network host \
+            --entrypoint /bin/sh \
+            minio/mc:RELEASE.2025-08-13T08-35-41Z \
+            -c "mc alias set local http://localhost:9000 minioadmin changeme && mc mb --ignore-existing local/projekt-manager"
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright
+        run: npx playwright test

@@ -6,15 +6,15 @@
 
 ## Context
 
-The project runs Docker in three places: developer workstations, (future) CI Docker-build jobs, and the production VPS. Each host installs Docker from the official `download.docker.com/linux/ubuntu` apt repository, which always resolves to the current stable release.
+The project runs Docker in three places: developer workstations, CI (image builds and Compose validation), and the production VPS. Developer and VPS hosts install Docker from the official `download.docker.com/linux/ubuntu` apt repository, which always resolves to the current stable release.
 
 During fresh VM setup on 2026-04-07, a version drift was discovered: the VPS (provisioned 2026-04-06) was running Docker 29.3.1, while a same-day fresh developer install pulled Docker 29.4.0. Both hosts had Compose plugin v5.1.1 by coincidence, but nothing enforced that. Under the default `unattended-upgrades` and `apt upgrade` behavior, either host can silently bump on its own schedule, and the drift compounds over time.
 
 Key forces:
 
 - **Local/prod parity is a load-bearing assumption.** ADR-0003 commits us to `docker compose up` producing identical stacks locally and in production. Silent version drift erodes that guarantee — a Compose-file feature or BuildKit syntax that works locally can fail on deploy.
-- **Deploy pipeline builds on the VPS.** `deploy.yml` runs `docker compose build app` on the VPS (not on the CI runner), so the VPS Docker version is directly exposed to every deploy — and is the host most at risk of silent bumps from `unattended-upgrades`.
-- **CI currently does not exercise Docker at all.** `ci.yml` uses GitHub Actions' native `services:` block for Postgres and never parses the Compose file or Dockerfile. Compose-file regressions surface only at deploy time. This gap is tracked in #51.
+- **VPS runs Docker in production.** Images are now built in CI and pulled on the VPS (see [ADR-0011](0011-build-images-in-ci-distribute-via-ghcr.md)), but the VPS Docker version still governs runtime behavior and is at risk of silent bumps from `unattended-upgrades`.
+- **CI exercises Docker for validation and image builds.** `ci.yml` includes a `docker` job that validates Compose files and builds the app image, plus a `build-and-push` job that publishes to GHCR.
 - **Solo operator.** There is no platform team to absorb surprise breakage from background upgrades. Determinism is worth more than automatic security patches at this scale.
 
 ## Decision
@@ -23,13 +23,13 @@ We will pin Docker Engine, Docker CLI, containerd, BuildKit plugin, and Compose 
 
 **Pinned versions (as of 2026-04-07):**
 
-| Package | Version |
-|---|---|
-| `docker-ce` | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `docker-ce-cli` | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `containerd.io` | `2.2.2-1~ubuntu.24.04~noble` |
-| `docker-buildx-plugin` | `0.33.0-1~ubuntu.24.04~noble` |
-| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble` |
+| Package                 | Version                         |
+| ----------------------- | ------------------------------- |
+| `docker-ce`             | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `docker-ce-cli`         | `5:29.3.1-1~ubuntu.24.04~noble` |
+| `containerd.io`         | `2.2.2-1~ubuntu.24.04~noble`    |
+| `docker-buildx-plugin`  | `0.33.0-1~ubuntu.24.04~noble`   |
+| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble`    |
 
 **Source of truth:** the production VPS is authoritative. Local environments match the VPS, not the other way around — so that developer environments reproduce production behaviour rather than leading it.
 
@@ -54,7 +54,7 @@ Install with `apt-get install docker-ce` (no version) and let `apt upgrade` pull
 
 ### Ubuntu's `docker.io` package
 
-`sudo apt-get install docker.io` from the Ubuntu archive. Main advantage: comes from the distribution, eligible for Ubuntu security updates. Ruled out for the same reasons given in ADR-0003 Phase 4: lags upstream on security patches, does not include the Compose V2 plugin we depend on.
+`sudo apt-get install docker.io` from the Ubuntu archive. Main advantage: comes from the distribution, eligible for Ubuntu security updates. Ruled out for the same reasons given in `docs/ops/server-setup.md` Phase 4: lags upstream on security patches, does not include the Compose V2 plugin we depend on.
 
 ### Pin only Docker Engine, leave plugins floating
 
@@ -78,14 +78,13 @@ Pin `docker-ce` and `docker-ce-cli` but let `containerd.io`, `docker-buildx-plug
 
 ### Mitigations
 
-- Tracking mechanism for Docker security advisories is an open decision (#52). Until chosen, manually check Docker release notes before any deliberate version bump, and treat that as the interim backstop.
+- Tracking mechanism for Docker security advisories is an open decision. Until chosen, manually check Docker release notes before any deliberate version bump, and treat that as the interim backstop.
 - `apt-mark showhold` is part of the post-install verification on every host (see `docs/ops/server-setup.md` Phase 4)
 - The upgrade procedure above is also documented in `docs/ops/server-setup.md` for operational reference
 
 ## References
 
 - [ADR-0003: Deployment infrastructure — VPS, Docker Compose, GitHub Actions](0003-deployment-infrastructure-vps-docker-compose-github-actions.md)
+- [ADR-0011: Build app images in CI, distribute via GHCR](0011-build-images-in-ci-distribute-via-ghcr.md) — CI now builds and pushes images
 - [docs/ops/server-setup.md](../ops/server-setup.md) — Phase 4 (Docker install)
 - Docker apt repository: https://download.docker.com/linux/ubuntu
-- #51 — Related gap: CI does not currently build the Docker image or parse the Compose file. Compose-file regressions only surface at deploy time.
-- #52 — Open decision: mechanism for tracking Docker security advisories under the version-pinning regime.

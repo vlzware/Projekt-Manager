@@ -8,13 +8,14 @@
 
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../server/app.js';
+import { validateEnv } from '../server/config/env.js';
 import { createDatabase } from '../server/db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../server/seed.js';
 import { deactivateUser as deactivateUserRepo } from '../server/repositories/user.js';
 import { randomBytes } from 'node:crypto';
 import type { Database } from '../server/db/connection.js';
-import { sessions } from '../server/db/schema.js';
+import { sessions, users } from '../server/db/schema.js';
 import type pg from 'pg';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -35,6 +36,12 @@ const migrationsFolder = path.resolve(__dirname, '../server/db/migrations');
  * gets a fresh seed without race conditions.
  */
 export async function startApp(): Promise<FastifyInstance> {
+  // Validate the env once at startup — consolidation review C-3 removed
+  // the dual ALLOW_INSECURE_HTTP code paths, so getEnv() is now the single
+  // source of truth. Integration tests need validateEnv() called before
+  // buildApp() accesses getEnv().
+  validateEnv();
+
   const conn = createDatabase();
   db = conn.db;
   pool = conn.pool;
@@ -169,8 +176,43 @@ export async function createExpiredSession(userId: string): Promise<string> {
  *
  * Used by AT-7 to simulate the "logged-in user gets deactivated" flow:
  * login normally, deactivate the account, then assert the existing token
- * is rejected on the next request.
+ * is rejected on the next request. Tests pass actorId=null because no
+ * human admin exists in this iteration — the audit pattern allows
+ * updatedBy to be null for system/test-fixture actions (data-model.md §5.5).
  */
 export async function deactivateUser(userId: string): Promise<void> {
-  return deactivateUserRepo(db, userId);
+  return deactivateUserRepo(db, userId, null);
+}
+
+/**
+ * Create an authenticated test user with the given roles and return a
+ * ready-to-use session token. The password hash is a placeholder — this
+ * helper mints the session directly in the database, bypassing login.
+ *
+ * Used by permission tests to construct users that do not match any seed
+ * role (e.g. roles: [] for a user with no permissions at all). Regular
+ * tests should log in via seed users instead.
+ */
+export async function createTestUserSession(options: {
+  roles: string[];
+  displayName?: string;
+}): Promise<{ userId: string; token: string }> {
+  const token = randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour ahead
+  const username = `test_${randomBytes(6).toString('hex')}`;
+  const userRows = await db
+    .insert(users)
+    .values({
+      username,
+      displayName: options.displayName ?? 'Test User',
+      // Placeholder hash — this helper bypasses login, so the value is
+      // never verified. Non-empty because the column is NOT NULL.
+      passwordHash: 'test-no-password-verification',
+      roles: options.roles,
+      active: true,
+    })
+    .returning();
+  const userId = userRows[0]!.id;
+  await db.insert(sessions).values({ userId, token, expiresAt });
+  return { userId, token };
 }
