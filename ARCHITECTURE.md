@@ -28,23 +28,23 @@ Stack decisions are recorded in ADRs: [ADR-0002](docs/adr/0002-tech-stack-typesc
 
 ## Architecture Overview
 
-Six responsibility layers. Dependency flows left-to-right only, never reversed. See [spec 11.2](docs/spec/architecture.md) for the full contract.
+Seven responsibility layers. Dependency flows left-to-right only, never reversed. The split on the server between **Services** and **Routes** is load-bearing — routes never touch repositories or db/schema directly; they delegate to services. See [spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries) for the authoritative contract.
 
 ```
-  config  <--  domain  <--  storage  <--  api
+  config  <--  domain  <--  storage  <--  services  <--  routes
                         <--  state   <--  ui
 
-  src/config/          src/domain/       src/server/config/         src/server/routes/
-                                         src/server/db/             src/server/middleware/
-                                         src/server/repositories/
-                                         src/server/services/
-                                         src/server/storage/        src/state/
-                                                                    src/ui/
+  src/config/         src/domain/    src/server/repositories/   src/server/services/   src/server/routes/
+                                     src/server/storage/                               src/server/middleware/
+                                                                                       src/state/
+                                                                                       src/ui/
 ```
 
 - **Config** and **Domain** are shared: both server and client import them.
-- **Storage**, **API** run server-side only.
+- **Storage**, **Services**, **Routes** run server-side only.
 - **State**, **UI** run client-side only.
+
+**Enforcement**: the layer rules are machine-enforced by `no-restricted-imports` zones in [`eslint.config.js`](eslint.config.js) (added in iteration 5). A PR that reaches from `src/ui/**` into `src/server/**`, from `src/server/routes/**` into `src/server/repositories/**`, or from `src/domain/**` into any higher layer fails lint. Type-only imports of `Database` from `src/server/db/connection` are allowed in route files because routes take the connection as a typed parameter.
 
 ---
 
@@ -118,21 +118,21 @@ React re-renders affected components
 
 All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives here because [`docs/spec/api.md`](docs/spec/api.md) is intentionally stack-agnostic (operations, inputs, outputs — not URLs).
 
-| Method | Path                                    | Auth    | Permission           | Rate limit | Purpose                                                                                                                                                      |
-| ------ | --------------------------------------- | ------- | -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| GET    | `/api/health`                           | none    | —                    | none       | Liveness probe; runs `SELECT 1` on the DB and a `HeadBucket` on MinIO in parallel. Returns `{status,checks:{db,storage}}`; 503 on any probe failure. See #48 |
-| POST   | `/api/auth/login`                       | none    | —                    | 5 / 1 min  | Login; sets HttpOnly `session` cookie                                                                                                                        |
-| POST   | `/api/auth/logout`                      | session | —                    | none       | Invalidates the current session                                                                                                                              |
-| GET    | `/api/auth/me`                          | session | —                    | none       | Current user profile                                                                                                                                         |
-| POST   | `/api/auth/change-password`             | session | —                    | 5 / 1 min  | Change own password (requires current password)                                                                                                              |
-| GET    | `/api/projects`                         | session | —                    | none       | List projects (optional `offset`, `limit`)                                                                                                                   |
-| GET    | `/api/projects/:id`                     | session | —                    | none       | Single project                                                                                                                                               |
-| POST   | `/api/projects/:id/transition/forward`  | session | `project:transition` | none       | Advance status by one step                                                                                                                                   |
-| POST   | `/api/projects/:id/transition/backward` | session | `project:transition` | none       | Reverse status by one step                                                                                                                                   |
-| PATCH  | `/api/projects/:id/dates`               | session | `project:dates`      | none       | Update `plannedStart` / `plannedEnd`                                                                                                                         |
-| POST   | `/api/projects/bulk/import`             | session | `project:create`     | none       | Import an array of projects                                                                                                                                  |
+| Method | Path                                    | Auth    | Permission             | Rate limit | Purpose                                                                                                                                                      |
+| ------ | --------------------------------------- | ------- | ---------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GET    | `/api/health`                           | none    | —                      | none       | Liveness probe; runs `SELECT 1` on the DB and a `HeadBucket` on MinIO in parallel. Returns `{status,checks:{db,storage}}`; 503 on any probe failure. See #48 |
+| POST   | `/api/auth/login`                       | none    | —                      | 5 / 1 min  | Login; sets HttpOnly `session` cookie                                                                                                                        |
+| POST   | `/api/auth/logout`                      | session | —                      | none       | Invalidates the current session                                                                                                                              |
+| GET    | `/api/auth/me`                          | session | —                      | none       | Current user profile (no permission — the caller is always looking up themselves)                                                                            |
+| POST   | `/api/auth/change-password`             | session | `auth:change-password` | 5 / 1 min  | Change own password (requires current password)                                                                                                              |
+| GET    | `/api/projects`                         | session | `project:read`         | none       | List projects (optional `offset`, `limit`)                                                                                                                   |
+| GET    | `/api/projects/:id`                     | session | `project:read`         | none       | Single project                                                                                                                                               |
+| POST   | `/api/projects/:id/transition/forward`  | session | `project:transition`   | none       | Advance status by one step                                                                                                                                   |
+| POST   | `/api/projects/:id/transition/backward` | session | `project:transition`   | none       | Reverse status by one step                                                                                                                                   |
+| PATCH  | `/api/projects/:id/dates`               | session | `project:dates`        | none       | Update `plannedStart` / `plannedEnd`                                                                                                                         |
+| POST   | `/api/projects/bulk/import`             | session | `project:create`       | none       | Import an array of projects (schema cap: 1000 items)                                                                                                         |
 
-Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Both are enforced centrally in `src/server/middleware/auth.ts` — never at the route level.
+Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Authentication is enforced by `createAuthMiddleware(db)` in `src/server/middleware/auth.ts` (applied as a plugin-level `preHandler` hook). **Permission** is enforced at the **route level** by `requirePermission('...')` preHandlers defined in `src/server/routes/*.ts` and checked against the role matrix in `src/server/config/permissions.ts` — see [spec §14.3](docs/spec/api.md#143-authorization-rules).
 
 Route definitions live in `src/server/routes/auth.ts`, `src/server/routes/projects.ts`, and `src/server/routes/projects-bulk.ts`. The health endpoint is registered in `src/server/start.ts`.
 
@@ -146,14 +146,14 @@ The four scenarios below are the most common changes. Each lists exact files to 
 
 ### Adding a new entity (e.g., Supplier)
 
-**Pattern to copy**: the `Project` entity. Read `src/server/db/schema.ts:60-102` (table), `src/domain/types.ts:1-33` (interface), `src/server/repositories/project-read.ts` (repo with `toProject` projection), `src/server/repositories/project.ts` (barrel re-export), `src/server/services/ProjectService.ts:51-144` (CRUD + transitions; file also includes bulkImport), `src/server/routes/projects.ts` (routes), `src/state/projectStore.ts` (store).
+**Pattern to copy**: the `Project` entity. Read `src/server/db/schema.ts` (`projects` table definition), `src/domain/types.ts` (`Project` interface), `src/server/repositories/project-read.ts` (repo with `toProject` projection), `src/server/repositories/project.ts` (barrel re-export), `src/server/services/ProjectService.ts` (`ProjectService` class — CRUD, transitions, bulk import), `src/server/routes/projects.ts` (routes), `src/state/projectStore.ts` (store).
 
 1. **Schema**: add the table in `src/server/db/schema.ts`. Use the same audit-field pattern as `projects` (`createdAt`/`updatedAt`/`createdBy`/`updatedBy`). Generate the migration with `npx drizzle-kit generate`. Never edit an existing migration file — always generate a new one.
 2. **Domain types**: add the TypeScript interface in `src/domain/types.ts`. Keep optional fields optional so the UI tolerates missing data ([spec §13.5](docs/spec/architecture.md#135-robustness)).
 3. **Repository**: create `src/server/repositories/supplier-read.ts`, `supplier-transitions.ts`, etc. — split by concern as the project repos do (`project-read.ts`, `project-transitions.ts`, `project-dates.ts`). Re-export through a barrel `supplier.ts`. Add a `toSupplier(row)` projection so Drizzle types do not leak upward.
 4. **Service**: create `src/server/services/SupplierService.ts`. Keep it framework-agnostic — the service layer must not import `fastify` types ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
 5. **Routes**: create `src/server/routes/suppliers.ts`. Register it in `src/server/app.ts` next to the existing `projectRoutes(db)` registration. Always go through the service — never call repositories from a route handler.
-6. **API client**: add a `supplierApi` block in `src/api/client.ts` (same pattern as `projectApi` at lines 128-144). One typed function per operation, ~3 lines each.
+6. **API client**: add a `supplierApi` block in `src/api/client.ts` (same pattern as the `projectApi` export). One typed function per operation, ~3 lines each.
 7. **State**: add `src/state/supplierStore.ts` modeled on `src/state/projectStore.ts`. Use optimistic updates with rollback for mutations.
 8. **UI**: add components under `src/ui/suppliers/`. One component per file with a sibling `.module.css` (per [CONTRIBUTING.md](CONTRIBUTING.md#code-style)).
 9. **Tests**: unit tests in `src/domain/__tests__/` for any pure functions, integration tests in `src/server/__tests__/` (copy `projects-list.test.ts` as a starting point), component tests in `src/ui/__tests__/`.
@@ -162,9 +162,9 @@ The four scenarios below are the most common changes. Each lists exact files to 
 
 ### Adding a new view (e.g., Worker view)
 
-**Pattern to copy**: the existing Kanban view consumes `useProjectStore` independently of the Calendar view. Read `src/ui/kanban/KanbanBoard.tsx` (the view component), `src/state/projectStore.ts:198-200` (the `getProjectsByState` selector), `src/App.tsx:72-77` (route registration), `src/domain/types.ts:45` (the `ViewMode` union).
+**Pattern to copy**: the existing Kanban view consumes `useProjectStore` independently of the Calendar view. Read `src/ui/kanban/KanbanBoard.tsx` (the view component), `src/state/projectStore.ts` (`getProjectsByState` selector), `src/App.tsx` (route registration), `src/domain/types.ts` (`ViewMode` union).
 
-1. **View type**: add the new view name to the `ViewMode` union in `src/domain/types.ts:45` (e.g., `'worker' | 'bookkeeper'`).
+1. **View type**: add the new view name to the `ViewMode` union in `src/domain/types.ts` (e.g., `'worker' | 'bookkeeper'`).
 2. **Component**: create `src/ui/worker/WorkerView.tsx` with its own `WorkerView.module.css`. The component reads from `useProjectStore` and filters in JSX — for example, `projects.filter(p => p.assignedWorkers?.some(w => w.userId === user.id))`.
 3. **Route**: register in `src/App.tsx` next to the existing kanban/calendar routes.
 4. **Navigation**: extend the header dropdown or sidebar so users can switch to the new view.
@@ -180,17 +180,22 @@ The four scenarios below are the most common changes. Each lists exact files to 
 2. **Define the schema**: every route uses Fastify's JSON Schema for the request body (see `projects.ts` for examples). This is your input validation — don't validate inside the handler.
 3. **Auth & permission**: apply `createAuthMiddleware(db)` as a `preHandler` for the plugin, and `requirePermission('your:permission')` per route. Add the new permission key to `src/server/config/permissions.ts` if it doesn't exist.
 4. **Delegate to a service method**. Routes never call repositories directly — see [spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries). If the service method doesn't exist yet, add it to the appropriate `*Service.ts`.
-5. **Errors**: throw `notFound(...)`, `validationError(...)`, etc. from `src/server/errors.ts`. Never throw raw `Error` from a route — the global handler in `src/server/app.ts:35-42` normalizes `AppError`, Fastify validation errors, and rate-limit errors — unknown errors are wrapped as a generic server error so internals never leak.
+5. **Errors**: throw `notFound(...)`, `validationError(...)`, etc. from `src/server/errors.ts`. Never throw raw `Error` from a route — the global handler in `src/server/app.ts` normalizes `AppError`, Fastify validation errors, and rate-limit errors; unknown errors are wrapped as a generic server error so internals never leak.
 6. **Register**: add the route plugin in `src/server/app.ts`.
 7. **Tests**: integration test in `src/server/__tests__/` using `api-helpers.ts` (`startApp()`, `login()`, `authPost()`/`authGet()`).
 8. **Spec**: add the operation to `docs/spec/api.md §14.2` and an AC in `docs/spec/verification.md`.
 
 ### Adding a new workflow state
 
+Most of the Kanban, calendar, and aging rendering is genuinely config-driven. Two specific places still hardcode boundary-state literals and will need updating in addition to the config:
+
 1. Update the state array in `src/config/stateConfig.ts` (name, type, color, aging thresholds, collapse tier).
-2. No application code changes are required — the Kanban board, transition logic (`src/domain/transitions.ts`), and aging calculation (`src/domain/aging.ts`) all read from the config.
-3. Note that **two existing tests hardcode the state list** and will need updating: `src/server/__tests__/projects-list.test.ts:74-91` and `src/domain/__tests__/transitions.test.ts`.
-4. Re-seed the database if existing data must be migrated to a new state (`SEED=force npm run dev`).
+2. **Boundary-state references**: `src/domain/transitions.ts` uses hardcoded `'anfrage'` and `'erledigt'` literals for "first state" and "terminal state" checks. If the new state is inserted in the middle these are safe; if it replaces the first or last position, update the literals to match. The server-side repository path (`src/server/repositories/project-transitions.ts`) is config-driven via `WORKFLOW_ORDER` and does not need changes.
+3. **Database default**: `src/server/db/schema.ts` defaults the `status` column to `'anfrage'`. If you change the first state, generate a migration with `npx drizzle-kit generate` to update the default.
+4. **Hardcoded test fixtures**: a couple of tests pin the full state list — grep for the state keys and update as needed.
+5. Re-seed the database if existing data must be migrated to a new state (`SEED=force npm run dev`).
+
+This is not a zero-code-change operation. Improving it toward full configurability is tracked in [spec §3](docs/spec/index.md#3-workflow-states).
 
 ---
 
@@ -212,25 +217,27 @@ Local development uses `docker-compose.dev.yml` for database and storage only; a
 
 ### CI/CD Pipeline
 
-One GitHub Actions workflow, one on-VPS script.
+One GitHub Actions workflow (`ci.yml`) produces an image; one operator-run script (`scripts/deploy.sh`) promotes it. There is no separate deploy workflow — the push-based deploy that older revisions of this doc described was removed in iteration 4 per [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md).
 
-**CI** (`.github/workflows/ci.yml`) — runs on push/PR to `main` and `iteration/**`:
+**CI** (`.github/workflows/ci.yml`) — triggered on push and PR to `main` and `iteration/**`. Single `check` job runs, in order:
 
-**CI** (`.github/workflows/ci.yml`) — runs on push and PR to `main` and `iteration/**`. Single `check` job:
+1. `npm audit` with the suppressed-advisory handling from [ADR-0007](docs/adr/0007-suppress-esbuild-dev-server-advisory.md).
+2. `npm run lint`, `npm run format:check`, `npx tsc --noEmit`.
+3. `bash scripts/check-env-drift.sh` — regression guard that every `env.ts` variable is forwarded via `docker-compose.yml`'s `services.app.environment`. Added after the incident where `BOOTSTRAP_ADMIN_*` landed in the Zod schema but were forgotten in compose.
+4. Postgres service container + MinIO container started as steps; `npm run test:coverage` runs unit + integration against real Postgres and real MinIO. Playwright is **not** part of the push/PR gate — the on-demand workflow `.github/workflows/e2e.yml` (added in iteration 5) runs it on `workflow_dispatch` only, so CI green on push does not imply E2E green. See [docs/spec/architecture.md §11.7](docs/spec/architecture.md#117-ci-gate) and [docs/spec/verification.md AC-37](docs/spec/verification.md#157-non-functional-requirements).
+5. `npm run build`.
+6. On push events only: `docker/build-push-action` builds the app image and pushes it to GHCR tagged `sha-<commit>` and `<branch-slug>`. PR events do not push.
 
-1. `npm audit` (with suppressed-advisory handling, see ADR-0007)
-2. Lint, format check, type check
-3. Env drift check (`scripts/check-env-drift.sh` — verifies env.ts vars are forwarded in docker-compose.yml)
-4. Start MinIO service container, run `npm run test:coverage` against real Postgres + MinIO
-5. `npm run build`
+**Deploy** (`scripts/deploy.sh`) — manual, pull-based, run on the VPS by the operator over WireGuard:
 
-**Deploy** (`scripts/deploy.sh`) — manual, pull-based, run on the VPS over WireGuard:
+1. Operator is already on the VPS (via WireGuard + sudo); invokes `sudo -u deploy /opt/projekt-manager/scripts/deploy.sh [<ref>]`. Default ref is `origin/main`; pass an explicit SHA for rollback.
+2. `git fetch origin`, `git checkout <expected-sha>`, assert `HEAD` landed at the expected SHA (hard-coded guard against a silently failed checkout).
+3. Decrypt `/opt/projekt-manager/secrets.env.age` via `age -d`, `source <(...)` with `set -a` so the KEY=VALUE lines reach compose. Plaintext is never written to disk.
+4. `APP_IMAGE_TAG=sha-<sha> docker compose pull app` — pulls the pre-built image from GHCR (no build on the VPS, per ADR-0011).
+5. `docker compose up -d` — swaps the `app` container to the new image; `db`, `storage`, and `caddy` keep running on their pinned images.
+6. Smoke test: `docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"` polls for up to 60 s. Failure dumps the last 50 lines of compose logs and exits non-zero, leaving the previously running version in place.
 
-1. SSH to VPS, `git fetch` + checkout the exact commit SHA
-2. `docker compose build app` + `docker compose up -d`
-3. Smoke test: polls the app container's `/api/health` endpoint for up to 60 s
-
-No automatic deploy. The operator promotes a CI-built image to production manually. Rationale: [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md). Day-to-day procedure: [docs/ops/manual-deploy.md](docs/ops/manual-deploy.md).
+No automatic deploy. Rationale: [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md). Day-to-day procedure: [docs/ops/manual-deploy.md](docs/ops/manual-deploy.md). Bootstrap (first-run) procedure: [docs/ops/manual-deploy.md#bootstrap-first-run-on-fresh-vps](docs/ops/manual-deploy.md#bootstrap-first-run-on-fresh-vps).
 
 ---
 
