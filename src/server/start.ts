@@ -15,7 +15,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { STRINGS } from '../config/strings.js';
 import { buildApp } from './app.js';
 import { bootstrapAdminIfEmpty } from './bootstrap.js';
-import { validateEnv } from './config/env.js';
+import { assertProductionSafe, validateEnv } from './config/env.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
@@ -57,14 +57,11 @@ async function start(): Promise<void> {
   const isProduction = env.NODE_ENV === 'production';
 
   // --- Production safety checks ---
+  // assertProductionSafe() lives in env.ts so it can be unit-tested directly
+  // (see env.test.ts) — see ADR-0013 and consolidation review C-2/C-4.
+  assertProductionSafe(env);
   if (isProduction) {
     rejectDevCredentials();
-    if (env.ALLOW_INSECURE_HTTP === 'true') {
-      throw new Error(
-        'Refusing to start: ALLOW_INSECURE_HTTP=true in production. ' +
-          'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.',
-      );
-    }
   }
 
   if (env.ALLOW_INSECURE_HTTP === 'true') {

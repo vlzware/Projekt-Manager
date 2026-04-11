@@ -2,9 +2,13 @@
  * Centralized server configuration constants.
  *
  * All policy-level values that were previously scattered across route handlers
- * and service modules live here. Environment-dependent values are read from
- * process.env at import time (validated separately in env.ts).
+ * and service modules live here. Environment-dependent values are resolved
+ * via getEnv() at call time — never from process.env at import time, because
+ * that bypass let ALLOW_INSECURE_HTTP and NODE_ENV be read from the raw env
+ * even after env.ts validated a different value (consolidation review C-3).
  */
+
+import { getEnv } from './env.js';
 
 // --- Authentication & Sessions -----------------------------------------------
 
@@ -21,10 +25,22 @@ export const AUTH_CONFIG = {
    * CPU time as a real comparison.
    */
   dummyHash: '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy',
-
-  /** Whether to set the Secure flag on cookies (HTTPS only). */
-  cookieSecure: process.env.NODE_ENV === 'production' && process.env.ALLOW_INSECURE_HTTP !== 'true',
 } as const;
+
+/**
+ * Whether to set the `Secure` flag on session cookies.
+ *
+ * Production with real TLS → true. Explicit HTTP evaluation mode
+ * (ALLOW_INSECURE_HTTP=true, see ADR-0013) → false. Development → false.
+ *
+ * Reads from the validated env (env.ts) — requires validateEnv() to have
+ * been called first (start.ts does this before buildApp()). Tests use
+ * startApp() in api-helpers.ts which also calls validateEnv().
+ */
+export function getCookieSecure(): boolean {
+  const env = getEnv();
+  return env.NODE_ENV === 'production' && env.ALLOW_INSECURE_HTTP !== 'true';
+}
 
 // --- Rate Limiting -----------------------------------------------------------
 

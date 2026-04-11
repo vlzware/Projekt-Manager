@@ -25,6 +25,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { buildApp } from '../app.js';
+import { validateEnv } from '../config/env.js';
 import { createDatabase } from '../db/connection.js';
 import { seed } from '../seed.js';
 import { SEED_USERS } from '../../test/seedAssumptions.js';
@@ -37,6 +38,10 @@ let pool: pg.Pool;
 
 describe('Login rate limiting (end-to-end)', () => {
   beforeAll(async () => {
+    // buildApp() reads the validated env (see config/index.ts and app.ts) —
+    // any test that bypasses startApp() must call validateEnv() itself.
+    validateEnv();
+
     const conn = createDatabase();
     pool = conn.pool;
 

@@ -8,6 +8,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../server/app.js';
+import { validateEnv } from '../server/config/env.js';
 import { createDatabase } from '../server/db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../server/seed.js';
@@ -35,6 +36,12 @@ const migrationsFolder = path.resolve(__dirname, '../server/db/migrations');
  * gets a fresh seed without race conditions.
  */
 export async function startApp(): Promise<FastifyInstance> {
+  // Validate the env once at startup — consolidation review C-3 removed
+  // the dual ALLOW_INSECURE_HTTP code paths, so getEnv() is now the single
+  // source of truth. Integration tests need validateEnv() called before
+  // buildApp() accesses getEnv().
+  validateEnv();
+
   const conn = createDatabase();
   db = conn.db;
   pool = conn.pool;

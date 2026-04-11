@@ -15,6 +15,7 @@ import type { Database } from './db/connection.js';
 import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { projectBulkRoutes } from './routes/projects-bulk.js';
+import { getEnv } from './config/env.js';
 import { AppError, rateLimited, serverError, validationError } from './errors.js';
 import { STRINGS } from '../config/strings.js';
 
@@ -74,7 +75,10 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
 
   // Security headers — CSP allows only same-origin resources,
   // HSTS enforces HTTPS (when TLS is active), X-Frame-Options blocks framing.
-  const insecureHttp = process.env.ALLOW_INSECURE_HTTP === 'true';
+  // Reads from validated env (see env.ts) — not process.env — so ADR-0013
+  // and the assertProductionSafe() guard in start.ts share a single source
+  // of truth for ALLOW_INSECURE_HTTP. See consolidation review C-3.
+  const insecureHttp = getEnv().ALLOW_INSECURE_HTTP === 'true';
   app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
