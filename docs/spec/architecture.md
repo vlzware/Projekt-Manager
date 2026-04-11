@@ -112,7 +112,8 @@ The deployed demo must exercise the real production topology. The purpose of dep
 ### 11.7 Continuous Delivery Pipeline
 
 - **CI trigger:** push or PR to `main` and `iteration/**` branches.
-- **CI gate:** the pipeline runs lint, type-check, format check, unit/component/integration tests, and build. Image is pushed to GHCR on push (not on PRs).
+- **CI gate (`.github/workflows/ci.yml`):** the pipeline runs `npm audit`, lint, format check, type check, env-drift check, unit + component + API-integration tests against real Postgres and real MinIO, and `npm run build`. Image is built and pushed to GHCR on push events (not on PRs). Playwright is **not** part of this gate — see below.
+- **On-demand E2E (`.github/workflows/e2e.yml`):** Playwright runs manually via the "Run workflow" button in the Actions tab. Same postgres-service + MinIO + seed shape as `ci.yml`, plus `npx playwright test`. Rationale: pushing Playwright into the push/PR gate would add multi-minute runtime and a retry-flakiness surface the project cannot afford to debug while shipping features; leaving it local-only means regressions go unnoticed until the next local run. The manual job is the compromise — one click away before a manual deploy. AC-37 in [verification.md §15.7](verification.md#157-engineering) documents the topology from the acceptance-criteria side.
 - **Deploy:** manual, pull-based. The operator promotes a CI-built image to the hosted environment over WireGuard. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
 - A failed deployment must not take down the currently running system. The deploy script polls the health endpoint after container swap.
 - Environment separation and rollback mechanisms are documented in [docs/ops/manual-deploy.md](../../docs/ops/manual-deploy.md).

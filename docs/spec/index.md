@@ -167,8 +167,8 @@ Mapping of features from the [kickoff "Done when" list](../project/kickoff.md) t
 | User authentication (login/logout, sessions)                | Done    | 2         |
 | Object storage module (prepared for uploads)                | Done    | 2         |
 | Deployment to hosted environment                            | Done    | 4         |
-| Continuous Delivery pipeline                                | Done    | 4         |
-| End-to-end tests on all integrations (CI)                   | Done    | 4         |
+| CI-built images + manual pull-based deploy                  | Done    | 4         |
+| End-to-end tests on all integrations (on-demand CI)         | Done    | 5         |
 | LLM-based customer data extraction from emails              | Planned | Future    |
 | All customer and project data managed in central system     | Planned | Future    |
 | Worker view (relevant projects, calendar, object data, GPS) | Planned | Future    |
