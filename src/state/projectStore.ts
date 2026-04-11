@@ -154,8 +154,8 @@ export const useProjectStore = create<ProjectState>((set, get) => {
           if (p.id !== projectId) return p;
           return {
             ...p,
-            plannedStart: start === null ? undefined : start !== undefined ? start : p.plannedStart,
-            plannedEnd: end === null ? undefined : end !== undefined ? end : p.plannedEnd,
+            plannedStart: start === null ? null : (start ?? p.plannedStart),
+            plannedEnd: end === null ? null : (end ?? p.plannedEnd),
             updatedAt: new Date().toISOString(),
           };
         }),

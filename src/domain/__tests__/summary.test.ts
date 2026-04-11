@@ -10,8 +10,16 @@ function makeProject(
     title: 'Test',
     statusChangedAt: '2026-04-01T00:00:00Z',
     customer: { name: 'Test Customer' },
+    address: null,
+    plannedStart: null,
+    plannedEnd: null,
+    assignedWorkers: null,
+    estimatedValue: null,
+    notes: null,
     createdAt: '2026-04-01T00:00:00Z',
     updatedAt: '2026-04-01T00:00:00Z',
+    createdBy: null,
+    updatedBy: null,
     ...overrides,
   };
 }

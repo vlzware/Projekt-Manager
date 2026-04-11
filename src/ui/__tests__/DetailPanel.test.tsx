@@ -234,8 +234,8 @@ describe('Date Clearing', () => {
 
     // Both dates should now be cleared
     const updated = useProjectStore.getState().projects.find((p) => p.id === 'p07');
-    expect(updated?.plannedStart).toBeUndefined();
-    expect(updated?.plannedEnd).toBeUndefined();
+    expect(updated?.plannedStart).toBeNull();
+    expect(updated?.plannedEnd).toBeNull();
 
     // PATCH should send both as null
     await waitFor(() => {
@@ -279,9 +279,9 @@ describe('Date Clearing', () => {
     const endInput = screen.getByTestId('detail-date-end') as HTMLInputElement;
     fireEvent.change(endInput, { target: { value: '' } });
 
-    // The project's plannedEnd should now be undefined (cleared)
+    // The project's plannedEnd should now be null (cleared)
     const updated = useProjectStore.getState().projects.find((p) => p.id === 'p07');
-    expect(updated?.plannedEnd).toBeUndefined();
+    expect(updated?.plannedEnd).toBeNull();
 
     // Start date should remain unchanged
     expect(updated?.plannedStart).toBe(project?.plannedStart);

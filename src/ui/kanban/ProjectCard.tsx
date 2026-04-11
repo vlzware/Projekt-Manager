@@ -17,7 +17,10 @@ export function ProjectCard({ project }: ProjectCardProps) {
   const config = STATE_CONFIG_MAP[project.status];
   const bold = isAgingBold(project.status, project.statusChangedAt);
   const agingText = getAgingText(project.status, project.statusChangedAt);
-  const dateRange = formatDateRange(project.plannedStart, project.plannedEnd);
+  const dateRange = formatDateRange(
+    project.plannedStart ?? undefined,
+    project.plannedEnd ?? undefined,
+  );
   const entryDate = formatDateDE(project.statusChangedAt);
 
   const handleCardClick = () => {

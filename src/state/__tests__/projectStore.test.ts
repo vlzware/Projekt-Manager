@@ -46,10 +46,16 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     status: 'geplant',
     statusChangedAt: '2026-04-01T10:00:00.000Z',
     customer: { name: 'Familie Test' },
+    address: null,
     plannedStart: '2026-04-10',
     plannedEnd: '2026-04-12',
+    assignedWorkers: null,
+    estimatedValue: null,
+    notes: null,
     createdAt: '2026-03-30T10:00:00.000Z',
     updatedAt: '2026-03-30T10:00:00.000Z',
+    createdBy: null,
+    updatedBy: null,
     ...overrides,
   };
 }
@@ -270,7 +276,7 @@ describe('projectStore — updateDates (optimistic + rollback)', () => {
   it('clears the date when null is passed', () => {
     mockedApi.updateDates.mockResolvedValue({ ok: true, data: makeProject() });
     useProjectStore.getState().updateDates('p1', null, undefined);
-    expect(useProjectStore.getState().projects[0]!.plannedStart).toBeUndefined();
+    expect(useProjectStore.getState().projects[0]!.plannedStart).toBeNull();
     expect(useProjectStore.getState().projects[0]!.plannedEnd).toBe('2026-04-12');
   });
 });

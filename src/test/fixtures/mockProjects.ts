@@ -68,8 +68,16 @@ export function buildProject(overrides: Partial<Project> = {}): Project {
     status: 'anfrage',
     statusChangedAt: daysAgo(0),
     customer: { name: 'Test Customer GmbH' },
+    address: null,
+    plannedStart: null,
+    plannedEnd: null,
+    assignedWorkers: null,
+    estimatedValue: null,
+    notes: null,
     createdAt: daysAgo(0),
     updatedAt: daysAgo(0),
+    createdBy: null,
+    updatedBy: null,
     ...overrides,
   };
 }

@@ -38,11 +38,11 @@ export function toProject(
     plannedEnd: row.plannedEnd?.toISOString() ?? null,
     assignedWorkers: workers.length > 0 ? workers : null,
     estimatedValue: row.estimatedValue ? Number(row.estimatedValue) : null,
-    notes: row.notes,
+    notes: row.notes ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    createdBy: row.createdBy,
-    updatedBy: row.updatedBy,
+    createdBy: row.createdBy ?? null,
+    updatedBy: row.updatedBy ?? null,
   };
 }
 
