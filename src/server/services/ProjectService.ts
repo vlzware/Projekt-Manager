@@ -24,6 +24,59 @@ import { notFound, validationError } from '../errors.js';
 import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
 
+/**
+ * Translate a database-layer error (typically a `pg` error) into a
+ * user-facing German message that does NOT leak constraint names, table
+ * names, column names, SQLSTATE codes, or English SQL fragments. The
+ * raw error is expected to be logged by the caller. See consolidation
+ * review C-5.
+ *
+ * Drizzle wraps `pg` errors in its own error class and exposes the
+ * original via `err.cause` (db-constraints.test.ts explicitly documents
+ * this), while a direct `pg.Pool.query` throws with `.code` at the top
+ * level. This walker accepts both shapes — a depth cap keeps the walk
+ * bounded in the face of pathological cause chains.
+ */
+function extractSqlState(err: unknown): string | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (!(current instanceof Error)) break;
+    const withCode = current as Error & { code?: string };
+    // PostgreSQL SQLSTATE is a 5-character string — node's system
+    // errors (ECONNREFUSED, EACCES, ...) have alphanumeric codes and
+    // would not match this shape.
+    if (typeof withCode.code === 'string' && /^[0-9A-Z]{5}$/.test(withCode.code)) {
+      return withCode.code;
+    }
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+function translatePgError(err: unknown): string {
+  const code = extractSqlState(err);
+  switch (code) {
+    // 23505 unique_violation — the only unique index on `projects` is on
+    // `number`, so this maps to the duplicate-number case. If we add more
+    // unique indexes later, this branch will need constraint-name
+    // discrimination before it can safely name the field.
+    case '23505':
+      return STRINGS.projects.duplicateNumber;
+    // 23503 foreign_key_violation — likely an assignedWorkerIds entry
+    // referencing a user UUID that does not exist, or created_by/updated_by
+    // pointing at a missing user.
+    case '23503':
+      return STRINGS.projects.foreignKeyViolation;
+    // 23514 check_violation — projects_end_requires_start is the only
+    // CHECK constraint on the table; validation normally catches this
+    // before insert, but the DB-level rejection is defense in depth.
+    case '23514':
+      return STRINGS.projects.dateConstraintViolation;
+    default:
+      return STRINGS.projects.unknownImportError;
+  }
+}
+
 export interface BulkImportItem {
   number?: unknown;
   title?: unknown;
@@ -147,8 +200,18 @@ export class ProjectService {
   /**
    * Bulk-import projects. Each item is validated independently.
    * Successfully validated items are inserted; failures are collected as errors.
+   *
+   * Database-layer errors are translated via translatePgError() so the
+   * client-facing `errors[].message` never contains constraint names,
+   * table names, SQLSTATE codes, or English SQL fragments. The raw error
+   * is logged server-side with the row index for debugging.
+   * See consolidation review C-5.
    */
-  async bulkImport(items: BulkImportItem[], userId: string): Promise<BulkImportResult> {
+  async bulkImport(
+    items: BulkImportItem[],
+    userId: string,
+    log: ServiceLogger,
+  ): Promise<BulkImportResult> {
     const errors: BulkImportError[] = [];
     let imported = 0;
 
@@ -180,8 +243,8 @@ export class ProjectService {
         });
         imported++;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : STRINGS.projects.unknownImportError;
-        errors.push({ index: i, message: msg });
+        log.error({ err, index: i }, 'Bulk import row failed');
+        errors.push({ index: i, message: translatePgError(err) });
       }
     }
 
@@ -272,6 +335,18 @@ export class ProjectService {
       (item.plannedStart === undefined || item.plannedStart === null)
     ) {
       return STRINGS.projects.endWithoutStart;
+    }
+    // Ordering invariant — matches the updateDates route path
+    // (project-dates.ts: DateValidationError). The DB CHECK constraint
+    // does NOT enforce ordering, only "end requires start", so the
+    // bulk-import path has to catch it in application code or else
+    // rows with end < start slip through silently.
+    if (typeof item.plannedStart === 'string' && typeof item.plannedEnd === 'string') {
+      const start = new Date(item.plannedStart);
+      const end = new Date(item.plannedEnd);
+      if (end.getTime() < start.getTime()) {
+        return STRINGS.projects.endBeforeStart;
+      }
     }
 
     // Assigned worker IDs validation

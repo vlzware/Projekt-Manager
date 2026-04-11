@@ -66,6 +66,11 @@ export const STRINGS = {
     endBeforeStart: 'Das Enddatum darf nicht vor dem Startdatum liegen.',
     invalidEstimatedValue: 'estimatedValue muss ein gültiger numerischer Wert sein.',
     unknownImportError: 'Unbekannter Fehler beim Import.',
+    // Import error translations — never leak pg constraint names, table
+    // names, column names, SQLSTATE codes, or English text. See C-5.
+    duplicateNumber: 'Projektnummer ist bereits vergeben.',
+    foreignKeyViolation: 'Verknüpfter Datensatz existiert nicht (z. B. zugeordnete Mitarbeiter).',
+    dateConstraintViolation: 'Datumsangaben verletzen eine Integritätsregel.',
   },
 
   validation: {

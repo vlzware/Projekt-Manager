@@ -35,6 +35,13 @@ export function projectBulkRoutes(db: Database) {
             properties: {
               projects: {
                 type: 'array',
+                // Hard cap to prevent resource-exhaustion from an unbounded
+                // payload. 1000 comfortably covers realistic customer
+                // imports (kickoff assumes 10-30 concurrent projects; a
+                // full historical backlog for a small company stays well
+                // under 1000). Revisit if real migrations need higher.
+                // See consolidation review C-5.
+                maxItems: 1000,
                 items: { type: 'object' },
               },
             },
@@ -45,7 +52,7 @@ export function projectBulkRoutes(db: Database) {
       },
       async (request, reply) => {
         const { projects } = request.body as { projects: BulkImportItem[] };
-        const result = await projectService.bulkImport(projects, request.user!.id);
+        const result = await projectService.bulkImport(projects, request.user!.id, request.log);
         return reply.code(200).send(result);
       },
     );
