@@ -55,8 +55,8 @@ The login screen is the **only** view available to unauthenticated users. No pro
 - **User indicator**: displays the authenticated user's `displayName`. Clicking reveals a minimal dropdown with a single entry: "Abmelden" (logout).
 - **Mutation error banner**: appears at the top of the main area whenever the most recent mutation failed. Carries a German message from the API error category (see [§9.5](#95-asynchronous-mutation-behavior)) and a dismiss button. Cleared on the next successful mutation or by dismissal.
 - **Default view**: Kanban (the primary overview tool). Toggling switches between views.
-- **Footer**: text driven by branding config **[C]**. Default: `"Projekt-Manager"` **[C]**. No longer says "Walking Skeleton · Mockdaten".
-- **Responsive target**: 1920×1080 desktop monitor and tablet (1024×768 minimum). Mobile is out of scope.
+- **Footer**: text driven by branding config **[C]**. Default: `"Projekt-Manager"` **[C]**.
+- **Responsive target** (Kanban and Calendar views): 1920×1080 desktop monitor and tablet (1024×768 minimum). The Kanban board and Calendar are office-role views; mobile-specific worker views are a separate concern (see [kickoff — Done when](../project/kickoff.md#done-when-final-product): "worker view … on a calendar view … option to add notes and upload pictures") and are not part of this specification.
 
 ---
 
@@ -100,7 +100,7 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 - Beauftragt: 5 days
 - Rechnung fällig: 3 days
 
-**Buffer states**: after a configurable threshold, the entry date turns bold AND the card additionally shows `"seit X Tagen"` as a text indicator. The state config carries **two** fields for buffer states — `agingBoldDays` controls when the entry date switches to bold, and `agingThresholdDays` controls when the `"seit X Tagen"` text appears. Both are set to the same value in the default config so the two visual effects transition in sync, but the fields are kept separate so a future iteration can stagger them (e.g., bold at 14 days, "seit X Tagen" at 18) without a schema change. See [data-model.md §5.2](data-model.md#52-state-metadata) for the field mapping. Default thresholds **[C]**:
+**Buffer states**: after a configurable threshold, the entry date turns bold AND the card additionally shows `"seit X Tagen"` as a text indicator. The state config carries **two** fields for buffer states — `agingBoldDays` controls when the entry date switches to bold, and `agingThresholdDays` controls when the `"seit X Tagen"` text appears. The fields are kept separate so the two effects can be staggered (e.g., bold at 14 days, "seit X Tagen" at 18) via configuration; in the default config both values match so the effects transition together. See [data-model.md §5.2](data-model.md#52-state-metadata) for the field mapping. Default thresholds **[C]**:
 
 - Angebot: 14 days
 - Geplant: 21 days
@@ -129,7 +129,7 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 #### 8.3.2 Interactivity
 
 - **Click on a project bar** → opens the Project Detail Panel (8.4).
-- **Date editing** is done via the Project Detail Panel (8.4). Calendar drag-to-resize is deferred.
+- **Date editing** is done via the Project Detail Panel (8.4). Calendar drag-to-resize is out of scope.
 
 ---
 
@@ -162,7 +162,7 @@ Displayed in the header. Shows aggregate counts computed from current project da
 - Count of projects in each action state: e.g., `"3× Rechnung fällig"`, `"2× Anfrage"`
 - Count of projects in buffer states exceeding aging thresholds: e.g., `"1 Angebot seit >14 Tagen"`
 
-Clicking an indicator filters the current view to show only the affected projects. For action-state indicators, this filters to all projects in that state. For aged buffer indicators, this filters to only the projects exceeding the threshold (not all projects in that buffer state). Implementation note: the filter state must distinguish between 'all projects in state X' (action-state filter) and 'only aged projects in state X' (buffer-aging filter). See [#81](https://github.com/vlzware/Projekt-Manager/issues/81). Non-matching cards are hidden (not dimmed). A `"Filter aufheben"` (clear filter) button appears in the summary area while a filter is active. Switching views clears the filter.
+Clicking an indicator filters the current view to show only the affected projects. For action-state indicators, this filters to all projects in that state. For aged buffer indicators, this filters to only the projects exceeding the threshold — not all projects in that buffer state. The filter state must distinguish between "all projects in state X" (action-state filter) and "only aged projects in state X" (buffer-aging filter). Non-matching cards are hidden (not dimmed). A `"Filter aufheben"` (clear filter) button appears in the summary area while a filter is active. Switching views clears the filter.
 
 Summary values update immediately after any state change.
 
@@ -200,9 +200,7 @@ Colors are configurable via the state configuration (see [Data Model — State M
 
 Every transition shows a confirmation dialog in German before executing: `"Status ändern: {current} → {target}?"` with OK / Abbrechen.
 
-Enforcement happens both server-side (API rejects invalid transitions) and client-side (buttons hidden as before). Server-side enforcement is authoritative.
-
-Design note: `Erledigt` is terminal — no backward transition. Reversal (e.g., for bounced payments) is deferred to the iteration that introduces real payment tracking.
+Enforcement happens both server-side (API rejects invalid transitions) and client-side (buttons hidden). Server-side enforcement is authoritative.
 
 ### 9.2 Inaction Visibility
 

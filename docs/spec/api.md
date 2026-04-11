@@ -44,25 +44,25 @@ Design notes:
 
 All project operations require an authenticated session.
 
-| Operation               | Input                                  | Output                    | Notes                                                                                                                                                           |
-| ----------------------- | -------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **List projects**       | optional: offset, limit                | project list, total count | Returns all projects visible to the authenticated user. Pagination optional for this iteration's data volume but the contract must support it.                  |
-| **Get project**         | project ID                             | single project            | Returns the full project object or a not-found error.                                                                                                           |
-| **Transition forward**  | project ID                             | updated project           | Advances status by one step. Rejects if current state is `erledigt`. Sets `status`, `statusChangedAt`, `updatedAt`, and `updatedBy` server-side.                |
-| **Transition backward** | project ID                             | updated project           | Moves status back by one step. Rejects if current state is `anfrage` or `erledigt`. Sets `status`, `statusChangedAt`, `updatedAt`, and `updatedBy` server-side. |
-| **Update dates**        | project ID, plannedStart?, plannedEnd? | updated project           | Updates date fields. Sets `updatedAt` and `updatedBy` server-side. Does **not** modify `statusChangedAt` — date changes must not reset aging calculations.      |
+| Operation               | Input                                  | Output                    | Notes                                                                                                                                                                         |
+| ----------------------- | -------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **List projects**       | optional: offset, limit                | project list, total count | Returns all projects visible to the authenticated user. The contract accepts pagination parameters even when the current data volume does not require the server to paginate. |
+| **Get project**         | project ID                             | single project            | Returns the full project object or a not-found error.                                                                                                                         |
+| **Transition forward**  | project ID                             | updated project           | Advances status by one step. Rejects if current state is `erledigt`. Sets `status`, `statusChangedAt`, `updatedAt`, and `updatedBy` server-side.                              |
+| **Transition backward** | project ID                             | updated project           | Moves status back by one step. Rejects if current state is `anfrage` or `erledigt`. Sets `status`, `statusChangedAt`, `updatedAt`, and `updatedBy` server-side.               |
+| **Update dates**        | project ID, plannedStart?, plannedEnd? | updated project           | Updates date fields. Sets `updatedAt` and `updatedBy` server-side. Does **not** modify `statusChangedAt` — date changes must not reset aging calculations.                    |
 
 Design notes:
 
 - **Transitions are explicit operations**, not generic field updates. This preserves the workflow rule that only adjacent states are reachable (see [ui.md — State Transitions](ui.md#91-state-transitions)) and makes the business rule enforceable server-side.
-- **Single-item project creation and deletion are deferred.** Bulk import is available (see [§14.2.4](#1424-bulk-operations)).
+- **Single-item project creation and deletion are out of scope.** Project creation is available only via bulk import (see [§14.2.4](#1424-bulk-operations)); deletion is not part of the specification.
 - **Full project object returned** after every mutation so the client can update its local state without a separate fetch.
 - **Update-dates PATCH semantics**: the operation takes both `plannedStart` and `plannedEnd` as optional fields, and treats them as a coordinated update rather than independent PATCHes.
   - Setting `plannedStart` to `null` explicitly clears it — and because the invariant `plannedEnd without plannedStart` is forbidden (see [data-model.md §6.8](data-model.md#68-date-validation)), the server also clears `plannedEnd` in the same transaction. This is the "clear the dates" gesture from the UI (Detail Panel clearing start also clears end, see [ui.md §8.4](ui.md#84-project-detail-panel)).
   - Omitting a field leaves it unchanged (standard PATCH semantics).
   - Setting `plannedEnd` to a value requires `plannedStart` to be present (either sent in the same request or already on the row); otherwise the operation is rejected with a validation error.
   - `plannedEnd` before `plannedStart` is rejected with a validation error.
-- **Concurrent edit handling** (e.g., optimistic locking) is deferred. At current scale (1–5 users), last-write-wins is acceptable. A future iteration may introduce conflict detection when multi-user editing becomes frequent.
+- **Concurrent edit handling**: last-write-wins. Optimistic locking and conflict detection are not part of this specification.
 - The project object returned by the API uses the shape defined in [data-model.md — Project Entity](data-model.md#51-project-entity), including nested `customer` and `address` objects.
 
 #### 14.2.3 User Management
@@ -71,12 +71,12 @@ Design notes:
 | ----------------------- | ------------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Change own password** | current password, new password | success/failure | Any authenticated user can change their own password. Current password must be verified before accepting the change. New password must meet the configured password policy (see [index.md §4.5](index.md#45-authentication)). Success invalidates every **other** session for the same user (the current session survives); see [data-model.md §5.4](data-model.md#54-session). |
 
-Other user management operations (list, create, update, reset password) are deferred to the iteration that introduces the administrator UI. Until then, user administration is handled via seed data or direct database access.
+Change-own-password is the only user-management operation in this specification. Administrative user management (list, create, update, reset password) is out of scope; user administration happens via seed data or direct database access.
 
 Design notes:
 
 - Password fields are accepted as plaintext input over the API (over HTTPS). The server hashes them before storage. Plaintext passwords are never stored or logged.
-- The change-password operation is API-only in this iteration — there is no UI surface for it. A "Passwort ändern" entry in the user dropdown is planned for a future iteration.
+- The change-password operation has no UI surface in this specification — it is exercised via the API directly.
 - **Other-session invalidation** is intentional: a compromised password that has already been used to open sessions on other devices must not survive a password rotation. Only the rotating session is preserved because revoking it too would force an immediate re-login that the legitimate user just finished authenticating for.
 - The endpoint requires both a valid session (`authenticate` preHandler) **and** the `auth:change-password` permission, enforced via `requirePermission()` at the route level.
 
@@ -91,7 +91,7 @@ Bulk operations let an administrator (or import flow) submit many items in a sin
 Design notes:
 
 - **Partial success is intentional.** A 30-row import where 2 rows are malformed should not block the other 28. The response gives the client enough information to render an error report and let the user fix the rejected rows.
-- **Validation runs server-side.** The same shape rules used by single-project creation are applied per item. The validator is a pure function so it can also be reused client-side for an "import preview" UI in a future iteration without round-tripping to the server.
+- **Validation runs server-side.** The same shape rules used by single-project creation are applied per item. The validator must be a pure function so it can be reused client-side (e.g. for an import-preview UI) without round-tripping to the server.
 - **No transactional all-or-nothing semantics.** If a row fails _after_ it passed validation (e.g., a row violates a uniqueness constraint such as a duplicate project number), the row is reported in `errors` and the others still commit. This matches the import-tool model the kickoff describes. Runtime errors from the database layer are translated to a generic German message before being packaged into the response — see [architecture.md §13.6](architecture.md#136-error-messages) and `ProjectService.translatePgError()` — so that no column, table, or constraint name reaches the client.
 - **The shape generalizes.** Future bulk operations (bulk update, bulk transition, bulk delete, bulk customer import) follow the same `{ imported|updated|... , errors }` pattern. The client can write a single `BulkResult` handler instead of one per operation.
 
@@ -110,12 +110,10 @@ Design notes:
 | worker     | project:read, auth:change-password                                                    |
 | bookkeeper | project:read, auth:change-password                                                    |
 
-Future iterations will add fine-grained permissions and per-role view restrictions.
-
 Design notes:
 
-- When role-specific views are introduced (later iterations), read access may be scoped (e.g., a worker sees only assigned projects). The API must be designed so that adding query filters (e.g., "projects assigned to user X") does not require restructuring — it should be an additive parameter on the list operation.
-- Authorization checks must be enforced server-side. Client-side UI hiding (e.g., hidden buttons) is a UX convenience, not a security measure (see [architecture.md §13.6](architecture.md#136-security)).
+- The API must be designed so that scoping reads to a subset (e.g. "projects assigned to user X") is an additive query filter on the list operation, not a restructuring of the endpoint.
+- Authorization checks must be enforced server-side. Client-side UI hiding (e.g. hidden buttons) is a UX convenience, not a security measure (see [architecture.md §13.6](architecture.md#136-security)).
 
 ---
 

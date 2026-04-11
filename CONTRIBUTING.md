@@ -48,7 +48,7 @@ Each test references the criterion it covers (e.g., `// AC-3: Projects in "Anfra
 2. Maps each to its test(s)
 3. Flags unmapped criteria as gaps
 
-Gaps block implementation (step 4). The reviewer must be different from the test author.
+Gaps block implementation (step 4). The reviewer must be different from the test author. The maintained map lives in [docs/testing/traceability.md](docs/testing/traceability.md).
 
 ### Security audit
 

@@ -56,7 +56,7 @@ interface Project {
 Design notes:
 
 - `statusChangedAt` is separate from `updatedAt` — editing notes must not reset aging calculations.
-- Customer and address are nested objects for clarity and future extensibility. **Known debt**: `customer` is inline (denormalized). Future iterations will extract to a `Customer` entity for cross-project lookup, deduplication, and LLM email extraction.
+- Customer and address are nested objects. `customer` is stored inline (denormalized) as part of the Project entity; the nesting keeps extraction into a separate `Customer` entity cheap (see §6.2).
 - `assignedWorkers` references `UserAccount` entries via a `project_workers` join table (m:n). The API returns `{ userId, displayName }` objects; writes accept `assignedWorkerIds: string[]` (user UUIDs).
 - `estimatedValue` is `number` in the API contract. The database stores it as `numeric(12,2)` for precision. The ORM converts between the two representations; clients always receive and send a JSON number.
 - No `priority` field — priority is implicit in state aging and column accumulation.
@@ -117,12 +117,11 @@ interface UserAccount {
 Design notes:
 
 - `createdBy` / `updatedBy` follow the audit metadata pattern (section 5.5). **No self-referential FK**: a foreign key from `users.createdBy` back to `users.id` would complicate bootstrapping (the first admin user cannot reference a creator that doesn't exist yet) and deletion cascades, without adding meaningful integrity guarantees. The columns are nullable UUIDs with no constraint.
-- `roles` is an array even if iteration 2 uses only a minimal role set. This keeps the door open for owner, office, worker, bookkeeper, admin, or company-specific roles in later iterations without requiring a schema change.
+- `roles` is an array. This supports multi-role assignments (owner, office, worker, bookkeeper, admin, or company-specific roles) without schema changes. The default role set is configurable **[C]**.
 - **[C]** `AccountRole` values are internal keys. German display labels (e.g. "Eigentümer", "Büro", "Arbeiter", "Buchhalter") are applied by configuration — the same pattern as workflow state labels.
 - `passwordHash` is included in the entity definition for completeness but is **never** included in API responses or the client-side data model. The hashing algorithm is an infrastructure concern (not specified here).
-- `active` allows disabling a user without deleting their records — important for audit trail in later iterations. Users are deactivated, not deleted.
+- `active` allows disabling a user without deleting their records, preserving referential integrity for historical project assignments. Users are deactivated, not deleted.
 - `lastLoginAt` is optional; populated on successful authentication.
-- **Known debt**: iteration 2 implements a minimal role set. Future iterations may add fine-grained permissions, per-role view restrictions, or company-specific role definitions. The current array-based model supports this without structural changes.
 - Worker assignment is linked to `UserAccount` via the `project_workers` join table.
 
 ### 5.4 Session
@@ -178,7 +177,7 @@ The product specification defines persistence behavior, not a concrete database 
 
 ### 6.2 Future Entity Extraction
 
-The persistence design must support future extraction of additional entities without rewriting the project UI:
+The persistence design must support extraction of additional entities without rewriting the project UI:
 
 - `Customer` — extracted from inline `Project.customer`
 - `Attachment` — file references for worker uploads (Aufmaß, photos)
@@ -186,7 +185,7 @@ The persistence design must support future extraction of additional entities wit
 - `Invoice` — invoice tracking for the bookkeeper view
 - `CompanySettings` — per-company configuration
 
-The current iteration may store some data denormalized for simplicity, but must not make later normalization prohibitively expensive.
+Some data may be stored denormalized for simplicity, but the storage shape must not make normalization prohibitively expensive.
 
 ### 6.3 Record Identity
 
@@ -195,9 +194,7 @@ The current iteration may store some data denormalized for simplicity, but must 
 
 ### 6.4 Concurrency
 
-Low write concurrency is assumed, but the design must tolerate multiple concurrent users accessing the system simultaneously.
-
-At current scale (1–5 users), last-write-wins is acceptable. A future iteration may introduce optimistic concurrency control (e.g., `updatedAt`-based conflict detection) when multi-user editing becomes frequent. The chosen conflict handling strategy should be documented in an ADR.
+Low write concurrency is assumed, but the design must tolerate multiple concurrent users accessing the system simultaneously. Conflict handling is last-write-wins. Optimistic concurrency control is not part of this specification.
 
 ### 6.5 Schema Evolution
 
@@ -227,8 +224,8 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 
 ### 6.9 Soft Deletes
 
-- Users are deactivated (`active = false`), not deleted. This preserves referential integrity and supports audit trail in later iterations.
-- Projects do not support deletion in this iteration.
+- Users are deactivated (`active = false`), not deleted. This preserves referential integrity and supports audit trail.
+- Project deletion is not part of this specification.
 
 ---
 
