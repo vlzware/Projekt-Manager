@@ -1,7 +1,5 @@
 # Verification
 
-_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
-
 ---
 
 ## 15. Acceptance Criteria
@@ -36,6 +34,7 @@ The system is accepted when all of the following are true.
 - **AC-18**: `Anfrage` hides the backward transition button.
 - **AC-19**: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
 - **AC-20**: UI does not crash on projects with missing optional fields.
+- **AC-53**: A failed mutation displays a German error message and reverts the optimistic UI update.
 
 ### 15.4 Authentication
 
@@ -47,6 +46,7 @@ The system is accepted when all of the following are true.
 - **AC-26**: After logout, pressing the browser back button does not reveal project data.
 - **AC-27**: A session that expires while the app is open redirects to login with an expiry message.
 - **AC-28**: A request with a valid session token for a deactivated user is rejected with an authentication error.
+- **AC-52**: An authenticated user can change their own password. A change attempt with an incorrect current password is rejected.
 
 ### 15.5 Multi-User
 
@@ -213,7 +213,69 @@ Tests providing coverage beyond the core specification. These are not mapped to 
 
 ---
 
-## 17. Risks and Mitigations
+## 17. Traceability matrix (AC ↔ tests)
+
+Maps each AC in §15 to the tests that pin it. Test ID columns reference §16.1 (UT) / §16.2 (CT) / §16.3 (AT). `E2E` column references `e2e/*.spec.ts` files (and §16.4 step numbers where helpful). Cardinality is N:M. `N/A — reason` means the AC cannot be exercised by §16.1–§16.3 tests (deployment infrastructure, structural/lint constraints).
+
+| AC    | §      | Short text                            | UT           | CT           | AT           | E2E                                                         | Notes                                 |
+| ----- | ------ | ------------------------------------- | ------------ | ------------ | ------------ | ----------------------------------------------------------- | ------------------------------------- |
+| AC-1  | §15.1  | Local stack startup                   |              |              |              | startup.spec.ts                                             | Boot sanity                           |
+| AC-2  | §15.1  | Kanban renders 9 columns              |              | CT-1, CT-2   | AT-8         | kanban-flows.spec.ts (render)                               | Implicit via CT-1/2 + AT-8            |
+| AC-3  | §15.1  | Calendar bars                         |              | CT-11, CT-12 |              | kanban-flows.spec.ts (calendar)                             |                                       |
+| AC-4  | §15.1  | Card opens detail panel               |              | CT-6         |              | kanban-flows.spec.ts                                        | Also pinned in DetailPanel.test.tsx   |
+| AC-5  | §15.1  | Forward transition + dialog + persist |              | CT-7         | AT-9         | kanban-flows.spec.ts (transitions, persistence)             |                                       |
+| AC-6  | §15.1  | Backward transition + persist         |              | CT-9         | AT-9         | kanban-flows.spec.ts (transitions, persistence)             | AT-9 covers backward via §step-10     |
+| AC-7  | §15.1  | Date change + persist + reflected     |              | CT-17        | AT-12, AT-13 | kanban-flows.spec.ts (date editing, persistence)            | AT-13 pins inverse-range rejection    |
+| AC-8  | §15.1  | Summary action + buffer counts        | UT-8, UT-9   | CT-13        |              | kanban-flows.spec.ts (summary filter)                       |                                       |
+| AC-9  | §15.1  | Summary indicator filters view        |              | CT-14, CT-15 |              | kanban-flows.spec.ts (summary filter)                       |                                       |
+| AC-10 | §15.1  | "X Projekte ohne Termin" counter      |              | CT-16        |              | kanban-flows.spec.ts (calendar)                             |                                       |
+| AC-11 | §15.2  | Action vs buffer styling              |              |              |              | KanbanBoard.test.tsx AC-11                                  | Pinned in component test, no CT ID    |
+| AC-12 | §15.2  | Consistent state colour               |              |              |              | KanbanBoard.test.tsx AC-12                                  | Pinned in component test, no CT ID    |
+| AC-13 | §15.2  | "seit X Tagen" indicator              | UT-1, UT-2   | CT-5         |              |                                                             | UI side in KanbanBoard.test.tsx AC-13 |
+| AC-14 | §15.2  | Card field display                    |              | CT-3, CT-4   |              |                                                             | Implicit via CT-3 + CT-4              |
+| AC-15 | §15.2  | statusChangedAt + bold when aged      | UT-3         | CT-5         |              |                                                             | UI side in KanbanBoard.test.tsx AC-15 |
+| AC-16 | §15.3  | Only +1 / -1 transitions              | UT-4 to UT-7 |              | AT-10, AT-11 |                                                             | Domain + API enforce; no skip path    |
+| AC-17 | §15.3  | Erledigt is terminal                  | UT-5, UT-7   | CT-8, CT-10  | AT-10        |                                                             |                                       |
+| AC-18 | §15.3  | Anfrage hides backward                | UT-6         | CT-10        | AT-11        |                                                             |                                       |
+| AC-19 | §15.3  | German dates + Monday week            |              |              |              | KanbanBoard AC-19, Calendar AC-19                           | Supplementary dateFormat tests too    |
+| AC-20 | §15.3  | Missing optional fields ok            |              |              |              | DetailPanel.test.tsx AC-20                                  | Pinned in component test, no CT ID    |
+| AC-21 | §15.4  | Login screen only when unauth         |              | CT-18        | AT-6         | smoke.spec.ts AC-21                                         | CT-18 pins login form render          |
+| AC-22 | §15.4  | Valid creds → Kanban                  | UT-10, UT-11 | CT-18, CT-19 | AT-1, AT-4   | smoke.spec.ts AC-22                                         | UT-10/11 pin password hash compare    |
+| AC-23 | §15.4  | Invalid creds → generic error         | UT-10        | CT-20        | AT-2         | failure-paths.spec.ts (header)                              |                                       |
+| AC-24 | §15.4  | Display name in header                |              | CT-21        |              | smoke.spec.ts AC-24                                         |                                       |
+| AC-25 | §15.4  | Abmelden → login screen               |              | CT-22        |              | smoke.spec.ts AC-25, kanban-flows.spec.ts AC-25             |                                       |
+| AC-26 | §15.4  | Back button after logout safe         |              |              |              | kanban-flows.spec.ts AC-26                                  |                                       |
+| AC-27 | §15.4  | Session expiry mid-app → login        | UT-12        |              | AT-5         | failure-paths.spec.ts, auth.test.tsx AC-27                  |                                       |
+| AC-28 | §15.4  | Deactivated user rejected             |              |              | AT-3, AT-7   |                                                             | AT-7 at auth.test.ts:374-429          |
+| AC-29 | §15.5  | Multi-user concurrent visibility      |              |              |              | auth.test.ts AC-29 block                                    | API integration test, no AT ID        |
+| AC-30 | §15.6  | Public URL + HTTPS                    |              |              |              |                                                             | N/A — deployment infra                |
+| AC-31 | §15.6  | Pull-based deploy                     |              |              |              |                                                             | N/A — deployment infra                |
+| AC-32 | §15.7  | Module structure                      |              |              |              |                                                             | N/A — structural / lint               |
+| AC-33 | §15.7  | Mutations via API only                |              |              |              |                                                             | N/A — structural / lint               |
+| AC-34 | §15.7  | State config in `config/`             |              |              |              |                                                             | N/A — structural / lint               |
+| AC-35 | §15.7  | Dependency direction                  |              |              |              |                                                             | N/A — structural / lint               |
+| AC-36 | §15.7  | Lint and format pass                  |              |              |              |                                                             | N/A — CI gate, not a test             |
+| AC-37 | §15.7  | §16 tests pass                        |              |              |              |                                                             | N/A — meta (the suite as a whole)     |
+| AC-38 | §15.8  | Branding config drives header/footer  |              |              |              | KanbanBoard.test.tsx AC-38                                  | Pinned in component test, no CT ID    |
+| AC-39 | §15.8  | Session duration via config           | UT-12        |              | AT-1         | auth.test.ts AC-39 (cookie max-age)                         | Implicit in every authed test         |
+| AC-40 | §15.9  | Object storage upload/retrieve        |              |              | AT-16        |                                                             |                                       |
+| AC-41 | §15.10 | Tier-3 collapse                       |              |              |              | KanbanBoard.test.tsx AC-41                                  | Pinned in component test, no CT ID    |
+| AC-42 | §15.10 | Tier-2 collapse                       |              |              |              | KanbanBoard.test.tsx AC-42                                  | Pinned in component test, no CT ID    |
+| AC-43 | §15.10 | Tier-1 collapse + action last         |              |              |              | KanbanBoard.test.tsx AC-43                                  | Pinned in component test, no CT ID    |
+| AC-44 | §15.10 | Click collapsed column to expand      |              |              |              | KanbanBoard.test.tsx AC-44                                  | Pinned in component test, no CT ID    |
+| AC-45 | §15.6  | HTTPS default + refusal + banner      |              |              |              | env.test.ts (assertProductionSafe), insecure-banner.spec.ts | Multi-surface; banner pinned via E2E  |
+| AC-46 | §15.6  | Failed deploy keeps old version       |              |              |              |                                                             | N/A — deployment infra                |
+| AC-47 | §15.6  | Operator can rollback by SHA          |              |              |              |                                                             | N/A — deployment infra                |
+| AC-48 | §15.6  | Post-deploy smoke against /api/health |              |              |              |                                                             | N/A — deployment infra                |
+| AC-49 | §15.6  | VPN-only network access               |              |              |              |                                                             | N/A — deployment infra                |
+| AC-50 | §15.6  | Data persists across redeploy         |              |              |              |                                                             | N/A — deployment infra                |
+| AC-51 | §15.6  | Deploy by SHA, not moving tag         |              |              |              |                                                             | N/A — deployment infra                |
+| AC-52 | §15.4  | Change own password                   |              |              | AT-14, AT-15 |                                                             |                                       |
+| AC-53 | §15.3  | Failed mutation reverts UI            |              | CT-23        |              | failure-paths.spec.ts                                       |                                       |
+
+---
+
+## 18. Risks and Mitigations
 
 | Risk                                        | Impact                                            | Mitigation                                                                                                                                                                |
 | ------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -226,17 +288,13 @@ Tests providing coverage beyond the core specification. These are not mapped to 
 
 ---
 
-## 18. Open Questions
+## 19. Open Questions
 
-### 18.1 Carried Forward
+### 19.1 Carried Forward
 
 1. **`Erledigt` reversal**: currently terminal with no way back. If a payment bounces, should the project be able to return to `Abgerechnet`? Deferred to the iteration that introduces real payment tracking. See also the design note in [ui.md §9.1](ui.md#91-state-transitions).
 2. **Object storage provider**: S3-compatible API is assumed ([ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md)). Evaluate Cloudflare R2 vs Hetzner Object Storage during deployment.
 
-### 18.2 Open
+### 19.2 Open
 
 3. **Bundle size budget**: no page weight budget is currently enforced. Revisit if page weight becomes a concern.
-
----
-
-_Cross-references: [index.md](index.md) for goal, scope, and assumptions; [data-model.md](data-model.md) for entity definitions; [ui.md](ui.md) for UI specification and behavioral rules; [architecture.md](architecture.md) for architectural constraints and NFRs; [api.md](api.md) for API operations._

@@ -1,7 +1,5 @@
 # UI Specification
 
-_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
-
 ## 8. UI Specification
 
 ### 8.1 Layout
@@ -221,7 +219,7 @@ Thresholds are defined in the state configuration (see [Data Model — State Met
 ### 9.3 Date Handling
 
 - All dates displayed in German format: `DD.MM.YYYY` or `DD.MM.` when year is obvious. **[C]** Display dates (card labels, timestamps, calendar headers) use German format. Date input controls (e.g., date pickers in the detail panel) render in the user's browser locale — the system respects the user's locale settings for interactive inputs.
-- Week starts on **Monday** (ISO 8601 / German convention). **[C]**
+- Week starts on **Monday** (ISO 8601 / German convention).
 - No time zones — all dates are local calendar dates.
 
 Date and locale display settings are company-configurable (see [architecture.md §12.2](architecture.md#122-company-configurable-settings)).

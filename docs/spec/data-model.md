@@ -1,7 +1,5 @@
 # Data Model
 
-_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
-
 ---
 
 ## 5. Data Model
@@ -286,7 +284,3 @@ The overall range covers roughly the past 4 weeks to the coming 4 weeks, providi
 ### 7.5 Realism
 
 Project titles, customer names, and addresses should be domain-representative for a German Handwerker company (see [index.md, section 4.1](index.md#41-company-profile)). Example: "Fassadenanstrich Müller", "Treppenhaussanierung Schmidt", "Malerarbeiten Bürokomplex Weber".
-
----
-
-_Living document — updated as each iteration ships. Git history preserves past versions._

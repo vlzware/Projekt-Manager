@@ -1,7 +1,5 @@
 # API Specification
 
-_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
-
 ---
 
 ## 14. API Specification

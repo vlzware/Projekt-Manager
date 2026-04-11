@@ -1,7 +1,5 @@
 # Architecture, Configuration, NFRs and Security
 
-_Iteration 5 — April 2026 | Living document — updated as each iteration ships._
-
 > **This document is the architectural contract** — what must hold for any code in this repository to be considered correct. For the **navigation guide** (tech stack overview, module map with file paths, request lifecycle, "how to extend" recipes), see [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repo root. The two documents serve different readers: this one is for spec audits, the root one is for finding your way around the code.
 
 ---
@@ -135,21 +133,19 @@ Rules that define the generic workflow behavior of the product — these apply t
 - Authentication required for protected access
 - Authorization enforced server-side on every protected operation
 
-### 12.2 Company-Configurable Settings **[C]**
+### 12.2 Company-Configurable Settings
 
-Values that may differ per customer and must not be hardcoded irreversibly:
+The following values are centralized as single-source constants in `src/config/` (client) or `src/server/config/` (server) and may vary per deployment without code changes elsewhere. Each corresponds to a `[C]` marker somewhere in this spec.
 
-- App name, branding, footer text
-- Workflow state labels, colors, order, and count
-- Aging thresholds (per state type)
-- Project numbering format
-- Company profile assumptions (trade, team size, region)
-- Date and locale display settings
-- Initial user and role setup defaults
-- Authentication parameters (session duration, password policy)
-- _Future:_ notification recipients, event rules, per-role permission matrices
-
-Current implementation status: app name, branding, footer text, workflow state configuration (labels, colors, thresholds, collapse tiers) are centralized in config modules. Date/locale, authentication parameters, project numbering format, and company profile assumptions are centralized as constants but not yet runtime-configurable — changing them requires a code change and rebuild. Moving to runtime or environment-driven configuration is planned.
+- App name, branding, footer text (`src/config/brandingConfig.ts`)
+- Workflow state configuration — labels, colors, order, count, aging thresholds, collapse tiers (`src/config/stateConfig.ts`)
+- German UI and error strings (`src/config/strings.ts`)
+- Date and locale display settings (`src/config/localeConfig.ts`)
+- Project numbering format — year + sequential (see [data-model.md §5.1](data-model.md#51-project-entity))
+- Password policy — minimum length, maximum byte length, blocklist (`src/server/config/password-policy.ts`)
+- Session duration (`src/server/config/index.ts`)
+- Role set and per-role permission matrix (`src/server/config/permissions.ts`)
+- Seed default password (`src/test/seedAssumptions.ts`)
 
 ### 12.3 Configuration Requirements
 
@@ -224,12 +220,8 @@ Every new API endpoint must satisfy:
 
 1. **Authentication**: valid, active session required (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md), [api.md section 14.3](api.md#143-authorization-rules)).
 2. **Authorization**: role-based permission check via `requirePermission()` (see `src/server/config/permissions.ts`).
-3. **Input validation**: Fastify JSON schema on request body and params (see [api.md section 14.2](api.md#142-operations)).
+3. **Input validation**: Fastify JSON schema on request body and params (see [api.md section 14.2](api.md#142-operations)). For bulk operations, per-item semantic validation may live in the service layer per §11.2.
 4. **Error handling**: use `AppError`, no stack traces or DB field names leaked (see `src/server/errors.ts`).
 5. **Rate limiting**: configured on authentication endpoints (login, password change). Mutation endpoints are not rate-limited — at current scale with VPN-only access ([ADR-0008](../adr/0008-vpn-first-network-access.md)), this is a known, accepted limitation.
 6. **CSRF protection**: `SameSite=Strict` cookies + CSP headers (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md)).
 7. **Password handling**: never log or store plaintext (see [ADR-0006](../adr/0006-password-policy-nist-blocklist.md)).
-
----
-
-_Living document — updated as each iteration ships. Git history preserves past versions._
