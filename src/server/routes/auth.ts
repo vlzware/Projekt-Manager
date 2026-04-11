@@ -8,7 +8,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
-import { createAuthMiddleware } from '../middleware/auth.js';
+import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
 import { AUTH_CONFIG, RATE_LIMIT } from '../config/index.js';
 import { AuthService } from '../services/AuthService.js';
 
@@ -81,7 +81,7 @@ export function authRoutes(db: Database) {
     app.post(
       '/api/auth/change-password',
       {
-        preHandler: authenticate,
+        preHandler: [authenticate, requirePermission('auth:change-password')],
         schema: {
           body: {
             type: 'object',

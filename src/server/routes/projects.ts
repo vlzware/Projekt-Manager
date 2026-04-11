@@ -34,6 +34,7 @@ export function projectRoutes(db: Database) {
             },
           },
         },
+        preHandler: requirePermission('project:read'),
       },
       async (request, reply) => {
         const query = request.query as { offset?: number; limit?: number };
@@ -61,6 +62,7 @@ export function projectRoutes(db: Database) {
             },
           },
         },
+        preHandler: requirePermission('project:read'),
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };

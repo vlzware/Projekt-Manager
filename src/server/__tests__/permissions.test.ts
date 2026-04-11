@@ -11,7 +11,15 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startApp, stopApp, login, authGet, authPost, authPatch } from '../../test/api-helpers.js';
+import {
+  startApp,
+  stopApp,
+  login,
+  authGet,
+  authPost,
+  authPatch,
+  createTestUserSession,
+} from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 
 /** Helper: find the first project in a given status from the list endpoint. */
@@ -158,6 +166,58 @@ describe('Role-based Permission Enforcement', () => {
       const updated = res.json();
       expect(updated.id).toBe(project.id);
       expect(updated.status).toBe('angebot');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Users with no permissions — guards against regressions where a
+  // protected route is registered without a `requirePermission` check.
+  // The four seed roles all carry `project:read` and `auth:change-password`,
+  // so prior to explicit enforcement these endpoints would silently allow
+  // anyone with a valid session — including a future role added without
+  // those permissions, or a programmatic user with roles: [].
+  //
+  // We mint the session directly (createTestUserSession) rather than
+  // adding a seed user, so the test surfaces the enforcement contract
+  // without depending on seed data shape.
+  // ---------------------------------------------------------------
+  describe('User with no permissions (roles: [])', () => {
+    let noPermsToken: string;
+
+    beforeAll(async () => {
+      const session = await createTestUserSession({ roles: [] });
+      noPermsToken = session.token;
+    });
+
+    it('cannot list projects — returns 403 NOT_PERMITTED', async () => {
+      const res = await authGet(noPermsToken, '/api/projects');
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('cannot get a project by id — returns 403 NOT_PERMITTED', async () => {
+      // A project id obtained via an authorized user — the id itself is not
+      // authorization-sensitive; the check is role-based.
+      const project = await findProjectByStatus(ownerToken, 'anfrage');
+      const res = await authGet(noPermsToken, `/api/projects/${project.id}`);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('cannot change own password — returns 403 NOT_PERMITTED', async () => {
+      const res = await authPost(noPermsToken, '/api/auth/change-password', {
+        currentPassword: 'irrelevant',
+        newPassword: 'irrelevant-too',
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('cannot transition a project — returns 403 NOT_PERMITTED', async () => {
+      const project = await findProjectByStatus(ownerToken, 'anfrage');
+      const res = await authPost(noPermsToken, `/api/projects/${project.id}/transition/forward`);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
     });
   });
 });
