@@ -172,8 +172,11 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
             </div>
           )}
 
-          {/* Estimated value */}
-          {currentProject.estimatedValue !== undefined && (
+          {/* Estimated value — gate on `!= null` so the section is hidden when
+              the API returns null (not just undefined). formatCurrencyDE()
+              also defends against a null slipping through, but hiding the
+              whole section when there is no value is the cleaner UX. */}
+          {currentProject.estimatedValue != null && (
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{STRINGS.ui.estimatedValue}</div>
               <div className={styles.fieldValue}>

@@ -40,4 +40,15 @@ describe('formatCurrencyDE', () => {
   it('formats a positive value with thousands separator and two decimals', () => {
     expect(formatCurrencyDE(1234.56)).toBe('1.234,56\u00a0\u20ac');
   });
+
+  it('returns an em-dash for null', () => {
+    // D F-8: Intl.NumberFormat.format(null) coerces to 0 and returns
+    // "0,00 €" — a falsified zero that misleads the user. The function
+    // must short-circuit on nullish before the format call.
+    expect(formatCurrencyDE(null)).toBe('\u2014');
+  });
+
+  it('returns an em-dash for undefined', () => {
+    expect(formatCurrencyDE(undefined)).toBe('\u2014');
+  });
 });

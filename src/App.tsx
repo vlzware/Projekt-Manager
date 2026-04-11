@@ -57,9 +57,19 @@ export function App() {
   const sessionCheckFired = useRef(false);
 
   useEffect(() => {
-    if (insecure) {
-      document.title = 'UNSICHER \u2013 ' + document.title;
-    }
+    if (!insecure) return;
+    // Snapshot the current title and restore it on cleanup. Without the
+    // restore, React 19 StrictMode's double-mount in dev produces
+    // "UNSICHER – UNSICHER – Projekt-Manager" because the effect runs
+    // twice without reverting between runs (consolidation review
+    // round-2 C M-2). The cleanup also handles the case where `insecure`
+    // flips false at runtime (would never happen in practice, but
+    // writing it correctly costs nothing).
+    const previous = document.title;
+    document.title = 'UNSICHER \u2013 ' + previous;
+    return () => {
+      document.title = previous;
+    };
   }, [insecure]);
 
   useEffect(() => {

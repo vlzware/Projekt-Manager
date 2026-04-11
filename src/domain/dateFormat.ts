@@ -34,9 +34,16 @@ export function formatDateRange(start?: string, end?: string): string {
 }
 
 /**
- * Format a currency value in German locale.
+ * Format a currency value in German locale. `null` and `undefined`
+ * return an em-dash placeholder rather than falling through to
+ * `Intl.NumberFormat.format(null)`, which would render a falsified
+ * "0,00 €" and mislead the user — see consolidation review D F-8.
+ * Callers should also gate the surrounding DOM on a real number
+ * (belt-and-braces), but the return value here guarantees no zero
+ * leaks through the format path even if the gate is missed.
  */
-export function formatCurrencyDE(value: number): string {
+export function formatCurrencyDE(value: number | null | undefined): string {
+  if (value == null) return '\u2014';
   return new Intl.NumberFormat(LOCALE.intlLocale, {
     style: 'currency',
     currency: LOCALE.currency,
