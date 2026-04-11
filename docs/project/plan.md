@@ -140,7 +140,7 @@ Systematic check that the base is aligned and nothing is lagging or missing befo
 ## Next iterations
 
 presentation[^1] -> scope for the next iteration -> specification -> tests -> implementation -> presentation[^1] ...
-until all goals, defined in the Definition of Done, are achieved (see [Done when](kickoff.md#done-when))
+until all goals, defined in the Definition of Done, are achieved (see [Done when](kickoff.md#done-when-final-product))
 
 ## Time allocation
 

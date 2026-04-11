@@ -27,7 +27,7 @@ The system is organized into seven responsibility layers. The split between **Ro
 | **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, event emission via `services/events.ts`. Imports from domain, storage, config. Never imports from routes or middleware.                                                                                                                                                    |
 | **Routes**   | Thin HTTP adapters: Fastify schema validation, cookie handling, preHandlers (`authenticate`, `requirePermission`), response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                                                                                  |
 | **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports. Stores live in `src/state/`.                                                                                                                                                                                                                                                  |
-| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state.                                                                                                                                                                                                                                                                          |
+| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared React hooks (`src/hooks/`) — e.g. `useProjectTransition`, `useRouterNav` — are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                            |
 
 **Dependency direction** (no reverse imports):
 
@@ -97,17 +97,18 @@ The system must not close doors that later iterations need open.
 
 ### 11.6 Deployment Topology
 
-The deployed system consists of three components:
+The deployed system consists of four components:
 
-| Component          | Role                                                                                                                                           |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Application**    | Serves the front end and exposes the API. Frontend and backend may be a single deployable unit or separate services — this is an ADR decision. |
-| **Database**       | Persistent storage for projects, users, and sessions.                                                                                          |
-| **Object storage** | Binary/file storage for future attachments.                                                                                                    |
+| Component          | Role                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Reverse proxy**  | TLS termination, HTTP → HTTPS redirect or non-binding, request forwarding to the application. Production uses Caddy with Cloudflare DNS-01 ACME — see [ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) and AC-45. The evaluation (HTTP-only) mode substitutes `Caddyfile.http` per [ADR-0013](../adr/0013-http-only-evaluation-mode.md). |
+| **Application**    | Serves the front end and exposes the API. Frontend and backend may be a single deployable unit or separate services — this is an ADR decision. The app container listens only on the reverse-proxy-visible network, never on the public interface directly.                                                                                                                    |
+| **Database**       | Persistent storage for projects, users, and sessions.                                                                                                                                                                                                                                                                                                                          |
+| **Object storage** | Binary/file storage for future attachments.                                                                                                                                                                                                                                                                                                                                    |
 
-These components may run on the same provider or on separate providers. The spec does not prescribe hosting vendors, managed services, container strategies, or network topology — those are ADR decisions.
+These components may run on the same provider or on separate providers. The spec does not prescribe hosting vendors, managed services, or container strategies — those are ADR decisions. Network topology is further constrained by [ADR-0008](../adr/0008-vpn-first-network-access.md) (VPN-first access) and by the AC-45 HTTPS-or-nothing rule.
 
-The deployed demo must exercise the real production topology. The purpose of deploying in this iteration is to validate the full infrastructure path (application, database, object storage all communicating in a hosted environment), not just the application code. A deployment that skips any of the three components does not satisfy the iteration goal.
+The deployed demo must exercise the real production topology. The purpose of deploying in this iteration is to validate the full infrastructure path (reverse proxy, application, database, object storage all communicating in a hosted environment), not just the application code. A deployment that skips any of the four components does not satisfy the iteration goal.
 
 ### 11.7 Continuous Delivery Pipeline
 

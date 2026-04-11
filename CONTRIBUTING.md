@@ -73,7 +73,11 @@ The audit uses adversarial framing — reviewers with a security-specific lens, 
 - **CSS Modules.** One `.module.css` per component. No inline styles for layout, no global CSS except a minimal reset.
 - **No `any`.** TypeScript strict mode. Use proper types or `unknown`.
 - **Imports.** Absolute from `src/` root where the bundler supports it, relative within the same module.
-- **Formatting is enforced by a pre-commit hook.** `husky` + `lint-staged` run `prettier --write` on staged `src/**/*.{ts,tsx,css}` files automatically. The hook installs on `npm install` via the `prepare` script — no extra setup. If you need to bypass it in an emergency, `git commit --no-verify` skips the hook; CI's `format:check` will still catch the drift.
+- **Formatting is enforced by two git hooks, not just one.**
+  - **pre-commit** (`.husky/pre-commit`): `husky` + `lint-staged` run `prettier --write` on staged files — both `src/**/*.{ts,tsx,css}` source files and `**/*.md` documentation. The hook installs on `npm install` via the `prepare` script — no extra setup. Files are auto-formatted and re-staged before the commit is recorded.
+  - **pre-push** (`.husky/pre-push`): runs `npm run format:check` across the whole repo as a belt-and-braces gate. This catches the cases where a commit lands changes that lint-staged did not rewrite (e.g., a file added via `git add -p` that bypassed the staged-file watcher, or a hand-edited commit via `git commit --amend --no-verify`). If pre-push fails, run `npm run format` and amend/recommit before retrying the push.
+  - **CI** (`ci.yml`, step `Format check`) runs the same `npm run format:check` — three layers of defense, all running the identical command.
+  - To bypass in an emergency: `git commit --no-verify` skips pre-commit, `git push --no-verify` skips pre-push. CI's `format:check` will still catch the drift at PR time. Avoid using either flag outside a genuine emergency — the hooks are there because format drift blocks merges under the pre-push gate.
 
 ## Branching Strategy
 

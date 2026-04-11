@@ -36,8 +36,12 @@ The login screen is the **only** view available to unauthenticated users. No pro
 
 ```
 ┌──────────────────────────────────────────────────────────┐
+│ [Insecure banner — only when ALLOW_INSECURE_HTTP]        │
+├──────────────────────────────────────────────────────────┤
 │  Header: App Name  |  [Kanban] [Kalender]  |  Summary    │
 │                                    [Maria Schmidt ▾]     │
+├──────────────────────────────────────────────────────────┤
+│ [Mutation error banner — only when a mutation failed]    │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │                     Active View                          │
@@ -48,8 +52,10 @@ The login screen is the **only** view available to unauthenticated users. No pro
 └──────────────────────────────────────────────────────────┘
 ```
 
+- **Insecure banner**: full-width red alert (`#dc2626`, white text, bold) shown only when the page loaded over plain HTTP on a non-localhost host. Text: `"UNSICHERER MODUS — Keine Verschlüsselung, Zugangsdaten werden im Klartext übertragen"`. Not dismissible, covers both the login screen and the authenticated layout, detected client-side via [`src/config/insecureConnection.ts`](../../src/config/insecureConnection.ts). See [AC-45](verification.md#156-deployment) and [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
 - **Header**: app name **[C]**, view toggle (Kanban / Kalender), summary indicators.
 - **User indicator**: displays the authenticated user's `displayName`. Clicking reveals a minimal dropdown with a single entry: "Abmelden" (logout).
+- **Mutation error banner**: appears at the top of the main area whenever the most recent mutation failed. Carries a German message from the API error category (see [§9.5](#95-asynchronous-mutation-behavior)) and a dismiss button. Cleared on the next successful mutation or by dismissal.
 - **Default view**: Kanban (the primary overview tool). Toggling switches between views.
 - **Footer**: text driven by branding config **[C]**. Default: `"Projekt-Manager"` **[C]**. No longer says "Walking Skeleton · Mockdaten".
 - **Responsive target**: 1920×1080 desktop monitor and tablet (1024×768 minimum). Mobile is out of scope.
@@ -96,7 +102,7 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 - Beauftragt: 5 days
 - Rechnung fällig: 3 days
 
-**Buffer states**: after a configurable threshold (`agingThresholdDays`), the entry date turns bold and the card additionally shows `"seit X Tagen"` as a text indicator. Default thresholds **[C]**:
+**Buffer states**: after a configurable threshold, the entry date turns bold AND the card additionally shows `"seit X Tagen"` as a text indicator. The state config carries **two** fields for buffer states — `agingBoldDays` controls when the entry date switches to bold, and `agingThresholdDays` controls when the `"seit X Tagen"` text appears. Both are set to the same value in the default config so the two visual effects transition in sync, but the fields are kept separate so a future iteration can stagger them (e.g., bold at 14 days, "seit X Tagen" at 18) without a schema change. See [data-model.md §5.2](data-model.md#52-state-metadata) for the field mapping. Default thresholds **[C]**:
 
 - Angebot: 14 days
 - Geplant: 21 days
@@ -120,7 +126,7 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 - Projects with `plannedStart` and `plannedEnd` render as **horizontal bars** spanning those dates.
 - Projects with only `plannedStart` (no `plannedEnd`) render as a **single-day block** on the start date.
 - Bar color encodes the workflow state (see 8.6).
-- Projects without planned dates do **not** appear. A counter below the calendar reads: `"X Projekte ohne Termin"` — clicking it switches to Kanban view.
+- Projects without planned dates do **not** appear. A counter below the calendar reads: `"X Projekte ohne Termin"` — clicking it switches to Kanban view AND applies a "no dates" filter so only the undated projects are visible. A `"Filter aufheben"` button clears the filter, and switching views also clears it.
 
 #### 8.3.2 Interactivity
 

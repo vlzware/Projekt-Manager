@@ -29,11 +29,11 @@ The API is the boundary between the front end and all persistent state. It repla
 
 #### 14.2.1 Authentication
 
-| Operation            | Input              | Output                                                                | Notes                                                                                                                                                    |
-| -------------------- | ------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Login**            | username, password | session token, user profile (id, username, displayName, roles, email) | Creates a new session. Rejects inactive users (`active = false`).                                                                                        |
-| **Logout**           | session token      | --                                                                    | Invalidates the specific session, not all sessions for the user.                                                                                         |
-| **Get current user** | (session)          | user profile (id, username, displayName, roles, email)                | Returns the authenticated user's profile. Used on app load to restore session (see [ui.md — Authentication Behavior](ui.md#94-authentication-behavior)). |
+| Operation            | Input              | Output                                                                                       | Notes                                                                                                                                                                                                                                                 |
+| -------------------- | ------------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Login**            | username, password | session token, user profile (id, username, displayName, roles, email) enveloped under `user` | Creates a new session. Rejects inactive users (`active = false`).                                                                                                                                                                                     |
+| **Logout**           | session token      | --                                                                                           | Invalidates the specific session, not all sessions for the user.                                                                                                                                                                                      |
+| **Get current user** | (session)          | user profile (id, username, displayName, roles, email) enveloped under `user`                | Returns the authenticated user's profile under the same `{ user: ... }` envelope as Login, so a typed client shares one response type. Used on app load to restore session (see [ui.md — Authentication Behavior](ui.md#94-authentication-behavior)). |
 
 Design notes:
 
@@ -59,14 +59,19 @@ Design notes:
 - **Transitions are explicit operations**, not generic field updates. This preserves the workflow rule that only adjacent states are reachable (see [ui.md — State Transitions](ui.md#91-state-transitions)) and makes the business rule enforceable server-side.
 - **Single-item project creation and deletion are deferred.** Bulk import is available (see [§14.2.4](#1424-bulk-operations)).
 - **Full project object returned** after every mutation so the client can update its local state without a separate fetch.
+- **Update-dates PATCH semantics**: the operation takes both `plannedStart` and `plannedEnd` as optional fields, and treats them as a coordinated update rather than independent PATCHes.
+  - Setting `plannedStart` to `null` explicitly clears it — and because the invariant `plannedEnd without plannedStart` is forbidden (see [data-model.md §6.8](data-model.md#68-date-validation)), the server also clears `plannedEnd` in the same transaction. This is the "clear the dates" gesture from the UI (Detail Panel clearing start also clears end, see [ui.md §8.4](ui.md#84-project-detail-panel)).
+  - Omitting a field leaves it unchanged (standard PATCH semantics).
+  - Setting `plannedEnd` to a value requires `plannedStart` to be present (either sent in the same request or already on the row); otherwise the operation is rejected with a validation error.
+  - `plannedEnd` before `plannedStart` is rejected with a validation error.
 - **Concurrent edit handling** (e.g., optimistic locking) is deferred. At current scale (1–5 users), last-write-wins is acceptable. A future iteration may introduce conflict detection when multi-user editing becomes frequent.
 - The project object returned by the API uses the shape defined in [data-model.md — Project Entity](data-model.md#51-project-entity), including nested `customer` and `address` objects.
 
 #### 14.2.3 User Management
 
-| Operation               | Input                          | Output          | Notes                                                                                                                                                                                                                         |
-| ----------------------- | ------------------------------ | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Change own password** | current password, new password | success/failure | Any authenticated user can change their own password. Current password must be verified before accepting the change. New password must meet the configured password policy (see [index.md §4.5](index.md#45-authentication)). |
+| Operation               | Input                          | Output          | Notes                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------- | ------------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Change own password** | current password, new password | success/failure | Any authenticated user can change their own password. Current password must be verified before accepting the change. New password must meet the configured password policy (see [index.md §4.5](index.md#45-authentication)). Success invalidates every **other** session for the same user (the current session survives); see [data-model.md §5.4](data-model.md#54-session). |
 
 Other user management operations (list, create, update, reset password) are deferred to the iteration that introduces the administrator UI. Until then, user administration is handled via seed data or direct database access.
 
@@ -74,6 +79,8 @@ Design notes:
 
 - Password fields are accepted as plaintext input over the API (over HTTPS). The server hashes them before storage. Plaintext passwords are never stored or logged.
 - The change-password operation is API-only in this iteration — there is no UI surface for it. A "Passwort ändern" entry in the user dropdown is planned for a future iteration.
+- **Other-session invalidation** is intentional: a compromised password that has already been used to open sessions on other devices must not survive a password rotation. Only the rotating session is preserved because revoking it too would force an immediate re-login that the legitimate user just finished authenticating for.
+- The endpoint requires both a valid session (`authenticate` preHandler) **and** the `auth:change-password` permission, enforced via `requirePermission()` at the route level.
 
 #### 14.2.4 Bulk Operations
 
@@ -87,7 +94,7 @@ Design notes:
 
 - **Partial success is intentional.** A 30-row import where 2 rows are malformed should not block the other 28. The response gives the client enough information to render an error report and let the user fix the rejected rows.
 - **Validation runs server-side.** The same shape rules used by single-project creation are applied per item. The validator is a pure function so it can also be reused client-side for an "import preview" UI in a future iteration without round-tripping to the server.
-- **No transactional all-or-nothing semantics.** If a row fails _after_ it passed validation (e.g., a unique-key conflict on `number`), the row is reported in `errors` and the others still commit. This matches the import-tool model the kickoff describes.
+- **No transactional all-or-nothing semantics.** If a row fails _after_ it passed validation (e.g., a row violates a uniqueness constraint such as a duplicate project number), the row is reported in `errors` and the others still commit. This matches the import-tool model the kickoff describes. Runtime errors from the database layer are translated to a generic German message before being packaged into the response — see [architecture.md §13.6](architecture.md#136-error-messages) and `ProjectService.translatePgError()` — so that no column, table, or constraint name reaches the client.
 - **The shape generalizes.** Future bulk operations (bulk update, bulk transition, bulk delete, bulk customer import) follow the same `{ imported|updated|... , errors }` pattern. The client can write a single `BulkResult` handler instead of one per operation.
 
 ---

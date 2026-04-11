@@ -360,7 +360,7 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 
 ### Phase 9 -- Deploy bootstrap
 
-Sets up `scripts/deploy.sh` with encrypted secrets. See [manual-deploy.md](manual-deploy.md#bootstrap--first-run-on-a-freshly-cloned-vps) for the authoritative procedure.
+Sets up `scripts/deploy.sh` with encrypted secrets. See [manual-deploy.md](manual-deploy.md#bootstrap-first-run-on-fresh-vps) for the authoritative procedure.
 
 1. Install `age`:
 
