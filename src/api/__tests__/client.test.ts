@@ -71,11 +71,35 @@ describe('apiCall — error paths', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.sessionExpired).toBe(true);
+      expect(result.category).toBe('authentication');
       expect(result.error.code).toBe('SESSION_EXPIRED');
     }
   });
 
-  it('does NOT mark sessionExpired for a 401 with a different code', async () => {
+  it('treats UNAUTHENTICATED the same as SESSION_EXPIRED for routing', async () => {
+    // Before H-3, only SESSION_EXPIRED flagged sessionExpired=true. A
+    // protected request with no cookie at all returns UNAUTHENTICATED and
+    // must also redirect to login — otherwise the user sees a stale page
+    // with a generic "mutation failed" banner instead of being bounced.
+    // api.md §14.4.1: "authentication error: credentials invalid, session
+    // expired, or session absent → redirect to login".
+    fetchMock.mockResolvedValue(
+      jsonResponse({ code: 'UNAUTHENTICATED', message: 'Nicht angemeldet.' }, 401),
+    );
+    const result = await apiCall('/api/x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.sessionExpired).toBe(true);
+      expect(result.category).toBe('authentication');
+      expect(result.error.code).toBe('UNAUTHENTICATED');
+    }
+  });
+
+  it('does NOT mark sessionExpired for INVALID_CREDENTIALS (still authentication category)', async () => {
+    // INVALID_CREDENTIALS is only ever thrown at the login screen itself,
+    // where the user is already at "login" — a redirect would be a no-op.
+    // The category is still `authentication` so the store can classify it
+    // correctly, but sessionExpired stays false so no redirect fires.
     fetchMock.mockResolvedValue(
       jsonResponse({ code: 'INVALID_CREDENTIALS', message: 'Anmeldung fehlgeschlagen.' }, 401),
     );
@@ -83,7 +107,82 @@ describe('apiCall — error paths', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.sessionExpired).toBe(false);
+      expect(result.category).toBe('authentication');
       expect(result.error.code).toBe('INVALID_CREDENTIALS');
+    }
+  });
+
+  it('classifies NOT_FOUND as not_found category', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ code: 'NOT_FOUND', message: 'Projekt nicht gefunden.' }, 404),
+    );
+    const result = await apiCall('/api/x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.category).toBe('not_found');
+      expect(result.sessionExpired).toBe(false);
+    }
+  });
+
+  it('classifies NOT_PERMITTED as authorization category', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ code: 'NOT_PERMITTED', message: 'Keine Berechtigung.' }, 403),
+    );
+    const result = await apiCall('/api/x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.category).toBe('authorization');
+      expect(result.sessionExpired).toBe(false);
+      expect(result.error.message).toBe('Keine Berechtigung.');
+    }
+  });
+
+  it('classifies VALIDATION_ERROR as validation category', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ code: 'VALIDATION_ERROR', message: 'Ungültig.' }, 422),
+    );
+    const result = await apiCall('/api/x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.category).toBe('validation');
+      expect(result.sessionExpired).toBe(false);
+    }
+  });
+
+  it('classifies RATE_LIMITED as rate_limited and falls back to the canonical German message', async () => {
+    // Intentionally omit a message on the server side to exercise the
+    // fallback — simulates a reverse-proxy intercept that returns a
+    // bare { code } body. The client must still show a user-ready
+    // German message and never an empty string or a raw code.
+    fetchMock.mockResolvedValue(jsonResponse({ code: 'RATE_LIMITED' }, 429));
+    const result = await apiCall('/api/x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.category).toBe('rate_limited');
+      expect(result.error.message).toBe('Zu viele Anfragen. Bitte später erneut versuchen.');
+      expect(result.sessionExpired).toBe(false);
+    }
+  });
+
+  it('classifies SERVER_ERROR as server_error and falls back to the canonical German message', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ code: 'SERVER_ERROR' }, 500));
+    const result = await apiCall('/api/x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.category).toBe('server_error');
+      expect(result.error.message).toBe('Ein interner Fehler ist aufgetreten.');
+    }
+  });
+
+  it('classifies an unknown code as server_error (fail-safe default)', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ code: 'SOMETHING_BRAND_NEW', message: 'whatever' }, 500),
+    );
+    const result = await apiCall('/api/x');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.category).toBe('server_error');
+      expect(result.error.code).toBe('SOMETHING_BRAND_NEW');
     }
   });
 

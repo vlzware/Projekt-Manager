@@ -46,8 +46,15 @@ export function toProject(
   };
 }
 
-/** Fetch assigned workers for a single project. */
-async function fetchWorkersForProject(
+/**
+ * Fetch assigned workers for a single project. Exported so mutation
+ * repositories (transitions, dates) can hydrate the API response shape
+ * with workers after their transaction commits — a plain `toProject(row)`
+ * returns `assignedWorkers: null` regardless of the join table's state,
+ * which violated the api.md §14.2.2 contract for mutation responses.
+ * See consolidation review B F-1.
+ */
+export async function fetchWorkersForProject(
   db: Database,
   projectId: string,
 ): Promise<{ userId: string; displayName: string }[]> {

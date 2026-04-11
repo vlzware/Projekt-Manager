@@ -10,7 +10,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startApp, stopApp, login, authGet, authPost } from '../../test/api-helpers.js';
+import { startApp, stopApp, login, authGet, authPatch, authPost } from '../../test/api-helpers.js';
 import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
 
 /** ISO 8601 date-time regex (loose — allows date-only or full timestamp) */
@@ -69,6 +69,100 @@ describe('Project Operations — Transitions', () => {
 
       const updated = res.json();
       expect(updated.updatedBy).toBe(me.id);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // B F-1: Mutation responses must include assignedWorkers.
+  //
+  // Prior to this fix, transitionForward, transitionBackward, and
+  // updateDates all returned the updated project with
+  // assignedWorkers: null regardless of the join-table state — the
+  // catch was that toProject() defaults workers to [], which the
+  // projection collapses to null. The api.md §14.2.2 contract says
+  // every mutation returns "the full project object" so the client
+  // can update its local state without a second fetch; dropping the
+  // workers silently broke that contract. The kickoff principle says
+  // silent data corruption / contract violations of this class are
+  // urgent regardless of whether today's frontend happens to avoid
+  // tripping on them.
+  // ---------------------------------------------------------------
+  describe('B F-1: mutation responses include assignedWorkers', () => {
+    let projectId: string;
+    let workerIds: string[];
+
+    beforeAll(async () => {
+      // Look up seeded worker user IDs via /api/auth/me for each.
+      const worker1Token = await login('arbeiter1', 'changeme');
+      const worker2Token = await login('arbeiter2', 'changeme');
+      const w1 = (await authGet(worker1Token, '/api/auth/me')).json();
+      const w2 = (await authGet(worker2Token, '/api/auth/me')).json();
+      workerIds = [w1.id, w2.id];
+
+      // Bulk-import a fresh project with two assigned workers — avoids
+      // depending on seed shape (seed.ts does not pre-populate the
+      // project_workers join table).
+      const importRes = await authPost(token, '/api/projects/bulk/import', {
+        projects: [
+          {
+            number: 'IMP-BF1-WORKERS',
+            title: 'workers-in-response regression fixture',
+            customer: { name: 'Kunde BF1' },
+            status: 'geplant',
+            assignedWorkerIds: workerIds,
+          },
+        ],
+      });
+      expect(importRes.statusCode).toBe(200);
+      expect(importRes.json().imported).toBe(1);
+
+      // Fetch it back to get the id.
+      const listRes = await authGet(token, '/api/projects');
+      const fixture = listRes
+        .json()
+        .data.find((p: Record<string, unknown>) => p.number === 'IMP-BF1-WORKERS');
+      expect(fixture).toBeDefined();
+      projectId = fixture.id;
+
+      // Sanity: GET returns both workers — baseline for the mutation tests.
+      const getRes = await authGet(token, `/api/projects/${projectId}`);
+      const fetched = getRes.json();
+      expect(Array.isArray(fetched.assignedWorkers)).toBe(true);
+      expect(fetched.assignedWorkers).toHaveLength(2);
+    });
+
+    it('transitionForward response includes assignedWorkers', async () => {
+      const res = await authPost(token, `/api/projects/${projectId}/transition/forward`);
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.id).toBe(projectId);
+      expect(Array.isArray(body.assignedWorkers)).toBe(true);
+      expect(body.assignedWorkers).toHaveLength(2);
+      const returnedIds = (body.assignedWorkers as { userId: string; displayName: string }[])
+        .map((w) => w.userId)
+        .sort();
+      expect(returnedIds).toEqual([...workerIds].sort());
+    });
+
+    it('transitionBackward response includes assignedWorkers', async () => {
+      // After the forward test the project is in `in_arbeit`; move it
+      // back to `geplant` for a symmetric assertion.
+      const res = await authPost(token, `/api/projects/${projectId}/transition/backward`);
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(Array.isArray(body.assignedWorkers)).toBe(true);
+      expect(body.assignedWorkers).toHaveLength(2);
+    });
+
+    it('updateDates response includes assignedWorkers', async () => {
+      const res = await authPatch(token, `/api/projects/${projectId}/dates`, {
+        plannedStart: '2026-10-01',
+        plannedEnd: '2026-10-15',
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(Array.isArray(body.assignedWorkers)).toBe(true);
+      expect(body.assignedWorkers).toHaveLength(2);
     });
   });
 
