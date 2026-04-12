@@ -6,57 +6,64 @@
 
 The system is accepted when all of the following are true.
 
+Each criterion is classified by defect impact (see [CONTRIBUTING.md § Acceptance Criteria](../../CONTRIBUTING.md#acceptance-criteria)):
+
+- **`[crit]`** — **Critical**: a defect means data corruption, financial impact, authentication/authorization failure, or data integrity violation. Verified by unit and/or integration test.
+- **`[vis]`** — **Visual / Design**: specifies expected behavior that does not guard a critical path. Verified by visual regression (E2E screenshot diff).
+
+Criteria without a marker are structural or infrastructure constraints verified by CI gates, linting, or deployment procedures.
+
 ### 15.1 Core
 
-- **AC-1**: The full stack (frontend, backend, database) starts locally with a documented command or minimal command sequence.
-- **AC-2**: Kanban view renders 9 columns with all projects in their correct states.
-- **AC-3**: Calendar view renders projects with planned dates as colored bars on a month grid.
-- **AC-4**: Clicking a project in either view opens the detail panel with all available fields.
-- **AC-5**: The [→] button transitions a project to the next state, with a German confirmation dialog. The card moves to the correct column. The change persists across page reloads.
-- **AC-6**: Backward transition via the detail panel moves a project to the previous state. The change persists across page reloads.
-- **AC-7**: Changing a date in the detail panel updates `plannedStart`/`plannedEnd` and is reflected in both views. The change persists across page reloads.
-- **AC-8**: Summary area shows counts for action states and aged buffer items.
-- **AC-9**: Clicking a summary indicator filters the view to affected projects.
-- **AC-10**: "X Projekte ohne Termin" counter appears below the calendar.
+- **AC-1** `[vis]`: The full stack (frontend, backend, database) starts locally with a documented command or minimal command sequence.
+- **AC-2** `[vis]`: Kanban view renders 9 columns with all projects in their correct states.
+- **AC-3** `[vis]`: Calendar view renders projects with planned dates as colored bars on a month grid.
+- **AC-4** `[vis]`: Clicking a project in either view opens the detail panel with all available fields.
+- **AC-5** `[crit]`: The [→] button transitions a project to the next state, with a German confirmation dialog. The card moves to the correct column. The change persists across page reloads.
+- **AC-6** `[crit]`: Backward transition via the detail panel moves a project to the previous state. The change persists across page reloads.
+- **AC-7** `[crit]`: Changing a date in the detail panel updates `plannedStart`/`plannedEnd` and is reflected in both views. The change persists across page reloads.
+- **AC-8** `[vis]`: Summary area shows counts for action states and aged buffer items.
+- **AC-9** `[vis]`: Clicking a summary indicator filters the view to affected projects.
+- **AC-10** `[vis]`: "X Projekte ohne Termin" counter appears below the calendar.
 
 ### 15.2 Visual
 
-- **AC-11**: Action columns are visually distinct from buffer columns.
-- **AC-12**: Each state has a consistent color across Kanban dots, calendar bars, and detail badge.
-- **AC-13**: Aged buffer items show a `"seit X Tagen"` indicator.
-- **AC-14**: Cards display project number, title, customer, dates (or "Kein Termin").
-- **AC-15**: Every card shows its `statusChangedAt` date. The date turns bold when the configured aging threshold is exceeded.
+- **AC-11** `[vis]`: Action columns are visually distinct from buffer columns.
+- **AC-12** `[vis]`: Each state has a consistent color across Kanban dots, calendar bars, and detail badge.
+- **AC-13** `[vis]`: Aged buffer items show a `"seit X Tagen"` indicator.
+- **AC-14** `[vis]`: Cards display project number, title, customer, dates (or "Kein Termin").
+- **AC-15** `[vis]`: Every card shows its `statusChangedAt` date. The date turns bold when the configured aging threshold is exceeded.
 
 ### 15.3 Behavioral
 
-- **AC-16**: State transitions only allow forward +1 or backward -1. No skipping.
-- **AC-17**: `Erledigt` is terminal — both transition buttons are hidden.
-- **AC-18**: `Anfrage` hides the backward transition button.
-- **AC-19**: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
-- **AC-20**: UI does not crash on projects with missing optional fields.
-- **AC-53**: A failed mutation displays a German error message and reverts the optimistic UI update.
+- **AC-16** `[crit]`: State transitions only allow forward +1 or backward -1. No skipping.
+- **AC-17** `[crit]`: `Erledigt` is terminal — both transition buttons are hidden.
+- **AC-18** `[crit]`: `Anfrage` hides the backward transition button.
+- **AC-19** `[vis]`: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
+- **AC-20** `[vis]`: UI does not crash on projects with missing optional fields.
+- **AC-53** `[vis]`: A failed mutation displays a German error message and reverts the optimistic UI update.
 
 ### 15.4 Authentication
 
-- **AC-21**: Unauthenticated users see only a login screen. No project data is accessible.
-- **AC-22**: Entering valid credentials and clicking "Anmelden" logs the user in and shows the Kanban view.
-- **AC-23**: Entering invalid credentials shows a generic error message in German.
-- **AC-24**: The user's display name is shown in the header.
-- **AC-25**: Clicking "Abmelden" logs the user out and returns to the login screen.
-- **AC-26**: After logout, pressing the browser back button does not reveal project data.
-- **AC-27**: A session that expires while the app is open redirects to login with an expiry message.
-- **AC-28**: A request with a valid session token for a deactivated user is rejected with an authentication error.
-- **AC-52**: An authenticated user can change their own password. A change attempt with an incorrect current password is rejected.
+- **AC-21** `[crit]`: Unauthenticated users see only a login screen. No project data is accessible.
+- **AC-22** `[crit]`: Entering valid credentials and clicking "Anmelden" logs the user in and shows the Kanban view.
+- **AC-23** `[crit]`: Entering invalid credentials shows a generic error message in German.
+- **AC-24** `[vis]`: The user's display name is shown in the header.
+- **AC-25** `[crit]`: Clicking "Abmelden" logs the user out and returns to the login screen.
+- **AC-26** `[crit]`: After logout, pressing the browser back button does not reveal project data.
+- **AC-27** `[crit]`: A session that expires while the app is open redirects to login with an expiry message.
+- **AC-28** `[crit]`: A request with a valid session token for a deactivated user is rejected with an authentication error.
+- **AC-52** `[crit]`: An authenticated user can change their own password. A change attempt with an incorrect current password is rejected.
 
 ### 15.5 Multi-User
 
-- **AC-29**: Two users logged in simultaneously see each other's changes after refreshing.
+- **AC-29** `[vis]`: Two users logged in simultaneously see each other's changes after refreshing.
 
 ### 15.6 Deployment
 
 - **AC-30**: The application is reachable by authorized clients over HTTPS. HTTPS is non-negotiable (see AC-45). Network reachability is scoped by [ADR-0008](../adr/0008-vpn-first-network-access.md); see also AC-49.
 - **AC-31**: A CI-built image can be promoted to the hosted environment via manual, pull-based deploy over VPN (see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)).
-- **AC-45**: HTTPS is enforced by default. HTTP-only mode requires an explicit opt-in flag AND a non-production environment (neither alone is sufficient). When HTTP mode is active, the UI shows a non-dismissible warning banner on every page. Enabling the insecure flag in production causes the server to refuse to start. See [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
+- **AC-45** `[crit]`: HTTPS is enforced by default. HTTP-only mode requires an explicit opt-in flag AND a non-production environment (neither alone is sufficient). When HTTP mode is active, the UI shows a non-dismissible warning banner on every page. Enabling the insecure flag in production causes the server to refuse to start. See [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
 - **AC-46**: A failed deployment leaves the previously running version running.
 - **AC-47**: A previously deployed commit can be redeployed (rollback) by the operator over VPN. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
 - **AC-48**: After every deploy, an automated smoke test verifies the health endpoint. Failure aborts the deploy.
@@ -75,77 +82,77 @@ The system is accepted when all of the following are true.
 
 ### 15.8 Configurability
 
-- **AC-38**: App name (header) and footer text are driven by a branding config, not hardcoded in components. Changing the config changes all instances.
-- **AC-39**: Authentication parameters (session duration) are driven by configuration.
+- **AC-38** `[vis]`: App name (header) and footer text are driven by a branding config, not hardcoded in components. Changing the config changes all instances.
+- **AC-39** `[crit]`: Authentication parameters (session duration) are driven by configuration.
 
 ### 15.9 Infrastructure
 
-- **AC-40**: Object storage module successfully uploads and retrieves a file in the deployed environment (see [architecture.md §11.4](architecture.md#114-object-storage-module)).
+- **AC-40** `[crit]`: Object storage module successfully uploads and retrieves a file in the deployed environment (see [architecture.md §11.4](architecture.md#114-object-storage-module)).
 
 ### 15.10 Responsive
 
-- **AC-41**: At viewport widths below 1780px, tier-3 columns (Angebot, Abgerechnet, Erledigt) collapse to slim indicators showing the column header and card count. Cards are hidden.
-- **AC-42**: At viewport widths below 1350px, tier-2 columns (Geplant, In Arbeit, Abnahme) also collapse.
-- **AC-43**: At viewport widths below 940px, tier-1 columns (Anfrage, Beauftragt, Rechnung fällig) also collapse. Action columns are always the last to collapse.
-- **AC-44**: Clicking a collapsed column expands it. Clicking the column header again collapses it.
+- **AC-41** `[vis]`: At viewport widths below 1780px, tier-3 columns (Angebot, Abgerechnet, Erledigt) collapse to slim indicators showing the column header and card count. Cards are hidden.
+- **AC-42** `[vis]`: At viewport widths below 1350px, tier-2 columns (Geplant, In Arbeit, Abnahme) also collapse.
+- **AC-43** `[vis]`: At viewport widths below 940px, tier-1 columns (Anfrage, Beauftragt, Rechnung fällig) also collapse. Action columns are always the last to collapse.
+- **AC-44** `[vis]`: Clicking a collapsed column expands it. Clicking the column header again collapses it.
 
 ### 15.11 Customer Management
 
-- **AC-54**: Creating a customer with a name returns a customer object with a generated ID. Phone, email, address, and notes are optional.
-- **AC-55**: Updating a customer changes only the specified fields (PATCH semantics). Passing `null` clears an optional field.
-- **AC-56**: Listing customers returns all customers with pagination support. The `search` parameter filters by name (case-insensitive substring match).
-- **AC-57**: Getting a customer returns the full customer object and a count of associated projects.
-- **AC-58**: A project references a customer via `customerId`. The API returns the full customer object nested in project responses.
+- **AC-54** `[crit]`: Creating a customer with a name returns a customer object with a generated ID. Phone, email, address, and notes are optional.
+- **AC-55** `[crit]`: Updating a customer changes only the specified fields (PATCH semantics). Passing `null` clears an optional field.
+- **AC-56** `[crit]`: Listing customers returns all customers with pagination support. The `search` parameter filters by name (case-insensitive substring match).
+- **AC-57** `[crit]`: Getting a customer returns the full customer object and a count of associated projects.
+- **AC-58** `[crit]`: A project references a customer via `customerId`. The API returns the full customer object nested in project responses.
 
 ### 15.12 Project Management
 
-- **AC-59**: Creating a single project with `number`, `title`, and `customerId` returns a project in the first workflow state. Optional fields default appropriately.
-- **AC-60**: Updating a project changes the specified fields. Status and project number are not changeable via update (status uses transitions; number is immutable).
-- **AC-61**: Soft-deleting a project marks it as deleted. The project no longer appears in list results, views, or exports.
-- **AC-62**: Project number is unique. Creating a project with a duplicate number is rejected with a validation error.
+- **AC-59** `[crit]`: Creating a single project with `number`, `title`, and `customerId` returns a project in the first workflow state. Optional fields default appropriately.
+- **AC-60** `[crit]`: Updating a project changes the specified fields. Status and project number are not changeable via update (status uses transitions; number is immutable).
+- **AC-61** `[crit]`: Soft-deleting a project marks it as deleted. The project no longer appears in list results, views, or exports.
+- **AC-62** `[crit]`: Project number is unique. Creating a project with a duplicate number is rejected with a validation error.
 
 ### 15.13 User Management
 
-- **AC-63**: An owner can create a new user account with username, display name, password, and roles. The created user can log in with the provided credentials.
-- **AC-64**: An owner can update a user's display name, roles, and email. Username is immutable — attempts to change it are rejected.
-- **AC-65**: An owner can deactivate a user. Deactivation invalidates all sessions for that user. The deactivated user cannot log in.
-- **AC-66**: An owner can reactivate a previously deactivated user. The reactivated user can log in again.
-- **AC-67**: An owner can reset another user's password. The new password must meet the password policy. The operation invalidates all sessions for the target user.
-- **AC-68**: A user cannot deactivate themselves. The API rejects self-deactivation with an error.
-- **AC-69**: Only users with `user:manage` permission (owner role) can create, update, deactivate, reactivate, or reset passwords. Other roles receive an authorization error.
+- **AC-63** `[crit]`: An owner can create a new user account with username, display name, password, and roles. The created user can log in with the provided credentials.
+- **AC-64** `[crit]`: An owner can update a user's display name, roles, and email. Username is immutable — attempts to change it are rejected.
+- **AC-65** `[crit]`: An owner can deactivate a user. Deactivation invalidates all sessions for that user. The deactivated user cannot log in.
+- **AC-66** `[crit]`: An owner can reactivate a previously deactivated user. The reactivated user can log in again.
+- **AC-67** `[crit]`: An owner can reset another user's password. The new password must meet the password policy. The operation invalidates all sessions for the target user.
+- **AC-68** `[crit]`: A user cannot deactivate themselves. The API rejects self-deactivation with an error.
+- **AC-69** `[crit]`: Only users with `user:manage` permission (owner role) can create, update, deactivate, reactivate, or reset passwords. Other roles receive an authorization error.
 
 ### 15.14 Import/Export
 
-- **AC-70**: Bulk customer import accepts an array of customer items. Valid items are persisted; invalid items are reported in `errors` with index and message. Partial success is the expected outcome.
-- **AC-71**: Exporting projects returns all non-deleted projects in JSON format. Filter parameters (status, customerId, date range) narrow the result set.
-- **AC-72**: Exporting customers returns all customers in JSON format. Filter parameters (has-projects, no-projects) narrow the result set.
-- **AC-73**: Export operations respect role-based permissions — `project:read` for project export, `customer:read` for customer export.
+- **AC-70** `[crit]`: Bulk customer import accepts an array of customer items. Valid items are persisted; invalid items are reported in `errors` with index and message. Partial success is the expected outcome.
+- **AC-71** `[crit]`: Exporting projects returns all non-deleted projects in JSON format. Filter parameters (status, customerId, date range) narrow the result set.
+- **AC-72** `[crit]`: Exporting customers returns all customers in JSON format. Filter parameters (has-projects, no-projects) narrow the result set.
+- **AC-73** `[crit]`: Export operations respect role-based permissions — `project:read` for project export, `customer:read` for customer export.
 
 ### 15.15 Navigation
 
-- **AC-74**: Navigation between all views (Kanban, Calendar, Projects, Customers, Users, Import/Export) works without page reload. Shared state is preserved across navigation.
-- **AC-75**: Views that require specific permissions are hidden from navigation for unauthorized users.
+- **AC-74** `[vis]`: Navigation between all views (Kanban, Calendar, Projects, Customers, Users, Import/Export) works without page reload. Shared state is preserved across navigation.
+- **AC-75** `[vis]`: Views that require specific permissions are hidden from navigation for unauthorized users.
 
 ### 15.16 Management Views
 
-- **AC-76**: The project management view displays a sortable, searchable, filterable table of all non-deleted projects.
-- **AC-77**: Creating a project from the management view with number, title, and customer produces a project in the first workflow state. The project appears in the table, the Kanban board, and the Calendar (if dates are set).
-- **AC-78**: Editing a project from the management view allows changing title, customer, assigned workers, estimated value, and notes. Status and project number are not editable through this form.
-- **AC-79**: Deleting a project from the management view soft-deletes it. The project disappears from all views and exports.
-- **AC-80**: The customer management view displays a searchable, paginated table of all customers with project counts.
-- **AC-81**: Creating a customer makes it immediately available in project creation/editing dropdowns without page reload.
-- **AC-82**: The user management view is only accessible to users with `user:read` permission. It displays all users including deactivated ones.
-- **AC-83**: Creating a user from the management view produces an account that can log in immediately with the provided credentials.
-- **AC-84**: Deactivating a user from the management view prevents that user from logging in and invalidates their active sessions.
-- **AC-85**: The critical path "create customer → create project referencing that customer" works without page reload or manual refresh.
+- **AC-76** `[vis]`: The project management view displays a sortable, searchable, filterable table of all non-deleted projects.
+- **AC-77** `[vis]`: Creating a project from the management view with number, title, and customer produces a project in the first workflow state. The project appears in the table, the Kanban board, and the Calendar (if dates are set).
+- **AC-78** `[vis]`: Editing a project from the management view allows changing title, customer, assigned workers, estimated value, and notes. Status and project number are not editable through this form.
+- **AC-79** `[vis]`: Deleting a project from the management view soft-deletes it. The project disappears from all views and exports.
+- **AC-80** `[vis]`: The customer management view displays a searchable, paginated table of all customers with project counts.
+- **AC-81** `[vis]`: Creating a customer makes it immediately available in project creation/editing dropdowns without page reload.
+- **AC-82** `[vis]`: The user management view is only accessible to users with `user:read` permission. It displays all users including deactivated ones.
+- **AC-83** `[vis]`: Creating a user from the management view produces an account that can log in immediately with the provided credentials.
+- **AC-84** `[vis]`: Deactivating a user from the management view prevents that user from logging in and invalidates their active sessions.
+- **AC-85** `[vis]`: The critical path "create customer → create project referencing that customer" works without page reload or manual refresh.
 
 ### 15.17 Import/Export UI
 
-- **AC-86**: Uploading a JSON file to the import UI produces a preview table of parsed records before submission.
-- **AC-87**: Submitting an import displays a result summary: count of imported records and a list of failed rows with index and German error message.
-- **AC-88**: Exporting projects produces a downloadable JSON file containing all non-deleted projects matching the selected filters.
-- **AC-89**: Exporting customers produces a downloadable JSON file containing all customers matching the selected filters.
-- **AC-90**: Import operations respect permissions: project import requires `project:create`, customer import requires `customer:write`. Unauthorized users see the import UI but cannot submit.
+- **AC-86** `[vis]`: Uploading a JSON file to the import UI produces a preview table of parsed records before submission.
+- **AC-87** `[vis]`: Submitting an import displays a result summary: count of imported records and a list of failed rows with index and German error message.
+- **AC-88** `[vis]`: Exporting projects produces a downloadable JSON file containing all non-deleted projects matching the selected filters.
+- **AC-89** `[vis]`: Exporting customers produces a downloadable JSON file containing all customers matching the selected filters.
+- **AC-90** `[vis]`: Import operations respect permissions: project import requires `project:create`, customer import requires `customer:write`. Unauthorized users see the import UI but cannot submit.
 
 ---
 
@@ -153,59 +160,15 @@ The system is accepted when all of the following are true.
 
 ### 16.1 Unit Tests
 
-- **UT-1**: Aging calculation — returns correct `"seit X Tagen"` for a buffer project exceeding threshold.
-- **UT-2**: Aging calculation — returns nothing for a project below threshold.
-- **UT-3**: Aging bold — returns true for an action-state project exceeding `agingBoldDays`.
 - **UT-4**: State transition — `getNextState('geplant')` returns `'in_arbeit'`.
 - **UT-5**: State transition — `getNextState('erledigt')` returns `null`.
 - **UT-6**: State transition — `getPreviousState('anfrage')` returns `null`.
 - **UT-7**: State transition — `getPreviousState('erledigt')` returns `null`.
-- **UT-8**: Summary computation — correctly counts projects per action state.
-- **UT-9**: Summary computation — correctly counts aged buffer items.
 - **UT-10**: Password hashing — a hashed password does not match a different plaintext.
 - **UT-11**: Password hashing — a hashed password matches the original plaintext.
 - **UT-12**: Session expiry — a session past its `expiresAt` is treated as invalid.
 
-### 16.2 Component Tests
-
-These tests run against a mocked API.
-
-- **CT-1**: Kanban board renders 9 columns with correct German labels.
-- **CT-2**: Kanban board distributes projects into correct columns.
-- **CT-3**: Project card displays number, title, customer, date range, entry date.
-- **CT-4**: Project card shows "Kein Termin" when dates are missing.
-- **CT-5**: Project card shows bold entry date when aging threshold exceeded.
-- **CT-6**: Clicking a card opens the detail panel.
-- **CT-7**: [→] button triggers state change and moves card to next column.
-- **CT-8**: [→] button is hidden on `Erledigt` cards.
-- **CT-9**: Backward transition via detail panel moves card to previous column.
-- **CT-10**: Backward button is hidden for `Anfrage` and `Erledigt`.
-- **CT-11**: Calendar renders projects with dates as colored bars.
-- **CT-12**: Calendar renders single-date project as single-day block.
-- **CT-13**: Summary area updates after a state change.
-- **CT-14**: Clicking a summary indicator filters the Kanban to matching projects.
-- **CT-15**: "Filter aufheben" button clears the filter.
-- **CT-16**: "X Projekte ohne Termin" counter appears below calendar.
-- **CT-17**: Changing dates in detail panel updates calendar bar position.
-- **CT-18**: Login form renders username, password fields, and submit button.
-- **CT-19**: Submitting valid credentials calls the login API and navigates to the main view.
-- **CT-20**: Submitting invalid credentials shows an error message without navigating.
-- **CT-21**: User indicator in header shows display name.
-- **CT-22**: Clicking "Abmelden" calls the logout API and shows the login screen.
-- **CT-23**: When a mutation API call fails, the UI shows an error message and reverts local state.
-- **CT-24**: While a mutation is in flight, the triggering control is disabled (no double-submit).
-- **CT-25**: Project management table renders all non-deleted projects with correct columns and supports sorting.
-- **CT-26**: Project creation form enforces required fields (number, title, customer) and submits to the API.
-- **CT-27**: Customer management table renders customers with project counts and supports name search.
-- **CT-28**: Customer creation form enforces required name field and submits to the API.
-- **CT-29**: User management table renders all users with role badges and active status. Deactivated users are visually distinct.
-- **CT-30**: User creation form enforces password policy and role selection.
-- **CT-31**: Import UI parses a JSON file, displays preview, submits, and renders partial-success results.
-- **CT-32**: Export UI triggers file download with correct filename pattern.
-- **CT-33**: Navigation hides views the current user lacks permission to access.
-- **CT-34**: Inline customer creation from the project form creates a customer and selects it without losing the project form state.
-
-### 16.3 API Integration Tests
+### 16.2 API Integration Tests
 
 These tests run against a real (test) database, not mocks.
 
@@ -251,7 +214,7 @@ These tests run against a real (test) database, not mocks.
 - **AT-40**: List projects with search parameter filters across number, title, and customer name.
 - **AT-41**: List projects with `hasNoDates` filter returns only projects without planned dates.
 
-### 16.4 E2E Tests
+### 16.3 E2E Tests
 
 The end-to-end path is covered by focused, isolated test files rather than a single monolithic scenario. This improves test isolation, failure diagnostics, and net-zero teardown. The steps below define the required behavioral coverage; the implementation may split them across multiple test files and specs.
 

@@ -41,7 +41,7 @@ export function Header() {
   };
 
   return (
-    <header className={styles.header}>
+    <header className={styles.header} data-testid="header">
       <div className={styles.navGroup}>
         <div className={styles.appName}>{BRANDING.appName}</div>
         <div className={styles.viewToggle}>

@@ -30,21 +30,15 @@ export default defineConfig({
     },
     projects: [
       {
-        // Unit + component tests: pure functions, React components, mocked APIs.
+        // Unit tests: pure domain functions, config validation.
         // No database, no Fastify — safe to run files in parallel.
         extends: true,
         test: {
           name: 'unit',
-          environment: 'jsdom',
-          setupFiles: ['./src/test/setup.ts'],
+          environment: 'node',
           include: [
             'src/config/__tests__/**/*.test.ts',
             'src/domain/__tests__/**/*.test.ts',
-            'src/ui/__tests__/**/*.test.{ts,tsx}',
-            'src/ui/*/__tests__/**/*.test.ts',
-            'src/state/__tests__/**/*.test.ts',
-            'src/hooks/__tests__/**/*.test.{ts,tsx}',
-            'src/api/__tests__/**/*.test.ts',
           ],
         },
       },
