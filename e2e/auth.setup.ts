@@ -1,5 +1,6 @@
 import { test as setup, expect } from '@playwright/test';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createDatabase } from '../src/server/db/connection.js';
 import { seed } from '../src/server/seed.js';
@@ -66,4 +67,12 @@ setup('reseed database and authenticate as inhaber', async ({ page }) => {
   await expect(page.getByTestId('user-indicator')).toContainText('Thomas Berger');
 
   await page.context().storageState({ path: STORAGE_STATE });
+
+  // Chrome marks localhost cookies as Secure (localhost is a "secure
+  // context"), but Playwright won't send Secure cookies over plain HTTP
+  // when restoring state into a fresh browser context. Strip the flag
+  // so the session cookie survives the context handoff.
+  const state = JSON.parse(fs.readFileSync(STORAGE_STATE, 'utf8'));
+  for (const cookie of state.cookies) cookie.secure = false;
+  fs.writeFileSync(STORAGE_STATE, JSON.stringify(state));
 });

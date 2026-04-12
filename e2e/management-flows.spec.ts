@@ -1,0 +1,245 @@
+import { test, expect } from '@playwright/test';
+
+/**
+ * E2E Management flows
+ *
+ * Covers §16.4 steps 18–24: customer CRUD, project CRUD, user management.
+ *
+ * These tests are written ahead of the implementation (TDD). They define
+ * the expected end-to-end behavior for management views introduced in
+ * iteration 6. They will fail until the corresponding views, routes,
+ * and services are implemented.
+ *
+ * Tests run serially because each step depends on the previous:
+ *   18. Create customer → 19. Create project referencing that customer →
+ *   20. Verify in Kanban → 21. Edit project → 22. Create user →
+ *   23. Deactivate user → 24. Reactivate user
+ *
+ * Seed data assumptions (inherited from auth.setup.ts):
+ *   - User: inhaber / changeme (Thomas Berger, owner)
+ *   - Auth storageState consumed from shared setup
+ *
+ * Test IDs follow the established naming convention (kebab-case, prefixed
+ * by feature area). The actual component implementation must use these
+ * data-testid values for the tests to pass.
+ */
+
+test.describe.configure({ mode: 'serial' });
+
+test.describe('Management flows', () => {
+  /** Customer name created in step 18, referenced in step 19. */
+  const testCustomerName = 'E2E Testkunde GmbH';
+
+  /** Project number created in step 19, used for search in step 21. */
+  const testProjectNumber = 'E2E-001';
+  const testProjectTitle = 'Fassadenreinigung E2E-Test';
+
+  /** Username created in step 22, used for deactivation/reactivation. */
+  const testUsername = 'e2e_worker';
+  const testPassword = 'E2eSecure123!';
+
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByTestId('kanban-board')).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------
+  // Step 18: Create customer
+  // AC-54, AC-81, AC-85
+  // ---------------------------------------------------------------
+  test('step 18: navigate to Customer view and create a customer', async ({ page }) => {
+    // Navigate to the Customer Management view
+    await page.getByTestId('view-toggle-kunden').click();
+    await expect(page.getByTestId('customer-table')).toBeVisible();
+
+    // Open create form
+    await page.getByTestId('customer-create-button').click();
+
+    // Fill required + optional fields
+    await page.getByTestId('customer-name-input').fill(testCustomerName);
+    await page.getByTestId('customer-street-input').fill('Industriestr. 42');
+    await page.getByTestId('customer-zip-input').fill('50667');
+    await page.getByTestId('customer-city-input').fill('Köln');
+
+    // Submit
+    await page.getByTestId('customer-submit').click();
+
+    // Verify the customer appears in the table
+    await expect(page.getByText(testCustomerName)).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------
+  // Step 19: Create project referencing the new customer
+  // AC-59, AC-77, AC-85
+  // ---------------------------------------------------------------
+  test('step 19: navigate to Project view and create a project', async ({ page }) => {
+    // Navigate to the Project Management view
+    await page.getByTestId('view-toggle-projekte').click();
+    await expect(page.getByTestId('project-table')).toBeVisible();
+
+    // Open create form
+    await page.getByTestId('project-create-button').click();
+
+    // Fill required fields
+    await page.getByTestId('project-number-input').fill(testProjectNumber);
+    await page.getByTestId('project-title-input').fill(testProjectTitle);
+
+    // Select the customer created in step 18
+    await page.getByTestId('project-customer-select').click();
+    await page.getByText(testCustomerName).click();
+
+    // Submit
+    await page.getByTestId('project-submit').click();
+
+    // Verify the project appears in the table
+    await expect(page.getByText(testProjectNumber)).toBeVisible();
+    await expect(page.getByText(testProjectTitle)).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------
+  // Step 20: New project appears in Kanban under first state
+  // AC-77
+  // ---------------------------------------------------------------
+  test('step 20: new project appears in Kanban board under Anfrage', async ({ page }) => {
+    // Navigate to Kanban view
+    await page.getByTestId('view-toggle-kanban').click();
+    await expect(page.getByTestId('kanban-board')).toBeVisible();
+
+    // The new project should be in the Anfrage column (first workflow state)
+    const anfrage = page.getByTestId('kanban-column-anfrage');
+    await expect(anfrage.getByText(testProjectTitle)).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------
+  // Step 21: Search and edit project notes
+  // AC-76, AC-78
+  // ---------------------------------------------------------------
+  test('step 21: search project in management view and edit notes', async ({ page }) => {
+    // Navigate to Project Management view
+    await page.getByTestId('view-toggle-projekte').click();
+    await expect(page.getByTestId('project-table')).toBeVisible();
+
+    // Search for the project by number
+    await page.getByTestId('project-search').fill(testProjectNumber);
+    await expect(page.getByText(testProjectTitle)).toBeVisible();
+
+    // Click to edit
+    await page.getByText(testProjectTitle).click();
+
+    // Edit notes
+    await page.getByTestId('project-notes-input').fill('Gerüst bestellt, Lieferung Montag');
+    await page.getByTestId('project-save').click();
+
+    // Verify save succeeded (the updated notes should persist)
+    await page.getByText(testProjectTitle).click();
+    await expect(page.getByTestId('project-notes-input')).toHaveValue(
+      'Gerüst bestellt, Lieferung Montag',
+    );
+  });
+
+  // ---------------------------------------------------------------
+  // Step 22: Create a user with worker role
+  // AC-63, AC-82, AC-83
+  // ---------------------------------------------------------------
+  test('step 22: navigate to User view and create a worker user', async ({ page }) => {
+    // Navigate to the User Management view
+    await page.getByTestId('view-toggle-benutzer').click();
+    await expect(page.getByTestId('user-table')).toBeVisible();
+
+    // Open create form
+    await page.getByTestId('user-create-button').click();
+
+    // Fill fields
+    await page.getByTestId('user-username-input').fill(testUsername);
+    await page.getByTestId('user-displayname-input').fill('E2E Testarbeiter');
+    await page.getByTestId('user-password-input').fill(testPassword);
+    await page.getByTestId('user-role-worker').check();
+
+    // Submit
+    await page.getByTestId('user-submit').click();
+
+    // Verify the user appears in the table
+    await expect(page.getByText('E2E Testarbeiter')).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------
+  // Step 23: Deactivate user — verify can't log in
+  // AC-65, AC-84
+  // ---------------------------------------------------------------
+  test('step 23: deactivate user and verify login is blocked', async ({ page, browser }) => {
+    // Navigate to User Management
+    await page.getByTestId('view-toggle-benutzer').click();
+    await expect(page.getByTestId('user-table')).toBeVisible();
+
+    // Find and deactivate the test user
+    const userRow = page.getByText('E2E Testarbeiter');
+    await userRow.click();
+    await page.getByTestId('user-deactivate-button').click();
+
+    // Confirm deactivation
+    const confirmDialog = page.getByTestId('confirm-dialog');
+    await expect(confirmDialog).toBeVisible();
+    await page.getByTestId('confirm-ok').click();
+
+    // Verify the user is shown as deactivated
+    await expect(page.getByText('E2E Testarbeiter')).toBeVisible();
+    // Deactivated users should be visually distinct (e.g., grayed out, badge)
+
+    // Verify in a separate browser context that the deactivated user can't log in
+    const freshContext = await browser.newContext({
+      storageState: { cookies: [], origins: [] },
+      viewport: { width: 1920, height: 1080 },
+    });
+    const freshPage = await freshContext.newPage();
+    try {
+      await freshPage.goto('/');
+      await freshPage.getByTestId('login-username').fill(testUsername);
+      await freshPage.getByTestId('login-password').fill(testPassword);
+      await freshPage.getByTestId('login-submit').click();
+
+      // Should see error, NOT the Kanban board
+      await expect(freshPage.getByTestId('login-error')).toBeVisible();
+      await expect(freshPage.getByTestId('kanban-board')).not.toBeVisible();
+    } finally {
+      await freshContext.close();
+    }
+  });
+
+  // ---------------------------------------------------------------
+  // Step 24: Reactivate user — verify can log in again
+  // AC-66
+  // ---------------------------------------------------------------
+  test('step 24: reactivate user and verify login works', async ({ page, browser }) => {
+    // Navigate to User Management
+    await page.getByTestId('view-toggle-benutzer').click();
+    await expect(page.getByTestId('user-table')).toBeVisible();
+
+    // Find and reactivate the test user
+    const userRow = page.getByText('E2E Testarbeiter');
+    await userRow.click();
+    await page.getByTestId('user-reactivate-button').click();
+
+    // Confirm reactivation
+    const confirmDialog = page.getByTestId('confirm-dialog');
+    await expect(confirmDialog).toBeVisible();
+    await page.getByTestId('confirm-ok').click();
+
+    // Verify the user can log in from a separate browser context
+    const freshContext = await browser.newContext({
+      storageState: { cookies: [], origins: [] },
+      viewport: { width: 1920, height: 1080 },
+    });
+    const freshPage = await freshContext.newPage();
+    try {
+      await freshPage.goto('/');
+      await freshPage.getByTestId('login-username').fill(testUsername);
+      await freshPage.getByTestId('login-password').fill(testPassword);
+      await freshPage.getByTestId('login-submit').click();
+
+      // Should see the Kanban board (worker has project:read)
+      await expect(freshPage.getByTestId('kanban-board')).toBeVisible();
+    } finally {
+      await freshContext.close();
+    }
+  });
+});
