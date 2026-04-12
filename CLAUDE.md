@@ -31,6 +31,8 @@ If the environment cannot meet a security or quality requirement, the correct be
 
 Concrete anchor: HTTPS must always terminate; the VPN does **not** substitute for TLS (defense in depth). See [ADR-0008](docs/adr/0008-vpn-first-network-access.md) and [#47](https://github.com/vlzware/Projekt-Manager/issues/47). If a review proposes removing an HTTPS-enforcement AC because the Caddyfile isn't yet configured, the answer is to configure the Caddyfile — the AC was right.
 
+**No backwards-compatibility work.** The project has no consumers; backwards-compatibility is a non-issue. Any code dealing with backwards-compatibility (shims, re-exports, deprecated wrappers, migration paths for removed APIs) is technical debt. When this changes, this section will say so.
+
 ## Undecided Specifics
 
 Many details are deliberately left open until their iteration. When work hits something undefined:
@@ -44,3 +46,4 @@ Many details are deliberately left open until their iteration. When work hits so
 - **Touching anything under `e2e/` means running Playwright (`npx playwright test` or `npm run test:e2e`) before declaring done.** `npm run test` / `vitest` does not cover E2E — the vitest config excludes `e2e/**`. A refactor that compiles and type-checks can still fail Playwright (e.g. state pollution between split tests). CI runs Playwright only on **manual dispatch** via `.github/workflows/e2e.yml` (added in iteration 5 consolidation); the push/PR gate in `ci.yml` deliberately skips it. "CI green on push" is therefore **not** a substitute for running Playwright locally before calling a change done. If Playwright cannot run in the current environment, say so explicitly — do not silently skip.
 - Touching anything under `src/` means running `vitest` (via `npm run test` or `npm run test:coverage`) as part of the DoD.
 - Changing a test file is not done until it has been executed. "Written" ≠ "passed".
+- **Do not generate unit or integration tests for design ACs.** Only critical ACs (data corruption, money, auth, data integrity) warrant unit/integration tests. Design ACs are covered by E2E visual regression. See CONTRIBUTING.md § Acceptance Criteria.
