@@ -50,24 +50,40 @@ Seven responsibility layers. Dependency flows left-to-right only, never reversed
 
 ## Module Map
 
-| Directory                  | Owns                                                                                                                                | Must NOT                                                |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions, insecure-connection detection                                 | Import anything outside `src/config/`                   |
-| `src/domain/`              | Types, transition rules, aging calc, summary computation, session expiry, date formatting                                           | Import from state, API, storage, or UI                  |
-| `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)                                                     | Contain business logic or import from layers above      |
-| `src/server/db/`           | Drizzle schema, connection, SQL migrations                                                                                          | Contain business logic                                  |
-| `src/server/services/`     | Business logic orchestration (AuthService, ProjectService), domain events, logger interface                                         | Know about HTTP, Fastify, or request objects            |
-| `src/server/repositories/` | Database queries (project, user, session)                                                                                           | Know about HTTP or contain business rules               |
-| `src/server/storage/`      | S3/MinIO client, upload/download/presign ops                                                                                        | Be called from anywhere except API routes               |
-| `src/server/middleware/`   | Cookie parsing, session auth, request decoration                                                                                    | Contain route handlers or business logic                |
-| `src/server/routes/`       | Route definitions, request validation, response serialization                                                                       | Access repositories directly (must go through services) |
-| `src/server/data/`         | Static data files (e.g. common-passwords list)                                                                                      | Contain logic or import from other modules              |
-| `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), bootstrap, health probe, seed, password hashing, error types                     | -                                                       |
-| `src/state/`               | Zustand stores (authStore, projectStore, uiStore, confirmStore), barrel re-export + cross-store reset (store.ts), client-side cache | Access the database or import server code               |
-| `src/api/`                 | Centralized API client, typed fetch wrappers                                                                                        | Contain business logic or UI concerns                   |
-| `src/hooks/`               | Shared React hooks (transitions, routing)                                                                                           | Contain API calls directly (must use stores)            |
-| `src/ui/`                  | React components (kanban, calendar, detail, auth, layout)                                                                           | Contain business logic beyond dispatching to state      |
-| `src/test/`                | Shared test setup, API test helpers, and seed fixtures                                                                              | Be imported in production code                          |
+| Directory                  | Owns                                                                                                                                                                                                                                                                                                                           | Must NOT                                                |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions, insecure-connection detection                                                                                                                                                                                                                            | Import anything outside `src/config/`                   |
+| `src/domain/`              | Types, transition rules, aging calc, summary computation, session expiry, date formatting                                                                                                                                                                                                                                      | Import from state, API, storage, or UI                  |
+| `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)                                                                                                                                                                                                                                                | Contain business logic or import from layers above      |
+| `src/server/db/`           | Drizzle schema, connection, SQL migrations                                                                                                                                                                                                                                                                                     | Contain business logic                                  |
+| `src/server/services/`     | Business logic orchestration (AuthService, ProjectService), domain event bus (`events.ts` — emits `project.transitioned`, `project.dates_changed`; subscribers attach here for audit, notifications), logger interface                                                                                                         | Know about HTTP, Fastify, or request objects            |
+| `src/server/repositories/` | Database queries (project, user, session)                                                                                                                                                                                                                                                                                      | Know about HTTP or contain business rules               |
+| `src/server/storage/`      | S3/MinIO client, upload/download/presign ops                                                                                                                                                                                                                                                                                   | Be called from anywhere except API routes               |
+| `src/server/middleware/`   | Cookie parsing, session auth, request decoration                                                                                                                                                                                                                                                                               | Contain route handlers or business logic                |
+| `src/server/routes/`       | Route definitions, request validation, response serialization                                                                                                                                                                                                                                                                  | Access repositories directly (must go through services) |
+| `src/server/data/`         | Static data files (e.g. common-passwords list)                                                                                                                                                                                                                                                                                 | Contain logic or import from other modules              |
+| `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), bootstrap, health probe, seed, password hashing (`hashPassword.ts` — bcrypt; note: bcrypt silently truncates at 72 UTF-8 bytes, so the password policy enforces a hard ceiling there), error types (`errors.ts` — `AppError` subtypes: `notFound`, `validationError`, etc.) | -                                                       |
+| `src/state/`               | Zustand stores (authStore, projectStore, uiStore, confirmStore), barrel re-export + cross-store reset (store.ts), client-side cache                                                                                                                                                                                            | Access the database or import server code               |
+| `src/api/`                 | Centralized API client, typed fetch wrappers                                                                                                                                                                                                                                                                                   | Contain business logic or UI concerns                   |
+| `src/hooks/`               | Shared React hooks (transitions, routing)                                                                                                                                                                                                                                                                                      | Contain API calls directly (must use stores)            |
+| `src/ui/`                  | React components (kanban, calendar, detail, auth, layout)                                                                                                                                                                                                                                                                      | Contain business logic beyond dispatching to state      |
+| `src/test/`                | Shared test setup, API test helpers, and seed fixtures                                                                                                                                                                                                                                                                         | Be imported in production code                          |
+
+### Configuration Files
+
+Each `[C]` marker in the [spec](docs/spec/index.md) corresponds to a value that can vary per deployment. This table maps them to files.
+
+| What                                                                      | File                                   |
+| ------------------------------------------------------------------------- | -------------------------------------- |
+| App name, branding, footer text                                           | `src/config/brandingConfig.ts`         |
+| Workflow states (labels, colors, order, aging thresholds, collapse tiers) | `src/config/stateConfig.ts`            |
+| German UI and error strings                                               | `src/config/strings.ts`                |
+| Date and locale display settings                                          | `src/config/localeConfig.ts`           |
+| Insecure-connection detection                                             | `src/config/insecureConnection.ts`     |
+| Password policy (min length, max bytes, blocklist)                        | `src/server/config/password-policy.ts` |
+| Session duration, rate-limit windows                                      | `src/server/config/index.ts`           |
+| Role set and per-role permission matrix                                   | `src/server/config/permissions.ts`     |
+| Seed default password                                                     | `src/test/seedAssumptions.ts`          |
 
 ---
 
@@ -180,7 +196,7 @@ The four scenarios below are the most common changes. Each lists exact files to 
 2. **Define the schema**: every route uses Fastify's JSON Schema for the request body (see `projects.ts` for examples). This is your input validation — don't validate inside the handler.
 3. **Auth & permission**: apply `createAuthMiddleware(db)` as a `preHandler` for the plugin, and `requirePermission('your:permission')` per route. Add the new permission key to `src/server/config/permissions.ts` if it doesn't exist.
 4. **Delegate to a service method**. Routes never call repositories directly — see [spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries). If the service method doesn't exist yet, add it to the appropriate `*Service.ts`.
-5. **Errors**: throw `notFound(...)`, `validationError(...)`, etc. from `src/server/errors.ts`. Never throw raw `Error` from a route — the global handler in `src/server/app.ts` normalizes `AppError`, Fastify validation errors, and rate-limit errors; unknown errors are wrapped as a generic server error so internals never leak.
+5. **Errors**: throw `notFound(...)`, `validationError(...)`, etc. from `src/server/errors.ts`. Never throw raw `Error` from a route — the global handler in `src/server/app.ts` normalizes `AppError`, Fastify validation errors, and rate-limit errors; unknown errors are wrapped as a generic server error so internals never leak. For bulk operations, translate database constraint violations to German user-facing messages via the service layer (see `ProjectService.translatePgError()` for the pattern) — no column, table, or constraint name may reach the client.
 6. **Register**: add the route plugin in `src/server/app.ts`.
 7. **Tests**: integration test in `src/server/__tests__/` using `api-helpers.ts` (`startApp()`, `login()`, `authPost()`/`authGet()`).
 8. **Spec**: add the operation to `docs/spec/api.md §14.2` and an AC in `docs/spec/verification.md`.
@@ -196,6 +212,16 @@ Most of the Kanban, calendar, and aging rendering is genuinely config-driven. Tw
 5. Re-seed the database if existing data must be migrated to a new state (`SEED=force npm run dev`).
 
 This is not a zero-code-change operation. Improving it toward full configurability is tracked in [spec §3](docs/spec/index.md#3-workflow-states).
+
+### Seeding modes
+
+The seed loader (`src/server/seed.ts`) is controlled by environment:
+
+- **Production** (`NODE_ENV=production`): seeding is skipped entirely — the start-up path in `src/server/start.ts` never calls it.
+- **`SEED=true`** (default in dev): loads seed data if the database is empty; no-ops if data already exists.
+- **`SEED=force`**: drops all seed records and reloads from scratch. Use after schema changes or to refresh stale demo dates.
+
+Run via `SEED=force npm run dev` or set in `.env`.
 
 ---
 
