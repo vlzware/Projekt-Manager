@@ -13,6 +13,7 @@ describe('Bulk Project Import', () => {
   let workerToken: string;
   let worker1Id: string;
   let worker2Id: string;
+  let customerId: string;
 
   beforeAll(async () => {
     await startApp();
@@ -25,6 +26,11 @@ describe('Bulk Project Import', () => {
     const w2Token = await login('arbeiter2', 'changeme');
     const w2 = await authGet(w2Token, '/api/auth/me');
     worker2Id = w2.json().user.id;
+
+    // Get a customer ID from seeded data for bulk import tests
+    const customerRes = await authGet(ownerToken, '/api/customers');
+    const customerList = customerRes.json().customers ?? customerRes.json().data;
+    customerId = customerList[0].id;
   });
 
   afterAll(async () => {
@@ -78,12 +84,12 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-001',
             title: 'Bulk Test Projekt 1',
-            customer: { name: 'Testkunde A' },
+            customerId,
           },
           {
             number: 'IMP-002',
             title: 'Bulk Test Projekt 2',
-            customer: { name: 'Testkunde B' },
+            customerId,
             status: 'beauftragt',
           },
         ],
@@ -101,7 +107,7 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-003',
             title: 'Default Status Test',
-            customer: { name: 'Testkunde C' },
+            customerId,
           },
         ],
       });
@@ -123,9 +129,8 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-004',
             title: 'Vollstaendiges Projekt',
-            customer: { name: 'Testkunde D', phone: '0123456', email: 'test@example.com' },
+            customerId,
             status: 'geplant',
-            address: { street: 'Teststr. 1', zip: '12345', city: 'Teststadt' },
             plannedStart: '2026-06-01',
             plannedEnd: '2026-06-15',
             assignedWorkerIds: [worker1Id, worker2Id],
@@ -154,7 +159,7 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-ORDER',
             title: 'end before start',
-            customer: { name: 'Testkunde' },
+            customerId,
             plannedStart: '2026-06-15',
             plannedEnd: '2026-06-10',
           },
@@ -180,7 +185,7 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-ENDONLY',
             title: 'end without start',
-            customer: { name: 'Testkunde' },
+            customerId,
             plannedEnd: '2026-06-15',
           },
         ],
@@ -199,7 +204,7 @@ describe('Bulk Project Import', () => {
         projects: [
           {
             title: 'No Number',
-            customer: { name: 'Testkunde' },
+            customerId,
           },
         ],
       });
@@ -217,7 +222,7 @@ describe('Bulk Project Import', () => {
         projects: [
           {
             number: 'IMP-ERR1',
-            customer: { name: 'Testkunde' },
+            customerId,
           },
         ],
       });
@@ -229,7 +234,7 @@ describe('Bulk Project Import', () => {
       expect(body.errors[0].message).toContain('title');
     });
 
-    it('skips items with missing customer and reports error', async () => {
+    it('skips items with missing customerId and reports error', async () => {
       const res = await authPost(ownerToken, '/api/projects/bulk/import', {
         projects: [
           {
@@ -243,25 +248,7 @@ describe('Bulk Project Import', () => {
       const body = res.json();
       expect(body.imported).toBe(0);
       expect(body.errors).toHaveLength(1);
-      expect(body.errors[0].message).toContain('customer');
-    });
-
-    it('skips items with missing customer.name and reports error', async () => {
-      const res = await authPost(ownerToken, '/api/projects/bulk/import', {
-        projects: [
-          {
-            number: 'IMP-ERR3',
-            title: 'No Customer Name',
-            customer: {},
-          },
-        ],
-      });
-
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(body.imported).toBe(0);
-      expect(body.errors).toHaveLength(1);
-      expect(body.errors[0].message).toContain('customer.name');
+      expect(body.errors[0].message).toContain('customerId');
     });
 
     it('skips items with invalid status and reports error', async () => {
@@ -270,7 +257,7 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-ERR4',
             title: 'Bad Status',
-            customer: { name: 'Testkunde' },
+            customerId,
             status: 'nonexistent_state',
           },
         ],
@@ -294,17 +281,17 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-MIX1',
             title: 'Valid Project',
-            customer: { name: 'Kunde Mix' },
+            customerId,
           },
           {
             // Missing number — invalid
             title: 'Invalid Project',
-            customer: { name: 'Kunde Mix' },
+            customerId,
           },
           {
             number: 'IMP-MIX2',
             title: 'Another Valid Project',
-            customer: { name: 'Kunde Mix 2' },
+            customerId,
             status: 'angebot',
           },
         ],
@@ -336,7 +323,7 @@ describe('Bulk Project Import', () => {
       const oversized = Array.from({ length: 1001 }, (_, i) => ({
         number: `IMP-CAP-${i}`,
         title: `Cap test ${i}`,
-        customer: { name: 'Kunde' },
+        customerId,
       }));
       const res = await authPost(ownerToken, '/api/projects/bulk/import', {
         projects: oversized,
@@ -363,7 +350,7 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-DUP-1',
             title: 'First insert',
-            customer: { name: 'Kunde Dup' },
+            customerId,
           },
         ],
       });
@@ -376,7 +363,7 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-DUP-1',
             title: 'Duplicate insert',
-            customer: { name: 'Kunde Dup' },
+            customerId,
           },
         ],
       });
@@ -419,7 +406,7 @@ describe('Bulk Project Import', () => {
           {
             number: 'IMP-FK-1',
             title: 'FK violation',
-            customer: { name: 'Kunde FK' },
+            customerId,
             assignedWorkerIds: ['00000000-0000-0000-0000-000000000000'],
           },
         ],

@@ -4,7 +4,7 @@
 
 import { eq } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
-import { projects } from '../db/schema.js';
+import { projects, customers } from '../db/schema.js';
 import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
@@ -64,11 +64,16 @@ export async function transitionForward(
     return { before, row: updated[0]! };
   });
 
-  // Hydrate assignedWorkers into the API response. Transitions do not
-  // touch project_workers, so reading outside the transaction is safe
-  // and lets us keep a narrower tx scope. See consolidation review B F-1.
-  const workers = await fetchWorkersForProject(db, id);
-  return { before: txResult.before, project: toProject(txResult.row, workers) };
+  // Hydrate workers + customer into the API response. Transitions do not
+  // touch project_workers or customers, so reading outside the tx is safe.
+  const [workers, customerRows] = await Promise.all([
+    fetchWorkersForProject(db, id),
+    db.select().from(customers).where(eq(customers.id, txResult.row.customerId)).limit(1),
+  ]);
+  return {
+    before: txResult.before,
+    project: toProject(txResult.row, customerRows[0] ?? null, workers),
+  };
 }
 
 /**
@@ -117,10 +122,14 @@ export async function transitionBackward(
     return { before, row: updated[0]! };
   });
 
-  // Hydrate assignedWorkers into the API response — see note in
-  // transitionForward above. Consolidation review B F-1.
-  const workers = await fetchWorkersForProject(db, id);
-  return { before: txResult.before, project: toProject(txResult.row, workers) };
+  const [workers, customerRows] = await Promise.all([
+    fetchWorkersForProject(db, id),
+    db.select().from(customers).where(eq(customers.id, txResult.row.customerId)).limit(1),
+  ]);
+  return {
+    before: txResult.before,
+    project: toProject(txResult.row, customerRows[0] ?? null, workers),
+  };
 }
 
 /** Thrown when a state transition is invalid. */

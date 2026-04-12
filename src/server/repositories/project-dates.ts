@@ -4,7 +4,7 @@
 
 import { eq } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
-import { projects } from '../db/schema.js';
+import { projects, customers } from '../db/schema.js';
 import { STRINGS } from '../../config/strings.js';
 import { toProject, fetchWorkersForProject, ProjectNotFoundError } from './project-read.js';
 
@@ -81,11 +81,11 @@ export async function updateDates(
     return updated[0]!;
   });
 
-  // Hydrate assignedWorkers into the response — date edits do not
-  // touch project_workers, so reading outside the transaction is safe.
-  // Consolidation review B F-1.
-  const workers = await fetchWorkersForProject(db, id);
-  return toProject(updatedRow, workers);
+  const [workers, customerRows] = await Promise.all([
+    fetchWorkersForProject(db, id),
+    db.select().from(customers).where(eq(customers.id, updatedRow.customerId)).limit(1),
+  ]);
+  return toProject(updatedRow, customerRows[0] ?? null, workers);
 }
 
 /** Thrown when date validation fails. */

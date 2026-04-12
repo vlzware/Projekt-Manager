@@ -9,10 +9,13 @@
 
 export {
   type ProjectRow,
+  type ListProjectsOpts,
   toProject,
   listProjects,
   getProject,
   insertProject,
+  updateProject,
+  softDeleteProject,
   ProjectNotFoundError,
 } from './project-read.js';
 export { transitionForward, transitionBackward, TransitionError } from './project-transitions.js';

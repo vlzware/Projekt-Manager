@@ -10,6 +10,8 @@ import {
   listProjects as listProjectsRepo,
   getProject as getProjectRepo,
   insertProject as insertProjectRepo,
+  updateProject as updateProjectRepo,
+  softDeleteProject as softDeleteProjectRepo,
   transitionForward as transitionForwardRepo,
   transitionBackward as transitionBackwardRepo,
   updateDates as updateDatesRepo,
@@ -17,59 +19,21 @@ import {
   TransitionError,
   DateValidationError,
 } from '../repositories/project.js';
+import type { ListProjectsOpts } from '../repositories/project-read.js';
 import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
-import { notFound, validationError } from '../errors.js';
+import { notFound, validationError, conflict, extractSqlState } from '../errors.js';
 import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
-
-/**
- * Translate a database-layer error (typically a `pg` error) into a
- * user-facing German message that does NOT leak constraint names, table
- * names, column names, SQLSTATE codes, or English SQL fragments. The
- * raw error is expected to be logged by the caller. See consolidation
- * review C-5.
- *
- * Drizzle wraps `pg` errors in its own error class and exposes the
- * original via `err.cause` (db-constraints.test.ts explicitly documents
- * this), while a direct `pg.Pool.query` throws with `.code` at the top
- * level. This walker accepts both shapes — a depth cap keeps the walk
- * bounded in the face of pathological cause chains.
- */
-function extractSqlState(err: unknown): string | null {
-  let current: unknown = err;
-  for (let depth = 0; depth < 5 && current; depth++) {
-    if (!(current instanceof Error)) break;
-    const withCode = current as Error & { code?: string };
-    // PostgreSQL SQLSTATE is a 5-character string — node's system
-    // errors (ECONNREFUSED, EACCES, ...) have alphanumeric codes and
-    // would not match this shape.
-    if (typeof withCode.code === 'string' && /^[0-9A-Z]{5}$/.test(withCode.code)) {
-      return withCode.code;
-    }
-    current = (current as Error & { cause?: unknown }).cause;
-  }
-  return null;
-}
 
 function translatePgError(err: unknown): string {
   const code = extractSqlState(err);
   switch (code) {
-    // 23505 unique_violation — the only unique index on `projects` is on
-    // `number`, so this maps to the duplicate-number case. If we add more
-    // unique indexes later, this branch will need constraint-name
-    // discrimination before it can safely name the field.
     case '23505':
       return STRINGS.projects.duplicateNumber;
-    // 23503 foreign_key_violation — likely an assignedWorkerIds entry
-    // referencing a user UUID that does not exist, or created_by/updated_by
-    // pointing at a missing user.
     case '23503':
       return STRINGS.projects.foreignKeyViolation;
-    // 23514 check_violation — projects_end_requires_start is the only
-    // CHECK constraint on the table; validation normally catches this
-    // before insert, but the DB-level rejection is defense in depth.
     case '23514':
       return STRINGS.projects.dateConstraintViolation;
     default:
@@ -81,8 +45,7 @@ export interface BulkImportItem {
   number?: unknown;
   title?: unknown;
   status?: unknown;
-  customer?: unknown;
-  address?: unknown;
+  customerId?: unknown;
   plannedStart?: unknown;
   plannedEnd?: unknown;
   assignedWorkerIds?: unknown;
@@ -105,7 +68,7 @@ const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
 export class ProjectService {
   constructor(private db: Database) {}
 
-  async listProjects(opts: { offset?: number; limit?: number }) {
+  async listProjects(opts: ListProjectsOpts) {
     return listProjectsRepo(this.db, opts);
   }
 
@@ -113,6 +76,82 @@ export class ProjectService {
     const project = await getProjectRepo(this.db, id);
     if (!project) throw notFound(STRINGS.entities.project);
     return project;
+  }
+
+  async createProject(
+    data: {
+      number: string;
+      title: string;
+      customerId: string;
+      status?: string;
+      plannedStart?: string | null;
+      plannedEnd?: string | null;
+      assignedWorkerIds?: string[];
+      estimatedValue?: number | null;
+      notes?: string | null;
+    },
+    userId: string,
+    log: ServiceLogger,
+  ) {
+    const status = (data.status ?? STATE_KEYS[0]) as WorkflowState;
+    if (!VALID_STATES.has(status)) {
+      throw validationError(STRINGS.projects.invalidStatus(status));
+    }
+
+    try {
+      const project = await insertProjectRepo(this.db, {
+        number: data.number,
+        title: data.title,
+        status,
+        customerId: data.customerId,
+        plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
+        plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
+        assignedWorkerIds: data.assignedWorkerIds ?? null,
+        estimatedValue: data.estimatedValue != null ? String(data.estimatedValue) : null,
+        notes: data.notes ?? null,
+        createdBy: userId,
+        updatedBy: userId,
+      });
+      log.info({ projectId: project.id }, 'project_created');
+      return project;
+    } catch (err) {
+      const sqlState = extractSqlState(err);
+      if (sqlState === '23505') throw conflict(STRINGS.projects.duplicateNumber);
+      if (sqlState === '23503') throw validationError(STRINGS.projects.foreignKeyViolation);
+      throw err;
+    }
+  }
+
+  async updateProject(
+    id: string,
+    data: {
+      title?: string;
+      customerId?: string;
+      assignedWorkerIds?: string[];
+      estimatedValue?: number | null;
+      notes?: string | null;
+    },
+    userId: string,
+    log: ServiceLogger,
+  ) {
+    try {
+      const project = await updateProjectRepo(this.db, id, userId, data);
+      log.info({ projectId: id }, 'project_updated');
+      return project;
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
+      throw err;
+    }
+  }
+
+  async deleteProject(id: string, userId: string, log: ServiceLogger) {
+    try {
+      await softDeleteProjectRepo(this.db, id, userId);
+      log.info({ projectId: id }, 'project_deleted');
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
+      throw err;
+    }
   }
 
   async transitionForward(projectId: string, userId: string, log: ServiceLogger) {
@@ -200,12 +239,6 @@ export class ProjectService {
   /**
    * Bulk-import projects. Each item is validated independently.
    * Successfully validated items are inserted; failures are collected as errors.
-   *
-   * Database-layer errors are translated via translatePgError() so the
-   * client-facing `errors[].message` never contains constraint names,
-   * table names, SQLSTATE codes, or English SQL fragments. The raw error
-   * is logged server-side with the row index for debugging.
-   * See consolidation review C-5.
    */
   async bulkImport(
     items: BulkImportItem[],
@@ -223,16 +256,15 @@ export class ProjectService {
         continue;
       }
 
-      // At this point all required fields are validated
       const status = (item.status as string | undefined) ?? STATE_KEYS[0];
+      const customerId = item.customerId as string;
 
       try {
         await insertProjectRepo(this.db, {
           number: item.number as string,
           title: item.title as string,
           status: status as WorkflowState,
-          customer: item.customer as { name: string; phone?: string; email?: string },
-          address: item.address as { street: string; zip: string; city: string } | null | undefined,
+          customerId,
           plannedStart: item.plannedStart ? new Date(item.plannedStart as string) : null,
           plannedEnd: item.plannedEnd ? new Date(item.plannedEnd as string) : null,
           assignedWorkerIds: item.assignedWorkerIds as string[] | null | undefined,
@@ -262,48 +294,9 @@ export class ProjectService {
       return STRINGS.validation.requiredString('title');
     }
 
-    // Customer validation
-    if (
-      item.customer == null ||
-      typeof item.customer !== 'object' ||
-      Array.isArray(item.customer)
-    ) {
-      return STRINGS.validation.requiredObject('customer');
-    }
-    const customer = item.customer as Record<string, unknown>;
-    if (typeof customer.name !== 'string' || customer.name.trim() === '') {
-      return STRINGS.validation.requiredString('customer.name');
-    }
-    if (
-      customer.phone !== undefined &&
-      customer.phone !== null &&
-      typeof customer.phone !== 'string'
-    ) {
-      return STRINGS.validation.mustBeString('customer.phone');
-    }
-    if (
-      customer.email !== undefined &&
-      customer.email !== null &&
-      typeof customer.email !== 'string'
-    ) {
-      return STRINGS.validation.mustBeString('customer.email');
-    }
-
-    // Address validation (optional, but must be well-formed if present)
-    if (item.address !== undefined && item.address !== null) {
-      if (typeof item.address !== 'object' || Array.isArray(item.address)) {
-        return STRINGS.validation.mustBeObject('address');
-      }
-      const addr = item.address as Record<string, unknown>;
-      if (typeof addr.street !== 'string' || addr.street.trim() === '') {
-        return STRINGS.validation.requiredString('address.street');
-      }
-      if (typeof addr.zip !== 'string' || addr.zip.trim() === '') {
-        return STRINGS.validation.requiredString('address.zip');
-      }
-      if (typeof addr.city !== 'string' || addr.city.trim() === '') {
-        return STRINGS.validation.requiredString('address.city');
-      }
+    // Customer validation: customerId is required
+    if (typeof item.customerId !== 'string' || item.customerId.trim() === '') {
+      return STRINGS.validation.requiredString('customerId');
     }
 
     // Status validation
@@ -324,11 +317,6 @@ export class ProjectService {
         return STRINGS.projects.invalidPlannedEnd;
       }
     }
-    // #54: same invariant as `updateDates` (project-dates.ts) —
-    // plannedEnd cannot exist without plannedStart. The DB now enforces
-    // this too via the projects_end_requires_start CHECK constraint, but
-    // surface a structured German message at validation time so the
-    // bulk-import error report is actionable instead of a raw PG error.
     if (
       item.plannedEnd !== undefined &&
       item.plannedEnd !== null &&
@@ -336,11 +324,6 @@ export class ProjectService {
     ) {
       return STRINGS.projects.endWithoutStart;
     }
-    // Ordering invariant — matches the updateDates route path
-    // (project-dates.ts: DateValidationError). The DB CHECK constraint
-    // does NOT enforce ordering, only "end requires start", so the
-    // bulk-import path has to catch it in application code or else
-    // rows with end < start slip through silently.
     if (typeof item.plannedStart === 'string' && typeof item.plannedEnd === 'string') {
       const start = new Date(item.plannedStart);
       const end = new Date(item.plannedEnd);
@@ -363,7 +346,7 @@ export class ProjectService {
       }
     }
 
-    // Estimated value validation (optional, but must be numeric if present)
+    // Estimated value
     if (item.estimatedValue !== undefined && item.estimatedValue !== null) {
       if (typeof item.estimatedValue !== 'string' && typeof item.estimatedValue !== 'number') {
         return STRINGS.validation.mustBeNumeric('estimatedValue');
@@ -373,7 +356,7 @@ export class ProjectService {
       }
     }
 
-    // Notes validation (optional, but must be a string if present)
+    // Notes
     if (item.notes !== undefined && item.notes !== null) {
       if (typeof item.notes !== 'string') {
         return STRINGS.validation.mustBeString('notes');

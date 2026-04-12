@@ -99,6 +99,11 @@ describe('Project Operations — Transitions', () => {
       const w2 = (await authGet(worker2Token, '/api/auth/me')).json().user;
       workerIds = [w1.id, w2.id];
 
+      // Get a customer ID from seeded data
+      const customerRes = await authGet(token, '/api/customers');
+      const customerList = customerRes.json().customers ?? customerRes.json().data;
+      const custId = customerList[0].id;
+
       // Bulk-import a fresh project with two assigned workers — avoids
       // depending on seed shape (seed.ts does not pre-populate the
       // project_workers join table).
@@ -107,7 +112,7 @@ describe('Project Operations — Transitions', () => {
           {
             number: 'IMP-BF1-WORKERS',
             title: 'workers-in-response regression fixture',
-            customer: { name: 'Kunde BF1' },
+            customerId: custId,
             status: 'geplant',
             assignedWorkerIds: workerIds,
           },

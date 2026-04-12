@@ -15,6 +15,10 @@ import type { Database } from './db/connection.js';
 import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { projectBulkRoutes } from './routes/projects-bulk.js';
+import { customerRoutes } from './routes/customers.js';
+import { customerBulkRoutes } from './routes/customers-bulk.js';
+import { userRoutes } from './routes/users.js';
+import { exportRoutes } from './routes/export.js';
 import { getEnv } from './config/env.js';
 import { AppError, rateLimited, serverError, validationError } from './errors.js';
 import { STRINGS } from '../config/strings.js';
@@ -145,6 +149,10 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     app.register(authRoutes(opts.db));
     app.register(projectRoutes(opts.db));
     app.register(projectBulkRoutes(opts.db));
+    app.register(customerRoutes(opts.db));
+    app.register(customerBulkRoutes(opts.db));
+    app.register(userRoutes(opts.db));
+    app.register(exportRoutes(opts.db));
   }
 
   return app;

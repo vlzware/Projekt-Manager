@@ -35,6 +35,8 @@ export const STRINGS = {
 
   entities: {
     project: 'Projekt',
+    customer: 'Kunde',
+    user: 'Benutzer',
     resource: 'Ressource',
   },
 
@@ -81,6 +83,18 @@ export const STRINGS = {
     mustBeObject: (field: string) => `${field} muss ein Objekt sein.`,
     mustBeUuidArray: (field: string) => `${field} muss ein Array von UUIDs sein.`,
     mustBeNumeric: (field: string) => `${field} muss eine Zahl oder ein numerischer String sein.`,
+  },
+
+  customers: {
+    duplicateName: 'Ein Kunde mit diesem Namen existiert bereits.',
+    nameRequired: 'Kundenname ist erforderlich.',
+  },
+
+  users: {
+    duplicateUsername: 'Benutzername ist bereits vergeben.',
+    cannotDeactivateSelf: 'Sie können sich nicht selbst deaktivieren.',
+    alreadyActive: 'Benutzer ist bereits aktiv.',
+    alreadyInactive: 'Benutzer ist bereits deaktiviert.',
   },
 
   password: {
