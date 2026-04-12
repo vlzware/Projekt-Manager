@@ -55,15 +55,15 @@ The system is accepted when all of the following are true.
 ### 15.6 Deployment
 
 - **AC-30**: The application is reachable by authorized clients over HTTPS. HTTPS is non-negotiable (see AC-45). Network reachability is scoped by [ADR-0008](../adr/0008-vpn-first-network-access.md); see also AC-49.
-- **AC-31**: A CI-built image can be promoted to the hosted environment via manual, pull-based deploy over WireGuard (see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)).
+- **AC-31**: A CI-built image can be promoted to the hosted environment via manual, pull-based deploy over VPN (see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)).
 - **AC-45**: HTTPS is the default transport. HTTP is never a silent fallback — it is an explicit, deliberately ugly opt-in used only in environments where TLS is unavailable (see [ADR-0013](../adr/0013-http-only-evaluation-mode.md) — VPN does not substitute for TLS, per [ADR-0008](../adr/0008-vpn-first-network-access.md)). The opt-in has four parts that must all hold together:
   1. **Default**: port 80 redirects to HTTPS before any application handler runs, or is not bound at all. No server route ever runs over plain HTTP in the default configuration.
-  2. **Opt-in**: HTTP mode is selected only when `ALLOW_INSECURE_HTTP=true` AND `NODE_ENV` is not `production`. Neither flag alone is sufficient. In HTTP mode the server disables the `Secure` cookie flag and relaxes CSP — operators must understand that credentials travel in cleartext.
+  2. **Opt-in**: HTTP mode is selected only when an explicit insecure-mode flag is set AND the environment is not production. Neither condition alone is sufficient. In HTTP mode the server disables the `Secure` cookie flag and relaxes CSP — operators must understand that credentials travel in cleartext.
   3. **Visible**: when HTTP mode is active, the UI renders a red, non-dismissible full-width banner on every page reading `"UNSICHERER MODUS — Keine Verschlüsselung, Zugangsdaten werden im Klartext übertragen"`, and the browser tab title is prefixed with `UNSICHER –`. The banner covers both the login screen and the authenticated layout.
-  4. **Production refusal**: `ALLOW_INSECURE_HTTP=true` with `NODE_ENV=production` causes the server to refuse to start. `NODE_ENV` defaults to `production` in the validated environment schema so an unset value hits the safer branch.
-- **AC-46**: A failed deployment leaves the previously running version running. `scripts/deploy.sh` aborts before swapping containers if the image pull, the compose-up, or the health-check loop fails; the operator sees a loud failure and the current containers keep serving traffic.
-- **AC-47**: A previously deployed commit can be redeployed (rollback) by the operator invoking `scripts/deploy.sh <sha>` on the VPS over WireGuard, where `<sha>` is any previously built image tag in GHCR. No code change and no workflow re-run are required — only operator presence on the host per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). The operator is also the only party who can decrypt the age-wrapped secrets the script needs, so rollback authority is tied to WireGuard + passphrase rather than a GitHub credential.
-- **AC-48**: After every `scripts/deploy.sh` invocation, an automated smoke test polls `/api/health` against the freshly started container. Failure of the smoke test aborts the deploy and surfaces the failure to the operator.
+  4. **Production refusal**: enabling the insecure-mode flag in production causes the server to refuse to start. The environment defaults to production in the validated environment schema so an unset value hits the safer branch.
+- **AC-46**: A failed deployment leaves the previously running version running. The deploy script aborts before swapping containers if the image pull, the container start, or the health-check loop fails; the operator sees a loud failure and the current containers keep serving traffic.
+- **AC-47**: A previously deployed commit can be redeployed (rollback) by the operator invoking the deploy script with a commit SHA on the host over VPN, where the SHA is any previously built image tag in the container registry. No code change and no workflow re-run are required — only operator presence on the host per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). The operator is also the only party who can decrypt the secrets the script needs, so rollback authority is tied to VPN access + passphrase rather than a CI credential.
+- **AC-48**: After every deploy script invocation, an automated smoke test polls `/api/health` against the freshly started container. Failure of the smoke test aborts the deploy and surfaces the failure to the operator.
 - **AC-49**: Network access to the hosted environment is restricted to authorized clients via VPN per [ADR-0008](../adr/0008-vpn-first-network-access.md). The application is not reachable from the public internet without VPN credentials.
 - **AC-50**: Database and object storage data persist across application container restarts and redeploys. A redeploy of the application containers does not wipe project, user, or session data.
 - **AC-51**: Deployments use a specific commit SHA, not a moving tag. The deployed version is reproducible and traceable to a single commit.
@@ -72,13 +72,13 @@ The system is accepted when all of the following are true.
 
 - **AC-32**: Code is structured into the modules defined in [architecture.md §11.2](architecture.md#112-responsibility-boundaries).
 - **AC-33**: All data mutations go through the API. The state layer dispatches to the API; UI components never call the API directly.
-- **AC-34**: State configuration (labels, colors, thresholds) is centralized in `config/`.
+- **AC-34**: State configuration (labels, colors, thresholds) is centralized in configuration modules.
 - **AC-35**: Dependency direction ([architecture.md §11.2](architecture.md#112-responsibility-boundaries)) is enforced — no reverse imports.
 - **AC-36**: Linting and formatting pass.
 - **AC-37**: Tests defined in section 16 pass. Coverage is split across two execution surfaces so the push/PR gate stays fast:
   - **Push/PR gate**: unit tests (§16.1), component tests (§16.2), API integration tests (§16.3), and the server-side supplementary tests (§16.5) run on every push and PR to protected branches. A failing test at this layer blocks merge.
-  - **On-demand E2E gate**: Playwright §16.4 + the E2E supplementary tests from §16.5 run on a manual trigger, typically before a manual deploy per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). Playwright is not part of the push/PR gate (see [architecture.md §11.7](architecture.md#117-continuous-delivery-pipeline) for the CI topology).
-  - **Local dev**: `npm run test` and `npm run test:e2e` run locally and are part of the Definition of Done for any change that touches their respective code paths.
+  - **On-demand E2E gate**: E2E tests (§16.4) + the E2E supplementary tests from §16.5 run on a manual trigger, typically before a manual deploy per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). E2E tests are not part of the push/PR gate (see [architecture.md §11.7](architecture.md#117-continuous-delivery-pipeline) for the CI topology).
+  - **Local dev**: unit/integration tests and E2E tests run locally and are part of the Definition of Done for any change that touches their respective code paths.
 
 ### 15.8 Configurability
 
@@ -95,6 +95,38 @@ The system is accepted when all of the following are true.
 - **AC-42**: At viewport widths below 1350px, tier-2 columns (Geplant, In Arbeit, Abnahme) also collapse.
 - **AC-43**: At viewport widths below 940px, tier-1 columns (Anfrage, Beauftragt, Rechnung fällig) also collapse. Action columns are always the last to collapse.
 - **AC-44**: Clicking a collapsed column expands it. Clicking the column header again collapses it.
+
+### 15.11 Customer Management
+
+- **AC-54**: Creating a customer with a name returns a customer object with a generated ID. Phone, email, address, and notes are optional.
+- **AC-55**: Updating a customer changes only the specified fields (PATCH semantics). Passing `null` clears an optional field.
+- **AC-56**: Listing customers returns all customers with pagination support. The `search` parameter filters by name (case-insensitive substring match).
+- **AC-57**: Getting a customer returns the full customer object and a count of associated projects.
+- **AC-58**: A project references a customer via `customerId`. The API returns the full customer object nested in project responses.
+
+### 15.12 Project Management
+
+- **AC-59**: Creating a single project with `number`, `title`, and `customerId` returns a project in the first workflow state. Optional fields default appropriately.
+- **AC-60**: Updating a project changes the specified fields. Status and project number are not changeable via update (status uses transitions; number is immutable).
+- **AC-61**: Soft-deleting a project marks it as deleted. The project no longer appears in list results, views, or exports.
+- **AC-62**: Project number is unique. Creating a project with a duplicate number is rejected with a validation error.
+
+### 15.13 User Management
+
+- **AC-63**: An owner can create a new user account with username, display name, password, and roles. The created user can log in with the provided credentials.
+- **AC-64**: An owner can update a user's display name, roles, and email. Username is immutable — attempts to change it are rejected.
+- **AC-65**: An owner can deactivate a user. Deactivation invalidates all sessions for that user. The deactivated user cannot log in.
+- **AC-66**: An owner can reactivate a previously deactivated user. The reactivated user can log in again.
+- **AC-67**: An owner can reset another user's password. The new password must meet the password policy. The operation invalidates all sessions for the target user.
+- **AC-68**: A user cannot deactivate themselves. The API rejects self-deactivation with an error.
+- **AC-69**: Only users with `user:manage` permission (owner role) can create, update, deactivate, reactivate, or reset passwords. Other roles receive an authorization error.
+
+### 15.14 Import/Export
+
+- **AC-70**: Bulk customer import accepts an array of customer items. Valid items are persisted; invalid items are reported in `errors` with index and message. Partial success is the expected outcome.
+- **AC-71**: Exporting projects returns all non-deleted projects in JSON format. Filter parameters (status, customerId, date range) narrow the result set.
+- **AC-72**: Exporting customers returns all customers in JSON format. Filter parameters (has-projects, no-projects) narrow the result set.
+- **AC-73**: Export operations respect role-based permissions — `project:read` for project export, `customer:read` for customer export.
 
 ---
 
@@ -164,6 +196,28 @@ These tests run against a real (test) database, not mocks.
 - **AT-14**: Change own password with correct current password succeeds.
 - **AT-15**: Change own password with incorrect current password is rejected.
 - **AT-16**: Object storage module can upload a file, retrieve it, and verify the retrieved contents match the original. Tested against the real (deployed) object storage infrastructure.
+- **AT-17**: Create project with valid fields returns a project in the first workflow state.
+- **AT-18**: Create project with a duplicate number is rejected with a validation error.
+- **AT-19**: Create project with a non-existent `customerId` is rejected with a validation error.
+- **AT-20**: Update project changes the specified fields and preserves others. `updatedAt` and `updatedBy` are set server-side.
+- **AT-21**: Update project does not accept `status` or `number` changes.
+- **AT-22**: Delete project sets `deleted = true`. The project is excluded from list results.
+- **AT-23**: Create customer with a name returns a customer with a generated ID.
+- **AT-24**: Update customer with PATCH semantics — omitted fields unchanged, `null` clears optional fields.
+- **AT-25**: List customers with `search` parameter filters by name substring.
+- **AT-26**: Get customer includes associated project count.
+- **AT-27**: List users returns all users (including deactivated) without `passwordHash`.
+- **AT-28**: Create user with valid fields returns a user that can log in.
+- **AT-29**: Create user with a duplicate username is rejected with a validation error.
+- **AT-30**: Update user changes display name and roles. Username is immutable.
+- **AT-31**: Deactivate user sets `active = false` and invalidates all sessions for that user.
+- **AT-32**: Reactivate user sets `active = true`. The user can log in again.
+- **AT-33**: Reset password changes the user's password and invalidates all sessions for the target user.
+- **AT-34**: Self-deactivation is rejected with an error.
+- **AT-35**: Bulk import customers — partial success: valid items persisted, invalid items reported.
+- **AT-36**: Export projects returns all non-deleted projects. Filter by status narrows results.
+- **AT-37**: Export customers returns all customers. Filter by has-projects narrows results.
+- **AT-38**: User management operations require `user:manage` permission — office/worker/bookkeeper roles are rejected.
 
 ### 16.4 E2E Tests
 
@@ -192,6 +246,11 @@ Tests providing coverage beyond the core specification. These are not mapped to 
 - Rate limiting: login throttling (429 on excess attempts)
 - DB constraints: CHECK constraint enforcement (`projects_end_requires_start`)
 - Single project GET: by ID, not-found handling
+- Customer CRUD: create, update, list with search, get with project count, FK enforcement
+- Project CRUD: create, update, soft-delete, number uniqueness, number immutability
+- User management: create, update, deactivate/reactivate, reset password, self-deactivation guard, username immutability
+- Bulk customer import: partial success, validation per item, permission enforcement
+- Export: project export with filters, customer export with filters, permission enforcement
 
 #### Client-side
 
@@ -215,10 +274,11 @@ Tests providing coverage beyond the core specification. These are not mapped to 
 
 ## 17. Risks and Mitigations
 
-| Risk                                        | Impact                             | Mitigation                                                                                                                        |
-| ------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 9 Kanban columns too tight on screen        | Usability                          | Horizontal scroll; responsive collapse tiers ([ui.md §10](ui.md#10-responsive-behavior)).                                         |
-| Over-styling action columns                 | Defeats Kanban principle           | Trust board structure; resist decorative urgency.                                                                                 |
-| API latency makes transitions feel sluggish | Interaction feels unresponsive     | Optimistic UI updates + sub-300ms API target ([architecture.md §13.2](architecture.md#132-performance)).                          |
-| Session management edge cases               | User loses work or sees stale data | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose). |
-| Seed data dates become stale over time      | Demo loses impact                  | Dates are relative to deployment date ([data-model.md §7.4](data-model.md#74-date-range)). A re-seed operation refreshes them.    |
+| Risk                                               | Impact                             | Mitigation                                                                                                                        |
+| -------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 9 Kanban columns too tight on screen               | Usability                          | Horizontal scroll; responsive collapse tiers ([ui.md §10](ui.md#10-responsive-behavior)).                                         |
+| Over-styling action columns                        | Defeats Kanban principle           | Trust board structure; resist decorative urgency.                                                                                 |
+| API latency makes transitions feel sluggish        | Interaction feels unresponsive     | Optimistic UI updates + sub-300ms API target ([architecture.md §13.2](architecture.md#132-performance)).                          |
+| Session management edge cases                      | User loses work or sees stale data | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose). |
+| Seed data dates become stale over time             | Demo loses impact                  | Dates are relative to deployment date ([data-model.md §7.5](data-model.md#75-date-range)). A re-seed operation refreshes them.    |
+| Soft-deleted projects consume storage indefinitely | Database growth                    | Low risk at current scale (10-30 projects). Periodic cleanup can be added as an operational procedure if needed.                  |

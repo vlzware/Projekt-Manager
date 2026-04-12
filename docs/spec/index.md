@@ -6,7 +6,7 @@
 
 ## 1. Goal
 
-Deliver a hosted, authenticated system that demonstrates a consolidated preview of the state of all projects across the main company workflow. The system persists structured data in a database, authenticates users via a 4-role permission matrix (see [§4.2](#42-users)), and serves the front end through a backend API. Binary/object storage is **wired as an infrastructure module and health-probed**, but no user-facing upload path is in scope — see [architecture.md §11.4](architecture.md#114-object-storage-module). The system provides two complementary views — a **Kanban board** and a **Calendar** — with basic interactivity.
+Deliver a hosted, authenticated system that demonstrates a consolidated preview of the state of all projects across the main company workflow. The system persists structured data in a database, authenticates users via a 4-role permission matrix (see [§4.2](#42-users)), and serves the front end through a backend API. Binary/object storage is included as a system component (see [architecture.md §11.4](architecture.md#114-object-storage-module)). The system provides two complementary views — a **Kanban board** and a **Calendar** — with basic interactivity.
 
 ---
 
@@ -17,15 +17,18 @@ Deliver a hosted, authenticated system that demonstrates a consolidated preview 
 - Project detail panel accessible from both views
 - State transitions (forward/backward by one step)
 - Date changes (planned start/end)
+- Project creation, editing, and soft-deletion
 - Summary area with aggregate indicators
 - German UI, English code
 - API layer between front end and data store
 - Persistent data storage in a database
 - Seed data providing a realistic starting snapshot
 - User authentication (login/logout, session management) with a 4-role permission matrix ([§4.2](#42-users))
+- Administrative user management (create, update, deactivate, reactivate, reset password)
+- Import and export operations for projects and customers
 - Object storage module encapsulating all binary storage operations (see [architecture.md §11.4](architecture.md#114-object-storage-module))
 - Deployment to a hosted environment (reverse proxy, application, database, object storage)
-- CI builds images and pushes to GHCR; manual pull-based deploy over WireGuard per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)
+- CI builds images and pushes to the container registry; manual pull-based deploy over VPN per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)
 
 ---
 
@@ -67,21 +70,22 @@ Three action states, four buffer states, one active, one terminal. The Kanban bo
 
 ### 4.2 Users
 
-The system is authenticated and implements a **four-role permission matrix**. The roles — `owner`, `office`, `worker`, `bookkeeper` — are defined in [`src/server/config/permissions.ts`](../../src/server/config/permissions.ts) and enforced server-side on every protected route via `requirePermission()`. See [api.md §14.3](api.md#143-authorization-rules) for the full role ↔ permission mapping.
+The system is authenticated and implements a **four-role permission matrix**. The roles — `owner`, `office`, `worker`, `bookkeeper` — are enforced server-side on every protected route via a role-based permission check. See [api.md §14.3](api.md#143-authorization-rules) for the full role ↔ permission mapping.
 
-- **Owner** and **office** carry full read + write permissions on projects (list, get, forward and backward transitions, date edits, bulk import) plus change-own-password.
-- **Worker** and **bookkeeper** are read-only on projects (list, get) plus change-own-password.
+- **Owner** carries full read + write permissions on projects and customers, plus administrative user management (create, update, deactivate, reactivate, reset password).
+- **Office** carries full read + write permissions on projects and customers, plus read access to user accounts.
+- **Worker** and **bookkeeper** have read-only access to projects and customers, plus change-own-password.
 - Self-registration is not available — users are created by an administrator, by seed data, or by the first-run bootstrap (see [§4.5](#45-authentication)).
 
-The role set and per-role permission list are configurable in `permissions.ts` **[C]**.
+The role set and per-role permission list are configurable **[C]**.
 
 ### 4.3 Scheduling
 
-Each project has at most one planned date range (start/end) representing the main execution slot. Detailed crew or resource planning is out of scope.
+Each project has at most one planned date range (start/end) representing the main execution slot.
 
 ### 4.4 Data Origin
 
-All data is stored in a persistent database, accessed through an API layer. Seed data (see [data-model.md §7](data-model.md#7-seed-data-specification)) is loaded **only when `NODE_ENV` is not `production`** — the production start-up path in [`src/server/start.ts`](../../src/server/start.ts) deliberately skips seeding to avoid overwriting real data on a first deploy. Dev and test workflows use `SEED=true` (or `SEED=force` to wipe and reload) to reach the starting snapshot.
+All data is stored in a persistent database, accessed through an API layer. Seed data (see [data-model.md §7](data-model.md#7-seed-data-specification)) is loaded only in non-production environments — the production start-up path deliberately skips seeding to avoid overwriting real data on a first deploy. Re-seeding drops and recreates all seed records.
 
 ### 4.5 Authentication
 
@@ -95,7 +99,7 @@ All data is stored in a persistent database, accessed through an API layer. Seed
 | Self-registration                    | Not available                                                                                                                         |
 | Password-change side effect          | Invalidates every **other** session for the same user (current session survives) — see [data-model.md §5.4](data-model.md#54-session) |
 
-**Password policy detail.** The minimum length is 8 characters (policy) but bcrypt truncates input at 72 UTF-8 bytes — the system enforces a hard ceiling there so long inputs fail loudly rather than silently ignoring bytes past the truncation point. A blocklist of common passwords (`src/server/data/common-passwords.ts`) is checked on every password set to reject trivially guessable values. Both checks run through the same `checkPasswordPolicy()` so the bootstrap path and the change-password endpoint cannot diverge. See [ADR-0006](../adr/0006-password-policy-nist-blocklist.md).
+**Password policy detail.** The minimum length is 8 characters; the maximum is 72 UTF-8 bytes — the system enforces a hard ceiling so long inputs fail loudly rather than silently truncating. A blocklist of common passwords is checked on every password set to reject trivially guessable values. Both checks run through a single validation path so the bootstrap path and the change-password endpoint cannot diverge. See [ADR-0006](../adr/0006-password-policy-nist-blocklist.md).
 
 For development, initial users come from seed data (see [data-model.md §7.2](data-model.md#72-user-dataset)). For production, the first admin account is created by the first-run bootstrap mechanism (see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md)); subsequent users are added administratively.
 
@@ -105,15 +109,15 @@ For development, initial users come from seed data (see [data-model.md §7.2](da
 
 This specification is split across multiple files:
 
-| File                                   | Sections | Contents                                                                           |
-| -------------------------------------- | -------- | ---------------------------------------------------------------------------------- |
-| **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                          |
-| **[data-model.md](data-model.md)**     | 5–7      | Project, User, Session entities; state metadata; persistence principles; seed data |
-| **[ui.md](ui.md)**                     | 8–10     | Layout, views, interactions, login, async mutation UX                              |
-| **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security  |
-| **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                   |
-| **[verification.md](verification.md)** | 15–17    | Acceptance criteria, test specifications, risks                                    |
+| File                                   | Sections | Contents                                                                                     |
+| -------------------------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                                    |
+| **[data-model.md](data-model.md)**     | 5–7      | Project, Customer, User, Session entities; state metadata; persistence principles; seed data |
+| **[ui.md](ui.md)**                     | 8–10     | Layout, views, interactions, login, async mutation UX                                        |
+| **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security            |
+| **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                             |
+| **[verification.md](verification.md)** | 15–17    | Acceptance criteria, test specifications, risks                                              |
 
 The test-spec traceability matrix (AC ↔ tests) lives in [docs/testing/traceability.md](../testing/traceability.md) — not in the spec itself, because it is a verification artifact maintained alongside the test suite (see [CONTRIBUTING.md §Workflow](../../CONTRIBUTING.md#workflow) step 3).
 
-**Notation.** `[C]` marks values that are centralized in `src/config/` (or equivalent) and may vary per deployment. Catalogue: [architecture.md §12.2](architecture.md#122-company-configurable-settings).
+**Notation.** `[C]` marks values that are centralized in configuration and may vary per deployment. Catalogue: [architecture.md §12.2](architecture.md#122-company-configurable-settings).

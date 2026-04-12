@@ -26,7 +26,7 @@ The application has two top-level layout states depending on authentication.
 └──────────────────────────────────────────────────────────┘
 ```
 
-The login screen is minimal: app name/logo, username field, password field, a submit button labeled "Anmelden", and an error area for failed attempts. The server returns a generic error message on failed login — no distinction between "user not found" and "wrong password" to avoid information leakage. The client displays the server-provided message. The generic behavior is enforced server-side, not client-side. No registration link, no password recovery (both out of scope).
+The login screen is minimal: app name/logo, username field, password field, a submit button labeled "Anmelden", and an error area for failed attempts. The server returns a generic error message on failed login — no distinction between "user not found" and "wrong password" to avoid information leakage. The client displays the server-provided message. The generic behavior is enforced server-side, not client-side.
 
 The login screen is the **only** view available to unauthenticated users. No project data is accessible without authentication.
 
@@ -50,13 +50,13 @@ The login screen is the **only** view available to unauthenticated users. No pro
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **Insecure banner**: full-width red alert (`#dc2626`, white text, bold) shown only when the page loaded over plain HTTP on a non-localhost host. Text: `"UNSICHERER MODUS — Keine Verschlüsselung, Zugangsdaten werden im Klartext übertragen"`. Not dismissible, covers both the login screen and the authenticated layout, detected client-side via [`src/config/insecureConnection.ts`](../../src/config/insecureConnection.ts). See [AC-45](verification.md#156-deployment) and [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
+- **Insecure banner**: full-width red alert (`#dc2626`, white text, bold) shown only when the page loaded over plain HTTP on a non-localhost host. Text: `"UNSICHERER MODUS — Keine Verschlüsselung, Zugangsdaten werden im Klartext übertragen"`. Not dismissible, covers both the login screen and the authenticated layout, detected client-side. See [AC-45](verification.md#156-deployment) and [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
 - **Header**: app name **[C]**, view toggle (Kanban / Kalender), summary indicators.
 - **User indicator**: displays the authenticated user's `displayName`. Clicking reveals a minimal dropdown with a single entry: "Abmelden" (logout).
 - **Mutation error banner**: appears at the top of the main area whenever the most recent mutation failed. Carries a German message from the API error category (see [§9.5](#95-asynchronous-mutation-behavior)) and a dismiss button. Cleared on the next successful mutation or by dismissal.
 - **Default view**: Kanban (the primary overview tool). Toggling switches between views.
 - **Footer**: text driven by branding config **[C]**. Default: `"Projekt-Manager"` **[C]**.
-- **Responsive target** (Kanban and Calendar views): 1920×1080 desktop monitor and tablet (1024×768 minimum). The Kanban board and Calendar are office-role views; mobile-specific worker views are a separate concern (see [kickoff — Done when](../project/kickoff.md#done-when-final-product): "worker view … on a calendar view … option to add notes and upload pictures") and are not part of this specification.
+- **Responsive target** (Kanban and Calendar views): 1920×1080 desktop monitor and tablet (1024×768 minimum).
 
 ---
 
@@ -129,7 +129,7 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 #### 8.3.2 Interactivity
 
 - **Click on a project bar** → opens the Project Detail Panel (8.4).
-- **Date editing** is done via the Project Detail Panel (8.4). Calendar drag-to-resize is out of scope.
+- **Date editing** is done via the Project Detail Panel (8.4).
 
 ---
 
@@ -150,8 +150,6 @@ Contents:
 - Estimated value, formatted as `8.500,00 €` (German locale)
 - Notes (read-only)
 - Timestamps: created, last updated, status changed
-
-Editing beyond state transitions and dates is **not** in scope.
 
 ---
 
@@ -196,9 +194,7 @@ Colors are configurable via the state configuration (see [Data Model — State M
 - **Backward**: to the immediately preceding state. Allowed from any state except `anfrage` (no previous) and `erledigt` (terminal).
 - **No skipping**: direct jumps across multiple states are not allowed.
 - **Terminal**: `erledigt` is a terminal state — no forward or backward transitions. Both transition buttons are hidden in the UI. The domain function `getPreviousState('erledigt')` returns `null` (not the actual predecessor) — terminality is a domain rule, not just a UI rule.
-- **Cancellation**: not in scope.
-
-Every transition shows a confirmation dialog in German before executing: `"Status ändern: {current} → {target}?"` with OK / Abbrechen.
+  Every transition shows a confirmation dialog in German before executing: `"Status ändern: {current} → {target}?"` with OK / Abbrechen.
 
 Enforcement happens both server-side (API rejects invalid transitions) and client-side (buttons hidden). Server-side enforcement is authoritative.
 
