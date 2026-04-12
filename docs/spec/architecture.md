@@ -8,10 +8,10 @@
 
 ### 11.1 Mandatory Constraints
 
-- Language: a type-safe language (type safety for the data model is non-negotiable) — applies to both client and server code. See [ADR-0002](../adr/0002-tech-stack-typescript-react-vite-zustand.md), [ADR-0004](../adr/0004-backend-stack-fastify-drizzle-node-postgres.md).
-- Testing: unit tests + component tests + API integration tests + at least one E2E smoke test.
+- Type-safe language for both client and server code.
+- Testing: unit + component + API integration + at least one E2E smoke test.
 - All data mutations go through the API. The front end never accesses the database directly.
-- Stack decisions are recorded in ADR documents (see [ADR-0002](../adr/0002-tech-stack-typescript-react-vite-zustand.md) for the front-end stack, [ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) for deployment infrastructure, [ADR-0004](../adr/0004-backend-stack-fastify-drizzle-node-postgres.md) for the backend stack).
+- Decisions that need context and rationale are recorded in [ADRs](../adr/index.md). All important implementation choices are visible in [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 ### 11.2 Responsibility Boundaries
 
@@ -42,24 +42,56 @@ The domain layer is shared: both the server (services, routes) and the client (s
 
 The state layer is a client-side cache delegating to the API.
 
-**State:** the full project list (fetched from API), the authenticated user, an optional active filter (by workflow state or aged-buffer subset), the active view (Kanban or Kalender), a confirm-dialog store (modal state for transition confirmations), mutation tracking (in-flight flag, error message), selected project ID (detail panel), and session-checked flag.
+**State:** the state layer manages the following data domains:
 
-**Mutations** (all persisted mutations go through the API):
+- **Projects** — the full project list (fetched from API), grouped by workflow state for Kanban rendering.
+- **Customers** — the full customer list, used in project forms and the customer management view.
+- **Users** — the user list (for admin views and worker assignment dropdowns). Only fetched when needed and when the user has `user:read` permission.
+- **Auth** — the authenticated user profile and session state.
+- **View state** — active view, active filter (by workflow state, aged-buffer subset, or custom criteria), selected entity ID for detail views.
+- **Mutation tracking** — in-flight flags and error messages per mutation. Confirm-dialog state for transition confirmations.
+- **Import state** — parsed file contents, validation preview, submission progress, result summary.
 
-- Transition a project forward or backward by one state → call API, update local state on success
-- Update a project's planned start/end dates → call API, update local state on success
-- Login / logout → call API, update auth state
-- Fetch all projects → call API, replace local project list
-- Set or clear a filter by workflow state (local only — no API call)
+**Mutations** (per [§11.1](#111-mandatory-constraints)):
+
+- Transition a project forward or backward by one state
+- Update a project's planned start/end dates
+- Create, update, or soft-delete a project
+- Create or update a customer
+- Create, update, deactivate, or reactivate a user (admin)
+- Reset a user's password (admin); change own password
+- Bulk import projects or customers
+- Login / logout
+- Fetch or refresh project list, customer list, user list
+- Set or clear a filter (local only — no API call)
 - Switch between views (local only — clears active filter)
 
 **Queries** (derived from locally cached data):
 
 - Projects grouped by workflow state
+- Projects filtered by search, status, customer, date range, or composite criteria
+- Customers filtered by search
 - Summary: count of projects per action state, count of aged buffer items per state with threshold, count of projects without planned dates
-- Current authenticated user
+- Current authenticated user and permissions
 
-The server-side event bus provides the hook mechanism — `project.transitioned` and `project.dates_changed` events are emitted by the service layer so that subscribers (audit logger, notification sender) can attach without modifying transition or update logic.
+**Server-side event bus.** Events are emitted by the service layer so that subscribers (audit logger, notification sender, analytics) can attach without modifying the originating logic.
+
+| Event                   | Emitted when                                        |
+| ----------------------- | --------------------------------------------------- |
+| `project.created`       | A project is created (single or bulk)               |
+| `project.updated`       | A project's fields are updated                      |
+| `project.transitioned`  | A project changes workflow state                    |
+| `project.dates_changed` | A project's planned dates are modified              |
+| `project.deleted`       | A project is soft-deleted                           |
+| `customer.created`      | A customer is created (single or bulk)              |
+| `customer.updated`      | A customer's fields are updated                     |
+| `user.created`          | A user account is created                           |
+| `user.updated`          | A user account is updated (profile or role changes) |
+| `user.deactivated`      | A user account is deactivated                       |
+| `user.reactivated`      | A user account is reactivated                       |
+| `user.password_changed` | A user's password is changed (self or admin reset)  |
+
+Events carry the entity ID, the acting user ID, and a timestamp at minimum. Payload shape is an implementation decision.
 
 ### 11.4 Object Storage Module
 
@@ -76,17 +108,19 @@ Capabilities at minimum:
 
 Structural requirements that keep future extensions cheap. Each row states a contract the codebase must uphold and the failure mode that would close the door.
 
-| Door                                             | Contract                                                                                                                                   | Closed if...                                                                                  |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| Adding/removing workflow states                  | States driven by a configuration array, not hardcoded logic                                                                                | Column count or state names are hardcoded in components                                       |
-| Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently                                                                                         | Kanban and Calendar are coupled to each other                                                 |
-| Adding fields to Project                         | Interface with optional fields; UI tolerates missing data                                                                                  | Components crash on undefined fields                                                          |
-| Adding file uploads / attachments                | Object storage module exists at the infrastructure layer (§11.4); Project model accepts optional attachments                               | Data layer assumes all project data fits in a single flat object                              |
-| Adding authentication / roles                    | Authentication and a role-based permission matrix sit behind the API; identity never baked into components                                 | User identity baked into component logic                                                      |
-| Adding notifications                             | Server-side event bus (§11.3) provides `project.transitioned` / `project.dates_changed` hooks so subscribers attach without touching flows | Transitions are handled inline in UI event handlers                                           |
-| Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                                             | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers) |
-| Multi-tenancy / multi-company                    | Configs are per-instance via environment; data model does not preclude adding tenant scoping                                               | Company names, branding, or workflow definitions are hardcoded in application code            |
-| Multi-language                                   | All user-facing strings are centralized in configuration; no inline literals in components                                                 | Inline literals in components; string configuration bypassed                                  |
+| Door                                             | Contract                                                                                                          | Closed if...                                                                                                 |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Adding/removing workflow states                  | States driven by a configuration array, not hardcoded logic                                                       | Column count or state names are hardcoded in components                                                      |
+| Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently                                                                | Kanban and Calendar are coupled to each other                                                                |
+| Adding fields to Project                         | Interface with optional fields; UI tolerates missing data                                                         | Components crash on undefined fields                                                                         |
+| Adding file uploads / attachments                | Object storage module exists at the infrastructure layer (§11.4); Project model accepts optional attachments      | Data layer assumes all project data fits in a single flat object                                             |
+| Adding authentication / roles                    | Authentication and a role-based permission matrix sit behind the API; identity never baked into components        | User identity baked into component logic                                                                     |
+| Adding notifications                             | Server-side event bus (§11.3) provides hooks for all CRUD operations so subscribers attach without touching flows | Transitions are handled inline in UI event handlers                                                          |
+| Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                    | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers)                |
+| Multi-language                                   | All user-facing strings are centralized in configuration; no inline literals in components                        | Inline literals in components; string configuration bypassed                                                 |
+| Adding management views for new entities         | Management views follow a uniform pattern (searchable table + CRUD forms) and consume the shared state layer      | Entity-specific CRUD logic is wired directly into view components instead of through the state layer and API |
+| Adding export formats (e.g. CSV)                 | Export operations accept a `format` parameter; the API contract does not assume JSON-only responses               | Export logic is hardcoded to produce JSON with no format dispatch                                            |
+| Adding bulk operations for new entities          | Bulk import/export follow a uniform result shape (`{ imported, errors }` for import; entity array for export)     | Each bulk operation has a bespoke result format                                                              |
 
 ### 11.6 Deployment Topology
 
@@ -115,11 +149,9 @@ Any deployed environment must exercise all four components end-to-end. A topolog
 
 ## 12. Configuration Boundaries
 
-Per [ADR-0001](../adr/0001-generalized-system-with-configurable-customer-specifics.md) and the [kickoff](../project/kickoff.md), company-specific assumptions must remain adjustable. This section distinguishes what is universal from what is company-configurable.
-
 ### 12.1 Universal Domain Rules
 
-Rules that define the generic workflow behavior of the product — these apply to all installations:
+Rules that apply to all installations:
 
 - Adjacent-only forward/backward transitions
 - Terminal state concept (no transitions out of the final state)
@@ -217,5 +249,5 @@ Every new API endpoint must satisfy:
 3. **Input validation**: request schema validation on request body and params (see [api.md section 14.2](api.md#142-operations)). For bulk operations, per-item semantic validation may live in the service layer per §11.2.
 4. **Error handling**: use application error types, no stack traces or DB field names leaked.
 5. **Rate limiting**: configured on authentication endpoints (login, password change). Mutation endpoints are not rate-limited — at current scale with VPN-only access ([ADR-0008](../adr/0008-vpn-first-network-access.md)), this is a known, accepted limitation.
-6. **CSRF protection**: `SameSite=Strict` cookies + CSP headers (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md)).
+6. **CSRF protection**: mechanism defined in [ADR-0005](../adr/0005-session-management-httponly-cookies.md).
 7. **Password handling**: never log or store plaintext (see [ADR-0006](../adr/0006-password-policy-nist-blocklist.md)).

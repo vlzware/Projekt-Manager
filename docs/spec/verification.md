@@ -56,29 +56,22 @@ The system is accepted when all of the following are true.
 
 - **AC-30**: The application is reachable by authorized clients over HTTPS. HTTPS is non-negotiable (see AC-45). Network reachability is scoped by [ADR-0008](../adr/0008-vpn-first-network-access.md); see also AC-49.
 - **AC-31**: A CI-built image can be promoted to the hosted environment via manual, pull-based deploy over VPN (see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)).
-- **AC-45**: HTTPS is the default transport. HTTP is never a silent fallback — it is an explicit, deliberately ugly opt-in used only in environments where TLS is unavailable (see [ADR-0013](../adr/0013-http-only-evaluation-mode.md) — VPN does not substitute for TLS, per [ADR-0008](../adr/0008-vpn-first-network-access.md)). The opt-in has four parts that must all hold together:
-  1. **Default**: port 80 redirects to HTTPS before any application handler runs, or is not bound at all. No server route ever runs over plain HTTP in the default configuration.
-  2. **Opt-in**: HTTP mode is selected only when an explicit insecure-mode flag is set AND the environment is not production. Neither condition alone is sufficient. In HTTP mode the server disables the `Secure` cookie flag and relaxes CSP — operators must understand that credentials travel in cleartext.
-  3. **Visible**: when HTTP mode is active, the UI renders a red, non-dismissible full-width banner on every page reading `"UNSICHERER MODUS — Keine Verschlüsselung, Zugangsdaten werden im Klartext übertragen"`, and the browser tab title is prefixed with `UNSICHER –`. The banner covers both the login screen and the authenticated layout.
-  4. **Production refusal**: enabling the insecure-mode flag in production causes the server to refuse to start. The environment defaults to production in the validated environment schema so an unset value hits the safer branch.
-- **AC-46**: A failed deployment leaves the previously running version running. The deploy script aborts before swapping containers if the image pull, the container start, or the health-check loop fails; the operator sees a loud failure and the current containers keep serving traffic.
-- **AC-47**: A previously deployed commit can be redeployed (rollback) by the operator invoking the deploy script with a commit SHA on the host over VPN, where the SHA is any previously built image tag in the container registry. No code change and no workflow re-run are required — only operator presence on the host per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). The operator is also the only party who can decrypt the secrets the script needs, so rollback authority is tied to VPN access + passphrase rather than a CI credential.
-- **AC-48**: After every deploy script invocation, an automated smoke test polls `/api/health` against the freshly started container. Failure of the smoke test aborts the deploy and surfaces the failure to the operator.
-- **AC-49**: Network access to the hosted environment is restricted to authorized clients via VPN per [ADR-0008](../adr/0008-vpn-first-network-access.md). The application is not reachable from the public internet without VPN credentials.
-- **AC-50**: Database and object storage data persist across application container restarts and redeploys. A redeploy of the application containers does not wipe project, user, or session data.
-- **AC-51**: Deployments use a specific commit SHA, not a moving tag. The deployed version is reproducible and traceable to a single commit.
+- **AC-45**: HTTPS is enforced by default. HTTP-only mode requires an explicit opt-in flag AND a non-production environment (neither alone is sufficient). When HTTP mode is active, the UI shows a non-dismissible warning banner on every page. Enabling the insecure flag in production causes the server to refuse to start. See [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
+- **AC-46**: A failed deployment leaves the previously running version running.
+- **AC-47**: A previously deployed commit can be redeployed (rollback) by the operator over VPN. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
+- **AC-48**: After every deploy, an automated smoke test verifies the health endpoint. Failure aborts the deploy.
+- **AC-49**: The hosted environment is reachable only via VPN. See [ADR-0008](../adr/0008-vpn-first-network-access.md).
+- **AC-50**: Database and object storage data persist across container restarts and redeploys.
+- **AC-51**: Deployments use a specific commit SHA, not a moving tag.
 
 ### 15.7 Engineering
 
-- **AC-32**: Code is structured into the modules defined in [architecture.md §11.2](architecture.md#112-responsibility-boundaries).
-- **AC-33**: All data mutations go through the API. The state layer dispatches to the API; UI components never call the API directly.
-- **AC-34**: State configuration (labels, colors, thresholds) is centralized in configuration modules.
-- **AC-35**: Dependency direction ([architecture.md §11.2](architecture.md#112-responsibility-boundaries)) is enforced — no reverse imports.
+- **AC-32**: Code structure and dependency direction follow [architecture.md §11.2](architecture.md#112-responsibility-boundaries). No reverse imports.
+- **AC-33**: Mutation boundary per [architecture.md §11.1](architecture.md#111-mandatory-constraints) is enforced. UI components dispatch through the state layer, not directly to the API client.
+- **AC-34**: State configuration (labels, colors, thresholds) is centralized, not scattered.
+- **AC-35**: Dependency direction is enforced by linter import restriction zones.
 - **AC-36**: Linting and formatting pass.
-- **AC-37**: Tests defined in section 16 pass. Coverage is split across two execution surfaces so the push/PR gate stays fast:
-  - **Push/PR gate**: unit tests (§16.1), component tests (§16.2), API integration tests (§16.3), and the server-side supplementary tests (§16.5) run on every push and PR to protected branches. A failing test at this layer blocks merge.
-  - **On-demand E2E gate**: E2E tests (§16.4) + the E2E supplementary tests from §16.5 run on a manual trigger, typically before a manual deploy per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md). E2E tests are not part of the push/PR gate (see [architecture.md §11.7](architecture.md#117-continuous-delivery-pipeline) for the CI topology).
-  - **Local dev**: unit/integration tests and E2E tests run locally and are part of the Definition of Done for any change that touches their respective code paths.
+- **AC-37**: Tests defined in section 16 pass. Push/PR gate runs unit, component, and API integration tests. E2E tests run on-demand (see [architecture.md §11.7](architecture.md#117-continuous-delivery-pipeline)).
 
 ### 15.8 Configurability
 
@@ -128,6 +121,32 @@ The system is accepted when all of the following are true.
 - **AC-72**: Exporting customers returns all customers in JSON format. Filter parameters (has-projects, no-projects) narrow the result set.
 - **AC-73**: Export operations respect role-based permissions — `project:read` for project export, `customer:read` for customer export.
 
+### 15.15 Navigation
+
+- **AC-74**: Navigation between all views (Kanban, Calendar, Projects, Customers, Users, Import/Export) works without page reload. Shared state is preserved across navigation.
+- **AC-75**: Views that require specific permissions are hidden from navigation for unauthorized users.
+
+### 15.16 Management Views
+
+- **AC-76**: The project management view displays a sortable, searchable, filterable table of all non-deleted projects.
+- **AC-77**: Creating a project from the management view with number, title, and customer produces a project in the first workflow state. The project appears in the table, the Kanban board, and the Calendar (if dates are set).
+- **AC-78**: Editing a project from the management view allows changing title, customer, assigned workers, estimated value, and notes. Status and project number are not editable through this form.
+- **AC-79**: Deleting a project from the management view soft-deletes it. The project disappears from all views and exports.
+- **AC-80**: The customer management view displays a searchable, paginated table of all customers with project counts.
+- **AC-81**: Creating a customer makes it immediately available in project creation/editing dropdowns without page reload.
+- **AC-82**: The user management view is only accessible to users with `user:read` permission. It displays all users including deactivated ones.
+- **AC-83**: Creating a user from the management view produces an account that can log in immediately with the provided credentials.
+- **AC-84**: Deactivating a user from the management view prevents that user from logging in and invalidates their active sessions.
+- **AC-85**: The critical path "create customer → create project referencing that customer" works without page reload or manual refresh.
+
+### 15.17 Import/Export UI
+
+- **AC-86**: Uploading a JSON file to the import UI produces a preview table of parsed records before submission.
+- **AC-87**: Submitting an import displays a result summary: count of imported records and a list of failed rows with index and German error message.
+- **AC-88**: Exporting projects produces a downloadable JSON file containing all non-deleted projects matching the selected filters.
+- **AC-89**: Exporting customers produces a downloadable JSON file containing all customers matching the selected filters.
+- **AC-90**: Import operations respect permissions: project import requires `project:create`, customer import requires `customer:write`. Unauthorized users see the import UI but cannot submit.
+
 ---
 
 ## 16. Test Specification
@@ -175,6 +194,16 @@ These tests run against a mocked API.
 - **CT-22**: Clicking "Abmelden" calls the logout API and shows the login screen.
 - **CT-23**: When a mutation API call fails, the UI shows an error message and reverts local state.
 - **CT-24**: While a mutation is in flight, the triggering control is disabled (no double-submit).
+- **CT-25**: Project management table renders all non-deleted projects with correct columns and supports sorting.
+- **CT-26**: Project creation form enforces required fields (number, title, customer) and submits to the API.
+- **CT-27**: Customer management table renders customers with project counts and supports name search.
+- **CT-28**: Customer creation form enforces required name field and submits to the API.
+- **CT-29**: User management table renders all users with role badges and active status. Deactivated users are visually distinct.
+- **CT-30**: User creation form enforces password policy and role selection.
+- **CT-31**: Import UI parses a JSON file, displays preview, submits, and renders partial-success results.
+- **CT-32**: Export UI triggers file download with correct filename pattern.
+- **CT-33**: Navigation hides views the current user lacks permission to access.
+- **CT-34**: Inline customer creation from the project form creates a customer and selects it without losing the project form state.
 
 ### 16.3 API Integration Tests
 
@@ -218,6 +247,9 @@ These tests run against a real (test) database, not mocks.
 - **AT-36**: Export projects returns all non-deleted projects. Filter by status narrows results.
 - **AT-37**: Export customers returns all customers. Filter by has-projects narrows results.
 - **AT-38**: User management operations require `user:manage` permission — office/worker/bookkeeper roles are rejected.
+- **AT-39**: List projects with status filter returns only matching projects.
+- **AT-40**: List projects with search parameter filters across number, title, and customer name.
+- **AT-41**: List projects with `hasNoDates` filter returns only projects without planned dates.
 
 ### 16.4 E2E Tests
 
@@ -232,43 +264,21 @@ The end-to-end path is covered by focused, isolated test files rather than a sin
 
 **Kanban flows (state transitions, dates, calendar, persistence)**: 4. Summary area shows `"3× Rechnung fällig"`. 5. User clicks a summary indicator — view filters to matching projects. 6. User clicks "Filter aufheben" — full view restored. 7. User clicks a card in `Geplant` — detail panel opens. 8. User clicks "Nächster Schritt" — confirmation dialog appears. 9. User confirms — card moves to `In Arbeit`. 10. User clicks "Vorheriger Schritt" on the same card — card moves back to `Geplant`. 11. User changes planned end date via date picker in detail panel. 12. User switches to calendar view — the project bar reflects the new date. 13. User clicks "X Projekte ohne Termin" — switches to filtered Kanban. 14. Summary area reflects current state counts throughout. 15. User refreshes the page — changes persist; user remains logged in. 17. Pressing browser back button after logout does not show project data.
 
-### 16.5 Supplementary Tests
+**Management flows (project, customer, user CRUD)**:
 
-Tests providing coverage beyond the core specification. These are not mapped to specific spec IDs but verify important behaviors.
+18. User navigates to the Customer Management view and creates a new customer with name and address.
+19. User navigates to the Project Management view and creates a new project, selecting the just-created customer.
+20. The new project appears in the Kanban board under the first workflow state.
+21. User navigates to the Project Management view, searches for the new project, and edits its notes.
+22. An owner navigates to the User Management view and creates a new user with the worker role.
+23. The owner deactivates the new user. A separate browser context confirms the deactivated user cannot log in.
+24. The owner reactivates the user. The user can log in again.
 
-#### Server-side
+**Import/Export flows**:
 
-- Bootstrap: first-run admin creation via `BOOTSTRAP_ADMIN_*` env vars
-- Bulk import: partial success, validation per item, permission enforcement
-- Events: domain event bus subscribe/emit, error isolation
-- Health probe: DB and storage liveness checks
-- Permissions: role-based access control matrix (4 roles)
-- Rate limiting: login throttling (429 on excess attempts)
-- DB constraints: CHECK constraint enforcement (`projects_end_requires_start`)
-- Single project GET: by ID, not-found handling
-- Customer CRUD: create, update, list with search, get with project count, FK enforcement
-- Project CRUD: create, update, soft-delete, number uniqueness, number immutability
-- User management: create, update, deactivate/reactivate, reset password, self-deactivation guard, username immutability
-- Bulk customer import: partial success, validation per item, permission enforcement
-- Export: project export with filters, customer export with filters, permission enforcement
-
-#### Client-side
-
-- API client: typed fetch wrappers, error paths, session expiry detection
-- Project store: optimistic updates, rollback on failure, session delegation
-- Confirm dialog: rendering, accessibility, focus trap
-- Collapse tier hook: responsive breakpoint calculations
-- Transition hook: canForward/canBackward, confirm flow
-- Router navigation: helper behavior
-- Date input value: normalization for HTML date inputs
-- Insecure connection: HTTP-mode detection
-
-#### E2E
-
-- Kanban flows: summary filter, transitions, date editing, calendar, persistence, back-button protection (covers spec §16.4 steps 4–15, 17 in split tests)
-- Failure paths: network errors, session expiry mid-flow
-- Startup: health endpoint verification, seed login
-- Insecure banner: HTTP-mode warning display
+25. User uploads a JSON file with 3 customer records (1 invalid — missing name). The import result shows 2 imported, 1 error with message.
+26. User exports all projects as JSON. The downloaded file contains all non-deleted projects.
+27. User exports projects filtered by a specific status. The file contains only matching projects.
 
 ---
 

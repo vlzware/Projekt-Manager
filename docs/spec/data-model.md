@@ -48,15 +48,10 @@ interface Project {
 Design notes:
 
 - `statusChangedAt` is separate from `updatedAt` — editing notes must not reset aging calculations.
-- `customerId` references the Customer entity (§5.6). The API returns the full customer object (including address) nested within the project response for convenience; writes accept `customerId`.
-- `assignedWorkers` references `UserAccount` entries via a `project_workers` join table (m:n). The API returns `{ userId, displayName }` objects; writes accept `assignedWorkerIds: string[]` (user UUIDs).
-- `estimatedValue` is `number` in the API contract. The database stores it with fixed-point precision. Clients always receive and send a JSON number.
-- No `priority` field — priority is implicit in state aging and column accumulation.
-- No stored boolean flags for warnings — these are derived from state and timestamps at render time.
-- Internal keys use English; German labels are applied at the UI layer.
-- The `WorkflowState` type shown here reflects the current default configuration. In implementation, the state set is driven by the configuration array — the type is derived from configuration, not hardcoded independently (see [index.md, section 3](index.md#3-workflow-states)).
-- `deleted` defaults to `false`. Soft-deleted projects are excluded from all list and detail queries. The field is not exposed in API responses for non-deleted projects.
-- `createdBy` / `updatedBy` follow the audit metadata rules defined in section 5.5.
+- `customerId` references Customer (§5.6). The API nests the full customer object in responses; writes accept `customerId`.
+- `assignedWorkers` is m:n via a join table. API returns `{ userId, displayName }`; writes accept `assignedWorkerIds: string[]`.
+- `WorkflowState` reflects the default configuration. The type is derived from the configuration array (see [index.md §3](index.md#3-workflow-states)).
+- Warnings and aging are derived from state and timestamps at render time — not stored.
 
 ### 5.2 State Metadata
 
@@ -109,17 +104,14 @@ interface UserAccount {
 
 Design notes:
 
-- `createdBy` / `updatedBy` follow the audit metadata pattern (section 5.5). **No self-referential FK**: a foreign key from `users.createdBy` back to `users.id` would complicate bootstrapping (the first admin user cannot reference a creator that doesn't exist yet) and deletion cascades, without adding meaningful integrity guarantees. The columns are nullable UUIDs with no constraint.
-- `roles` is an array. This supports multi-role assignments (owner, office, worker, bookkeeper, admin, or company-specific roles) without schema changes. The default role set is configurable **[C]**.
-- **[C]** `AccountRole` values are internal keys. German display labels (e.g. "Eigentümer", "Büro", "Arbeiter", "Buchhalter") are applied by configuration — the same pattern as workflow state labels.
-- `passwordHash` is included in the entity definition for completeness but is **never** included in API responses or the client-side data model. The hashing algorithm is an infrastructure concern (not specified here).
-- `active` allows disabling a user without deleting their records, preserving referential integrity for historical project assignments. Users are deactivated, not deleted.
-- `lastLoginAt` is optional; populated on successful authentication.
-- Worker assignment is linked to `UserAccount` via the `project_workers` join table.
+- `createdBy` / `updatedBy` are nullable UUIDs with no FK constraint (bootstrapping the first admin would create a circular dependency).
+- `roles` is an array — supports multi-role assignment without schema changes. Role set is configurable **[C]**. Role labels are applied by configuration.
+- `passwordHash` is **never** included in API responses.
+- Users are deactivated, not deleted.
 
 ### 5.4 Session
 
-The session model is intentionally minimal and mechanism-agnostic. The spec defines what is tracked, not the transport mechanism (cookie vs. token is an implementation/ADR decision).
+Minimal session model. Transport mechanism is an implementation decision (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md)).
 
 ```typescript
 interface Session {
@@ -131,11 +123,11 @@ interface Session {
 }
 ```
 
-Design note: The `token` field is the value delivered to the client (e.g., via cookie). It is cryptographically random and opaque. The delivery mechanism (HttpOnly cookie vs. bearer token) is an ADR decision.
+Design note: The `token` field is a cryptographically random, opaque value delivered to the client. The delivery mechanism is defined in [ADR-0005](../adr/0005-session-management-httponly-cookies.md).
 
 Session validation must verify that the referenced user is still active (`active = true`). If the user has been deactivated, the session is treated as invalid regardless of its `expiresAt`.
 
-Password changes invalidate all other sessions for the affected user.
+**Password-change session side effects:** when a user changes their own password, all **other** sessions for that user are invalidated (the current session survives). When an administrator resets another user's password, **all** sessions for the target user are invalidated.
 
 ### 5.5 Audit Metadata
 
@@ -184,6 +176,7 @@ Design notes:
 - Follows the audit metadata pattern (§5.5).
 - `name` is required; all other fields are optional.
 - A customer may exist without any projects (e.g., imported from an external system before project creation).
+- Customers are permanent records. There is no soft-delete flag and no delete API operation. Deletion is prevented by foreign key constraints (projects reference customers) and by the design principle that customer history must be preserved for audit and bookkeeping continuity. If a customer relationship ends, the record remains — it simply has no active projects.
 
 ---
 

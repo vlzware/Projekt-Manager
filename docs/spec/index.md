@@ -1,31 +1,59 @@
 # Product Specification
 
-**Source documents:** [Kickoff](../project/kickoff.md), [Plan](../project/plan.md)
+This spec defines **what** the application does — not how it does it, how it was in the past, or how the project evolves.
+
+- **How** (implementation): [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repo root — the navigation guide to the codebase. Major decisions with context and rationale live in [ADRs](../adr/index.md).
+- **Why** (vision, final scope, out-of-scope): [Kickoff](../project/kickoff.md).
+- **`[C]`** marks values deliberately made configurable so the application can be adjusted to a real company's needs.
+
+The spec is a reference document. It strives for focused, concise language and easy navigation. Each rule or constraint is stated once at its authoritative location and cross-referenced elsewhere — single source of truth over restatement. Logical completeness ensures implementability without vagueness on the main points; minute implementation details are left to the implementers.
 
 ---
 
 ## 1. Goal
 
-Deliver a hosted, authenticated system that demonstrates a consolidated preview of the state of all projects across the main company workflow. The system persists structured data in a database, authenticates users via a 4-role permission matrix (see [§4.2](#42-users)), and serves the front end through a backend API. Binary/object storage is included as a system component (see [architecture.md §11.4](architecture.md#114-object-storage-module)). The system provides two complementary views — a **Kanban board** and a **Calendar** — with basic interactivity.
+A hosted, authenticated system for centralized management of projects, customers, and users across the main company workflow. The system persists structured data in a database, authenticates users via a configurable role-based permission matrix (see [§4.2](#42-users)), and serves the front end through a backend API. Binary/object storage is included as a system component (see [architecture.md §11.4](architecture.md#114-object-storage-module)).
+
+The system provides:
+
+- **Workflow views** — Kanban board and Calendar — making inaction visible through board structure, aging indicators, and summary counts.
+- **Management views** — tabular interfaces for projects, customers, and users with full CRUD capabilities.
+- **Data exchange** — bulk import and export of projects and customers for integration with external systems.
+
+All views are role-gated. The system enforces that every pending action (unanswered inquiry, unscheduled job, unsent invoice) is impossible to overlook.
 
 ---
 
 ## 2. Scope
 
+### Workflow
+
 - Kanban board with one column per workflow state
-- Calendar view (month) showing scheduled projects
+- Calendar view (month/week) showing scheduled projects
 - Project detail panel accessible from both views
 - State transitions (forward/backward by one step)
 - Date changes (planned start/end)
-- Project creation, editing, and soft-deletion
-- Summary area with aggregate indicators
+- Summary area with aggregate indicators and clickable filters
+
+### Management
+
+- Project management: searchable list with filter, sort, create, edit, soft-delete
+- Customer management: searchable list with create, edit
+- User management (admin): list, create, edit, deactivate/reactivate, password reset
+- Change-own-password for all authenticated users
+
+### Data Exchange
+
+- Bulk import of projects and customers with partial-success semantics
+- Export of projects and customers in JSON with filter support
+
+### Cross-Cutting
+
 - German UI, English code
 - API layer between front end and data store
 - Persistent data storage in a database
 - Seed data providing a realistic starting snapshot
-- User authentication (login/logout, session management) with a 4-role permission matrix ([§4.2](#42-users))
-- Administrative user management (create, update, deactivate, reactivate, reset password)
-- Import and export operations for projects and customers
+- User authentication (login/logout, session management) with a configurable role-based permission matrix ([§4.2](#42-users))
 - Object storage module encapsulating all binary storage operations (see [architecture.md §11.4](architecture.md#114-object-storage-module))
 - Deployment to a hosted environment (reverse proxy, application, database, object storage)
 - CI builds images and pushes to the container registry; manual pull-based deploy over VPN per [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)
@@ -89,15 +117,15 @@ All data is stored in a persistent database, accessed through an API layer. Seed
 
 ### 4.5 Authentication
 
-| Attribute                            | Assumed Value                                                                                                                         |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
-| Authentication method                | Username + password                                                                                                                   |
-| Password policy                      | Min 8 characters, max 72 UTF-8 bytes, common-password blocklist **[C]**                                                               |
-| Session duration                     | 24 hours **[C]**                                                                                                                      |
-| Maximum concurrent sessions per user | Unlimited                                                                                                                             |
-| Default admin account                | Environment-variable bootstrap on first run (`BOOTSTRAP_ADMIN_*`) — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md)          |
-| Self-registration                    | Not available                                                                                                                         |
-| Password-change side effect          | Invalidates every **other** session for the same user (current session survives) — see [data-model.md §5.4](data-model.md#54-session) |
+| Attribute                            | Assumed Value                                                                                                                |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| Authentication method                | Username + password                                                                                                          |
+| Password policy                      | Min 8 characters, max 72 UTF-8 bytes, common-password blocklist **[C]**                                                      |
+| Session duration                     | 24 hours **[C]**                                                                                                             |
+| Maximum concurrent sessions per user | Unlimited                                                                                                                    |
+| Default admin account                | Environment-variable bootstrap on first run (`BOOTSTRAP_ADMIN_*`) — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
+| Self-registration                    | Not available                                                                                                                |
+| Password-change side effect          | See [data-model.md §5.4](data-model.md#54-session)                                                                           |
 
 **Password policy detail.** The minimum length is 8 characters; the maximum is 72 UTF-8 bytes — the system enforces a hard ceiling so long inputs fail loudly rather than silently truncating. A blocklist of common passwords is checked on every password set to reject trivially guessable values. Both checks run through a single validation path so the bootstrap path and the change-password endpoint cannot diverge. See [ADR-0006](../adr/0006-password-policy-nist-blocklist.md).
 
@@ -113,11 +141,11 @@ This specification is split across multiple files:
 | -------------------------------------- | -------- | -------------------------------------------------------------------------------------------- |
 | **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                                    |
 | **[data-model.md](data-model.md)**     | 5–7      | Project, Customer, User, Session entities; state metadata; persistence principles; seed data |
-| **[ui.md](ui.md)**                     | 8–10     | Layout, views, interactions, login, async mutation UX                                        |
+| **[ui.md](ui.md)**                     | 8–10     | Layout, navigation, workflow views, management views, import/export, interactions            |
 | **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security            |
 | **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                             |
 | **[verification.md](verification.md)** | 15–17    | Acceptance criteria, test specifications, risks                                              |
 
 The test-spec traceability matrix (AC ↔ tests) lives in [docs/testing/traceability.md](../testing/traceability.md) — not in the spec itself, because it is a verification artifact maintained alongside the test suite (see [CONTRIBUTING.md §Workflow](../../CONTRIBUTING.md#workflow) step 3).
 
-**Notation.** `[C]` marks values that are centralized in configuration and may vary per deployment. Catalogue: [architecture.md §12.2](architecture.md#122-company-configurable-settings).
+`[C]` catalogue: [architecture.md §12.2](architecture.md#122-company-configurable-settings).

@@ -36,27 +36,25 @@ The login screen is the **only** view available to unauthenticated users. No pro
 ┌──────────────────────────────────────────────────────────┐
 │ [Insecure banner — only when ALLOW_INSECURE_HTTP]        │
 ├──────────────────────────────────────────────────────────┤
-│  Header: App Name  |  [Kanban] [Kalender]  |  Summary    │
+│  Header: App Name  |  Navigation (§8.7)  |  Summary      │
 │                                    [Maria Schmidt ▾]     │
 ├──────────────────────────────────────────────────────────┤
 │ [Mutation error banner — only when a mutation failed]    │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │                     Active View                          │
-│               (Kanban or Calendar)                       │
 │                                                          │
 ├──────────────────────────────────────────────────────────┤
 │  Footer: configurable text [C]                           │
 └──────────────────────────────────────────────────────────┘
 ```
 
-- **Insecure banner**: full-width red alert (`#dc2626`, white text, bold) shown only when the page loaded over plain HTTP on a non-localhost host. Text: `"UNSICHERER MODUS — Keine Verschlüsselung, Zugangsdaten werden im Klartext übertragen"`. Not dismissible, covers both the login screen and the authenticated layout, detected client-side. See [AC-45](verification.md#156-deployment) and [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
-- **Header**: app name **[C]**, view toggle (Kanban / Kalender), summary indicators.
-- **User indicator**: displays the authenticated user's `displayName`. Clicking reveals a minimal dropdown with a single entry: "Abmelden" (logout).
-- **Mutation error banner**: appears at the top of the main area whenever the most recent mutation failed. Carries a German message from the API error category (see [§9.5](#95-asynchronous-mutation-behavior)) and a dismiss button. Cleared on the next successful mutation or by dismissal.
-- **Default view**: Kanban (the primary overview tool). Toggling switches between views.
-- **Footer**: text driven by branding config **[C]**. Default: `"Projekt-Manager"` **[C]**.
-- **Responsive target** (Kanban and Calendar views): 1920×1080 desktop monitor and tablet (1024×768 minimum).
+- **Insecure banner**: non-dismissible, visually prominent warning shown when the page loaded over plain HTTP on a non-localhost host. Covers both login and authenticated layout. See [AC-45](verification.md#156-deployment) and [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
+- **Header**: app name **[C]**, navigation ([§8.7](#87-navigation)), summary indicators.
+- **User indicator**: displays the authenticated user's `displayName`. Clicking reveals a dropdown — see [§8.7.2](#872-user-menu).
+- **Mutation error banner**: appears when the most recent mutation failed. German message from the API error category (see [§9.5](#95-asynchronous-mutation-behavior)), dismiss button. Cleared on next successful mutation or by dismissal.
+- **Default view**: Kanban.
+- **Footer**: text driven by branding config **[C]**.
 
 ---
 
@@ -66,9 +64,7 @@ The login screen is the **only** view available to unauthenticated users. No pro
 
 The board has **9 columns**, one per workflow state (see [index.md — Workflow States](index.md#3-workflow-states)). Each column header shows the German label and the card count.
 
-Action columns are visually distinct from buffer columns (e.g., warm-tinted background for action, neutral for buffer). This distinction makes the board structure itself communicate which columns demand attention.
-
-With 9 columns, horizontal scrolling may be needed on narrower screens. At 1920px, each column gets ~200px — tight but workable.
+Action columns are visually distinct from buffer columns (e.g., warm-tinted background for action, neutral for buffer).
 
 #### 8.2.2 Project Card
 
@@ -86,13 +82,13 @@ With 9 columns, horizontal scrolling may be needed on narrower screens. At 1920p
 - **Project number** and **title**.
 - **Customer name**.
 - **Date range** if available; `"Kein Termin"` otherwise.
-- **[→] button** advances to the next workflow state. Confirmation dialog: `"Status ändern: Geplant → In Arbeit?"` with OK / Abbrechen. Hidden for `Erledigt` cards.
+- **[→] button** advances to the next workflow state with a German confirmation dialog showing current and target state. Hidden for `Erledigt` cards.
 
 Cards within a column are sorted by `statusChangedAt` ascending (longest-waiting on top).
 
 #### 8.2.3 Entry Date and Aging
 
-Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026"`). The date is displayed as a standalone label (e.g., `15.03.2026`), not prefixed. The `"seit X Tagen"` aging text is a separate indicator that appears below for aged buffer cards. This makes the age of every card visible regardless of state type. For aged buffer cards, the `"seit X Tagen"` text appears below the date label — both are shown.
+Every card shows its `statusChangedAt` as a date label. The `"seit X Tagen"` aging text is a separate indicator that appears below for aged buffer cards — both the date and the aging text are shown.
 
 **Action states**: after a configurable threshold (`agingBoldDays`), the entry date turns **bold** — a subtle but clear flag that this item has been waiting too long. Default thresholds **[C]**:
 
@@ -135,20 +131,20 @@ Every card shows its `statusChangedAt` as a small date label (e.g., `"15.03.2026
 
 ### 8.4 Project Detail Panel
 
-A **slide-in panel** from the right side (not a modal — the user retains context of the view behind it). Width: ~400px on desktop.
+A detail view that preserves the context of the underlying view (the user should not lose sight of the board or calendar).
 
 Contents:
 
-- Project number, title (large)
+- Project number, title
 - Current status with colored badge + German label
-- **"Nächster Schritt" button** → forward transition (same as [→]). Hidden for `Erledigt`.
-- **"Vorheriger Schritt" button** → backward transition, styled less prominently. Hidden for `Anfrage` (no previous state) and `Erledigt` (terminal).
-- Customer: name, phone (`tel:` link), email (`mailto:` link)
-- Address: full address with Google Maps link (`https://www.google.com/maps/search/?api=1&query={street}+{zip}+{city}`)
+- **Forward transition button** (same as [→]). Hidden for `Erledigt`.
+- **Backward transition button**, styled less prominently. Hidden for `Anfrage` (no previous state) and `Erledigt` (terminal).
+- Customer: name, phone (clickable), email (clickable)
+- Address (clickable map link if available)
 - **Dates: planned start/end** — editable via date picker inputs. Changes update `plannedStart`/`plannedEnd` and are reflected in both views immediately. The UI prevents invalid combinations: clearing `plannedStart` while `plannedEnd` is set also clears `plannedEnd` (see [data-model.md §6.8](data-model.md#68-date-validation)).
-- Assigned workers (list of names)
+- Assigned workers (list of display names). Editing is available in the Project Management View ([§8.8.3](#883-edit-project)).
 - Estimated value, formatted as `8.500,00 €` (German locale)
-- Notes (read-only)
+- Notes (read-only in the Kanban/Calendar context; editable in the Project Management View, [§8.8.3](#883-edit-project))
 - Timestamps: created, last updated, status changed
 
 ---
@@ -186,6 +182,203 @@ Colors are configurable via the state configuration (see [Data Model — State M
 
 ---
 
+### 8.7 Navigation
+
+The authenticated layout provides navigation between all available views. The navigation mechanism (sidebar, top tabs, or other) is an implementation decision.
+
+#### 8.7.1 Views
+
+| View          | Label      | Access                                                     | Default                        |
+| ------------- | ---------- | ---------------------------------------------------------- | ------------------------------ |
+| Kanban        | "Kanban"   | All authenticated users                                    | Yes (landing view after login) |
+| Calendar      | "Kalender" | All authenticated users                                    | No                             |
+| Projects      | "Projekte" | All authenticated users                                    | No                             |
+| Customers     | "Kunden"   | All authenticated users                                    | No                             |
+| Users         | "Benutzer" | `user:read` permission required                            | No                             |
+| Import/Export | "Daten"    | Visible to all; operations gated by per-action permissions | No                             |
+
+Navigation between views preserves shared state (cached project list, customer list, authenticated user). Switching views clears any active filter.
+
+Views that the user lacks permission to access are hidden from navigation. Server-side authorization remains authoritative — hiding is a UX convenience.
+
+#### 8.7.2 User Menu
+
+The user menu (accessible from the header area) provides:
+
+- Display of the authenticated user's `displayName`
+- "Passwort ändern" — opens a password change form (current password, new password, confirmation)
+- "Abmelden" — logs out and returns to the login screen
+
+---
+
+### 8.8 Project Management View
+
+A tabular list of all projects with search, filtering, and CRUD operations.
+
+#### 8.8.1 List
+
+- Columns: project number, title, customer name, status (colored badge), planned dates, estimated value, assigned workers.
+- Sortable by any column. Default sort: project number descending.
+- Search: free-text filter across project number, title, and customer name.
+- Filters: by status (multi-select), by customer, by date range (planned start), by "has no dates" flag. Filters use AND logic. A "Filter aufheben" control clears all filters.
+- Pagination when the list exceeds a configurable page size **[C]**.
+- Soft-deleted projects are excluded.
+
+#### 8.8.2 Create Project
+
+Accessible via a primary action button. Requires `project:create` permission (button hidden otherwise).
+
+Fields:
+
+- **Project number** — auto-suggested from the configured format **[C]**, editable by the user, immutable after creation.
+- **Title** — required.
+- **Customer** — required. Selection from existing customers, with an option to create a new customer inline (see [§8.9.4](#894-inline-customer-creation)).
+- **Status** — defaults to the first workflow state. Optionally selectable if configuration allows **[C]**.
+- **Planned start / Planned end** — optional. Same validation as the detail panel (end requires start).
+- **Assigned workers** — optional multi-select from active users with the `worker` role.
+- **Estimated value** — optional numeric input.
+- **Notes** — optional free text.
+
+On success, the new project appears in the list and in Kanban/Calendar views.
+
+#### 8.8.3 Edit Project
+
+Clicking a project row opens the project for editing. The editing surface reuses the Project Detail Panel ([§8.4](#84-project-detail-panel)) with expanded editability:
+
+- **Notes** are editable.
+- **Assigned workers** are editable via multi-select.
+- **Estimated value** is editable.
+- **Customer** can be changed.
+
+All editable fields use PATCH semantics via the Update project API operation. Status changes and date changes continue to use their dedicated operations.
+
+Requires `project:update` permission for mutations. Users without this permission see all fields as read-only.
+
+#### 8.8.4 Delete Project
+
+Available per project row or in the edit view. Confirmation dialog: `"Projekt {number} wirklich löschen?"` with OK / Abbrechen. Soft-deletes via the API.
+
+Requires `project:delete` permission.
+
+---
+
+### 8.9 Customer Management View
+
+A tabular list of all customers with search and CRUD operations.
+
+#### 8.9.1 List
+
+- Columns: name, phone, email, city, project count, last updated.
+- Search: name substring filter (case-insensitive), matching the API's `search` parameter.
+- Pagination when the list exceeds a configurable page size **[C]**.
+- Clicking a customer's project count navigates to the Project Management View filtered to that customer.
+
+#### 8.9.2 Create Customer
+
+Accessible via a primary action button. Requires `customer:write` permission.
+
+Fields:
+
+- **Name** — required.
+- **Phone** — optional.
+- **Email** — optional.
+- **Address** — optional nested group: street, zip, city.
+- **Notes** — optional free text.
+
+If a customer with the same name already exists, the UI offers to navigate to the existing record for editing instead of creating a duplicate.
+
+On success, the new customer appears in the list and is immediately available in project creation/editing dropdowns.
+
+#### 8.9.3 Edit Customer
+
+Clicking a customer row opens the customer for editing. PATCH semantics: omitted fields unchanged, explicit `null` clears optional fields.
+
+Requires `customer:write` permission for mutations. Users without this permission see all fields as read-only.
+
+#### 8.9.4 Inline Customer Creation
+
+When creating or editing a project ([§8.8.2](#882-create-project), [§8.8.3](#883-edit-project)), the customer selector includes an option to create a new customer inline. On successful creation, the new customer is automatically selected for the project.
+
+---
+
+### 8.10 User Management View
+
+An administrative view for managing user accounts. Only accessible to users with `user:read` permission. Hidden from navigation for users without this permission.
+
+#### 8.10.1 List
+
+- Columns: display name, username, roles (as badges), email, active status indicator, last login.
+- Shows all users including deactivated ones. Deactivated users are visually distinct.
+
+#### 8.10.2 Create User
+
+Accessible via a primary action button. Requires `user:manage` permission (button hidden otherwise).
+
+Fields:
+
+- **Username** — required, unique, immutable after creation.
+- **Display name** — required.
+- **Password** — required. Must meet the configured password policy **[C]**.
+- **Roles** — required. Multi-select from the configured role set **[C]**.
+- **Email** — optional.
+
+#### 8.10.3 Edit User
+
+Clicking a user row opens the user for editing. Editable fields: display name, roles, email. Username is read-only.
+
+Password is not part of the edit form — password reset uses a dedicated operation ([§8.10.5](#8105-reset-password)).
+
+Requires `user:manage` permission for mutations.
+
+#### 8.10.4 Deactivate / Reactivate
+
+Available as a row action or within the edit view. Requires `user:manage` permission.
+
+- **Deactivate**: confirmation dialog. Self-deactivation is rejected by the API; the UI should prevent it.
+- **Reactivate**: confirmation dialog.
+
+#### 8.10.5 Reset Password
+
+Available as a row action or within the edit view. Opens a form with new password plus confirmation. Must meet the configured password policy.
+
+Administrative action — does not require the target user's current password. Invalidates all of the target user's sessions.
+
+Requires `user:manage` permission.
+
+---
+
+### 8.11 Import/Export View
+
+A dedicated view for bulk data operations.
+
+#### 8.11.1 Import
+
+Supports two entity types: projects and customers. The active entity type is selectable.
+
+**Workflow:**
+
+1. **Upload** — user selects a JSON file. The client parses and displays a preview table.
+2. **Validation preview** — the preview highlights rows with detectable client-side issues (missing required fields, type mismatches). For customer imports, rows matching existing customers by name are flagged as overwrites. Client-side validation is a convenience; server-side is authoritative.
+3. **Submit** — user confirms import. If the preview flagged customer overwrites, the UI requires explicit confirmation before committing. The client sends the parsed array to the bulk import API.
+4. **Result** — summary of imported count and failed rows with index and German error message. The user can correct and re-upload failed rows.
+
+Permission requirements: project import requires `project:create`, customer import requires `customer:write`. Users without permission see a clear indication that they cannot import.
+
+#### 8.11.2 Export
+
+Supports two entity types: projects and customers.
+
+**Workflow:**
+
+1. **Configure** — user selects entity type and optional filters (project: status, customer, date range; customer: has-projects / no-projects).
+2. **Export** — triggers file download. JSON format. Filename includes entity type and date.
+
+Permission requirements: project export requires `project:read`, customer export requires `customer:read`.
+
+Exports never include soft-deleted projects or password hashes.
+
+---
+
 ## 9. Behavioral Rules
 
 ### 9.1 State Transitions
@@ -193,10 +386,10 @@ Colors are configurable via the state configuration (see [Data Model — State M
 - **Forward**: to the next state in the sequence. Allowed from any state except `erledigt`.
 - **Backward**: to the immediately preceding state. Allowed from any state except `anfrage` (no previous) and `erledigt` (terminal).
 - **No skipping**: direct jumps across multiple states are not allowed.
-- **Terminal**: `erledigt` is a terminal state — no forward or backward transitions. Both transition buttons are hidden in the UI. The domain function `getPreviousState('erledigt')` returns `null` (not the actual predecessor) — terminality is a domain rule, not just a UI rule.
-  Every transition shows a confirmation dialog in German before executing: `"Status ändern: {current} → {target}?"` with OK / Abbrechen.
+- **Terminal**: `erledigt` is a terminal state — no forward or backward transitions. Both transition buttons are hidden. Terminality is a domain rule, not just a UI rule.
+- Every transition requires a German confirmation dialog showing current and target state.
 
-Enforcement happens both server-side (API rejects invalid transitions) and client-side (buttons hidden). Server-side enforcement is authoritative.
+Enforcement happens both server-side (API rejects invalid transitions) and client-side (buttons hidden). Server-side is authoritative.
 
 ### 9.2 Inaction Visibility
 
@@ -204,19 +397,13 @@ Visibility is provided by three mechanisms:
 
 **Board structure** (primary): action columns with accumulated cards are immediately visible. The column IS the signal.
 
-**Entry date on every card**: every card shows its `statusChangedAt` date. This makes age visible at a glance regardless of state type. After a configurable threshold, the date turns **bold** — a clear flag without decorative excess.
-
-**Buffer aging text** (for buffer states only): cards exceeding their `agingThresholdDays` additionally show `"seit X Tagen"` as a text indicator, since buffer-column accumulation is normal and doesn't inherently signal a problem.
-
-Thresholds are defined in the state configuration (see [Data Model — State Metadata](data-model.md#52-state-metadata)) and listed in section 8.2.3.
+**Entry date and aging indicators**: per [§8.2.3](#823-entry-date-and-aging), cards show their entry date with bold thresholds and, for buffer states, a `"seit X Tagen"` text indicator.
 
 ### 9.3 Date Handling
 
-- All dates displayed in German format: `DD.MM.YYYY` or `DD.MM.` when year is obvious. **[C]** Display dates (card labels, timestamps, calendar headers) use German format. Date input controls (e.g., date pickers in the detail panel) render in the user's browser locale — the system respects the user's locale settings for interactive inputs.
-- Week starts on **Monday** (ISO 8601 / German convention).
+- Display dates use the configured locale format **[C]**. Default: German (`DD.MM.YYYY`).
+- Week starts on **Monday** (ISO 8601).
 - No time zones — all dates are local calendar dates.
-
-Date and locale display settings are company-configurable (see [architecture.md §12.2](architecture.md#122-company-configurable-settings)).
 
 ### 9.4 Authentication Behavior
 

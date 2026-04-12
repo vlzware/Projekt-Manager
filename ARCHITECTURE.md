@@ -56,7 +56,7 @@ Seven responsibility layers. Dependency flows left-to-right only, never reversed
 | `src/domain/`              | Types, transition rules, aging calc, summary computation, session expiry, date formatting                                                                                                                                                                                                                                      | Import from state, API, storage, or UI                  |
 | `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)                                                                                                                                                                                                                                                | Contain business logic or import from layers above      |
 | `src/server/db/`           | Drizzle schema, connection, SQL migrations                                                                                                                                                                                                                                                                                     | Contain business logic                                  |
-| `src/server/services/`     | Business logic orchestration (AuthService, ProjectService), domain event bus (`events.ts` — emits `project.transitioned`, `project.dates_changed`; subscribers attach here for audit, notifications), logger interface                                                                                                         | Know about HTTP, Fastify, or request objects            |
+| `src/server/services/`     | Business logic orchestration (AuthService, ProjectService), domain event bus (`events.ts` — emits CRUD events for all entities; subscribers attach here for audit, notifications), logger interface                                                                                                                            | Know about HTTP, Fastify, or request objects            |
 | `src/server/repositories/` | Database queries (project, user, session)                                                                                                                                                                                                                                                                                      | Know about HTTP or contain business rules               |
 | `src/server/storage/`      | S3/MinIO client, upload/download/presign ops                                                                                                                                                                                                                                                                                   | Be called from anywhere except API routes               |
 | `src/server/middleware/`   | Cookie parsing, session auth, request decoration                                                                                                                                                                                                                                                                               | Contain route handlers or business logic                |
@@ -264,6 +264,15 @@ One GitHub Actions workflow (`ci.yml`) produces an image; one operator-run scrip
 6. Smoke test: `docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"` polls for up to 60 s. Failure dumps the last 50 lines of compose logs and exits non-zero, leaving the previously running version in place.
 
 No automatic deploy. Rationale: [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md). Day-to-day procedure: [docs/ops/manual-deploy.md](docs/ops/manual-deploy.md). Bootstrap (first-run) procedure: [docs/ops/manual-deploy.md#bootstrap-first-run-on-fresh-vps](docs/ops/manual-deploy.md#bootstrap-first-run-on-fresh-vps).
+
+---
+
+## Design Decisions (Not ADR-Worthy)
+
+- **Export format**: JSON only. `format` parameter reserved for future use.
+- **Project number format**: configurable `[C]`, enforced only for uniqueness.
+- **Customer duplicates on import**: single-create offers to edit existing; bulk import warns and requires confirmation before overwriting. No merge.
+- **Bulk transitions**: not supported. Users transition individually.
 
 ---
 
