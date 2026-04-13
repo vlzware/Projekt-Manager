@@ -23,6 +23,7 @@ export function ProjectManagement() {
   const fetchCustomers = useProjectManagementStore((s) => s.fetchCustomers);
   const createProject = useProjectManagementStore((s) => s.createProject);
   const updateProject = useProjectManagementStore((s) => s.updateProject);
+  const updateDates = useProjectManagementStore((s) => s.updateDates);
   const deleteProject = useProjectManagementStore((s) => s.deleteProject);
   const clearError = useProjectManagementStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
@@ -38,6 +39,8 @@ export function ProjectManagement() {
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [notes, setNotes] = useState('');
   const [estimatedValue, setEstimatedValue] = useState('');
+  const [plannedStart, setPlannedStart] = useState('');
+  const [plannedEnd, setPlannedEnd] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -76,6 +79,8 @@ export function ProjectManagement() {
     setCustomerId('');
     setNotes('');
     setEstimatedValue('');
+    setPlannedStart('');
+    setPlannedEnd('');
   };
 
   const handleCreate = async () => {
@@ -107,6 +112,16 @@ export function ProjectManagement() {
       notes: notes.trim() || null,
     });
 
+    // Save dates if they changed (separate API endpoint)
+    const origStart = editProject.plannedStart ? editProject.plannedStart.slice(0, 10) : '';
+    const origEnd = editProject.plannedEnd ? editProject.plannedEnd.slice(0, 10) : '';
+    if (plannedStart !== origStart || plannedEnd !== origEnd) {
+      await updateDates(editProject.id, {
+        plannedStart: plannedStart || null,
+        plannedEnd: plannedEnd || null,
+      });
+    }
+
     setSubmitting(false);
     if (result) {
       setEditProject(null);
@@ -128,6 +143,8 @@ export function ProjectManagement() {
     setTitle(project.title);
     setNotes(project.notes ?? '');
     setEstimatedValue(project.estimatedValue != null ? String(project.estimatedValue) : '');
+    setPlannedStart(project.plannedStart ? project.plannedStart.slice(0, 10) : '');
+    setPlannedEnd(project.plannedEnd ? project.plannedEnd.slice(0, 10) : '');
     clearError();
   };
 
@@ -144,13 +161,6 @@ export function ProjectManagement() {
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
-        <input
-          className={styles.searchInput}
-          placeholder={STRINGS.ui.search}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          data-testid="project-search"
-        />
         <button
           className={styles.createButton}
           onClick={() => {
@@ -163,6 +173,13 @@ export function ProjectManagement() {
         >
           {STRINGS.ui.create}
         </button>
+        <input
+          className={styles.searchInput}
+          placeholder={STRINGS.ui.search}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          data-testid="project-search"
+        />
       </div>
 
       {error && !formOpen && !editProject && <div className={styles.error}>{error}</div>}
@@ -324,6 +341,34 @@ export function ProjectManagement() {
                 value={editProject.customer?.name ?? '—'}
                 readOnly
                 disabled
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>{STRINGS.ui.dateStart}</label>
+              <input
+                className={styles.formInput}
+                type="date"
+                value={plannedStart}
+                onChange={(e) => {
+                  setPlannedStart(e.target.value);
+                  // Clear end if start is cleared (same rule as detail panel)
+                  if (!e.target.value) setPlannedEnd('');
+                }}
+                data-testid="project-start-edit"
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>{STRINGS.ui.dateEnd}</label>
+              <input
+                className={styles.formInput}
+                type="date"
+                value={plannedEnd}
+                onChange={(e) => setPlannedEnd(e.target.value)}
+                min={plannedStart || undefined}
+                disabled={!plannedStart}
+                data-testid="project-end-edit"
               />
             </div>
 

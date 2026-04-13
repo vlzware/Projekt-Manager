@@ -29,6 +29,10 @@ interface ProjectManagementState {
       notes?: string | null;
     },
   ) => Promise<Project | null>;
+  updateDates: (
+    id: string,
+    dates: { plannedStart?: string | null; plannedEnd?: string | null },
+  ) => Promise<Project | null>;
   deleteProject: (id: string) => Promise<boolean>;
   clearError: () => void;
 }
@@ -86,6 +90,26 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
   updateProject: async (id, data) => {
     set({ error: null });
     const result = await projectApi.update(id, data);
+
+    if (!result.ok) {
+      if (result.sessionExpired) {
+        handleSessionExpired();
+        return null;
+      }
+      set({ error: result.error.message });
+      return null;
+    }
+
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? result.data : p)),
+    }));
+    useProjectStore.getState().fetchProjects();
+    return result.data;
+  },
+
+  updateDates: async (id, dates) => {
+    set({ error: null });
+    const result = await projectApi.updateDates(id, dates);
 
     if (!result.ok) {
       if (result.sessionExpired) {
