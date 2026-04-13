@@ -18,3 +18,4 @@
 | [0014](0014-ac-tier-system-critical-vs-design.md)                           | AC tier system — critical vs design test coverage               | Accepted | 2026-04-12 |
 | [0015](0015-copy-paste-textarea-email-data-intake.md)                       | Copy/paste textarea for email data intake                       | Accepted | 2026-04-13 |
 | [0016](0016-llm-email-extraction-via-server-proxied-openrouter.md)          | LLM email extraction via server-proxied OpenRouter              | Accepted | 2026-04-13 |
+| [0017](0017-soft-delete-as-board-archive.md)                                | Project soft-delete as board archive, not audit trail           | Accepted | 2026-04-13 |

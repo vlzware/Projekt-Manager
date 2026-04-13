@@ -103,8 +103,8 @@ Criteria without a marker are structural or infrastructure constraints verified 
 - **AC-56** `[crit]`: Listing customers returns all customers with pagination support. The `search` parameter filters by name (case-insensitive substring match).
 - **AC-57** `[crit]`: Getting a customer returns the full customer object and a count of associated projects.
 - **AC-58** `[crit]`: A project references a customer via `customerId`. The API returns the full customer object nested in project responses.
-- **AC-91** `[crit]`: Deleting a customer with no associated projects succeeds (hard delete). The customer no longer appears in list or get responses.
-- **AC-92** `[crit]`: Deleting a customer that has associated projects is rejected (409 Conflict). The customer and its projects remain unchanged.
+- **AC-91** `[crit]`: Deleting a customer with no active projects succeeds (hard delete). Any archived projects are purged atomically with the customer. The customer no longer appears in list or get responses.
+- **AC-92** `[crit]`: Deleting a customer that has active (non-archived) projects is rejected (409 Conflict). The customer and its projects remain unchanged.
 - **AC-93** `[crit]`: Deleting a customer requires `customer:delete` permission. Users without this permission receive 403.
 
 ### 15.12 Project Management

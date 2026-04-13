@@ -231,7 +231,11 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 ### 6.9 Soft Deletes
 
 - Users can be deactivated (`active = false`) or hard-deleted. Deactivation is the default for preserving assignment history. Hard deletion is available to the owner role and cascades sessions and worker assignments; `createdBy`/`updatedBy` references are set to null. Self-deletion is rejected by the API.
-- Projects are soft-deleted (`deleted = true`). Deleted projects are excluded from list and read operations but retained in the database for audit purposes and referential integrity.
+- Projects are soft-deleted (`deleted = true`) as an **archive-from-board** mechanism (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Archived projects are excluded from active views (Kanban, Calendar, list endpoints) but retained in the database as historical reference. This is not an audit trail — there is no immutability guarantee.
+  - Archived projects are **immutable via the API**: transitions, date updates, PATCH, and re-delete are rejected with 404 (AC-95).
+  - When a customer is deleted, their archived projects are **purged atomically** with the customer — the archive has no value without the customer relationship. Active (non-archived) projects still block customer deletion (409).
+  - The API exposes `archivedProjectCount` on `GET /api/customers/:id` so the UI can warn before destructive customer deletion.
+  - No restore path exists via the API. Recovery requires database access.
 
 ---
 
