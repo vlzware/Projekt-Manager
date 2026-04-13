@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { useAuthStore } from '@/state/authStore';
 import { useUserStore } from '@/state/userStore';
 import { useConfirmStore } from '@/state/confirmStore';
 import { STRINGS } from '@/config/strings';
@@ -16,6 +17,9 @@ import styles from './Management.module.css';
 const AVAILABLE_ROLES = Object.keys(STRINGS.roles);
 
 export function UserManagement() {
+  const authUser = useAuthStore((s) => s.authUser);
+  const canManage = authUser?.roles.some((r) => r === 'owner') ?? false;
+
   const users = useUserStore((s) => s.users);
   const loading = useUserStore((s) => s.loading);
   const error = useUserStore((s) => s.error);
@@ -89,18 +93,20 @@ export function UserManagement() {
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
-        <button
-          className={styles.createButton}
-          onClick={() => {
-            clearError();
-            resetForm();
-            setSelectedUser(null);
-            setFormOpen(true);
-          }}
-          data-testid="user-create-button"
-        >
-          {STRINGS.ui.create}
-        </button>
+        {canManage && (
+          <button
+            className={styles.createButton}
+            onClick={() => {
+              clearError();
+              resetForm();
+              setSelectedUser(null);
+              setFormOpen(true);
+            }}
+            data-testid="user-create-button"
+          >
+            {STRINGS.ui.create}
+          </button>
+        )}
       </div>
 
       {error && !formOpen && !selectedUser && <div className={styles.error}>{error}</div>}
@@ -119,7 +125,7 @@ export function UserManagement() {
           {users.map((u) => (
             <tr
               key={u.id}
-              className={u.active ? undefined : `${styles.rowInactive} deactivated`}
+              className={`${styles.clickableRow} ${u.active ? '' : `${styles.rowInactive} deactivated`}`}
               onClick={() => {
                 setSelectedUser(u);
                 setFormOpen(false);
@@ -259,7 +265,7 @@ export function UserManagement() {
               <button className={styles.cancelButton} onClick={() => setSelectedUser(null)}>
                 {STRINGS.ui.close}
               </button>
-              {selectedUser.active ? (
+              {canManage && selectedUser.active && (
                 <button
                   className={styles.dangerButton}
                   onClick={() => handleDeactivate(selectedUser)}
@@ -267,7 +273,8 @@ export function UserManagement() {
                 >
                   {STRINGS.ui.deactivate}
                 </button>
-              ) : (
+              )}
+              {canManage && !selectedUser.active && (
                 <button
                   className={styles.actionButton}
                   onClick={() => handleReactivate(selectedUser)}

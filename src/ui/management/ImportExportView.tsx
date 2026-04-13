@@ -11,6 +11,9 @@ import { useAuthStore } from '@/state/authStore';
 import { useImportExportStore } from '@/state/importExportStore';
 import styles from './Management.module.css';
 
+const MAX_IMPORT_FILE_MB = 5;
+const MAX_IMPORT_FILE_BYTES = MAX_IMPORT_FILE_MB * 1024 * 1024;
+
 export function ImportExportView() {
   const authUser = useAuthStore((s) => s.authUser);
   const canImport = authUser?.roles.some((r) => r === 'owner' || r === 'office') ?? false;
@@ -27,15 +30,23 @@ export function ImportExportView() {
 
   const exportEntity = useImportExportStore((s) => s.exportEntity);
   const exportStatus = useImportExportStore((s) => s.exportStatus);
+  const exportCustomerFilter = useImportExportStore((s) => s.exportCustomerFilter);
   const exporting = useImportExportStore((s) => s.exporting);
   const exportError = useImportExportStore((s) => s.exportError);
   const setExportEntity = useImportExportStore((s) => s.setExportEntity);
   const setExportStatus = useImportExportStore((s) => s.setExportStatus);
+  const setExportCustomerFilter = useImportExportStore((s) => s.setExportCustomerFilter);
   const runExport = useImportExportStore((s) => s.runExport);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) {
+      setImportData(null);
+      return;
+    }
+
+    if (file.size > MAX_IMPORT_FILE_BYTES) {
+      setImportError(STRINGS.ui.fileTooLarge(MAX_IMPORT_FILE_MB));
       setImportData(null);
       return;
     }
@@ -219,6 +230,20 @@ export function ImportExportView() {
                   {cfg.label}
                 </option>
               ))}
+            </select>
+          )}
+
+          {exportEntity === 'customers' && (
+            <select
+              className={styles.formSelect}
+              value={exportCustomerFilter}
+              onChange={(e) => setExportCustomerFilter(e.target.value as '' | 'true' | 'false')}
+              data-testid="export-customer-filter"
+              style={{ width: 'auto' }}
+            >
+              <option value="">{STRINGS.ui.all}</option>
+              <option value="true">{STRINGS.ui.withProjects}</option>
+              <option value="false">{STRINGS.ui.withoutProjects}</option>
             </select>
           )}
 

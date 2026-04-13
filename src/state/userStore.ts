@@ -8,7 +8,7 @@
 import { create } from 'zustand';
 import type { User } from '@/domain/types';
 import { userApi } from '@/api/client';
-import { useAuthStore } from './authStore';
+import { handleSessionExpired } from './sessionExpired';
 
 interface UserState {
   users: User[];
@@ -35,10 +35,6 @@ interface UserState {
   deactivateUser: (id: string) => Promise<boolean>;
   reactivateUser: (id: string) => Promise<boolean>;
   clearError: () => void;
-}
-
-function handleSessionExpired() {
-  useAuthStore.getState().handleSessionExpired();
 }
 
 export const useUserStore = create<UserState>((set, get) => ({

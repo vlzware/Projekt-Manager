@@ -13,7 +13,7 @@ import type { Project, SummaryData } from '@/domain/types';
 import { getNextState, getPreviousState } from '@/domain/transitions';
 import { computeSummary } from '@/domain/summary';
 import { projectApi, type ApiResult } from '@/api/client';
-import { useAuthStore } from './authStore';
+import { handleSessionExpired } from './sessionExpired';
 
 interface ProjectState {
   projects: Project[];
@@ -29,10 +29,6 @@ interface ProjectState {
   getProjectsByState: (state: WorkflowState) => Project[];
   getSummary: () => SummaryData;
   isMutationInFlight: (projectId: string) => boolean;
-}
-
-function handleSessionExpired() {
-  useAuthStore.getState().handleSessionExpired();
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => {

@@ -286,7 +286,7 @@ export const projectApi = {
       body: dates,
     }),
 
-  bulkImport: (projects: object[]) =>
+  bulkImport: (projects: Record<string, unknown>[]) =>
     apiCall<ImportResult>('/api/projects/bulk/import', {
       method: 'POST',
       body: { projects },
@@ -320,7 +320,7 @@ export const customerApi = {
     },
   ) => apiCall<Customer>(`/api/customers/${id}`, { method: 'PATCH', body: data }),
 
-  bulkImport: (customers: object[]) =>
+  bulkImport: (customers: Record<string, unknown>[]) =>
     apiCall<ImportResult>('/api/customers/bulk/import', {
       method: 'POST',
       body: { customers },

@@ -78,6 +78,7 @@ function clearDownstreamState(): void {
     importResult: null,
     importError: null,
     importing: false,
+    exportCustomerFilter: '',
     exporting: false,
     exportError: null,
   });

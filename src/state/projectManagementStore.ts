@@ -8,7 +8,7 @@
 import { create } from 'zustand';
 import type { Project, Customer } from '@/domain/types';
 import { projectApi, customerApi } from '@/api/client';
-import { useAuthStore } from './authStore';
+import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';
 
 interface ProjectManagementState {
@@ -23,10 +23,6 @@ interface ProjectManagementState {
   updateProject: (id: string, data: { notes?: string | null }) => Promise<Project | null>;
   deleteProject: (id: string) => Promise<boolean>;
   clearError: () => void;
-}
-
-function handleSessionExpired() {
-  useAuthStore.getState().handleSessionExpired();
 }
 
 export const useProjectManagementStore = create<ProjectManagementState>((set, get) => ({

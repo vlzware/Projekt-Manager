@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
 import { Routes, Route, Navigate, useInRouterContext, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
@@ -40,6 +41,17 @@ function useUrlToStoreSync() {
 function UrlStoreSync() {
   useUrlToStoreSync();
   return null;
+}
+
+/**
+ * Route guard — renders children only if the authenticated user
+ * has at least one of the required roles. Redirects to /kanban otherwise.
+ */
+function RequireRoles({ roles, children }: { roles: string[]; children: ReactNode }) {
+  const authUser = useAuthStore((s) => s.authUser);
+  const hasAccess = authUser?.roles.some((r) => roles.includes(r)) ?? false;
+  if (!hasAccess) return <Navigate to="/kanban" replace />;
+  return <>{children}</>;
 }
 
 export function App() {
@@ -98,7 +110,14 @@ export function App() {
         <Route path="/calendar" element={<CalendarView />} />
         <Route path="/customers" element={<CustomerManagement />} />
         <Route path="/projects" element={<ProjectManagement />} />
-        <Route path="/users" element={<UserManagement />} />
+        <Route
+          path="/users"
+          element={
+            <RequireRoles roles={['owner', 'office']}>
+              <UserManagement />
+            </RequireRoles>
+          }
+        />
         <Route path="/data" element={<ImportExportView />} />
         <Route path="/" element={<Navigate to="/kanban" replace />} />
         <Route path="*" element={<Navigate to="/kanban" replace />} />
@@ -113,7 +132,11 @@ export function App() {
     ) : activeView === 'projekte' ? (
       <ProjectManagement />
     ) : activeView === 'benutzer' ? (
-      <UserManagement />
+      authUser?.roles.some((r) => r === 'owner' || r === 'office') ? (
+        <UserManagement />
+      ) : (
+        <KanbanBoard />
+      )
     ) : activeView === 'daten' ? (
       <ImportExportView />
     ) : (

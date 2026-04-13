@@ -6,7 +6,7 @@
  * See e2e/visual-regression-management.spec.ts for delete flow.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { STRINGS } from '@/config/strings';
 import { STATE_CONFIGS } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
@@ -38,24 +38,36 @@ export function ProjectManagement() {
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
-  const searchChanged = useRef(false);
   useEffect(() => {
     fetchProjects();
     fetchCustomers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchProjects, fetchCustomers]);
 
+  // Debounced search — skip initial render (fetchProjects above handles it).
+  const prevSearch = useRef(search);
   useEffect(() => {
-    if (!searchChanged.current) {
-      searchChanged.current = true;
-      return;
-    }
+    if (search === prevSearch.current) return;
+    prevSearch.current = search;
     const timer = setTimeout(() => {
       fetchProjects(search || undefined);
     }, 300);
     return () => clearTimeout(timer);
   }, [search, fetchProjects]);
+
+  // Close customer dropdown on outside click
+  const closeDropdown = useCallback((e: MouseEvent) => {
+    if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+      setCustomerDropdownOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!customerDropdownOpen) return;
+    document.addEventListener('mousedown', closeDropdown);
+    return () => document.removeEventListener('mousedown', closeDropdown);
+  }, [customerDropdownOpen, closeDropdown]);
 
   const resetForm = () => {
     setNumber('');
@@ -156,7 +168,7 @@ export function ProjectManagement() {
         </thead>
         <tbody>
           {projects.map((p) => (
-            <tr key={p.id} onClick={() => handleRowClick(p)}>
+            <tr key={p.id} className={styles.clickableRow} onClick={() => handleRowClick(p)}>
               <td>{p.number}</td>
               <td>{p.title}</td>
               <td>{p.customer?.name ?? '—'}</td>
@@ -223,7 +235,11 @@ export function ProjectManagement() {
 
             <div className={styles.formGroup}>
               <label className={styles.formLabel}>{STRINGS.ui.customer} *</label>
-              <div className={styles.selectWrapper} data-testid="project-customer-select">
+              <div
+                className={styles.selectWrapper}
+                data-testid="project-customer-select"
+                ref={dropdownRef}
+              >
                 <input
                   className={styles.formInput}
                   value={customerId ? (customers.find((c) => c.id === customerId)?.name ?? '') : ''}

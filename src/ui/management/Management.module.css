@@ -72,8 +72,11 @@
 }
 
 .table tbody tr {
-  cursor: pointer;
   transition: background 0.1s;
+}
+
+.clickableRow {
+  cursor: pointer;
 }
 
 .table tbody tr:hover {

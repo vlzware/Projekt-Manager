@@ -8,14 +8,14 @@
 import { create } from 'zustand';
 import type { ImportResult } from '@/domain/types';
 import { customerApi, projectApi, exportApi } from '@/api/client';
-import { useAuthStore } from './authStore';
+import { handleSessionExpired } from './sessionExpired';
 
 type EntityType = 'customers' | 'projects';
 
 interface ImportExportState {
   // Import
   importEntity: EntityType;
-  importData: object[] | null;
+  importData: Record<string, unknown>[] | null;
   importResult: ImportResult | null;
   importError: string | null;
   importing: boolean;
@@ -23,23 +23,21 @@ interface ImportExportState {
   // Export
   exportEntity: EntityType;
   exportStatus: string;
+  exportCustomerFilter: '' | 'true' | 'false';
   exporting: boolean;
   exportError: string | null;
 
   setImportEntity: (entity: EntityType) => void;
-  setImportData: (data: object[] | null) => void;
+  setImportData: (data: Record<string, unknown>[] | null) => void;
   setImportError: (error: string | null) => void;
   clearImportState: () => void;
 
   setExportEntity: (entity: EntityType) => void;
   setExportStatus: (status: string) => void;
+  setExportCustomerFilter: (filter: '' | 'true' | 'false') => void;
 
   runImport: () => Promise<void>;
   runExport: () => Promise<void>;
-}
-
-function handleSessionExpired() {
-  useAuthStore.getState().handleSessionExpired();
 }
 
 export const useImportExportStore = create<ImportExportState>((set, get) => ({
@@ -51,6 +49,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
 
   exportEntity: 'projects',
   exportStatus: '',
+  exportCustomerFilter: '',
   exporting: false,
   exportError: null,
 
@@ -60,8 +59,10 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
   setImportError: (error) => set({ importError: error }),
   clearImportState: () => set({ importData: null, importResult: null, importError: null }),
 
-  setExportEntity: (entity) => set({ exportEntity: entity, exportStatus: '', exportError: null }),
+  setExportEntity: (entity) =>
+    set({ exportEntity: entity, exportStatus: '', exportCustomerFilter: '', exportError: null }),
   setExportStatus: (status) => set({ exportStatus: status }),
+  setExportCustomerFilter: (filter) => set({ exportCustomerFilter: filter }),
 
   runImport: async () => {
     const { importEntity, importData } = get();
@@ -87,13 +88,15 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
   },
 
   runExport: async () => {
-    const { exportEntity, exportStatus } = get();
+    const { exportEntity, exportStatus, exportCustomerFilter } = get();
     set({ exporting: true, exportError: null });
 
     const result =
       exportEntity === 'projects'
         ? await exportApi.projects(exportStatus ? { status: exportStatus } : undefined)
-        : await exportApi.customers();
+        : await exportApi.customers(
+            exportCustomerFilter ? { hasProjects: exportCustomerFilter } : undefined,
+          );
 
     if (!result.ok) {
       if (result.sessionExpired) {

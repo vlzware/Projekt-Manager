@@ -189,6 +189,10 @@ export const STRINGS = {
     uploadFile: 'JSON-Datei auswählen',
     statusFilter: 'Status-Filter',
     all: 'Alle',
+    withProjects: 'Mit Projekten',
+    withoutProjects: 'Ohne Projekte',
+    fileTooLarge: (maxMb: number) => `Datei zu groß. Maximal ${maxMb} MB erlaubt.`,
+    noPermission: 'Keine Berechtigung.',
   },
 
   aging: {
