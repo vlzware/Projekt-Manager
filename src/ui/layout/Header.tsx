@@ -6,6 +6,7 @@ import type { ViewMode } from '@/domain/types';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
 import { SummaryArea } from './SummaryArea';
+import { EmailExtractModal } from '../extraction/EmailExtractModal';
 import styles from './Header.module.css';
 
 export function Header() {
@@ -14,6 +15,7 @@ export function Header() {
   const logout = useAuthStore((s) => s.logout);
   const { navigateTo } = useRouterNav();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [extractOpen, setExtractOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,6 +30,7 @@ export function Header() {
   }, [dropdownOpen]);
 
   const canReadUsers = authUser?.roles.some((r) => r === 'owner' || r === 'office') ?? false;
+  const canExtract = canReadUsers; // owner and office can use extraction
 
   const views: { key: ViewMode; label: string }[] = [
     { key: 'kanban', label: STRINGS.ui.viewKanban },
@@ -63,6 +66,15 @@ export function Header() {
           ))}
         </div>
       </div>
+      {canExtract && (
+        <button
+          className={styles.extractButton}
+          onClick={() => setExtractOpen(true)}
+          data-testid="extract-button"
+        >
+          {STRINGS.ui.extractEmail}
+        </button>
+      )}
       <div className={styles.summaryWrapper}>
         <SummaryArea />
       </div>
@@ -88,6 +100,7 @@ export function Header() {
           )}
         </div>
       )}
+      {extractOpen && <EmailExtractModal onClose={() => setExtractOpen(false)} />}
     </header>
   );
 }

@@ -91,6 +91,11 @@ export const STRINGS = {
     hasProjects: 'Kunde kann nicht gelöscht werden, da noch Projekte zugeordnet sind.',
   },
 
+  extraction: {
+    notConfigured: 'E-Mail-Extraktion ist nicht konfiguriert (OPENROUTER_API_KEY fehlt).',
+    emptyInput: 'E-Mail-Text darf nicht leer sein.',
+  },
+
   users: {
     duplicateUsername: 'Benutzername ist bereits vergeben.',
     cannotDeactivateSelf: 'Sie können sich nicht selbst deaktivieren.',
@@ -173,6 +178,17 @@ export const STRINGS = {
     deactivateConfirm: (name: string) => `${name} wirklich deaktivieren?`,
     reactivateConfirm: (name: string) => `${name} wirklich reaktivieren?`,
     deleteConfirm: (item: string) => `${item} wirklich löschen?`,
+
+    // Extraction
+    extractEmail: 'E-Mail Import',
+    extractButton: 'Daten extrahieren',
+    extractPlaceholder: 'E-Mail-Text hier einfügen...',
+    extracting: 'Extrahiere Daten...',
+    customerData: 'Kundendaten',
+    projectData: 'Projektdaten',
+    existingCustomer: 'Vorhandener Kunde',
+    newCustomer: 'Neuer Kunde',
+    description: 'Beschreibung',
 
     // Import/Export
     import: 'Import',

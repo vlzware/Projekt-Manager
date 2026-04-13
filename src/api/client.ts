@@ -380,4 +380,24 @@ export const exportApi = {
     ),
 };
 
+export interface ExtractionResult {
+  customer: {
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+    street: string | null;
+    zip: string | null;
+    city: string | null;
+  };
+  project: {
+    title: string | null;
+    description: string | null;
+  };
+}
+
+export const extractApi = {
+  extract: (text: string) =>
+    apiCall<ExtractionResult>('/api/extract', { method: 'POST', body: { text } }),
+};
+
 export type { AuthUser };

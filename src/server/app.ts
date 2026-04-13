@@ -19,6 +19,7 @@ import { customerRoutes } from './routes/customers.js';
 import { customerBulkRoutes } from './routes/customers-bulk.js';
 import { userRoutes } from './routes/users.js';
 import { exportRoutes } from './routes/export.js';
+import { extractRoutes } from './routes/extract.js';
 import { getEnv } from './config/env.js';
 import { AppError, rateLimited, serverError, validationError } from './errors.js';
 import { STRINGS } from '../config/strings.js';
@@ -153,6 +154,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     app.register(customerBulkRoutes(opts.db));
     app.register(userRoutes(opts.db));
     app.register(exportRoutes(opts.db));
+    app.register(extractRoutes(opts.db));
   }
 
   return app;
