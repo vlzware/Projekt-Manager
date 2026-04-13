@@ -16,3 +16,5 @@
 | [0012](0012-manual-pull-based-deploy-over-wireguard.md)                     | Manual pull-based deploy over WireGuard                         | Accepted | 2026-04-10 |
 | [0013](0013-http-only-evaluation-mode.md)                                   | HTTP-only evaluation mode for full-stack integration testing    | Accepted | 2026-04-10 |
 | [0014](0014-ac-tier-system-critical-vs-design.md)                           | AC tier system — critical vs design test coverage               | Accepted | 2026-04-12 |
+| [0015](0015-copy-paste-textarea-email-data-intake.md)                       | Copy/paste textarea for email data intake                       | Accepted | 2026-04-13 |
+| [0016](0016-llm-email-extraction-via-server-proxied-openrouter.md)          | LLM email extraction via server-proxied OpenRouter              | Accepted | 2026-04-13 |
