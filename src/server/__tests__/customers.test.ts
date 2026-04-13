@@ -20,7 +20,15 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startApp, stopApp, login, authGet, authPost, authPatch } from '../../test/api-helpers.js';
+import {
+  startApp,
+  stopApp,
+  login,
+  authGet,
+  authPost,
+  authPatch,
+  authDelete,
+} from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 
 describe('Customer CRUD Operations', () => {
@@ -252,6 +260,71 @@ describe('Customer CRUD Operations', () => {
 
       const body = res.json();
       expect(body.code).toBe('NOT_FOUND');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Delete customer
+  // AC-91 [crit]: delete customer with no projects succeeds
+  // AC-92 [crit]: delete customer with projects is rejected (409)
+  // AC-93 [crit]: delete customer requires customer:delete permission
+  // ---------------------------------------------------------------
+  describe('Delete customer', () => {
+    it('AC-93: requires customer:delete permission — worker is rejected', async () => {
+      const res = await authDelete(workerToken, `/api/customers/${createdCustomerId}`);
+
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('AC-93: requires customer:delete permission — office is rejected', async () => {
+      const officeToken = await login(SEED_USERS.office.username, SEED_DEFAULT_PASSWORD);
+      const res = await authDelete(officeToken, `/api/customers/${createdCustomerId}`);
+
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('AC-92: rejects deletion when projects reference the customer', async () => {
+      // Create a project referencing the customer
+      const projectRes = await authPost(ownerToken, '/api/projects', {
+        number: 'DEL-TEST-001',
+        title: 'Deletion Test Project',
+        customerId: createdCustomerId,
+      });
+      expect(projectRes.statusCode).toBe(201);
+
+      const res = await authDelete(ownerToken, `/api/customers/${createdCustomerId}`);
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('CONFLICT');
+    });
+
+    it('AC-91: deletes customer with no projects', async () => {
+      // Create a fresh customer with no projects
+      const createRes = await authPost(ownerToken, '/api/customers', {
+        name: 'Zum Löschen',
+      });
+      expect(createRes.statusCode).toBe(201);
+      const deleteId = createRes.json().id;
+
+      const res = await authDelete(ownerToken, `/api/customers/${deleteId}`);
+
+      expect(res.statusCode).toBe(204);
+
+      // Verify it's gone
+      const getRes = await authGet(ownerToken, `/api/customers/${deleteId}`);
+      expect(getRes.statusCode).toBe(404);
+    });
+
+    it('returns 404 for non-existent customer', async () => {
+      const res = await authDelete(
+        ownerToken,
+        '/api/customers/00000000-0000-0000-0000-000000000000',
+      );
+
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('NOT_FOUND');
     });
   });
 });

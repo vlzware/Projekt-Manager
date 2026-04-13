@@ -152,5 +152,25 @@ export function customerRoutes(db: Database) {
         return reply.code(200).send(customer);
       },
     );
+
+    // DELETE /api/customers/:id — delete customer
+    app.delete(
+      '/api/customers/:id',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', format: 'uuid' } },
+          },
+        },
+        preHandler: requirePermission('customer:delete'),
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        await customerService.deleteCustomer(id, request.log);
+        return reply.code(204).send();
+      },
+    );
   };
 }

@@ -130,6 +130,14 @@ export async function updateCustomer(
   return toCustomerResponse(rows[0]!);
 }
 
+export async function deleteCustomer(db: Database, id: string): Promise<boolean> {
+  const rows = await db
+    .delete(customers)
+    .where(eq(customers.id, id))
+    .returning({ id: customers.id });
+  return rows.length > 0;
+}
+
 export async function findCustomerByName(db: Database, name: string): Promise<CustomerRow | null> {
   const rows = await db.select().from(customers).where(eq(customers.name, name)).limit(1);
   return rows[0] ?? null;

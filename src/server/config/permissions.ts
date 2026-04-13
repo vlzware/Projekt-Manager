@@ -7,6 +7,7 @@ export type Permission =
   | 'project:dates'
   | 'customer:read'
   | 'customer:write'
+  | 'customer:delete'
   | 'user:read'
   | 'user:manage'
   | 'auth:change-password';
@@ -23,6 +24,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'project:dates',
     'customer:read',
     'customer:write',
+    'customer:delete',
     'user:read',
     'user:manage',
     'auth:change-password',

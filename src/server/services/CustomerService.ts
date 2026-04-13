@@ -8,10 +8,11 @@ import {
   getCustomer as getCustomerRepo,
   createCustomer as createCustomerRepo,
   updateCustomer as updateCustomerRepo,
+  deleteCustomer as deleteCustomerRepo,
   findCustomerByName,
 } from '../repositories/customer.js';
 import { STRINGS } from '../../config/strings.js';
-import { notFound } from '../errors.js';
+import { notFound, conflict, extractSqlState } from '../errors.js';
 import type { ServiceLogger } from './Logger.js';
 
 export class CustomerService {
@@ -63,6 +64,19 @@ export class CustomerService {
     if (!customer) throw notFound(STRINGS.entities.customer);
     log.info({ customerId: id }, 'customer_updated');
     return customer;
+  }
+
+  async deleteCustomer(id: string, log: ServiceLogger) {
+    try {
+      const deleted = await deleteCustomerRepo(this.db, id);
+      if (!deleted) throw notFound(STRINGS.entities.customer);
+      log.info({ customerId: id }, 'customer_deleted');
+    } catch (err) {
+      if (extractSqlState(err) === '23503') {
+        throw conflict(STRINGS.customers.hasProjects);
+      }
+      throw err;
+    }
   }
 
   async bulkImport(

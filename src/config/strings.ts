@@ -88,6 +88,7 @@ export const STRINGS = {
   customers: {
     duplicateName: 'Ein Kunde mit diesem Namen existiert bereits.',
     nameRequired: 'Kundenname ist erforderlich.',
+    hasProjects: 'Kunde kann nicht gelöscht werden, da noch Projekte zugeordnet sind.',
   },
 
   users: {
