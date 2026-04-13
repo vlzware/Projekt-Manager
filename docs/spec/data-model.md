@@ -176,7 +176,7 @@ Design notes:
 - Follows the audit metadata pattern (§5.5).
 - `name` is required; all other fields are optional.
 - A customer may exist without any projects (e.g., imported from an external system before project creation).
-- Customers are permanent records. There is no soft-delete flag and no delete API operation. Deletion is prevented by foreign key constraints (projects reference customers) and by the design principle that customer history must be preserved for audit and bookkeeping continuity. If a customer relationship ends, the record remains — it simply has no active projects.
+- Customers can be deleted (hard delete) only when no projects reference them. The `ON DELETE no action` FK constraint on `projects.customer_id` enforces this at the database level — a delete attempt on a customer with projects is rejected. Deletion requires the `customer:delete` permission (owner only). A customer without projects is a normal state (e.g., imported before project creation) and deleting such a record is a cleanup operation, not a data-integrity concern.
 
 ---
 

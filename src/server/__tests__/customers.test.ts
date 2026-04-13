@@ -16,7 +16,7 @@
  * Permission model:
  *   - All authenticated users can read customers (customer:read)
  *   - owner and office can create/update (customer:write)
- *   - No delete operation — customers are permanent (spec §8.9)
+ *   - owner can delete customers without projects (customer:delete) — see data-model.md §5.6
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

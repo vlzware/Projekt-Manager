@@ -112,16 +112,13 @@ Design notes:
 
 All customer operations require an authenticated session.
 
-| Operation           | Input                                                | Output                                         | Notes                                                                                                                                                                          |
-| ------------------- | ---------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **List customers**  | optional: offset, limit, search (name substring)     | customer list, total count                     | Returns all customers. Search parameter filters by name (case-insensitive substring match).                                                                                    |
-| **Get customer**    | customer ID                                          | single customer, with associated project count | Returns the full customer object or a not-found error. Includes a count of projects referencing this customer.                                                                 |
-| **Create customer** | name, phone?, email?, address?, notes?               | created customer                               | Creates a new customer. `name` is required. Requires `customer:write` permission.                                                                                              |
-| **Update customer** | customer ID, name?, phone?, email?, address?, notes? | updated customer                               | Updates the specified fields. PATCH semantics — omitted fields are unchanged. Explicitly passing `null` for an optional field clears it. Requires `customer:write` permission. |
-
-Design notes:
-
-- No delete operation. Customer records are permanent (see [data-model.md §5.6](data-model.md#56-customer-entity)).
+| Operation           | Input                                                | Output                                         | Notes                                                                                                                                                                                                    |
+| ------------------- | ---------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **List customers**  | optional: offset, limit, search (name substring)     | customer list, total count                     | Returns all customers. Search parameter filters by name (case-insensitive substring match).                                                                                                              |
+| **Get customer**    | customer ID                                          | single customer, with associated project count | Returns the full customer object or a not-found error. Includes a count of projects referencing this customer.                                                                                           |
+| **Create customer** | name, phone?, email?, address?, notes?               | created customer                               | Creates a new customer. `name` is required. Requires `customer:write` permission.                                                                                                                        |
+| **Update customer** | customer ID, name?, phone?, email?, address?, notes? | updated customer                               | Updates the specified fields. PATCH semantics — omitted fields are unchanged. Explicitly passing `null` for an optional field clears it. Requires `customer:write` permission.                           |
+| **Delete customer** | customer ID                                          | success confirmation                           | Hard-deletes the customer. Rejected if projects reference this customer (FK constraint). Requires `customer:delete` permission (owner only). See [data-model.md §5.6](data-model.md#56-customer-entity). |
 
 ---
 
@@ -130,12 +127,12 @@ Design notes:
 - All API operations require authentication (valid, active session).
 - The system implements a basic role-based permission matrix. All authenticated, active users can view all projects (list, get) and change their own password. Other operations — including mutations, imports, and exports — require specific permissions granted by role:
 
-| Role       | Permissions                                                                                                                                                                  |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| owner      | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, user:read, user:manage, auth:change-password |
-| office     | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, user:read, auth:change-password              |
-| worker     | project:read, customer:read, auth:change-password                                                                                                                            |
-| bookkeeper | project:read, customer:read, auth:change-password                                                                                                                            |
+| Role       | Permissions                                                                                                                                                                                   |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| owner      | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, customer:delete, user:read, user:manage, auth:change-password |
+| office     | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, user:read, auth:change-password                               |
+| worker     | project:read, customer:read, auth:change-password                                                                                                                                             |
+| bookkeeper | project:read, customer:read, auth:change-password                                                                                                                                             |
 
 Design notes:
 
