@@ -6,9 +6,9 @@ import {
   canTransitionBackward,
 } from '../transitions';
 
-// Covers UT-4, UT-5, UT-6, UT-7 from docs/spec/verification.md §16.1.
-// The per-case UT-4..UT-7 tests were removed as redundant with the full-workflow
-// tests below, which chain every transition in one go.
+// AC-16 [crit]: Only +1/-1 transitions (UT-4 to UT-7)
+// AC-17 [crit]: Erledigt is terminal (UT-5, UT-7)
+// AC-18 [crit]: Anfrage hides backward (UT-6)
 describe('state transitions', () => {
   it('getNextState follows the full workflow order', () => {
     expect(getNextState('anfrage')).toBe('angebot');

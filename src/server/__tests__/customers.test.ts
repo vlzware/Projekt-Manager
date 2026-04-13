@@ -123,6 +123,7 @@ describe('Customer CRUD Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-24: Update customer — PATCH semantics
+  // AC-55 [crit]
   // ---------------------------------------------------------------
   describe('AT-24: Update customer (PATCH semantics)', () => {
     it('changes only the specified fields, preserves others', async () => {
@@ -173,6 +174,7 @@ describe('Customer CRUD Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-25: List customers with search parameter
+  // AC-56 [crit]
   // ---------------------------------------------------------------
   describe('AT-25: List customers', () => {
     it('returns all customers with pagination', async () => {
@@ -228,6 +230,7 @@ describe('Customer CRUD Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-26: Get customer includes project count
+  // AC-57 [crit]
   // ---------------------------------------------------------------
   describe('AT-26: Get single customer with project count', () => {
     it('returns the full customer object and associated project count', async () => {

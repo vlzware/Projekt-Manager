@@ -173,6 +173,7 @@ describe('Project Operations — Transitions', () => {
 
   // ---------------------------------------------------------------
   // AT-10: Transition forward from erledigt is rejected
+  // AC-16 [crit], AC-17 [crit]
   // ---------------------------------------------------------------
   describe('AT-10: Transition forward from erledigt', () => {
     it('returns a validation error (erledigt is terminal)', async () => {
@@ -196,6 +197,7 @@ describe('Project Operations — Transitions', () => {
 
   // ---------------------------------------------------------------
   // AT-11: Transition backward from anfrage is rejected
+  // AC-16 [crit], AC-18 [crit]
   // ---------------------------------------------------------------
   describe('AT-11: Transition backward from anfrage', () => {
     it('returns a validation error (anfrage is the first state)', async () => {

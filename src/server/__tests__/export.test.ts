@@ -47,6 +47,7 @@ describe('Export Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-36: Export projects
+  // AC-71 [crit], AC-73 [crit]
   // ---------------------------------------------------------------
   describe('AT-36: Export projects', () => {
     it('returns all non-deleted projects as JSON array', async () => {
@@ -138,6 +139,7 @@ describe('Export Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-37: Export customers
+  // AC-72 [crit]
   // ---------------------------------------------------------------
   describe('AT-37: Export customers', () => {
     it('returns all customers as JSON array', async () => {

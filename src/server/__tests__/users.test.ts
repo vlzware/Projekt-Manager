@@ -163,6 +163,7 @@ describe('User Management Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-30: Update user — displayName, roles; username immutable
+  // AC-64 [crit]
   // ---------------------------------------------------------------
   describe('AT-30: Update user', () => {
     it('changes display name and roles', async () => {
@@ -293,6 +294,7 @@ describe('User Management Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-33: Reset password → sessions invalidated
+  // AC-67 [crit]
   // ---------------------------------------------------------------
   describe('AT-33: Reset password', () => {
     let resetTargetId: string;
@@ -352,6 +354,7 @@ describe('User Management Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-34: Self-deactivation rejected
+  // AC-68 [crit]
   // ---------------------------------------------------------------
   describe('AT-34: Self-deactivation', () => {
     it('rejects when owner tries to deactivate themselves', async () => {
@@ -375,6 +378,7 @@ describe('User Management Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-38: Permission enforcement — only user:manage can manage
+  // AC-69 [crit]
   // ---------------------------------------------------------------
   describe('AT-38: Permission enforcement', () => {
     it('office cannot create users (has user:read, lacks user:manage)', async () => {

@@ -103,6 +103,7 @@ describe('Password Change Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-14: Change own password with correct current password succeeds
+  // AC-52 [crit]
   // ---------------------------------------------------------------
   describe('AT-14: Change own password (success)', () => {
     it('changes password and allows login with the new one', async () => {
@@ -168,6 +169,7 @@ describe('Password Change Operations', () => {
 
   // ---------------------------------------------------------------
   // AT-15: Change own password with incorrect current password is rejected
+  // AC-52 [crit]
   // ---------------------------------------------------------------
   describe('AT-15: Change own password (wrong current password)', () => {
     it('rejects when current password is incorrect', async () => {

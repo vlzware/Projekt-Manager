@@ -39,6 +39,7 @@ export default defineConfig({
           include: [
             'src/config/__tests__/**/*.test.ts',
             'src/domain/__tests__/**/*.test.ts',
+            'src/state/__tests__/**/*.test.ts',
           ],
         },
       },
