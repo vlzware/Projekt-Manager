@@ -111,6 +111,11 @@ export async function reactivateUser(
   return toUserResponse(rows[0]!);
 }
 
+export async function deleteUser(db: Database, id: string): Promise<boolean> {
+  const rows = await db.delete(users).where(eq(users.id, id)).returning({ id: users.id });
+  return rows.length > 0;
+}
+
 export async function findByUsername(db: Database, username: string): Promise<UserRow | null> {
   const rows = await db.select().from(users).where(eq(users.username, username)).limit(1);
   return rows[0] ?? null;

@@ -132,6 +132,26 @@ export function userRoutes(db: Database) {
       },
     );
 
+    // DELETE /api/users/:id — hard-delete user (owner only)
+    app.delete(
+      '/api/users/:id',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', format: 'uuid' } },
+          },
+        },
+        preHandler: requirePermission('user:delete'),
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        await userService.deleteUser(id, request.user!.id, request.log);
+        return reply.code(204).send();
+      },
+    );
+
     // POST /api/users/:id/deactivate
     app.post(
       '/api/users/:id/deactivate',

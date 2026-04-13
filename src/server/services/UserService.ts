@@ -9,6 +9,7 @@ import {
   listUsers as listUsersRepo,
   createUser as createUserRepo,
   updateUser as updateUserRepo,
+  deleteUser as deleteUserRepo,
   deactivateUser as deactivateUserRepo,
   reactivateUser as reactivateUserRepo,
   changePassword as changePasswordRepo,
@@ -116,6 +117,21 @@ export class UserService {
     if (!result) throw notFound(STRINGS.entities.user);
     log.info({ userId: id }, 'user_reactivated');
     return result;
+  }
+
+  async deleteUser(id: string, actorId: string, log: ServiceLogger) {
+    if (id === actorId) {
+      throw validationError(STRINGS.users.cannotDeleteSelf);
+    }
+
+    // Invalidate all sessions before deletion (cascade handles it at DB level,
+    // but explicit cleanup ensures any in-memory session cache is aware).
+    await deleteSessionsByUserId(this.db, id);
+
+    const deleted = await deleteUserRepo(this.db, id);
+    if (!deleted) throw notFound(STRINGS.entities.user);
+
+    log.info({ userId: id, actorId }, 'user_deleted');
   }
 
   async resetPassword(id: string, newPassword: string, actorId: string, log: ServiceLogger) {

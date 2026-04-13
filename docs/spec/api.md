@@ -77,13 +77,14 @@ Design notes:
 | **Reactivate user**     | user ID                                        | updated user           | Sets `active = true`. Requires `user:manage` permission.                                                                                                                                                                                                                                                                                           |
 | **Reset password**      | user ID, new password                          | success/failure        | Administrative password reset — does not require the user's current password. New password must meet the configured password policy. Session side effects per [data-model.md §5.4](data-model.md#54-session). Requires `user:manage` permission.                                                                                                   |
 | **Change own password** | current password, new password                 | success/failure        | Any authenticated user can change their own password. Current password must be verified before accepting the change. New password must meet the configured password policy (see [index.md §4.5](index.md#45-authentication)). Session side effects per [data-model.md §5.4](data-model.md#54-session). Requires `auth:change-password` permission. |
+| **Delete user**         | user ID                                        | 204 No Content         | Hard-deletes the user. Cascades sessions and worker assignments; `createdBy`/`updatedBy` references are set to null. Self-deletion is rejected. Requires `user:delete` permission (owner only).                                                                                                                                                    |
 
 Design notes:
 
 - Plaintext passwords are never stored or logged. The server hashes before storage.
 - **Username is immutable** after creation.
-- Users are deactivated, never deleted (see [data-model.md §6.9](data-model.md#69-soft-deletes)).
-- **Self-deactivation is prohibited.**
+- Users can be deactivated or hard-deleted. Deactivation preserves the record; deletion removes it. See [data-model.md §6.9](data-model.md#69-soft-deletes).
+- **Self-deactivation and self-deletion are prohibited.**
 - Password-change session side effects: see [data-model.md §5.4](data-model.md#54-session).
 
 #### 14.2.4 Bulk Operations
@@ -127,12 +128,12 @@ All customer operations require an authenticated session.
 - All API operations require authentication (valid, active session).
 - The system implements a basic role-based permission matrix. All authenticated, active users can view all projects (list, get) and change their own password. Other operations — including mutations, imports, and exports — require specific permissions granted by role:
 
-| Role       | Permissions                                                                                                                                                                                   |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| owner      | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, customer:delete, user:read, user:manage, auth:change-password |
-| office     | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, user:read, auth:change-password                               |
-| worker     | project:read, customer:read, auth:change-password                                                                                                                                             |
-| bookkeeper | project:read, customer:read, auth:change-password                                                                                                                                             |
+| Role       | Permissions                                                                                                                                                                                                |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| owner      | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, customer:delete, user:read, user:manage, user:delete, auth:change-password |
+| office     | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, user:read, auth:change-password                                            |
+| worker     | project:read, customer:read, auth:change-password                                                                                                                                                          |
+| bookkeeper | project:read, customer:read, auth:change-password                                                                                                                                                          |
 
 Design notes:
 

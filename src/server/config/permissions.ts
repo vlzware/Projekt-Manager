@@ -10,6 +10,7 @@ export type Permission =
   | 'customer:delete'
   | 'user:read'
   | 'user:manage'
+  | 'user:delete'
   | 'auth:change-password';
 
 export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
@@ -27,6 +28,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'customer:delete',
     'user:read',
     'user:manage',
+    'user:delete',
     'auth:change-password',
   ],
   office: [

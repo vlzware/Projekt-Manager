@@ -107,7 +107,7 @@ Design notes:
 - `createdBy` / `updatedBy` are nullable UUIDs with no FK constraint (bootstrapping the first admin would create a circular dependency).
 - `roles` is an array — supports multi-role assignment without schema changes. Role set is configurable **[C]**. Role labels are applied by configuration.
 - `passwordHash` is **never** included in API responses.
-- Users are deactivated, not deleted.
+- Users can be deactivated (`active = false`) or hard-deleted (owner only). See [§6.9](#69-soft-deletes).
 
 ### 5.4 Session
 
@@ -230,7 +230,7 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 
 ### 6.9 Soft Deletes
 
-- Users are deactivated (`active = false`), not deleted. This preserves referential integrity and supports audit trail.
+- Users can be deactivated (`active = false`) or hard-deleted. Deactivation is the default for preserving assignment history. Hard deletion is available to the owner role and cascades sessions and worker assignments; `createdBy`/`updatedBy` references are set to null. Self-deletion is rejected by the API.
 - Projects are soft-deleted (`deleted = true`). Deleted projects are excluded from list and read operations but retained in the database for audit purposes and referential integrity.
 
 ---
