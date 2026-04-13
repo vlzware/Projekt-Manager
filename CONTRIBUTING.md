@@ -74,11 +74,11 @@ Not every AC warrants a unit or integration test. ACs are classified into two ti
 
 ### Critical AC
 
-Guards a critical path — a defect here means data corruption, financial impact, authentication/authorization failure, or data integrity violation.
+Guards a critical path — a defect here means data corruption, financial impact, authentication/authorization failure, data integrity violation, or misleading state that causes wrong user decisions.
 
 - **Verified by:** unit and/or integration test
 - **Traceability:** must appear in the test-spec traceability map with a test reference
-- **Examples:** "Deleting a project requires confirmation and is irreversible", "Only authenticated users can access the API"
+- **Examples:** "Deleting a project requires confirmation and is irreversible", "Only authenticated users can access the API", "A failed mutation reverts the optimistic UI update"
 
 ### Design AC
 
@@ -90,7 +90,7 @@ Specifies expected behavior that does not guard a critical path — layout, inte
 
 ### Classification test
 
-> **If this breaks, does the user lose data, money, or access?**
+> **If this breaks, does the user lose data, money, access, or act on wrong information?**
 > Yes → Critical AC → unit/integration test.
 > No → Design AC → visual regression.
 

@@ -8,7 +8,7 @@ The system is accepted when all of the following are true.
 
 Each criterion is classified by defect impact (see [CONTRIBUTING.md § Acceptance Criteria](../../CONTRIBUTING.md#acceptance-criteria)):
 
-- **`[crit]`** — **Critical**: a defect means data corruption, financial impact, authentication/authorization failure, or data integrity violation. Verified by unit and/or integration test.
+- **`[crit]`** — **Critical**: a defect means data corruption, financial impact, authentication/authorization failure, data integrity violation, or misleading state that causes wrong user decisions. Verified by unit and/or integration test.
 - **`[vis]`** — **Visual / Design**: specifies expected behavior that does not guard a critical path. Verified by visual regression (E2E screenshot diff).
 
 Criteria without a marker are structural or infrastructure constraints verified by CI gates, linting, or deployment procedures.
@@ -41,7 +41,7 @@ Criteria without a marker are structural or infrastructure constraints verified 
 - **AC-18** `[crit]`: `Anfrage` hides the backward transition button.
 - **AC-19** `[vis]`: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
 - **AC-20** `[vis]`: UI does not crash on projects with missing optional fields.
-- **AC-53** `[vis]`: A failed mutation displays a German error message and reverts the optimistic UI update.
+- **AC-53** `[crit]`: A failed mutation displays a German error message and reverts the optimistic UI update.
 
 ### 15.4 Authentication
 

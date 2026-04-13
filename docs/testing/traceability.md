@@ -2,7 +2,7 @@
 
 Maps each acceptance criterion in [spec §15](../spec/verification.md#15-acceptance-criteria) to the tests that pin it. Test-ID columns reference the test specification in [spec §16](../spec/verification.md#16-test-specification): UT (§16.1 Unit), AT (§16.2 API integration). The `E2E` column references `e2e/*.spec.ts` files (and §16.3 step numbers where helpful). Cardinality is N:M.
 
-The `Tier` column classifies each AC: `[crit]` = critical (data integrity, auth, money — verified by unit/integration tests), `[vis]` = visual/design (verified by E2E visual regression), `—` = structural/infra (N/A for testing).
+The `Tier` column classifies each AC: `[crit]` = critical (data integrity, auth, money, misleading state — verified by unit/integration tests), `[vis]` = visual/design (verified by E2E visual regression), `—` = structural/infra (N/A for testing).
 
 `N/A — reason` means the AC cannot be exercised by §16.1–§16.2 tests (deployment infrastructure, structural/lint constraints, meta-requirements).
 
@@ -62,7 +62,7 @@ This document is maintained as part of the workflow's test-spec traceability rev
 | AC-50 | —      | §15.6  | Data persists across redeploy         |              |              |                                                             | N/A — deployment infra               |
 | AC-51 | —      | §15.6  | Deploy by SHA, not moving tag         |              |              |                                                             | N/A — deployment infra               |
 | AC-52 | [crit] | §15.4  | Change own password                   |              | AT-14, AT-15 |                                                             |                                      |
-| AC-53 | [vis]  | §15.3  | Failed mutation reverts UI            |              |              | failure-paths.spec.ts                                       |                                      |
+| AC-53 | [crit] | §15.3  | Failed mutation reverts UI            |              |              | failure-paths.spec.ts                                       |                                      |
 | AC-54 | [crit] | §15.11 | Create customer → generated ID        |              | AT-23        |                                                             |                                      |
 | AC-55 | [crit] | §15.11 | Update customer PATCH semantics       |              | AT-24        |                                                             |                                      |
 | AC-56 | [crit] | §15.11 | List customers with search            |              | AT-25        |                                                             |                                      |

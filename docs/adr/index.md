@@ -15,3 +15,4 @@
 | [0011](0011-build-images-in-ci-distribute-via-ghcr.md)                      | Build app images in CI, distribute via GHCR                     | Accepted | 2026-04-09 |
 | [0012](0012-manual-pull-based-deploy-over-wireguard.md)                     | Manual pull-based deploy over WireGuard                         | Accepted | 2026-04-10 |
 | [0013](0013-http-only-evaluation-mode.md)                                   | HTTP-only evaluation mode for full-stack integration testing    | Accepted | 2026-04-10 |
+| [0014](0014-ac-tier-system-critical-vs-design.md)                           | AC tier system — critical vs design test coverage               | Accepted | 2026-04-12 |
