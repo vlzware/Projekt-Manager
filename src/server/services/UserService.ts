@@ -4,6 +4,12 @@
  */
 
 import type { Database } from '../db/connection.js';
+
+// Drizzle transactions share the query-builder API with Database but lack
+// the $client property. Repository functions only use query methods, so
+// passing a transaction is safe at runtime.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type DbLike = any;
 import {
   findById,
   listUsers as listUsersRepo,
@@ -103,10 +109,14 @@ export class UserService {
       throw validationError(STRINGS.users.cannotDeactivateSelf);
     }
 
-    const user = await deactivateUserRepo(this.db, id, actorId);
-    if (!user) throw notFound(STRINGS.entities.user);
-    // Invalidate all sessions for the deactivated user
-    await deleteSessionsByUserId(this.db, id);
+    // Atomic: deactivation + session invalidation in one transaction.
+    // If session cleanup fails, the deactivation rolls back too.
+    const user = await this.db.transaction(async (tx) => {
+      const result = await deactivateUserRepo(tx as DbLike, id, actorId);
+      if (!result) throw notFound(STRINGS.entities.user);
+      await deleteSessionsByUserId(tx as DbLike, id);
+      return result;
+    });
 
     log.info({ userId: id }, 'user_deactivated');
     return user;
@@ -124,12 +134,14 @@ export class UserService {
       throw validationError(STRINGS.users.cannotDeleteSelf);
     }
 
-    // Invalidate all sessions before deletion (cascade handles it at DB level,
-    // but explicit cleanup ensures any in-memory session cache is aware).
-    await deleteSessionsByUserId(this.db, id);
-
-    const deleted = await deleteUserRepo(this.db, id);
-    if (!deleted) throw notFound(STRINGS.entities.user);
+    // Atomic: session cleanup + user deletion in one transaction.
+    // The sessions FK has ON DELETE CASCADE, but explicit cleanup inside
+    // the same transaction makes the intent clear and order-independent.
+    await this.db.transaction(async (tx) => {
+      await deleteSessionsByUserId(tx as DbLike, id);
+      const deleted = await deleteUserRepo(tx as DbLike, id);
+      if (!deleted) throw notFound(STRINGS.entities.user);
+    });
 
     log.info({ userId: id, actorId }, 'user_deleted');
   }
@@ -147,10 +159,15 @@ export class UserService {
       }
     }
 
+    // Hash before the transaction (CPU-bound, no DB needed)
     const newHash = await hashPassword(newPassword);
-    await changePasswordRepo(this.db, id, newHash, actorId);
-    // Invalidate all sessions for the target user
-    await deleteSessionsByUserId(this.db, id);
+
+    // Atomic: password change + session invalidation in one transaction.
+    await this.db.transaction(async (tx) => {
+      await changePasswordRepo(tx as DbLike, id, newHash, actorId);
+      await deleteSessionsByUserId(tx as DbLike, id);
+    });
+
     log.info({ userId: id, actorId }, 'password_reset');
   }
 }

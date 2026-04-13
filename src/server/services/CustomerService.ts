@@ -9,7 +9,7 @@ import {
   createCustomer as createCustomerRepo,
   updateCustomer as updateCustomerRepo,
   deleteCustomer as deleteCustomerRepo,
-  findCustomerByName,
+  findCustomersByName,
 } from '../repositories/customer.js';
 import { STRINGS } from '../../config/strings.js';
 import { notFound, conflict, extractSqlState } from '../errors.js';
@@ -137,9 +137,14 @@ export class CustomerService {
       };
 
       try {
-        const existing = await findCustomerByName(this.db, data.name);
-        if (existing) {
-          await updateCustomerRepo(this.db, existing.id, userId, data);
+        const matches = await findCustomersByName(this.db, data.name);
+        if (matches.length > 1) {
+          // Ambiguous: multiple customers share this name — refuse to guess
+          errors.push({ index: i, message: STRINGS.customers.ambiguousName });
+          continue;
+        }
+        if (matches.length === 1) {
+          await updateCustomerRepo(this.db, matches[0]!.id, userId, data);
           updated++;
         } else {
           await createCustomerRepo(this.db, {
