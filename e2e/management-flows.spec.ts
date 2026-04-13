@@ -156,6 +156,7 @@ test.describe('Management flows', () => {
     await page.getByTestId('user-username-input').fill(testUsername);
     await page.getByTestId('user-displayname-input').fill('E2E Testarbeiter');
     await page.getByTestId('user-password-input').fill(testPassword);
+    await page.getByTestId('user-password-confirm-input').fill(testPassword);
     await page.getByTestId('user-role-worker').check();
 
     // Submit
