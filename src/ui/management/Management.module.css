@@ -22,6 +22,7 @@
   border-radius: 6px;
   font-size: 0.875rem;
   min-width: 220px;
+  margin-left: auto;
   outline: none;
   transition: border-color 0.15s;
 }
