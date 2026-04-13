@@ -65,6 +65,8 @@ export interface BulkImportResult {
 }
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export class ProjectService {
   constructor(private db: Database) {}
@@ -288,18 +290,27 @@ export class ProjectService {
 
   /**
    * Validate a single bulk-import item. Returns an error message or null if valid.
+   *
+   * Must enforce the same invariants as the single-record JSON Schema in
+   * routes/projects.ts — UUID format, ISO date format, max lengths, etc.
    */
   private validateImportItem(item: BulkImportItem): string | null {
     if (typeof item.number !== 'string' || item.number.trim() === '') {
       return STRINGS.validation.requiredString('number');
     }
+    if (item.number.length > 20) {
+      return STRINGS.validation.maxLength('number', 20);
+    }
     if (typeof item.title !== 'string' || item.title.trim() === '') {
       return STRINGS.validation.requiredString('title');
     }
+    if (item.title.length > 500) {
+      return STRINGS.validation.maxLength('title', 500);
+    }
 
-    // Customer validation: customerId is required
-    if (typeof item.customerId !== 'string' || item.customerId.trim() === '') {
-      return STRINGS.validation.requiredString('customerId');
+    // Customer validation: customerId is required and must be a UUID
+    if (typeof item.customerId !== 'string' || !UUID_RE.test(item.customerId)) {
+      return STRINGS.validation.mustBeUuid('customerId');
     }
 
     // Status validation
@@ -309,14 +320,14 @@ export class ProjectService {
       }
     }
 
-    // Date validation
+    // Date validation — require strict ISO 8601 date format (YYYY-MM-DD)
     if (item.plannedStart !== undefined && item.plannedStart !== null) {
-      if (typeof item.plannedStart !== 'string' || isNaN(Date.parse(item.plannedStart))) {
+      if (typeof item.plannedStart !== 'string' || !ISO_DATE_RE.test(item.plannedStart)) {
         return STRINGS.projects.invalidPlannedStart;
       }
     }
     if (item.plannedEnd !== undefined && item.plannedEnd !== null) {
-      if (typeof item.plannedEnd !== 'string' || isNaN(Date.parse(item.plannedEnd))) {
+      if (typeof item.plannedEnd !== 'string' || !ISO_DATE_RE.test(item.plannedEnd)) {
         return STRINGS.projects.invalidPlannedEnd;
       }
     }
@@ -339,11 +350,7 @@ export class ProjectService {
     if (item.assignedWorkerIds !== undefined && item.assignedWorkerIds !== null) {
       if (
         !Array.isArray(item.assignedWorkerIds) ||
-        !item.assignedWorkerIds.every(
-          (id: unknown) =>
-            typeof id === 'string' &&
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id),
-        )
+        !item.assignedWorkerIds.every((id: unknown) => typeof id === 'string' && UUID_RE.test(id))
       ) {
         return STRINGS.validation.mustBeUuidArray('assignedWorkerIds');
       }

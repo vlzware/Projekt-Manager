@@ -85,6 +85,8 @@ export const STRINGS = {
     mustBeObject: (field: string) => `${field} muss ein Objekt sein.`,
     mustBeUuidArray: (field: string) => `${field} muss ein Array von UUIDs sein.`,
     mustBeNumeric: (field: string) => `${field} muss eine Zahl oder ein numerischer String sein.`,
+    mustBeUuid: (field: string) => `${field} muss eine gültige UUID sein.`,
+    maxLength: (field: string, max: number) => `${field} darf maximal ${max} Zeichen lang sein.`,
   },
 
   customers: {

@@ -50,6 +50,15 @@ Regeln:
 - Der Projekttitel soll kurz und beschreibend sein (z.B. "Fassadenanstrich Einfamilienhaus").
 - Kundenname: bevorzuge den Firmennamen, falls vorhanden, sonst den Personennamen.`;
 
+/**
+ * Validate and clamp an LLM-extracted field: must be a string or null,
+ * truncated to maxLen to match DB column limits. Non-string values → null.
+ */
+function clampStr(value: unknown, maxLen: number): string | null {
+  if (typeof value !== 'string') return null;
+  return value.length > maxLen ? value.slice(0, maxLen) : value;
+}
+
 export class ExtractionService {
   async extract(emailText: string, log: ServiceLogger): Promise<ExtractionResult> {
     const env = getEnv();
@@ -94,23 +103,42 @@ export class ExtractionService {
       }
 
       // Strip markdown code fences — LLMs often wrap JSON in ```json ... ```
-      const content = rawContent.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+      // Try boundary-based stripping first, fall back to finding first { and last }
+      let content = rawContent.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+      if (!content.trimStart().startsWith('{')) {
+        const first = rawContent.indexOf('{');
+        const last = rawContent.lastIndexOf('}');
+        if (first !== -1 && last > first) {
+          content = rawContent.slice(first, last + 1);
+        }
+      }
 
-      const parsed = JSON.parse(content) as ExtractionResult;
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+
+      // Runtime validation: ensure the parsed structure has the expected shape
+      // and all fields are strings or null, clamped to DB column max lengths.
+      const customer =
+        typeof parsed.customer === 'object' && parsed.customer !== null
+          ? (parsed.customer as Record<string, unknown>)
+          : {};
+      const project =
+        typeof parsed.project === 'object' && parsed.project !== null
+          ? (parsed.project as Record<string, unknown>)
+          : {};
 
       log.info({}, 'extraction_completed');
       return {
         customer: {
-          name: parsed.customer?.name ?? null,
-          phone: parsed.customer?.phone ?? null,
-          email: parsed.customer?.email ?? null,
-          street: parsed.customer?.street ?? null,
-          zip: parsed.customer?.zip ?? null,
-          city: parsed.customer?.city ?? null,
+          name: clampStr(customer.name, 255),
+          phone: clampStr(customer.phone, 100),
+          email: clampStr(customer.email, 255),
+          street: clampStr(customer.street, 255),
+          zip: clampStr(customer.zip, 20),
+          city: clampStr(customer.city, 255),
         },
         project: {
-          title: parsed.project?.title ?? null,
-          description: parsed.project?.description ?? null,
+          title: clampStr(project.title, 500),
+          description: clampStr(project.description, 10000),
         },
       };
     } catch (err) {

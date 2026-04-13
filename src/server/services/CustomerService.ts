@@ -101,15 +101,38 @@ export class CustomerService {
         errors.push({ index: i, message: STRINGS.customers.nameRequired });
         continue;
       }
+      if (item.name.length > 255) {
+        errors.push({ index: i, message: STRINGS.validation.maxLength('name', 255) });
+        continue;
+      }
+
+      // Validate address structure if present — must have street, zip, city as strings
+      let address: { street: string; zip: string; city: string } | null = null;
+      if (item.address !== undefined && item.address !== null) {
+        if (typeof item.address !== 'object' || Array.isArray(item.address)) {
+          errors.push({ index: i, message: STRINGS.validation.mustBeObject('address') });
+          continue;
+        }
+        const addr = item.address as Record<string, unknown>;
+        if (
+          typeof addr.street !== 'string' ||
+          typeof addr.zip !== 'string' ||
+          typeof addr.city !== 'string'
+        ) {
+          errors.push({
+            index: i,
+            message: STRINGS.validation.mustBeObject('address (street, zip, city)'),
+          });
+          continue;
+        }
+        address = { street: addr.street, zip: addr.zip, city: addr.city };
+      }
 
       const data = {
         name: item.name,
         phone: typeof item.phone === 'string' ? item.phone : null,
         email: typeof item.email === 'string' ? item.email : null,
-        address:
-          item.address && typeof item.address === 'object' && !Array.isArray(item.address)
-            ? (item.address as { street: string; zip: string; city: string })
-            : null,
+        address,
         notes: typeof item.notes === 'string' ? item.notes : null,
       };
 
