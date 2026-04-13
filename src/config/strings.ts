@@ -92,7 +92,9 @@ export const STRINGS = {
   customers: {
     duplicateName: 'Ein Kunde mit diesem Namen existiert bereits.',
     nameRequired: 'Kundenname ist erforderlich.',
-    hasProjects: 'Kunde kann nicht gelöscht werden, da noch Projekte zugeordnet sind.',
+    hasProjects: 'Kunde kann nicht gelöscht werden, da noch aktive Projekte zugeordnet sind.',
+    deleteWithArchived: (n: number) =>
+      `Achtung: ${n} archivierte Projekt${n === 1 ? '' : 'e'} werden dabei endgültig gelöscht. Fortfahren?`,
     ambiguousName: 'Mehrere Kunden mit diesem Namen gefunden. Import-Zuordnung nicht eindeutig.',
   },
 

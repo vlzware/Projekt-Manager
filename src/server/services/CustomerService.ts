@@ -3,6 +3,7 @@
  */
 
 import type { Database } from '../db/connection.js';
+import { eq, and } from 'drizzle-orm';
 import {
   listCustomers as listCustomersRepo,
   getCustomer as getCustomerRepo,
@@ -11,8 +12,9 @@ import {
   deleteCustomer as deleteCustomerRepo,
   findCustomersByName,
 } from '../repositories/customer.js';
+import { projects } from '../db/schema.js';
 import { STRINGS } from '../../config/strings.js';
-import { notFound, conflict, extractSqlState } from '../errors.js';
+import { notFound, conflict } from '../errors.js';
 import type { ServiceLogger } from './Logger.js';
 
 export class CustomerService {
@@ -67,16 +69,39 @@ export class CustomerService {
   }
 
   async deleteCustomer(id: string, log: ServiceLogger) {
-    try {
-      const deleted = await deleteCustomerRepo(this.db, id);
-      if (!deleted) throw notFound(STRINGS.entities.customer);
-      log.info({ customerId: id }, 'customer_deleted');
-    } catch (err) {
-      if (extractSqlState(err) === '23503') {
-        throw conflict(STRINGS.customers.hasProjects);
-      }
-      throw err;
+    // Check for active (non-archived) projects referencing this customer.
+    const activeProjects = await this.db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.customerId, id), eq(projects.deleted, false)))
+      .limit(1);
+
+    if (activeProjects.length > 0) {
+      throw conflict(STRINGS.customers.hasProjects);
     }
+
+    // All referencing projects (if any) are archived. Delete them and the
+    // customer atomically — the archive has no value without the customer.
+    // project_workers rows cascade automatically (ON DELETE CASCADE).
+    await this.db.transaction(async (tx) => {
+      const purged = await tx
+        .delete(projects)
+        .where(and(eq(projects.customerId, id), eq(projects.deleted, true)))
+        .returning({ id: projects.id });
+
+      if (purged.length > 0) {
+        log.info(
+          { customerId: id, archivedProjectsRemoved: purged.length },
+          'archived_projects_purged',
+        );
+      }
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const deleted = await deleteCustomerRepo(tx as any, id);
+      if (!deleted) throw notFound(STRINGS.entities.customer);
+    });
+
+    log.info({ customerId: id }, 'customer_deleted');
   }
 
   async bulkImport(

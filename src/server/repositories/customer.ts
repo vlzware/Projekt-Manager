@@ -2,7 +2,7 @@
  * Customer repository — CRUD operations.
  */
 
-import { eq, count, ilike } from 'drizzle-orm';
+import { eq, and, count, ilike } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { customers, projects } from '../db/schema.js';
 
@@ -59,18 +59,31 @@ export async function listCustomers(
 export async function getCustomer(
   db: Database,
   id: string,
-): Promise<(ReturnType<typeof toCustomerResponse> & { projectCount: number }) | null> {
+): Promise<
+  | (ReturnType<typeof toCustomerResponse> & {
+      projectCount: number;
+      archivedProjectCount: number;
+    })
+  | null
+> {
   const rows = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
   if (rows.length === 0) return null;
 
-  const [countResult] = await db
-    .select({ value: count() })
-    .from(projects)
-    .where(eq(projects.customerId, id));
+  const [[activeCount], [archivedCount]] = await Promise.all([
+    db
+      .select({ value: count() })
+      .from(projects)
+      .where(and(eq(projects.customerId, id), eq(projects.deleted, false))),
+    db
+      .select({ value: count() })
+      .from(projects)
+      .where(and(eq(projects.customerId, id), eq(projects.deleted, true))),
+  ]);
 
   return {
     ...toCustomerResponse(rows[0]!),
-    projectCount: countResult?.value ?? 0,
+    projectCount: activeCount?.value ?? 0,
+    archivedProjectCount: archivedCount?.value ?? 0,
   };
 }
 

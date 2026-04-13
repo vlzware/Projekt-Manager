@@ -13,6 +13,7 @@ import {
   text,
   boolean,
   timestamp,
+  date,
   jsonb,
   numeric,
   index,
@@ -97,8 +98,8 @@ export const projects = pgTable(
       .notNull()
       .references(() => customers.id),
 
-    plannedStart: timestamp('planned_start', { withTimezone: true }),
-    plannedEnd: timestamp('planned_end', { withTimezone: true }),
+    plannedStart: date('planned_start', { mode: 'date' }),
+    plannedEnd: date('planned_end', { mode: 'date' }),
 
     estimatedValue: numeric('estimated_value', { precision: 12, scale: 2 }),
     notes: text('notes'),
