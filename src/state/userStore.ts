@@ -34,6 +34,8 @@ interface UserState {
   ) => Promise<boolean>;
   deactivateUser: (id: string) => Promise<boolean>;
   reactivateUser: (id: string) => Promise<boolean>;
+  deleteUser: (id: string) => Promise<boolean>;
+  resetPassword: (id: string, newPassword: string) => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -134,6 +136,42 @@ export const useUserStore = create<UserState>((set, get) => ({
     set((s) => ({
       users: s.users.map((u) => (u.id === id ? result.data : u)),
     }));
+    return true;
+  },
+
+  deleteUser: async (id) => {
+    set({ error: null });
+    const result = await userApi.delete(id);
+
+    if (!result.ok) {
+      if (result.sessionExpired) {
+        handleSessionExpired();
+        return false;
+      }
+      set({ error: result.error.message });
+      return false;
+    }
+
+    set((s) => ({
+      users: s.users.filter((u) => u.id !== id),
+      total: s.total - 1,
+    }));
+    return true;
+  },
+
+  resetPassword: async (id, newPassword) => {
+    set({ error: null });
+    const result = await userApi.resetPassword(id, newPassword);
+
+    if (!result.ok) {
+      if (result.sessionExpired) {
+        handleSessionExpired();
+        return false;
+      }
+      set({ error: result.error.message });
+      return false;
+    }
+
     return true;
   },
 

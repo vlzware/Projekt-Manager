@@ -7,6 +7,7 @@ import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
 import { SummaryArea } from './SummaryArea';
 import { EmailExtractModal } from '../extraction/EmailExtractModal';
+import { PasswordChangeModal } from './PasswordChangeModal';
 import styles from './Header.module.css';
 
 export function Header() {
@@ -16,6 +17,7 @@ export function Header() {
   const { navigateTo } = useRouterNav();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [extractOpen, setExtractOpen] = useState(false);
+  const [pwChangeOpen, setPwChangeOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -104,6 +106,16 @@ export function Header() {
             <div className={styles.dropdown}>
               <button
                 className={styles.dropdownItem}
+                data-testid="pw-change-button"
+                onClick={() => {
+                  setDropdownOpen(false);
+                  setPwChangeOpen(true);
+                }}
+              >
+                {STRINGS.password.change}
+              </button>
+              <button
+                className={styles.dropdownItem}
                 data-testid="logout-button"
                 onClick={handleLogout}
               >
@@ -114,6 +126,7 @@ export function Header() {
         </div>
       )}
       {extractOpen && <EmailExtractModal onClose={() => setExtractOpen(false)} />}
+      {pwChangeOpen && <PasswordChangeModal onClose={() => setPwChangeOpen(false)} />}
     </header>
   );
 }

@@ -233,6 +233,12 @@ export const authApi = {
   logout: () => apiCall<{ success: boolean }>('/api/auth/logout', { method: 'POST' }),
 
   me: () => apiCall<LoginResponse>('/api/auth/me'),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    apiCall<{ success: boolean }>('/api/auth/change-password', {
+      method: 'POST',
+      body: { currentPassword, newPassword },
+    }),
 };
 
 export const projectApi = {
@@ -358,6 +364,8 @@ export const userApi = {
   deactivate: (id: string) => apiCall<User>(`/api/users/${id}/deactivate`, { method: 'POST' }),
 
   reactivate: (id: string) => apiCall<User>(`/api/users/${id}/reactivate`, { method: 'POST' }),
+
+  delete: (id: string) => apiCall<void>(`/api/users/${id}`, { method: 'DELETE' }),
 
   resetPassword: (id: string, newPassword: string) =>
     apiCall<{ success: boolean }>(`/api/users/${id}/reset-password`, {
