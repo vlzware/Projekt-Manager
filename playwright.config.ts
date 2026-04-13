@@ -29,6 +29,7 @@ const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/user.json');
  * completes before this one starts.
  */
 const MUTATING_TESTS = /kanban-flows|management-flows|import-export-flows|visual-regression-management|visual-regression-import-export/;
+const DEMO_TESTS = /demo-.*\.spec\.ts/;
 
 export default defineConfig({
   testDir: './e2e',
@@ -63,7 +64,7 @@ export default defineConfig({
     {
       name: 'chromium',
       dependencies: ['setup'],
-      testIgnore: [/smoke\.spec\.ts/, /.*\.setup\.ts/, MUTATING_TESTS],
+      testIgnore: [/smoke\.spec\.ts/, /.*\.setup\.ts/, MUTATING_TESTS, DEMO_TESTS],
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1920, height: 1080 },
@@ -97,6 +98,18 @@ export default defineConfig({
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1920, height: 1080 },
+      },
+    },
+
+    // 5. Demo recordings — not part of the normal test suite.
+    //    Run: npx playwright test --project=demo --headed
+    {
+      name: 'demo',
+      testMatch: DEMO_TESTS,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1280, height: 720 },
+        video: { mode: 'on', size: { width: 1280, height: 720 } },
       },
     },
   ],
