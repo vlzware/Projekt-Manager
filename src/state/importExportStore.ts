@@ -9,6 +9,8 @@ import { create } from 'zustand';
 import type { ImportResult } from '@/domain/types';
 import { customerApi, projectApi, exportApi } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
+import { useProjectStore } from './projectStore';
+import { useCustomerStore } from './customerStore';
 
 type EntityType = 'customers' | 'projects';
 
@@ -85,6 +87,14 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
     }
 
     set({ importing: false, importResult: result.data });
+
+    // Refresh the affected stores so newly imported records are visible
+    // without a manual page reload.
+    if (importEntity === 'projects') {
+      useProjectStore.getState().fetchProjects();
+    } else {
+      useCustomerStore.getState().fetchCustomers();
+    }
   },
 
   runExport: async () => {

@@ -14,6 +14,7 @@ import { getNextState, getPreviousState } from '@/domain/transitions';
 import { computeSummary } from '@/domain/summary';
 import { projectApi, type ApiResult } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
+import { useProjectManagementStore } from './projectManagementStore';
 
 interface ProjectState {
   projects: Project[];
@@ -30,6 +31,9 @@ interface ProjectState {
   getSummary: () => SummaryData;
   isMutationInFlight: (projectId: string) => boolean;
 }
+
+/** Monotonic counter to discard stale fetch responses. */
+let fetchSeq = 0;
 
 export const useProjectStore = create<ProjectState>((set, get) => {
   /**
@@ -87,6 +91,11 @@ export const useProjectStore = create<ProjectState>((set, get) => {
           return;
         }
 
+        // Use the server response data — it has the authoritative status,
+        // timestamps, and updatedBy. Client-computed values would drift
+        // from the DB due to clock skew and miss server-side fields.
+        const updated = result.data;
+
         // Re-enable controls first (flushSync forces React to commit the
         // enabled state to the DOM before the card moves to a new column).
         flushSync(() => {
@@ -95,18 +104,12 @@ export const useProjectStore = create<ProjectState>((set, get) => {
             return { mutationInFlight: rest };
           });
         });
-        // Then apply the status change — card moves to new column.
+        // Then apply the server response — card moves to new column.
         set((s) => ({
-          projects: s.projects.map((p) => {
-            if (p.id !== projectId) return p;
-            return {
-              ...p,
-              status: next,
-              statusChangedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
-          }),
+          projects: s.projects.map((p) => (p.id === projectId ? updated : p)),
         }));
+        // Sync the management store so both views stay consistent.
+        useProjectManagementStore.getState().fetchProjects();
       })
       .catch(() => {
         set((s) => {
@@ -125,7 +128,10 @@ export const useProjectStore = create<ProjectState>((set, get) => {
     mutationInFlight: {},
 
     fetchProjects: async () => {
+      const seq = ++fetchSeq;
       const result = await projectApi.list();
+      // Discard if a newer fetch was initiated while this one was in flight
+      if (seq !== fetchSeq) return;
       if (!result.ok) return;
       set({ projects: result.data.data ?? result.data });
     },
@@ -185,10 +191,16 @@ export const useProjectStore = create<ProjectState>((set, get) => {
             return;
           }
 
+          // Replace optimistic data with server response
           set((s) => {
             const { [projectId]: _, ...rest } = s.mutationInFlight;
-            return { mutationInFlight: rest };
+            return {
+              projects: s.projects.map((p) => (p.id === projectId ? result.data : p)),
+              mutationInFlight: rest,
+            };
           });
+          // Sync the management store
+          useProjectManagementStore.getState().fetchProjects();
         })
         .catch(() => {
           set((s) => {
