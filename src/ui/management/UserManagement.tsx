@@ -1,5 +1,5 @@
 /**
- * User management view — list, create, deactivate, reactivate users.
+ * User management view — list, create, deactivate, reactivate, reset password.
  *
  * Only accessible to users with user:read permission (owner, office).
  * Test IDs follow the established naming convention (kebab-case).
@@ -27,6 +27,8 @@ export function UserManagement() {
   const createUser = useUserStore((s) => s.createUser);
   const deactivateUser = useUserStore((s) => s.deactivateUser);
   const reactivateUser = useUserStore((s) => s.reactivateUser);
+  const deleteUser = useUserStore((s) => s.deleteUser);
+  const resetUserPassword = useUserStore((s) => s.resetPassword);
   const clearError = useUserStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
 
@@ -35,8 +37,13 @@ export function UserManagement() {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirm, setPasswordConfirm] = useState('');
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetPw, setResetPw] = useState('');
+  const [resetPwConfirm, setResetPwConfirm] = useState('');
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   useEffect(() => {
     fetchUsers();
@@ -46,6 +53,7 @@ export function UserManagement() {
     setUsername('');
     setDisplayName('');
     setPassword('');
+    setPasswordConfirm('');
     setSelectedRoles([]);
   };
 
@@ -55,8 +63,16 @@ export function UserManagement() {
     );
   };
 
+  const passwordsMatch = password === passwordConfirm;
+
   const handleCreate = async () => {
-    if (!username.trim() || !displayName.trim() || !password.trim() || selectedRoles.length === 0)
+    if (
+      !username.trim() ||
+      !displayName.trim() ||
+      !password.trim() ||
+      !passwordsMatch ||
+      selectedRoles.length === 0
+    )
       return;
     setSubmitting(true);
 
@@ -71,6 +87,30 @@ export function UserManagement() {
     if (ok) {
       setFormOpen(false);
       resetForm();
+    }
+  };
+
+  const resetPwMatch = resetPw === resetPwConfirm;
+
+  const handleDelete = async (user: User) => {
+    const confirmed = await requestConfirm(STRINGS.ui.deleteConfirm(user.displayName));
+    if (!confirmed) return;
+
+    setSelectedUser(null);
+    await deleteUser(user.id);
+  };
+
+  const handleResetPassword = async (user: User) => {
+    if (!resetPw.trim() || !resetPwMatch) return;
+    setSubmitting(true);
+
+    const ok = await resetUserPassword(user.id, resetPw);
+    setSubmitting(false);
+
+    if (ok) {
+      setResetSuccess(true);
+      setResetPw('');
+      setResetPwConfirm('');
     }
   };
 
@@ -193,6 +233,20 @@ export function UserManagement() {
             </div>
 
             <div className={styles.formGroup}>
+              <label className={styles.formLabel}>{STRINGS.password.confirm} *</label>
+              <input
+                className={styles.formInput}
+                type="password"
+                value={passwordConfirm}
+                onChange={(e) => setPasswordConfirm(e.target.value)}
+                data-testid="user-password-confirm-input"
+              />
+              {password && passwordConfirm && !passwordsMatch && (
+                <div className={styles.error}>{STRINGS.password.mismatch}</div>
+              )}
+            </div>
+
+            <div className={styles.formGroup}>
               <label className={styles.formLabel}>{STRINGS.ui.roles} *</label>
               <div className={styles.checkboxGroup}>
                 {AVAILABLE_ROLES.map((role) => (
@@ -223,6 +277,7 @@ export function UserManagement() {
                   !username.trim() ||
                   !displayName.trim() ||
                   !password.trim() ||
+                  !passwordsMatch ||
                   selectedRoles.length === 0
                 }
                 data-testid="user-submit"
@@ -234,9 +289,16 @@ export function UserManagement() {
         </div>
       )}
 
-      {/* User detail / deactivate / reactivate */}
+      {/* User detail / deactivate / reactivate / reset password */}
       {selectedUser && !formOpen && (
-        <div className={styles.formOverlay} onClick={() => setSelectedUser(null)}>
+        <div
+          className={styles.formOverlay}
+          onClick={() => {
+            setSelectedUser(null);
+            setResetOpen(false);
+            setResetSuccess(false);
+          }}
+        >
           <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
             <h2 className={styles.formTitle}>{selectedUser.displayName}</h2>
 
@@ -259,12 +321,90 @@ export function UserManagement() {
               </span>
             </div>
 
+            {/* Reset password section (owner only) */}
+            {canManage && resetOpen && (
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e2e8f0' }}>
+                {resetSuccess ? (
+                  <div className={styles.resultBox}>{STRINGS.password.resetSuccess}</div>
+                ) : (
+                  <>
+                    <div className={styles.formGroup}>
+                      <label className={styles.formLabel}>{STRINGS.password.newPassword} *</label>
+                      <input
+                        className={styles.formInput}
+                        type="password"
+                        value={resetPw}
+                        onChange={(e) => setResetPw(e.target.value)}
+                        data-testid="user-reset-pw-input"
+                        autoFocus
+                      />
+                    </div>
+                    <div className={styles.formGroup}>
+                      <label className={styles.formLabel}>{STRINGS.password.confirm} *</label>
+                      <input
+                        className={styles.formInput}
+                        type="password"
+                        value={resetPwConfirm}
+                        onChange={(e) => setResetPwConfirm(e.target.value)}
+                        data-testid="user-reset-pw-confirm"
+                      />
+                      {resetPw && resetPwConfirm && !resetPwMatch && (
+                        <div className={styles.error}>{STRINGS.password.mismatch}</div>
+                      )}
+                    </div>
+                    <div className={styles.formActions}>
+                      <button
+                        className={styles.cancelButton}
+                        onClick={() => {
+                          setResetOpen(false);
+                          setResetPw('');
+                          setResetPwConfirm('');
+                        }}
+                      >
+                        {STRINGS.ui.cancel}
+                      </button>
+                      <button
+                        className={styles.submitButton}
+                        onClick={() => handleResetPassword(selectedUser)}
+                        disabled={submitting || !resetPw.trim() || !resetPwMatch}
+                        data-testid="user-reset-pw-submit"
+                      >
+                        {STRINGS.password.resetPassword}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setSelectedUser(null)}>
+              <button
+                className={styles.cancelButton}
+                onClick={() => {
+                  setSelectedUser(null);
+                  setResetOpen(false);
+                  setResetSuccess(false);
+                }}
+              >
                 {STRINGS.ui.close}
               </button>
+              {canManage && !resetOpen && (
+                <button
+                  className={styles.actionButton}
+                  onClick={() => {
+                    setResetOpen(true);
+                    setResetSuccess(false);
+                    setResetPw('');
+                    setResetPwConfirm('');
+                    clearError();
+                  }}
+                  data-testid="user-reset-pw-button"
+                >
+                  {STRINGS.password.resetPassword}
+                </button>
+              )}
               {canManage && selectedUser.active && (
                 <button
                   className={styles.dangerButton}
@@ -281,6 +421,15 @@ export function UserManagement() {
                   data-testid="user-reactivate-button"
                 >
                   {STRINGS.ui.reactivate}
+                </button>
+              )}
+              {canManage && selectedUser.id !== authUser?.id && (
+                <button
+                  className={styles.dangerButton}
+                  onClick={() => handleDelete(selectedUser)}
+                  data-testid="user-delete-button"
+                >
+                  {STRINGS.ui.delete}
                 </button>
               )}
             </div>

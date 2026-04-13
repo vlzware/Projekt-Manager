@@ -99,6 +99,7 @@ export const STRINGS = {
   users: {
     duplicateUsername: 'Benutzername ist bereits vergeben.',
     cannotDeactivateSelf: 'Sie können sich nicht selbst deaktivieren.',
+    cannotDeleteSelf: 'Sie können sich nicht selbst löschen.',
     alreadyActive: 'Benutzer ist bereits aktiv.',
     alreadyInactive: 'Benutzer ist bereits deaktiviert.',
   },
@@ -114,6 +115,14 @@ export const STRINGS = {
     tooShort: 'Neues Passwort ist zu kurz (mindestens 8 Zeichen).',
     tooLong: 'Neues Passwort ist zu lang.',
     tooCommon: 'Dieses Passwort ist zu häufig. Bitte ein sichereres Passwort wählen.',
+    confirm: 'Passwort bestätigen',
+    mismatch: 'Passwörter stimmen nicht überein.',
+    change: 'Passwort ändern',
+    currentPassword: 'Aktuelles Passwort',
+    newPassword: 'Neues Passwort',
+    changeSuccess: 'Passwort wurde geändert.',
+    resetPassword: 'Passwort zurücksetzen',
+    resetSuccess: 'Passwort wurde zurückgesetzt.',
   },
 
   ui: {

@@ -245,12 +245,13 @@ On success, the new project appears in the list and in Kanban/Calendar views.
 
 Clicking a project row opens the project for editing. The editing surface reuses the Project Detail Panel ([§8.4](#84-project-detail-panel)) with expanded editability:
 
+- **Planned start / Planned end** — editable via date inputs. Same validation as the detail panel (end requires start, end disabled when start is empty).
 - **Notes** are editable.
 - **Assigned workers** are editable via multi-select.
 - **Estimated value** is editable.
 - **Customer** can be changed.
 
-All editable fields use PATCH semantics via the Update project API operation. Status changes and date changes continue to use their dedicated operations.
+All editable fields use PATCH semantics via the Update project API operation. Status changes use their dedicated operation. Date changes use the dedicated dates operation (`PATCH /api/projects/:id/dates`).
 
 Requires `project:update` permission for mutations. Users without this permission see all fields as read-only.
 
@@ -318,7 +319,7 @@ Fields:
 
 - **Username** — required, unique, immutable after creation.
 - **Display name** — required.
-- **Password** — required. Must meet the configured password policy **[C]**.
+- **Password** — required. Must meet the configured password policy **[C]**. Includes a confirmation field; submission is blocked until both entries match.
 - **Roles** — required. Multi-select from the configured role set **[C]**.
 - **Email** — optional.
 
@@ -344,6 +345,12 @@ Available as a row action or within the edit view. Opens a form with new passwor
 Administrative action — does not require the target user's current password. Invalidates all of the target user's sessions.
 
 Requires `user:manage` permission.
+
+#### 8.10.6 Delete User
+
+Available within the user detail view. Confirmation dialog. Self-deletion is prevented (button hidden for the authenticated user's own record; API rejects if attempted). Hard-deletes the user and cascades related data (sessions, worker assignments).
+
+Requires `user:delete` permission (owner only).
 
 ---
 
