@@ -6,6 +6,7 @@
   border-radius: 6px;
   overflow: hidden;
   min-height: 0;
+  background: #ffffff;
 }
 
 .headerRow {
@@ -40,7 +41,7 @@
 }
 
 .weekRow:nth-child(even) {
-  background: rgba(241, 245, 249, 0.5);
+  background: #f1f5f9;
 }
 
 .dayCell {
