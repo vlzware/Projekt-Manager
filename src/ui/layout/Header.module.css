@@ -61,14 +61,15 @@
 }
 
 .extractButton {
-  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
   border: 1px solid #f59e0b;
   border-radius: 6px;
   background: rgba(245, 158, 11, 0.15);
   color: #fbbf24;
   cursor: pointer;
-  font-size: 0.875rem;
-  font-weight: 500;
   flex-shrink: 0;
   transition:
     background 0.15s,
