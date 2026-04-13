@@ -73,6 +73,8 @@ export const STRINGS = {
     duplicateNumber: 'Projektnummer ist bereits vergeben.',
     foreignKeyViolation: 'Verknüpfter Datensatz existiert nicht (z. B. zugeordnete Mitarbeiter).',
     dateConstraintViolation: 'Datumsangaben verletzen eine Integritätsregel.',
+    concurrentModification:
+      'Der Projektstatus wurde zwischenzeitlich geändert. Bitte Seite neu laden.',
   },
 
   validation: {

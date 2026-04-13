@@ -78,6 +78,13 @@
       "when": 1776163200000,
       "tag": "0010_customers_table",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1776278400000,
+      "tag": "0011_data_integrity_constraints",
+      "breakpoints": true
     }
   ]
 }

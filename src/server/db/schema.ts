@@ -77,8 +77,8 @@ export const customers = pgTable('customers', {
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  createdBy: uuid('created_by'),
-  updatedBy: uuid('updated_by'),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
 });
 
 // ---------------------------------------------------------------
@@ -116,6 +116,14 @@ export const projects = pgTable(
     check(
       'projects_end_requires_start',
       sql`${table.plannedEnd} IS NULL OR ${table.plannedStart} IS NOT NULL`,
+    ),
+    check(
+      'projects_end_not_before_start',
+      sql`${table.plannedEnd} IS NULL OR ${table.plannedStart} IS NULL OR ${table.plannedEnd} >= ${table.plannedStart}`,
+    ),
+    check(
+      'projects_valid_status',
+      sql`${table.status} IN ('anfrage', 'angebot', 'beauftragt', 'geplant', 'in_arbeit', 'abnahme', 'rechnung_faellig', 'abgerechnet', 'erledigt')`,
     ),
   ],
 );

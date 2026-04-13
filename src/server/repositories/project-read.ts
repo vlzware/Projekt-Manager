@@ -266,43 +266,47 @@ export async function insertProject(
   },
 ): Promise<ReturnType<typeof toProject>> {
   const now = new Date();
-  const rows = await db
-    .insert(projects)
-    .values({
-      number: data.number,
-      title: data.title,
-      status: data.status,
-      statusChangedAt: now,
-      customerId: data.customerId,
-      plannedStart: data.plannedStart ?? null,
-      plannedEnd: data.plannedEnd ?? null,
-      estimatedValue: data.estimatedValue ?? null,
-      notes: data.notes ?? null,
-      createdAt: now,
-      updatedAt: now,
-      createdBy: data.createdBy ?? null,
-      updatedBy: data.updatedBy ?? null,
-    })
-    .returning();
+  const project = await db.transaction(async (tx) => {
+    const rows = await tx
+      .insert(projects)
+      .values({
+        number: data.number,
+        title: data.title,
+        status: data.status,
+        statusChangedAt: now,
+        customerId: data.customerId,
+        plannedStart: data.plannedStart ?? null,
+        plannedEnd: data.plannedEnd ?? null,
+        estimatedValue: data.estimatedValue ?? null,
+        notes: data.notes ?? null,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: data.createdBy ?? null,
+        updatedBy: data.updatedBy ?? null,
+      })
+      .returning();
 
-  const project = rows[0]!;
-  let workers: { userId: string; displayName: string }[] = [];
+    const row = rows[0]!;
 
-  if (data.assignedWorkerIds && data.assignedWorkerIds.length > 0) {
-    await db.insert(projectWorkers).values(
-      data.assignedWorkerIds.map((userId) => ({
-        projectId: project.id,
-        userId,
-      })),
-    );
-    workers = await fetchWorkersForProject(db, project.id);
-  }
+    if (data.assignedWorkerIds && data.assignedWorkerIds.length > 0) {
+      await tx.insert(projectWorkers).values(
+        data.assignedWorkerIds.map((userId) => ({
+          projectId: row.id,
+          userId,
+        })),
+      );
+    }
 
-  const customerRows = await db
-    .select()
-    .from(customers)
-    .where(eq(customers.id, project.customerId))
-    .limit(1);
+    return row;
+  });
+
+  // Hydrate workers + customer outside the transaction
+  const [workers, customerRows] = await Promise.all([
+    data.assignedWorkerIds?.length
+      ? fetchWorkersForProject(db, project.id)
+      : Promise.resolve([] as { userId: string; displayName: string }[]),
+    db.select().from(customers).where(eq(customers.id, project.customerId)).limit(1),
+  ]);
 
   return toProject(project, customerRows[0] ?? null, workers);
 }
@@ -338,7 +342,11 @@ export async function updateProject(
     }
     if (data.notes !== undefined) setClause.notes = data.notes;
 
-    const rows = await tx.update(projects).set(setClause).where(eq(projects.id, id)).returning();
+    const rows = await tx
+      .update(projects)
+      .set(setClause)
+      .where(and(eq(projects.id, id), eq(projects.deleted, false)))
+      .returning();
 
     if (rows.length === 0) throw new ProjectNotFoundError();
     const project = rows[0]!;
@@ -375,7 +383,7 @@ export async function softDeleteProject(db: Database, id: string, userId: string
   const rows = await db
     .update(projects)
     .set({ deleted: true, updatedAt: new Date(), updatedBy: userId })
-    .where(eq(projects.id, id))
+    .where(and(eq(projects.id, id), eq(projects.deleted, false)))
     .returning({ id: projects.id });
 
   if (rows.length === 0) throw new ProjectNotFoundError();

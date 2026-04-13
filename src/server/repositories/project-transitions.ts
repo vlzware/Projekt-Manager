@@ -2,7 +2,7 @@
  * Project repository — state transition operations.
  */
 
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { projects, customers } from '../db/schema.js';
 import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
@@ -33,7 +33,11 @@ export async function transitionForward(
   userId: string,
 ): Promise<TransitionResult> {
   const txResult = await db.transaction(async (tx) => {
-    const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
+    const rows = await tx
+      .select()
+      .from(projects)
+      .where(and(eq(projects.id, id), eq(projects.deleted, false)))
+      .limit(1);
 
     if (rows.length === 0) {
       throw new ProjectNotFoundError();
@@ -50,6 +54,9 @@ export async function transitionForward(
     const nextStatus = WORKFLOW_ORDER[currentIndex + 1]!;
     const now = new Date();
 
+    // Optimistic lock: WHERE status = :before rejects concurrent transitions.
+    // Under READ COMMITTED, a competing UPDATE waits for this tx to commit,
+    // then re-evaluates the WHERE — if the status moved, 0 rows match.
     const updated = await tx
       .update(projects)
       .set({
@@ -58,8 +65,12 @@ export async function transitionForward(
         updatedAt: now,
         updatedBy: userId,
       })
-      .where(eq(projects.id, id))
+      .where(and(eq(projects.id, id), eq(projects.status, before)))
       .returning();
+
+    if (updated.length === 0) {
+      throw new ConcurrentModificationError();
+    }
 
     return { before, row: updated[0]! };
   });
@@ -86,7 +97,11 @@ export async function transitionBackward(
   userId: string,
 ): Promise<TransitionResult> {
   const txResult = await db.transaction(async (tx) => {
-    const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
+    const rows = await tx
+      .select()
+      .from(projects)
+      .where(and(eq(projects.id, id), eq(projects.deleted, false)))
+      .limit(1);
 
     if (rows.length === 0) {
       throw new ProjectNotFoundError();
@@ -108,6 +123,7 @@ export async function transitionBackward(
     const prevStatus = WORKFLOW_ORDER[currentIndex - 1]!;
     const now = new Date();
 
+    // Optimistic lock: WHERE status = :before rejects concurrent transitions.
     const updated = await tx
       .update(projects)
       .set({
@@ -116,8 +132,12 @@ export async function transitionBackward(
         updatedAt: now,
         updatedBy: userId,
       })
-      .where(eq(projects.id, id))
+      .where(and(eq(projects.id, id), eq(projects.status, before)))
       .returning();
+
+    if (updated.length === 0) {
+      throw new ConcurrentModificationError();
+    }
 
     return { before, row: updated[0]! };
   });
@@ -137,5 +157,13 @@ export class TransitionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'TransitionError';
+  }
+}
+
+/** Thrown when a concurrent modification prevented the transition. */
+export class ConcurrentModificationError extends Error {
+  constructor() {
+    super(STRINGS.projects.concurrentModification);
+    this.name = 'ConcurrentModificationError';
   }
 }

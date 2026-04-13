@@ -17,6 +17,7 @@ import {
   updateDates as updateDatesRepo,
   ProjectNotFoundError,
   TransitionError,
+  ConcurrentModificationError,
   DateValidationError,
 } from '../repositories/project.js';
 import type { ListProjectsOpts } from '../repositories/project-read.js';
@@ -161,6 +162,7 @@ export class ProjectService {
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
+      if (err instanceof ConcurrentModificationError) throw conflict(err.message);
       throw err;
     }
 
@@ -187,6 +189,7 @@ export class ProjectService {
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
+      if (err instanceof ConcurrentModificationError) throw conflict(err.message);
       throw err;
     }
 

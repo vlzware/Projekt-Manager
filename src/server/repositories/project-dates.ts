@@ -2,7 +2,7 @@
  * Project repository — date update operations.
  */
 
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { projects, customers } from '../db/schema.js';
 import { STRINGS } from '../../config/strings.js';
@@ -20,7 +20,11 @@ export async function updateDates(
   dates: { plannedStart?: string | null; plannedEnd?: string | null },
 ): Promise<ReturnType<typeof toProject>> {
   const updatedRow = await db.transaction(async (tx) => {
-    const rows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
+    const rows = await tx
+      .select()
+      .from(projects)
+      .where(and(eq(projects.id, id), eq(projects.deleted, false)))
+      .limit(1);
 
     if (rows.length === 0) {
       throw new ProjectNotFoundError();

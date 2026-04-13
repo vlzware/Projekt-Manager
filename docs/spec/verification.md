@@ -149,6 +149,15 @@ Criteria without a marker are structural or infrastructure constraints verified 
 - **AC-84** `[vis]`: Deactivating a user from the management view prevents that user from logging in and invalidates their active sessions.
 - **AC-85** `[vis]`: The critical path "create customer → create project referencing that customer" works without page reload or manual refresh.
 
+### 15.18 Data Integrity
+
+- **AC-94** `[crit]`: A concurrent state transition on the same project is rejected with a 409 Conflict error. The project remains in the state produced by the first transition.
+- **AC-95** `[crit]`: Mutations (transition, date update, PATCH update, soft-delete) on a soft-deleted project are rejected with 404 Not Found.
+- **AC-96** `[crit]`: The database rejects a project row with a `status` value outside the valid workflow states (defense-in-depth CHECK constraint).
+- **AC-97** `[crit]`: The database rejects a project row where `plannedEnd < plannedStart` (defense-in-depth CHECK constraint).
+- **AC-98** `[crit]`: Deleting a user sets `customers.createdBy` / `customers.updatedBy` to null for any customer records that user created or last modified (FK with ON DELETE SET NULL).
+- **AC-99** `[crit]`: Project creation (insert + worker assignment) is atomic. If worker assignment fails (e.g., invalid user ID), the project row is not persisted.
+
 ### 15.17 Import/Export UI
 
 - **AC-86** `[vis]`: Uploading a JSON file to the import UI produces a preview table of parsed records before submission.
@@ -216,6 +225,13 @@ These tests run against a real (test) database, not mocks.
 - **AT-39**: List projects with status filter returns only matching projects.
 - **AT-40**: List projects with search parameter filters across number, title, and customer name.
 - **AT-41**: List projects with `hasNoDates` filter returns only projects without planned dates.
+- **AT-42**: Transition on a soft-deleted project returns 404 Not Found.
+- **AT-43**: Date update on a soft-deleted project returns 404 Not Found.
+- **AT-44**: PATCH update on a soft-deleted project returns 404 Not Found.
+- **AT-45**: Direct INSERT of a project with an invalid status is rejected by the database CHECK constraint.
+- **AT-46**: Direct INSERT of a project with `plannedEnd < plannedStart` is rejected by the database CHECK constraint.
+- **AT-47**: Deleting a user nullifies `createdBy`/`updatedBy` on customer records that user created or last modified.
+- **AT-48**: Project creation with an invalid worker ID rolls back the entire operation — no orphan project row.
 
 ### 16.3 E2E Tests
 
