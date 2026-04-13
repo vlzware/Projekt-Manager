@@ -33,7 +33,11 @@ export function LoginForm() {
       <form data-testid="login-form" className={styles.form} onSubmit={handleSubmit}>
         <h2 className={styles.title}>{STRINGS.auth.loginButton}</h2>
 
-        {authError && <div className={styles.error}>{authError}</div>}
+        {authError && (
+          <div className={styles.error} data-testid="login-error">
+            {authError}
+          </div>
+        )}
 
         <div className={styles.field}>
           <label htmlFor="login-username" className={styles.label}>

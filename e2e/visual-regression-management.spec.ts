@@ -85,11 +85,9 @@ test.describe('Project management', () => {
 
     await page.getByTestId('project-number-input').fill('VR-001');
     await page.getByTestId('project-title-input').fill('Visual Regression Test');
-    // Select first available customer option
-    const select = page.getByTestId('project-customer-select');
-    await select.click();
-    await select.locator('option').first().waitFor();
-    await select.selectOption({ index: 0 });
+    // Open the custom customer dropdown and pick the first entry
+    await page.getByTestId('project-customer-select').click();
+    await page.getByTestId('project-customer-select').locator('[class*="selectOption"]').first().click();
 
     await page.getByTestId('project-submit').click();
     await expect(page.getByTestId('project-table')).toHaveScreenshot('project-created.png');

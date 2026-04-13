@@ -48,7 +48,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
         <span className={styles.projectNumber}>{project.number}</span>
       </div>
       <div className={styles.title}>{project.title}</div>
-      <div className={styles.customer}>{project.customer.name}</div>
+      <div className={styles.customer}>{project.customer?.name ?? '—'}</div>
       <div
         className={dateRange === STRINGS.projects.noDate ? styles.noDates : styles.dates}
         data-testid={`card-dates-${project.id}`}

@@ -56,9 +56,17 @@ export function getCookieSecure(): boolean {
 
 // --- Rate Limiting -----------------------------------------------------------
 
+/**
+ * Rate limits. The login limit can be raised via LOGIN_RATE_LIMIT_MAX
+ * for environments where multiple browser contexts log in rapidly
+ * (e.g. Playwright E2E tests with fresh-context assertions).
+ * Production default: 5 per minute.
+ */
+const loginRateMax = Number(process.env.LOGIN_RATE_LIMIT_MAX) || 5;
+
 export const RATE_LIMIT = {
   /** Login endpoint. */
-  login: { max: 5, timeWindow: '1 minute' },
+  login: { max: loginRateMax, timeWindow: '1 minute' },
 
   /** Password change endpoint. */
   passwordChange: { max: 5, timeWindow: '1 minute' },

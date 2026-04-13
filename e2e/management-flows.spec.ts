@@ -130,6 +130,9 @@ test.describe('Management flows', () => {
     await page.getByTestId('project-notes-input').fill('Gerüst bestellt, Lieferung Montag');
     await page.getByTestId('project-save').click();
 
+    // Wait for the edit panel to close (save completes, panel dismissed)
+    await page.getByTestId('project-notes-input').waitFor({ state: 'hidden' });
+
     // Verify save succeeded (the updated notes should persist)
     await page.getByText(testProjectTitle).click();
     await expect(page.getByTestId('project-notes-input')).toHaveValue(
@@ -176,10 +179,14 @@ test.describe('Management flows', () => {
     await userRow.click();
     await page.getByTestId('user-deactivate-button').click();
 
-    // Confirm deactivation
+    // Confirm deactivation — wait for the API response so the DB state
+    // is settled before we verify login behavior in a fresh context.
     const confirmDialog = page.getByTestId('confirm-dialog');
     await expect(confirmDialog).toBeVisible();
-    await page.getByTestId('confirm-ok').click();
+    await Promise.all([
+      page.waitForResponse((resp) => resp.url().includes('/deactivate') && resp.ok()),
+      page.getByTestId('confirm-ok').click(),
+    ]);
 
     // Verify the user is shown as deactivated
     await expect(page.getByText('E2E Testarbeiter')).toBeVisible();
@@ -222,7 +229,14 @@ test.describe('Management flows', () => {
     // Confirm reactivation
     const confirmDialog = page.getByTestId('confirm-dialog');
     await expect(confirmDialog).toBeVisible();
-    await page.getByTestId('confirm-ok').click();
+    // Wait for the reactivation API to complete before verifying login —
+    // without this, the fresh context can race the async handler and
+    // attempt login while the user is still deactivated in the DB.
+    const [reactivateResponse] = await Promise.all([
+      page.waitForResponse((resp) => resp.url().includes('/reactivate') && resp.ok()),
+      page.getByTestId('confirm-ok').click(),
+    ]);
+    expect(reactivateResponse.ok()).toBe(true);
 
     // Verify the user can log in from a separate browser context
     const freshContext = await browser.newContext({

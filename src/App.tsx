@@ -9,6 +9,10 @@ import { Header } from '@/ui/layout/Header';
 import { Footer } from '@/ui/layout/Footer';
 import { KanbanBoard } from '@/ui/kanban/KanbanBoard';
 import { CalendarView } from '@/ui/calendar/CalendarView';
+import { CustomerManagement } from '@/ui/management/CustomerManagement';
+import { ProjectManagement } from '@/ui/management/ProjectManagement';
+import { UserManagement } from '@/ui/management/UserManagement';
+import { ImportExportView } from '@/ui/management/ImportExportView';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
@@ -92,14 +96,28 @@ export function App() {
       <Routes>
         <Route path="/kanban" element={<KanbanBoard />} />
         <Route path="/calendar" element={<CalendarView />} />
+        <Route path="/customers" element={<CustomerManagement />} />
+        <Route path="/projects" element={<ProjectManagement />} />
+        <Route path="/users" element={<UserManagement />} />
+        <Route path="/data" element={<ImportExportView />} />
         <Route path="/" element={<Navigate to="/kanban" replace />} />
         <Route path="*" element={<Navigate to="/kanban" replace />} />
       </Routes>
     ) : // Fallback for tests that render <App /> without a router
     activeView === 'kanban' ? (
       <KanbanBoard />
-    ) : (
+    ) : activeView === 'kalender' ? (
       <CalendarView />
+    ) : activeView === 'kunden' ? (
+      <CustomerManagement />
+    ) : activeView === 'projekte' ? (
+      <ProjectManagement />
+    ) : activeView === 'benutzer' ? (
+      <UserManagement />
+    ) : activeView === 'daten' ? (
+      <ImportExportView />
+    ) : (
+      <KanbanBoard />
     );
 
     return (

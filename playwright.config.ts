@@ -15,6 +15,21 @@ const __dirname = path.dirname(__filename);
  */
 const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/user.json');
 
+/**
+ * Tests that create persistent data in the shared database.
+ *
+ * These must run serially (single worker) to prevent cross-test
+ * contamination: management-flows creates customers/projects/users,
+ * import-export-flows imports records, kanban-flows asserts on
+ * aggregate counts that break if another test inserts rows mid-run,
+ * and the VR variants create prefixed data for screenshots.
+ *
+ * Read-only tests (failure-paths, insecure-banner, startup, base
+ * visual-regression) run in parallel in a separate project that
+ * completes before this one starts.
+ */
+const MUTATING_TESTS = /kanban-flows|management-flows|import-export-flows|visual-regression-management|visual-regression-import-export/;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -33,9 +48,7 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   projects: [
-    // 1. Setup project — runs first, logs in once, writes the shared
-    //    storage state consumed by the "chromium" project below. It's
-    //    scoped via testMatch so only auth.setup.ts runs here.
+    // 1. Setup — reseed database, authenticate once, save storage state.
     {
       name: 'setup',
       testMatch: /.*\.setup\.ts/,
@@ -45,34 +58,41 @@ export default defineConfig({
       },
     },
 
-    // 2. Authenticated tests — reuses the storage state from `setup`.
-    //    Covers kanban-flows, failure-paths, and the API-only startup
-    //    test (the latter doesn't care about storageState but gains
-    //    nothing from running without it either).
+    // 2. Read-only tests — safe to parallelize. These never INSERT
+    //    rows, so they can't interfere with each other's assertions.
     {
       name: 'chromium',
       dependencies: ['setup'],
-      testIgnore: [/smoke\.spec\.ts/, /.*\.setup\.ts/],
+      testIgnore: [/smoke\.spec\.ts/, /.*\.setup\.ts/, MUTATING_TESTS],
       use: {
         ...devices['Desktop Chrome'],
-        // Override the default 1280px viewport: the responsive collapse
-        // tiers (spec ui.md §10) hide tier-2 columns (incl. Geplant) below
-        // 1350px, which the E2E tests need open.
         viewport: { width: 1920, height: 1080 },
         storageState: STORAGE_STATE,
       },
     },
 
-    // 3. Smoke test — intentionally unauthenticated. smoke.spec.ts
-    //    exercises the login round-trip itself, so it must start from
-    //    a clean logged-out state (no `storageState` in this project).
-    //    BUT it must still depend on `setup` because setup reseeds the
-    //    database: without the dependency, smoke would run in parallel
-    //    with the TRUNCATE CASCADE in auth.setup.ts and race the user
-    //    it tries to log in as.
+    // 3. Mutating tests — serial, single worker. Depends on setup only
+    //    (not on chromium) so screenshot mismatches in read-only VR
+    //    tests don't block functional test execution. Read-only tests
+    //    can't contaminate mutating tests because they never write data.
+    {
+      name: 'chromium-mutating',
+      dependencies: ['setup'],
+      testMatch: MUTATING_TESTS,
+      fullyParallel: false,
+      workers: 1,
+      use: {
+        ...devices['Desktop Chrome'],
+        viewport: { width: 1920, height: 1080 },
+        storageState: STORAGE_STATE,
+      },
+    },
+
+    // 4. Smoke test — unauthenticated login round-trip. Runs after
+    //    mutating tests so user deactivation/reactivation has settled.
     {
       name: 'smoke',
-      dependencies: ['setup'],
+      dependencies: ['chromium-mutating'],
       testMatch: /smoke\.spec\.ts/,
       use: {
         ...devices['Desktop Chrome'],
@@ -84,5 +104,11 @@ export default defineConfig({
     command: 'npm run dev',
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
+    env: {
+      // E2E tests use fresh browser contexts with separate logins
+      // (steps 23/24 deactivate/reactivate, VR worker-role tests).
+      // The production limit of 5/min is too tight for the full suite.
+      LOGIN_RATE_LIMIT_MAX: '30',
+    },
   },
 });

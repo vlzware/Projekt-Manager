@@ -36,9 +36,10 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
     updateDates(currentProject.id, undefined, val || null);
   };
 
-  const mapsUrl = currentProject.address
+  const customerAddress = currentProject.customer?.address ?? null;
+  const mapsUrl = customerAddress
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-        `${currentProject.address.street} ${currentProject.address.zip} ${currentProject.address.city}`,
+        `${customerAddress.street} ${customerAddress.zip} ${customerAddress.city}`,
       )}`
     : null;
 
@@ -101,13 +102,13 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           {/* Customer */}
           <div className={styles.section}>
             <div className={styles.sectionLabel}>{STRINGS.ui.customer}</div>
-            <div className={styles.fieldValue}>{currentProject.customer.name}</div>
-            {currentProject.customer.phone && (
+            <div className={styles.fieldValue}>{currentProject.customer?.name ?? '—'}</div>
+            {currentProject.customer?.phone && (
               <a className={styles.link} href={`tel:${currentProject.customer.phone}`}>
                 {currentProject.customer.phone}
               </a>
             )}
-            {currentProject.customer.email && (
+            {currentProject.customer?.email && (
               <a className={styles.link} href={`mailto:${currentProject.customer.email}`}>
                 {currentProject.customer.email}
               </a>
@@ -115,13 +116,13 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           </div>
 
           {/* Address */}
-          {currentProject.address && (
+          {customerAddress && (
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{STRINGS.ui.address}</div>
               <div className={styles.fieldValue}>
-                {currentProject.address.street}
+                {customerAddress.street}
                 <br />
-                {currentProject.address.zip} {currentProject.address.city}
+                {customerAddress.zip} {customerAddress.city}
               </div>
               {mapsUrl && (
                 <a className={styles.link} href={mapsUrl} target="_blank" rel="noopener noreferrer">

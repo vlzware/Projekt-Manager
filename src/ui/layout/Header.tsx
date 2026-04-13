@@ -27,9 +27,15 @@ export function Header() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [dropdownOpen]);
 
+  const canReadUsers = authUser?.roles.some((r) => r === 'owner' || r === 'office') ?? false;
+
   const views: { key: ViewMode; label: string }[] = [
     { key: 'kanban', label: STRINGS.ui.viewKanban },
     { key: 'kalender', label: STRINGS.ui.viewCalendar },
+    { key: 'projekte', label: STRINGS.ui.viewProjects },
+    { key: 'kunden', label: STRINGS.ui.viewCustomers },
+    ...(canReadUsers ? [{ key: 'benutzer' as ViewMode, label: STRINGS.ui.viewUsers }] : []),
+    { key: 'daten', label: STRINGS.ui.viewData },
   ];
 
   const handleLogout = async () => {
