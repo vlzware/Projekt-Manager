@@ -34,6 +34,7 @@ interface CustomerState {
       notes?: string | null;
     },
   ) => Promise<boolean>;
+  deleteCustomer: (id: string) => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -97,6 +98,26 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
     // Update in-place
     set((s) => ({
       customers: s.customers.map((c) => (c.id === id ? result.data : c)),
+    }));
+    return true;
+  },
+
+  deleteCustomer: async (id) => {
+    set({ error: null });
+    const result = await customerApi.delete(id);
+
+    if (!result.ok) {
+      if (result.sessionExpired) {
+        handleSessionExpired();
+        return false;
+      }
+      set({ error: result.error.message });
+      return false;
+    }
+
+    set((s) => ({
+      customers: s.customers.filter((c) => c.id !== id),
+      total: s.total - 1,
     }));
     return true;
   },

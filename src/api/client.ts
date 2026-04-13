@@ -320,6 +320,9 @@ export const customerApi = {
     },
   ) => apiCall<Customer>(`/api/customers/${id}`, { method: 'PATCH', body: data }),
 
+  delete: (id: string) =>
+    apiCall<{ success: boolean }>(`/api/customers/${id}`, { method: 'DELETE' }),
+
   bulkImport: (customers: Record<string, unknown>[]) =>
     apiCall<ImportResult>('/api/customers/bulk/import', {
       method: 'POST',
