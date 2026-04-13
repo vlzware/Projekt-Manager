@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { STATE_CONFIGS } from '@/config/stateConfig';
 import type { WorkflowState } from '@/config/stateConfig';
 import { useProjectStore } from '@/state/projectStore';
@@ -31,13 +31,13 @@ export function KanbanBoard() {
   // When a filter badge is clicked, expand only the matching column and
   // collapse all others — draws attention to the relevant column.
   // When cleared, reset so auto-collapse tiers take over again.
-  useEffect(() => {
-    if (activeFilter) {
-      setExpanded(new Set([activeFilter]));
-    } else {
-      setExpanded(new Set());
-    }
-  }, [activeFilter]);
+  // Uses "adjust state during render" (React docs) instead of useEffect
+  // to avoid cascading renders.
+  const [prevFilter, setPrevFilter] = useState(activeFilter);
+  if (prevFilter !== activeFilter) {
+    setPrevFilter(activeFilter);
+    setExpanded(activeFilter ? new Set([activeFilter]) : new Set());
+  }
 
   // Filters are mutually exclusive (see uiStore). Apply whichever is active.
   const filteredProjects = filterNoDates

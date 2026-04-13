@@ -145,3 +145,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     clearDownstreamState();
   },
 }));
+
+/**
+ * Standalone password-change action. Does not affect auth state (the session
+ * stays valid), so it lives outside the store. UI components can import this
+ * instead of reaching for @/api/client directly.
+ */
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const result = await authApi.changePassword(currentPassword, newPassword);
+  if (!result.ok && result.sessionExpired) {
+    useAuthStore.getState().handleSessionExpired();
+  }
+  return result;
+}

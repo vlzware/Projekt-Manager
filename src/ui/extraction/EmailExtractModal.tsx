@@ -7,7 +7,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { extractApi, customerApi, projectApi } from '@/api/client';
+import {
+  extractFromEmail,
+  searchCustomers,
+  createCustomerFromExtraction,
+  createProjectFromExtraction,
+} from '@/state/extractionActions';
 import { useCustomerStore } from '@/state/customerStore';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useProjectStore } from '@/state/projectStore';
@@ -51,20 +56,20 @@ export function EmailExtractModal({ onClose }: Props) {
   const fetchCustomers = useCustomerStore((s) => s.fetchCustomers);
   const fetchMgmtProjects = useProjectManagementStore((s) => s.fetchProjects);
 
-  // Search for existing customers when match search changes
+  // Search for existing customers when match search changes.
+  // Empty search is handled via derivation (effectiveMatchResults below)
+  // to avoid synchronous setState inside the effect body.
   useEffect(() => {
-    if (!matchSearch.trim()) {
-      setMatchResults([]);
-      return;
-    }
+    if (!matchSearch.trim()) return;
     const timer = setTimeout(async () => {
-      const result = await customerApi.list({ search: matchSearch });
-      if (result.ok) {
-        setMatchResults(result.data.customers);
-      }
+      const results = await searchCustomers(matchSearch);
+      setMatchResults(results);
     }, 300);
     return () => clearTimeout(timer);
   }, [matchSearch]);
+
+  // When search is empty, suppress stale results without a synchronous setState.
+  const effectiveMatchResults = matchSearch.trim() ? matchResults : [];
 
   // Close match dropdown on outside click
   const closeDropdown = useCallback((e: MouseEvent) => {
@@ -83,7 +88,7 @@ export function EmailExtractModal({ onClose }: Props) {
     setError(null);
     setExtracting(true);
 
-    const result = await extractApi.extract(emailText);
+    const result = await extractFromEmail(emailText);
 
     setExtracting(false);
 
@@ -123,7 +128,7 @@ export function EmailExtractModal({ onClose }: Props) {
           ? { street: street.trim(), zip: zip.trim(), city: city.trim() }
           : null;
 
-      const custResult = await customerApi.create({
+      const custResult = await createCustomerFromExtraction({
         name: customerName.trim(),
         phone: phone.trim() || null,
         email: email.trim() || null,
@@ -143,7 +148,7 @@ export function EmailExtractModal({ onClose }: Props) {
     if (projectTitle.trim()) {
       const num = projectNumber.trim() || generateProjectNumber();
 
-      const projResult = await projectApi.create({
+      const projResult = await createProjectFromExtraction({
         number: num,
         title: projectTitle.trim(),
         customerId: custId,
@@ -197,7 +202,14 @@ export function EmailExtractModal({ onClose }: Props) {
                 disabled={extracting || !emailText.trim()}
                 data-testid="extract-submit"
               >
-                {extracting ? STRINGS.ui.extracting : STRINGS.ui.extractButton}
+                {extracting ? (
+                  <>
+                    <span className={styles.spinner} />
+                    {STRINGS.ui.extracting}
+                  </>
+                ) : (
+                  STRINGS.ui.extractButton
+                )}
               </button>
             </div>
           </>
@@ -213,7 +225,8 @@ export function EmailExtractModal({ onClose }: Props) {
                 className={styles.formInput}
                 value={
                   selectedCustomerId
-                    ? (matchResults.find((c) => c.id === selectedCustomerId)?.name ?? matchSearch)
+                    ? (effectiveMatchResults.find((c) => c.id === selectedCustomerId)?.name ??
+                      matchSearch)
                     : matchSearch
                 }
                 onChange={(e) => {
@@ -221,13 +234,13 @@ export function EmailExtractModal({ onClose }: Props) {
                   setSelectedCustomerId(null);
                   setMatchDropdownOpen(true);
                 }}
-                onClick={() => matchResults.length > 0 && setMatchDropdownOpen(true)}
+                onClick={() => effectiveMatchResults.length > 0 && setMatchDropdownOpen(true)}
                 placeholder={STRINGS.ui.search}
                 data-testid="extract-customer-search"
               />
-              {matchDropdownOpen && matchResults.length > 0 && (
+              {matchDropdownOpen && effectiveMatchResults.length > 0 && (
                 <div className={styles.selectDropdown}>
-                  {matchResults.map((c) => (
+                  {effectiveMatchResults.map((c) => (
                     <div
                       key={c.id}
                       className={styles.selectOption}

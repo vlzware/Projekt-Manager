@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react';
-import { authApi } from '@/api/client';
+import { changePassword } from '@/state/authStore';
 import { STRINGS } from '@/config/strings';
 import styles from '../management/Management.module.css';
 
@@ -31,7 +31,7 @@ export function PasswordChangeModal({ onClose }: Props) {
     setSubmitting(true);
     setError(null);
 
-    const result = await authApi.changePassword(currentPassword, newPassword);
+    const result = await changePassword(currentPassword, newPassword);
 
     setSubmitting(false);
     if (!result.ok) {
