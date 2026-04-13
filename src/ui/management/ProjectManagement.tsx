@@ -37,6 +37,7 @@ export function ProjectManagement() {
   const [customerId, setCustomerId] = useState('');
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [notes, setNotes] = useState('');
+  const [estimatedValue, setEstimatedValue] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -74,6 +75,7 @@ export function ProjectManagement() {
     setTitle('');
     setCustomerId('');
     setNotes('');
+    setEstimatedValue('');
   };
 
   const handleCreate = async () => {
@@ -93,13 +95,22 @@ export function ProjectManagement() {
     }
   };
 
-  const handleSaveNotes = async () => {
-    if (!editProject) return;
+  const handleSaveEdit = async () => {
+    if (!editProject || !title.trim()) return;
     setSubmitting(true);
-    const result = await updateProject(editProject.id, { notes: notes.trim() || null });
+
+    const parsedValue = estimatedValue.trim() ? parseFloat(estimatedValue.replace(',', '.')) : null;
+
+    const result = await updateProject(editProject.id, {
+      title: title.trim(),
+      estimatedValue: parsedValue != null && !isNaN(parsedValue) ? parsedValue : null,
+      notes: notes.trim() || null,
+    });
+
     setSubmitting(false);
     if (result) {
       setEditProject(null);
+      resetForm();
     }
   };
 
@@ -114,7 +125,9 @@ export function ProjectManagement() {
 
   const handleRowClick = (project: Project) => {
     setEditProject(project);
+    setTitle(project.title);
     setNotes(project.notes ?? '');
+    setEstimatedValue(project.estimatedValue != null ? String(project.estimatedValue) : '');
     clearError();
   };
 
@@ -285,13 +298,45 @@ export function ProjectManagement() {
         </div>
       )}
 
-      {/* Edit panel (click row → edit notes) */}
+      {/* Edit panel (click row → edit project) */}
       {editProject && !formOpen && (
         <div className={styles.formOverlay} onClick={() => setEditProject(null)}>
           <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
             <h2 className={styles.formTitle}>
-              {editProject.number} — {editProject.title}
+              {editProject.number} — {STRINGS.ui.edit}
             </h2>
+
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>{STRINGS.ui.title} *</label>
+              <input
+                className={styles.formInput}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                data-testid="project-title-edit"
+                autoFocus
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>{STRINGS.ui.customer}</label>
+              <input
+                className={styles.formInput}
+                value={editProject.customer?.name ?? '—'}
+                readOnly
+                disabled
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel}>{STRINGS.ui.value}</label>
+              <input
+                className={styles.formInput}
+                value={estimatedValue}
+                onChange={(e) => setEstimatedValue(e.target.value)}
+                placeholder="0,00"
+                data-testid="project-value-edit"
+              />
+            </div>
 
             <div className={styles.formGroup}>
               <label className={styles.formLabel}>{STRINGS.ui.notes}</label>
@@ -311,8 +356,8 @@ export function ProjectManagement() {
               </button>
               <button
                 className={styles.submitButton}
-                onClick={handleSaveNotes}
-                disabled={submitting}
+                onClick={handleSaveEdit}
+                disabled={submitting || !title.trim()}
                 data-testid="project-save"
               >
                 {STRINGS.ui.save}

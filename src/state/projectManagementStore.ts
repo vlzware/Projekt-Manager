@@ -20,7 +20,15 @@ interface ProjectManagementState {
   fetchProjects: (search?: string) => Promise<void>;
   fetchCustomers: () => Promise<void>;
   createProject: (data: { number: string; title: string; customerId: string }) => Promise<boolean>;
-  updateProject: (id: string, data: { notes?: string | null }) => Promise<Project | null>;
+  updateProject: (
+    id: string,
+    data: {
+      title?: string;
+      customerId?: string;
+      estimatedValue?: number | null;
+      notes?: string | null;
+    },
+  ) => Promise<Project | null>;
   deleteProject: (id: string) => Promise<boolean>;
   clearError: () => void;
 }
