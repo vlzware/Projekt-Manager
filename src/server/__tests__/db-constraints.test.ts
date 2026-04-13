@@ -16,6 +16,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createDatabase } from '../db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../seed.js';
+import { eq } from 'drizzle-orm';
 import { projects, customers } from '../db/schema.js';
 import type { Database } from '../db/connection.js';
 import type pg from 'pg';
@@ -48,6 +49,9 @@ describe('DB CHECK constraints — projects.planned_end requires planned_start',
   });
 
   afterAll(async () => {
+    // Clean up test artifacts so they don't leak into the dev database
+    await db.delete(projects).where(eq(projects.customerId, testCustomerId));
+    await db.delete(customers).where(eq(customers.id, testCustomerId));
     await pool.end();
   });
 
