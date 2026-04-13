@@ -72,13 +72,13 @@ export default defineConfig({
       },
     },
 
-    // 3. Mutating tests — serial, single worker. Depends on setup only
-    //    (not on chromium) so screenshot mismatches in read-only VR
-    //    tests don't block functional test execution. Read-only tests
-    //    can't contaminate mutating tests because they never write data.
+    // 3. Mutating tests — serial, single worker. Depends on chromium
+    //    so read-only VR screenshots complete before mutations begin.
+    //    Without this ordering, mutating tests change DB data while
+    //    read-only tests take screenshots, causing flaky pixel diffs.
     {
       name: 'chromium-mutating',
-      dependencies: ['setup'],
+      dependencies: ['chromium'],
       testMatch: MUTATING_TESTS,
       fullyParallel: false,
       workers: 1,
@@ -108,8 +108,8 @@ export default defineConfig({
       testMatch: DEMO_TESTS,
       use: {
         ...devices['Desktop Chrome'],
-        viewport: { width: 1280, height: 720 },
-        video: { mode: 'on', size: { width: 1280, height: 720 } },
+        viewport: { width: 1400, height: 1200 },
+        video: { mode: 'on', size: { width: 1400, height: 1200 } },
       },
     },
   ],
