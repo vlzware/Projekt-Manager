@@ -226,7 +226,7 @@ See [wireguard-setup.md](wireguard-setup.md).
 
 ### Phase 7 -- Git access for deploy user
 
-Read-only Deploy Key scoped to this repo (outbound only -- unaffected by ADR-0012 cutover).
+Read-only Deploy Key scoped to this repo (outbound only).
 
 1. Generate keypair:
 
@@ -360,68 +360,7 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 
 ### Phase 9 -- Deploy bootstrap
 
-Sets up `scripts/deploy.sh` with encrypted secrets. See [manual-deploy.md](manual-deploy.md#bootstrap-first-run-on-fresh-vps) for the authoritative procedure.
-
-1. Install `age`:
-
-   ```bash
-   sudo apt update && sudo apt install -y age
-   ```
-
-2. GHCR login (classic PAT, `read:packages`):
-
-   ```bash
-   sudo -u deploy docker login ghcr.io -u vlzware --password-stdin <<< '<PAT>'
-   ```
-
-3. Verify pull:
-
-   ```bash
-   sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main
-   ```
-
-4. Create and upload `secrets.env.age` (on workstation):
-
-   ```bash
-   cat > /tmp/secrets.env <<'EOF'
-   POSTGRES_PASSWORD='...'
-   MINIO_ROOT_PASSWORD='...'
-   CLOUDFLARE_API_TOKEN='...'
-   EOF
-   age -p -o secrets.env.age /tmp/secrets.env
-   shred -u /tmp/secrets.env
-
-   scp secrets.env.age <sudo-user>@vps:/tmp/secrets.env.age
-   ```
-
-   On VPS:
-
-   ```bash
-   sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
-   sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
-   sudo chmod 0600 /opt/projekt-manager/secrets.env.age
-   ```
-
-5. Remove plaintext secrets from `.env`.
-
-6. First deploy:
-
-   ```bash
-   sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
-   ```
-
-7. Lock down deploy user (ONLY after step 6 succeeds):
-
-   ```bash
-   sudo usermod -s /usr/sbin/nologin deploy
-   sudo rm -f /home/deploy/.ssh/authorized_keys
-   ```
-
-8. Prove locked-down flow:
-   ```bash
-   sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose down'
-   sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
-   ```
+Sets up `scripts/deploy.sh` with encrypted secrets and performs the first deploy. See [manual-deploy.md § Bootstrap](manual-deploy.md#bootstrap-first-run-on-fresh-vps) for the authoritative procedure.
 
 **Verify from WireGuard client:**
 

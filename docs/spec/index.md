@@ -4,7 +4,7 @@ This spec defines **what** the application does — not how it does it, how it w
 
 - **How** (implementation): [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repo root — the navigation guide to the codebase. Major decisions with context and rationale live in [ADRs](../adr/index.md).
 - **Why** (vision, final scope, out-of-scope): [Kickoff](../project/kickoff.md).
-- **Conventions** (rules the spec must satisfy): [conventions.md](conventions.md).
+- **Conventions** (rules the spec must satisfy): [review/conventions-spec.md](../../review/conventions-spec.md).
 - **`[C]`** marks values deliberately made configurable so the application can be adjusted to a real company's needs.
 
 ---
@@ -44,6 +44,7 @@ All views are role-gated. The system enforces that every pending action (unanswe
 ### Data Exchange
 
 - Bulk import of projects and customers with partial-success semantics
+- Email-based data intake via LLM extraction (paste email text, review extracted customer and project fields, save)
 - Export of projects and customers in JSON with filter support
 
 ### Cross-Cutting

@@ -68,16 +68,7 @@ The `SEED` variable in `.env` controls database seeding on backend startup:
 
 Seeding is always skipped in production (`NODE_ENV=production`).
 
-All seed users share the password **`changeme`**.
-
-| Username      | Display Name           | Role              |
-| ------------- | ---------------------- | ----------------- |
-| `inhaber`     | Thomas Berger          | owner             |
-| `buero`       | Maria Schmidt          | office            |
-| `arbeiter1`   | Jan Nowak              | worker            |
-| `arbeiter2`   | Lukas Fischer          | worker            |
-| `buchhalter`  | Petra Weiß             | bookkeeper        |
-| `deaktiviert` | Ehemaliger Mitarbeiter | worker (inactive) |
+Seed user list and credentials: [docs/ops/local-dev.md § Seed users](docs/ops/local-dev.md#seed-users).
 
 ### Tests
 

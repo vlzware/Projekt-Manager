@@ -6,7 +6,7 @@
 
 The system is accepted when all of the following are true.
 
-Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Acceptance Criteria](../../CONTRIBUTING.md#acceptance-criteria) and [conventions.md S-G1](conventions.md#g-acceptance-criteria)):
+Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Acceptance Criteria](../../CONTRIBUTING.md#acceptance-criteria) and [conventions-spec.md S-ACS1](../../review/conventions-spec.md)):
 
 - **`[crit]`** — **Critical**: a defect means data corruption, financial impact, authentication/authorization failure, data integrity violation, or misleading state that causes wrong user decisions. Verified by unit and/or integration test.
 - **`[vis]`** — **Visual / Design**: specifies expected behavior that does not guard a critical path. Verified by visual regression (E2E screenshot diff).
@@ -165,6 +165,17 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-98** `[crit]`: Deleting a user nullifies the audit references (`createdBy` / `updatedBy`) on any customer records that user created or last modified.
 - **AC-99** `[crit]`: Project creation (insert + worker assignment) is atomic. If worker assignment fails (e.g., invalid user ID), the project row is not persisted.
 
+### 15.19 Email Data Intake
+
+- **AC-100** `[crit]`: An unauthenticated email extraction request is rejected with an authentication error.
+- **AC-101** `[crit]`: An email extraction request from a user without `customer:write` permission is rejected with an authorization error.
+- **AC-102** `[crit]`: Email text that is empty or exceeds 50,000 characters is rejected with a validation error.
+- **AC-103** `[crit]`: A successful extraction returns a structured response with a `customer` section (name, phone, email, street, zip, city) and a `project` section (title, description). Fields not present in the input email are `null`.
+- **AC-104** `[crit]`: An upstream extraction failure (missing configuration, unreachable service, unparseable response) is mapped to a server error. No internal details leak to the client.
+- **AC-105** `[vis]`: The entry point to the email extraction modal is visible only to users with `customer:write` permission.
+- **AC-106** `[vis]`: The extraction modal presents a paste textarea and an extract action. The action is disabled while the textarea is empty or an extraction is in flight.
+- **AC-107** `[vis]`: After extraction, the modal presents editable customer and project fields for review and supports selecting an existing customer by name to avoid duplicates.
+
 ---
 
 ## 16. Test Specification
@@ -232,6 +243,12 @@ These tests run against a real (test) database, not mocks.
 - **AT-47**: Deleting a user nullifies `createdBy`/`updatedBy` on customer records that user created or last modified.
 - **AT-48**: Project creation with an invalid worker ID rolls back the entire operation — no orphan project row.
 - **AT-49**: Two concurrent forward transitions on the same project — one succeeds, the other is rejected as a conflict (`CONFLICT` error code). The project advances exactly one step.
+- **AT-50**: Unauthenticated email extraction request is rejected with an authentication error.
+- **AT-51**: Email extraction request from a user without `customer:write` permission is rejected with an authorization error.
+- **AT-52**: Email extraction with empty text is rejected as a validation error.
+- **AT-53**: Email extraction with text exceeding 50,000 characters is rejected as a validation error.
+- **AT-54**: Email extraction with valid input (mocked upstream) returns structured customer and project fields.
+- **AT-55**: Upstream extraction failure returns a server error without leaking internal details.
 
 ### 16.3 E2E Tests
 
