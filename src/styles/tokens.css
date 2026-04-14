@@ -27,11 +27,13 @@
   /* Pure */
   --color-white: #ffffff;
 
-  /* Blue (accent) */
-  --color-blue-400: #60a5fa;
-  --color-blue-500: #3b82f6;
-  --color-blue-600: #2563eb;
-  --color-blue-950: #1e3a5f;
+  /*
+   * Accent primitives live in src/config/brandingConfig.ts and are injected
+   * at boot by src/styles/applyBranding.ts as --brand-accent-light and
+   * --brand-accent-dark. The semantic accent tokens below resolve through
+   * those custom properties; the fallback hexes mirror the default BRANDING
+   * values so the pre-JS frame matches the post-JS frame.
+   */
 
   /* Red (danger) */
   --color-red-50: #fef2f2;
@@ -95,11 +97,23 @@
   --color-border-muted: var(--color-slate-100);
   --color-border-inverse: var(--color-slate-600);
 
-  /* Accent */
-  --color-accent: var(--color-blue-500);
-  --color-accent-hover: var(--color-blue-600);
-  --color-accent-active-surface: var(--color-blue-950);
-  --color-focus-ring: var(--color-blue-500);
+  /*
+   * Accent — resolves through the brand accent custom property
+   * (--brand-accent-light), set by src/styles/applyBranding.ts at boot.
+   * The fallback hex matches the default BRANDING.accent.light so the
+   * pre-JS frame is indistinguishable from the post-JS frame.
+   *
+   * Hover and active-surface are derived via color-mix so any branded
+   * accent gets a tonally-consistent set without the customer having
+   * to hand-pick three colors. `rgb(from …)` in LoginForm/CalendarGrid
+   * consumes --color-focus-ring the same way. The stricter baseline of
+   * the two is Chrome 125+, Firefox 128+, Safari 16.4+ — this project
+   * targets evergreen browsers so that floor is acceptable.
+   */
+  --color-accent: var(--brand-accent-light, #3b82f6);
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 88%, black);
+  --color-accent-active-surface: color-mix(in srgb, var(--color-accent) 45%, black);
+  --color-focus-ring: var(--color-accent);
 
   /* Status — danger */
   --color-danger: var(--color-red-600);
@@ -130,9 +144,11 @@
 
   /* Alpha overlays — rgb triplets for rgba() usage. Each mirrors a
      primitive above; CSS cannot convert hex → triplet, so they are
-     maintained by hand. Keep in sync with the referenced primitive. */
+     maintained by hand. Keep in sync with the referenced primitive.
+     Focus-ring alpha is expressed inline with rgb(from --color-focus-ring
+     ... / α) at the call sites — no triplet needed because the accent
+     value is only known at runtime (set by applyBranding.ts). */
   --color-overlay-rgb: 0, 0, 0; /* black */
-  --color-focus-ring-rgb: 59, 130, 246; /* --color-blue-500 */
   --color-warning-rgb: 245, 158, 11; /* --color-amber-500 */
   --color-on-inverse-rgb: 255, 255, 255; /* --color-white */
 }
@@ -169,11 +185,15 @@
   --color-border-muted: var(--color-slate-800);
   --color-border-inverse: var(--color-slate-700);
 
-  /* Accent */
-  --color-accent: var(--color-blue-400);
-  --color-accent-hover: var(--color-blue-500);
-  --color-accent-active-surface: var(--color-blue-950);
-  --color-focus-ring: var(--color-blue-400);
+  /*
+   * Accent — mirrors the :root pattern but resolves through
+   * --brand-accent-dark. Fallback hex matches the default
+   * BRANDING.accent.dark.
+   */
+  --color-accent: var(--brand-accent-dark, #60a5fa);
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 88%, black);
+  --color-accent-active-surface: color-mix(in srgb, var(--color-accent) 45%, black);
+  --color-focus-ring: var(--color-accent);
 
   /* Status — danger */
   --color-danger: var(--color-red-400);
@@ -203,9 +223,9 @@
   --color-success-text: var(--color-green-300);
 
   /* Alpha overlays — overlay kept black (shadows over a dark surface still
-     read as depth); other triplets re-mirror their dark-mode semantic target. */
+     read as depth); other triplets re-mirror their dark-mode semantic target.
+     No --color-focus-ring-rgb: call sites use rgb(from --color-focus-ring). */
   --color-overlay-rgb: 0, 0, 0; /* black */
-  --color-focus-ring-rgb: 96, 165, 250; /* --color-blue-400 */
   --color-warning-rgb: 251, 191, 36; /* --color-amber-400 */
   --color-on-inverse-rgb: 241, 245, 249; /* --color-slate-100 */
 }

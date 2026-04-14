@@ -59,7 +59,7 @@
 }
 
 .today {
-  background: rgba(var(--color-focus-ring-rgb), 0.05);
+  background: rgb(from var(--color-focus-ring) r g b / 0.05);
 }
 
 .dayNumber {

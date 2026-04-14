@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
 
 /**
- * Theme override tests — covers AC-109..AC-112 from the theming block
- * (spec: docs/spec/verification.md §15.20, docs/spec/ui.md §9.6).
+ * Theme override tests — covers AC-109..AC-112 and AC-114 from the theming
+ * block (spec: docs/spec/verification.md §15.20, docs/spec/ui.md §9.6,
+ * docs/spec/architecture.md §12.5).
  *
  * AC-109 [vis]: Applying a non-default theme override on the document root
  * replaces the semantic token layer. Components render with the overridden
@@ -20,6 +21,11 @@ import { test, expect } from '@playwright/test';
  * AC-112 [vis]: When the user's theme preference is `'system'`, operating-
  * system color-scheme changes propagate to the UI without a reload.
  *
+ * AC-114 [vis]: Changing the configured accent value updates every accent-
+ * using surface — primary actions, focus rings, etc. — in both modes.
+ * AC-113 (accent must come from brandingConfig, not be hardcoded) is
+ * enforced structurally by scripts/check-theme-tokens.sh, not here.
+ *
  * Scope notes:
  *   - Uses the `chromium` project (parallel, read-only). Empty storageState
  *     forces the unauthenticated login view so each test is self-contained
@@ -28,6 +34,10 @@ import { test, expect } from '@playwright/test';
  *   - The localStorage key `theme-preference` is pinned as the contract
  *     (see §9.6 "Local cache semantics"). The implementation MUST use this
  *     exact key; if it picks a different one, these tests fail and the
+ *     naming gets reconciled in the spec, not by rewriting the test.
+ *   - The custom-property names `--brand-accent-light` and
+ *     `--brand-accent-dark` are pinned by AC-114 below. If the
+ *     implementation chooses different names, the test fails and the
  *     naming gets reconciled in the spec, not by rewriting the test.
  */
 
@@ -453,4 +463,160 @@ test('AC-112 [vis]: system mode tracks OS color-scheme change without reload', a
     navigations,
     `Expected zero navigations between the emulateMedia(colorScheme:'dark') call and the repaint. Observed ${navigations}. A reload defeats the "without a reload" requirement of AC-112.`,
   ).toBe(0);
+});
+
+// --- AC-114 helpers --------------------------------------------------------
+//
+// Two unlikely-to-collide accent values. Each is picked well outside the
+// neutral-and-blue region so a missed-propagation bug (element stuck on the
+// default palette) produces a loud, unambiguous failure. The override CSS
+// is compared as a numeric tuple rather than a literal string — Chromium's
+// getComputedStyle output shape (`rgb(r, g, b)` vs `rgb(r g b)`) is a
+// browser/CSS-version concern we do not want to pin.
+const ACCENT_LIGHT_OVERRIDE: [number, number, number] = [210, 40, 170]; // magenta
+const ACCENT_DARK_OVERRIDE: [number, number, number] = [40, 200, 120]; // green
+
+/**
+ * Read the computed background-color of the login submit button. The button
+ * consumes the accent via `background: var(--color-accent)` in
+ * src/ui/auth/LoginForm.module.css — so its background IS the resolved
+ * accent value. Selected by role + accessible name ("Anmelden") so this
+ * spec remains stable across test-instrumentation churn on the component.
+ */
+async function readSubmitButtonBg(page: import('@playwright/test').Page): Promise<string> {
+  const button = page.getByRole('button', { name: /Anmelden/ });
+  return button.evaluate((el) => window.getComputedStyle(el).backgroundColor);
+}
+
+/**
+ * Focus the username input, then read its computed border color. The
+ * focused input consumes the accent via `border-color: var(--color-focus-ring)`
+ * in src/ui/auth/LoginForm.module.css — the second accent surface sampled
+ * by this test. Selected by the accessible name from its <label>, not by
+ * testid, so this spec remains independent of component-level instrumentation.
+ */
+async function readFocusedInputBorder(page: import('@playwright/test').Page): Promise<string> {
+  const input = page.getByLabel(/Benutzername|Username/i).first();
+  await input.focus();
+  return input.evaluate((el) => window.getComputedStyle(el).borderColor);
+}
+
+/**
+ * Inject a `<style>` rule that redefines the brand accent at the document
+ * root. We do NOT use `element.style.setProperty(...)` because — depending
+ * on how #101 wires the chain — `--brand-accent-light` may only be read
+ * from the `:root` rule inside a cascade that declares the `--color-accent`
+ * semantic token. A stylesheet rule produces identical cascade behavior to
+ * the production definition; inline styles on `<html>` would be strictly
+ * higher specificity and could mask a real broken reference.
+ *
+ * Scope: we override BOTH the light and dark accent custom properties in a
+ * single <style> block, then toggle `data-theme` to select which branch
+ * wins. Overriding both simultaneously is safe: each rule applies only
+ * inside its own cascade context.
+ */
+async function installAccentOverride(
+  page: import('@playwright/test').Page,
+  light: [number, number, number],
+  dark: [number, number, number],
+): Promise<void> {
+  const [lR, lG, lB] = light;
+  const [dR, dG, dB] = dark;
+  await page.addStyleTag({
+    content: `
+      :root {
+        --brand-accent-light: rgb(${lR}, ${lG}, ${lB});
+        --brand-accent-dark: rgb(${dR}, ${dG}, ${dB});
+      }
+    `,
+  });
+}
+
+// AC-114
+test('AC-114 [vis]: configured accent value propagates to accent surfaces in both modes', async ({
+  page,
+}) => {
+  // --- Phase 0: deterministic light baseline. ---
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.goto('/');
+  await expect(page.getByTestId('login-form')).toBeVisible();
+
+  // Capture the DEFAULT accent resolution before any override is injected.
+  // These baselines are the "before" half of the before/after contract:
+  // if an override reaches the DOM but a surface does not change, the
+  // wiring from --color-accent / --color-focus-ring back to the brand
+  // accent custom property is broken on that surface.
+  const lightSubmitBefore = await readSubmitButtonBg(page);
+  const lightBorderBefore = await readFocusedInputBorder(page);
+
+  // --- Phase 1: install both overrides, verify light-mode surfaces. ---
+  await installAccentOverride(page, ACCENT_LIGHT_OVERRIDE, ACCENT_DARK_OVERRIDE);
+
+  // Re-read the accent surfaces. In light mode, both should now match the
+  // LIGHT override (dark override is silent because [data-theme="dark"]
+  // is not active).
+  const lightSubmitAfter = await readSubmitButtonBg(page);
+  const lightBorderAfter = await readFocusedInputBorder(page);
+
+  expect(
+    lightSubmitAfter,
+    `Submit button background did not change after redefining --brand-accent-light. Before: ${lightSubmitBefore}, after: ${lightSubmitAfter}. Either --color-accent does not resolve through --brand-accent-light in light mode, or the submit button is not consuming --color-accent.`,
+  ).not.toBe(lightSubmitBefore);
+
+  const lightSubmitTuple = parseRgb(lightSubmitAfter);
+  expect(lightSubmitTuple, `could not parse computed color ${lightSubmitAfter}`).not.toBeNull();
+  expect(
+    lightSubmitTuple,
+    `Submit button background resolved to ${lightSubmitAfter}, not the injected light override rgb(${ACCENT_LIGHT_OVERRIDE.join(', ')}). The override reached the DOM but the accent chain (brand accent → --color-accent → submit button) is broken somewhere along the way.`,
+  ).toEqual(ACCENT_LIGHT_OVERRIDE);
+
+  expect(
+    lightBorderAfter,
+    `Focused input border did not change after redefining --brand-accent-light. Before: ${lightBorderBefore}, after: ${lightBorderAfter}. --color-focus-ring is not resolving through --brand-accent-light in light mode.`,
+  ).not.toBe(lightBorderBefore);
+
+  const lightBorderTuple = parseRgb(lightBorderAfter);
+  expect(lightBorderTuple, `could not parse computed color ${lightBorderAfter}`).not.toBeNull();
+  expect(
+    lightBorderTuple,
+    `Focused input border resolved to ${lightBorderAfter}, not the injected light override rgb(${ACCENT_LIGHT_OVERRIDE.join(', ')}). The accent chain for --color-focus-ring is broken.`,
+  ).toEqual(ACCENT_LIGHT_OVERRIDE);
+
+  // --- Phase 2: switch to dark mode, verify dark override wins. ---
+  // Toggle the attribute directly (AC-109/110 pattern) — this test is
+  // about the PALETTE chain, not about FOUC timing.
+  await page.evaluate(() => {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+  const darkSubmitAfter = await readSubmitButtonBg(page);
+  const darkBorderAfter = await readFocusedInputBorder(page);
+
+  // Dark accent must differ from the LIGHT override — otherwise
+  // [data-theme="dark"] has no effect on the accent (missing dark-branch
+  // override).
+  expect(
+    darkSubmitAfter,
+    `Submit button background in dark mode (${darkSubmitAfter}) is identical to the light override (${lightSubmitAfter}). The [data-theme="dark"] branch does not override --color-accent through --brand-accent-dark.`,
+  ).not.toBe(lightSubmitAfter);
+
+  const darkSubmitTuple = parseRgb(darkSubmitAfter);
+  expect(darkSubmitTuple, `could not parse computed color ${darkSubmitAfter}`).not.toBeNull();
+  expect(
+    darkSubmitTuple,
+    `Dark-mode submit background resolved to ${darkSubmitAfter}, not the injected dark override rgb(${ACCENT_DARK_OVERRIDE.join(', ')}). The dark accent chain (--brand-accent-dark → --color-accent → button) is broken.`,
+  ).toEqual(ACCENT_DARK_OVERRIDE);
+
+  expect(
+    darkBorderAfter,
+    `Focused input border in dark mode (${darkBorderAfter}) is identical to the light override (${lightBorderAfter}). --color-focus-ring does not pick up --brand-accent-dark under [data-theme="dark"].`,
+  ).not.toBe(lightBorderAfter);
+
+  const darkBorderTuple = parseRgb(darkBorderAfter);
+  expect(darkBorderTuple, `could not parse computed color ${darkBorderAfter}`).not.toBeNull();
+  expect(
+    darkBorderTuple,
+    `Dark-mode focused input border resolved to ${darkBorderAfter}, not the injected dark override rgb(${ACCENT_DARK_OVERRIDE.join(', ')}). The dark accent chain for --color-focus-ring is broken.`,
+  ).toEqual(ACCENT_DARK_OVERRIDE);
 });
