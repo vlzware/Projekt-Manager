@@ -21,15 +21,13 @@ const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/user.json');
  * These must run serially (single worker) to prevent cross-test
  * contamination: management-flows creates customers/projects/users,
  * import-export-flows imports records, kanban-flows asserts on
- * aggregate counts that break if another test inserts rows mid-run,
- * and the VR variants create prefixed data for screenshots.
+ * aggregate counts that break if another test inserts rows mid-run.
  *
- * Read-only tests (failure-paths, insecure-banner, startup, base
- * visual-regression) run in parallel in a separate project that
- * completes before this one starts.
+ * Read-only tests (failure-paths, insecure-banner, startup,
+ * permission-visibility, theming) run in parallel in a separate project
+ * that completes before this one starts.
  */
-const MUTATING_TESTS =
-  /kanban-flows|management-flows|import-export-flows|visual-regression-management|visual-regression-import-export|theme-preference/;
+const MUTATING_TESTS = /kanban-flows|management-flows|import-export-flows|theme-preference/;
 const DEMO_TESTS = /demo-.*\.spec\.ts/;
 
 export default defineConfig({
@@ -39,15 +37,14 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
-  expect: {
-    toHaveScreenshot: {
-      animations: 'disabled',
-      maxDiffPixelRatio: 0.01,
-    },
-  },
   use: {
     baseURL: 'http://localhost:5173',
-    trace: 'on-first-retry',
+    // Design ACs are verified by running Playwright in UI mode and reviewing
+    // by eye (see CONTRIBUTING.md § Testing) — stored-screenshot baselines
+    // were dropped as brittle friction. `retain-on-failure` captures a
+    // full trace on any failing run so the failure can be inspected via
+    // `npx playwright show-trace <zip>` without needing a retry to trigger.
+    trace: 'retain-on-failure',
   },
   projects: [
     // 1. Setup — reseed database, authenticate once, save storage state.
@@ -73,10 +70,10 @@ export default defineConfig({
       },
     },
 
-    // 3. Mutating tests — serial, single worker. Depends on chromium
-    //    so read-only VR screenshots complete before mutations begin.
-    //    Without this ordering, mutating tests change DB data while
-    //    read-only tests take screenshots, causing flaky pixel diffs.
+    // 3. Mutating tests — serial, single worker. Depends on chromium so
+    //    read-only specs finish before mutations begin; prevents race
+    //    conditions where a mutating test changes DB state while a
+    //    read-only assertion is still evaluating.
     {
       name: 'chromium-mutating',
       dependencies: ['chromium'],
@@ -119,8 +116,8 @@ export default defineConfig({
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
     env: {
-      // E2E tests use fresh browser contexts with separate logins
-      // (steps 23/24 deactivate/reactivate, VR worker-role tests).
+      // E2E tests use fresh browser contexts with separate logins (steps
+      // 23/24 deactivate/reactivate, permission-visibility per-role logins).
       // The production limit of 5/min is too tight for the full suite.
       LOGIN_RATE_LIMIT_MAX: '30',
     },

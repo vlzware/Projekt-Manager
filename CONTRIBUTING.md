@@ -70,15 +70,30 @@ Guards a critical path — a defect here means data corruption, financial impact
 
 Specifies expected behavior that does not guard a critical path — layout, interaction flow, status display, sorting, visual state.
 
-- **Verified by:** visual regression (E2E screenshot diff)
-- **Traceability:** tracked in spec, mapped to a visual regression screenshot in the traceability review
+- **Verified by:** human visual review via `npx playwright test --ui` (see [§ Testing](#testing))
+- **Traceability:** tracked in spec; no stored baseline — the test exists, the judgment is the reviewer's
 - **Examples:** "Projects in 'Anfrage' appear in the first column", "The export button is disabled when no projects are selected"
 
 ### Classification test
 
 > **If this breaks, does the user lose data, money, access, or act on wrong information?**
 > Yes → Critical AC → unit/integration test.
-> No → Design AC → visual regression.
+> No → Design AC → human visual review in Playwright UI mode.
+
+## Testing
+
+| Layer              | Command                                     | When                                                                                                                   |
+| ------------------ | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Unit + integration | `npm run test`                              | Every change under `src/`. Critical ACs assert here.                                                                   |
+| E2E headless       | `npm run test:e2e`                          | Before committing E2E work; full regression gate when Playwright is dispatched in CI.                                  |
+| E2E interactive    | `npx playwright test --ui --project=<name>` | Design AC review; debugging a failing E2E. Time-travel through every step with DOM, network, and console side-by-side. |
+| Trace review       | `npx playwright show-trace <zip>`           | Post-hoc inspection of a failed run — traces are retained on failure per `playwright.config.ts`.                       |
+
+**Design ACs** are verified by running UI mode, watching the flow, and judging by eye. Stored-screenshot baselines were dropped: legitimate UI changes produced a stream of false positives that trained contributors to blind-update snapshots, defeating the purpose. The functional E2E specs (`management-flows`, `kanban-flows`, `permission-visibility`, …) remain the automated behavioral gate.
+
+**UI Mode gotcha**: pass `--project=<name>` explicitly — `chromium` for read-only specs (including `permission-visibility`), `chromium-mutating` for serial tests that mutate DB state, `smoke` for the unauthenticated boot check. Without an explicit project, the filter defaults hide everything but the `setup` login and the test tree appears empty.
+
+**Integration prerequisites**: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init` — `npm run test` needs Postgres on `:5432` and MinIO on `:9000`; Playwright needs those plus the dev server on `:5173` (auto-started via `webServer`). Close the MCP Chromium browser before Playwright runs on the 24 GB VM — the persistent MCP instance plus per-worker Playwright browsers OOM Chrome.
 
 ## Code Style
 
