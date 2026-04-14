@@ -96,6 +96,55 @@ describe('AC-95: Mutations on soft-deleted projects', () => {
 });
 
 // ---------------------------------------------------------------
+// §15.18 AC-94: Concurrent state transitions are rejected as conflict
+// AT-49
+// ---------------------------------------------------------------
+describe('AC-94: Concurrent state transitions', () => {
+  let token: string;
+
+  beforeAll(async () => {
+    await startApp();
+    token = await login('inhaber', 'changeme');
+  });
+
+  afterAll(async () => {
+    await stopApp();
+  });
+
+  it('AT-49: two concurrent forward transitions — one succeeds, one is rejected as conflict', async () => {
+    // Pick a project in a non-terminal, non-boundary state.
+    // Seed (data-model.md §7.1) provides 2 projects in 'beauftragt'.
+    const listRes = await authGet(token, '/api/projects');
+    const projectList = listRes.json().data;
+    const target = projectList.find((p: Record<string, unknown>) => p.status === 'beauftragt');
+    expect(target).toBeDefined();
+    const projectId = target.id;
+
+    // Fire two concurrent forward transitions on the same project.
+    // The optimistic lock at project-transitions.ts:60 (WHERE status = :before)
+    // ensures the second UPDATE matches 0 rows once the first commits.
+    const [resA, resB] = await Promise.all([
+      authPost(token, `/api/projects/${projectId}/transition/forward`),
+      authPost(token, `/api/projects/${projectId}/transition/forward`),
+    ]);
+
+    // Exactly one must succeed (200), the other must conflict (409).
+    const codes = [resA.statusCode, resB.statusCode].sort();
+    expect(codes).toEqual([200, 409]);
+
+    // The conflict response must use the CONFLICT error code
+    // (api.md §14.4.1).
+    const conflict = resA.statusCode === 409 ? resA : resB;
+    expect(conflict.json().code).toBe('CONFLICT');
+
+    // The project must have advanced exactly ONE step, not two.
+    const verifyRes = await authGet(token, `/api/projects/${projectId}`);
+    expect(verifyRes.statusCode).toBe(200);
+    expect(verifyRes.json().status).toBe('geplant');
+  });
+});
+
+// ---------------------------------------------------------------
 // §15.18 AC-96, AC-97: DB-level CHECK constraints
 // AT-45, AT-46
 // ---------------------------------------------------------------

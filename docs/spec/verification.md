@@ -231,6 +231,7 @@ These tests run against a real (test) database, not mocks.
 - **AT-46**: Direct INSERT of a project with `plannedEnd < plannedStart` is rejected by the database CHECK constraint.
 - **AT-47**: Deleting a user nullifies `createdBy`/`updatedBy` on customer records that user created or last modified.
 - **AT-48**: Project creation with an invalid worker ID rolls back the entire operation — no orphan project row.
+- **AT-49**: Two concurrent forward transitions on the same project — one succeeds, the other is rejected as a conflict (`CONFLICT` error code). The project advances exactly one step.
 
 ### 16.3 E2E Tests
 
