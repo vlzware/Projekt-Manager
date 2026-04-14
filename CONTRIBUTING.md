@@ -209,6 +209,10 @@ Issues without a milestone stay in the backlog.
 
 Specs are stack-agnostic. The litmus test: **if swapping the framework wouldn't change the statement, it belongs in the spec. If it would, it belongs in an ADR or design doc.**
 
+### Spec quality rules
+
+Every spec change is reviewed against the rubric in [docs/spec/conventions.md](docs/spec/conventions.md) — coherence with the kickoff, internal consistency, completeness, no-noise style, self-containment, AC rigor, configurability marking, and traceability. Findings are cited by rule ID (`S-A1`, `S-B2`, …). The framework-swap test above is rule `S-D1`.
+
 ### Iteration spec lifecycle
 
 1. At the start of an iteration, update the spec files in `docs/spec/` to reflect the new scope. Git history preserves previous iterations.

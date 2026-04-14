@@ -32,7 +32,7 @@ interface Project {
   plannedStart?: string; // ISO 8601 date
   plannedEnd?: string; // ISO 8601 date
 
-  assignedWorkers?: { userId: string; displayName: string }[]; // references UserAccount via project_workers join table
+  assignedWorkers?: { userId: string; displayName: string }[]; // references UserAccount (m:n join, see §6.6)
   estimatedValue?: number; // EUR net
   notes?: string;
 
@@ -176,7 +176,7 @@ Design notes:
 - Follows the audit metadata pattern (§5.5).
 - `name` is required; all other fields are optional.
 - A customer may exist without any projects (e.g., imported from an external system before project creation).
-- Customers can be deleted (hard delete) only when no projects reference them. The `ON DELETE no action` FK constraint on `projects.customer_id` enforces this at the database level — a delete attempt on a customer with projects is rejected. Deletion requires the `customer:delete` permission (owner only). A customer without projects is a normal state (e.g., imported before project creation) and deleting such a record is a cleanup operation, not a data-integrity concern.
+- Customers can be hard-deleted via the API when no **active** (non-archived) projects reference them. Archived projects are purged atomically with the customer (see [§6.9](#69-soft-deletes) and [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Deletion requires the `customer:delete` permission (owner only). A customer without projects is a normal state (e.g., imported before project creation) and deleting such a record is a cleanup operation, not a data-integrity concern.
 
 ---
 
@@ -200,7 +200,10 @@ The persistence design must support extraction of additional entities without re
 
 ### 6.4 Concurrency
 
-Low write concurrency is assumed, but the design must tolerate multiple concurrent users accessing the system simultaneously. Conflict handling is last-write-wins. Optimistic concurrency control is not part of this specification.
+Low write concurrency is assumed; the design tolerates multiple concurrent users.
+
+- **State transitions** use optimistic concurrency control — a transition is rejected as a conflict if the project's status has moved since the client's last read (see [AC-94](verification.md#1518-data-integrity)). The client should refetch and present the new state.
+- **Other mutations** (date updates, PATCH updates) use last-write-wins. Concurrent edits to the same record silently overwrite — acceptable at the assumed concurrency level.
 
 ### 6.5 Schema Evolution
 
@@ -225,16 +228,16 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 
 - If both `plannedStart` and `plannedEnd` are provided, `plannedEnd` must not be before `plannedStart`.
 - Either date may be null (cleared). Setting only `plannedStart` without `plannedEnd` is valid (renders as single-day block in calendar).
-- Setting only `plannedEnd` without `plannedStart` is not valid — the API rejects this combination, **and the database enforces the same invariant via the `projects_end_requires_start` CHECK constraint**. This is defense in depth for direct DB writes (seed scripts, migrations, manual SQL) that bypass the route layer.
+- Setting only `plannedEnd` without `plannedStart` is not valid — the API rejects this combination, **and the database enforces the same invariant via a defense-in-depth CHECK constraint**. This guards direct DB writes (seed scripts, migrations, manual SQL) that bypass the route layer.
 - The API rejects all invalid date combinations.
 
 ### 6.9 Soft Deletes
 
 - Users can be deactivated (`active = false`) or hard-deleted. Deactivation is the default for preserving assignment history. Hard deletion is available to the owner role and cascades sessions and worker assignments; `createdBy`/`updatedBy` references are set to null. Self-deletion is rejected by the API.
 - Projects are soft-deleted (`deleted = true`) as an **archive-from-board** mechanism (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Archived projects are excluded from active views (Kanban, Calendar, list endpoints) but retained in the database as historical reference. This is not an audit trail — there is no immutability guarantee.
-  - Archived projects are **immutable via the API**: transitions, date updates, PATCH, and re-delete are rejected with 404 (AC-95).
-  - When a customer is deleted, their archived projects are **purged atomically** with the customer — the archive has no value without the customer relationship. Active (non-archived) projects still block customer deletion (409).
-  - The API exposes `archivedProjectCount` on `GET /api/customers/:id` so the UI can warn before destructive customer deletion.
+  - Archived projects are **immutable via the API**: transitions, date updates, PATCH, and re-delete are rejected as not found (see [AC-95](verification.md#1518-data-integrity)).
+  - When a customer is deleted, their archived projects are **purged atomically** with the customer — the archive has no value without the customer relationship. Active (non-archived) projects still block customer deletion as a conflict (see [AC-92](verification.md#1511-customer-management)).
+  - The API exposes an archived-project count on the customer GET response so the UI can warn before destructive customer deletion.
   - No restore path exists via the API. Recovery requires database access.
 
 ---

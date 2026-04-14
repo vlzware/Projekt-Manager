@@ -34,7 +34,7 @@ The login screen is the **only** view available to unauthenticated users. No pro
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ [Insecure banner — only when ALLOW_INSECURE_HTTP]        │
+│ [Insecure banner — only in insecure-mode evaluation]     │
 ├──────────────────────────────────────────────────────────┤
 │  Header: App Name  |  Navigation (§8.7)  |  Summary      │
 │                                    [Maria Schmidt ▾]     │
@@ -251,7 +251,7 @@ Clicking a project row opens the project for editing. The editing surface reuses
 - **Estimated value** is editable.
 - **Customer** can be changed.
 
-All editable fields use PATCH semantics via the Update project API operation. Status changes use their dedicated operation. Date changes use the dedicated dates operation (`PATCH /api/projects/:id/dates`).
+All editable fields use PATCH semantics via the Update project API operation. Status changes use their dedicated transition operations. Date changes use the dedicated update-dates operation (see [api.md §14.2.2](api.md#1422-projects)).
 
 Requires `project:update` permission for mutations. Users without this permission see all fields as read-only.
 

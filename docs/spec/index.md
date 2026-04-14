@@ -4,9 +4,8 @@ This spec defines **what** the application does — not how it does it, how it w
 
 - **How** (implementation): [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repo root — the navigation guide to the codebase. Major decisions with context and rationale live in [ADRs](../adr/index.md).
 - **Why** (vision, final scope, out-of-scope): [Kickoff](../project/kickoff.md).
+- **Conventions** (rules the spec must satisfy): [conventions.md](conventions.md).
 - **`[C]`** marks values deliberately made configurable so the application can be adjusted to a real company's needs.
-
-The spec is a reference document. It strives for focused, concise language and easy navigation. Each rule or constraint is stated once at its authoritative location and cross-referenced elsewhere — single source of truth over restatement. Logical completeness ensures implementability without vagueness on the main points; minute implementation details are left to the implementers.
 
 ---
 
@@ -117,15 +116,15 @@ All data is stored in a persistent database, accessed through an API layer. Seed
 
 ### 4.5 Authentication
 
-| Attribute                            | Assumed Value                                                                                                                |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Authentication method                | Username + password                                                                                                          |
-| Password policy                      | Min 8 characters, max 72 UTF-8 bytes, common-password blocklist **[C]**                                                      |
-| Session duration                     | 24 hours **[C]**                                                                                                             |
-| Maximum concurrent sessions per user | Unlimited                                                                                                                    |
-| Default admin account                | Environment-variable bootstrap on first run (`BOOTSTRAP_ADMIN_*`) — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
-| Self-registration                    | Not available                                                                                                                |
-| Password-change side effect          | See [data-model.md §5.4](data-model.md#54-session)                                                                           |
+| Attribute                            | Assumed Value                                                                                        |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Authentication method                | Username + password                                                                                  |
+| Password policy                      | Min 8 characters, max 72 UTF-8 bytes, common-password blocklist **[C]**                              |
+| Session duration                     | 24 hours **[C]**                                                                                     |
+| Maximum concurrent sessions per user | Unlimited                                                                                            |
+| Default admin account                | Environment-driven bootstrap on first run — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
+| Self-registration                    | Not available                                                                                        |
+| Password-change side effect          | See [data-model.md §5.4](data-model.md#54-session)                                                   |
 
 **Password policy detail.** The minimum length is 8 characters; the maximum is 72 UTF-8 bytes — the system enforces a hard ceiling so long inputs fail loudly rather than silently truncating. A blocklist of common passwords is checked on every password set to reject trivially guessable values. Both checks run through a single validation path so the bootstrap path and the change-password endpoint cannot diverge. See [ADR-0006](../adr/0006-password-policy-nist-blocklist.md).
 

@@ -6,12 +6,11 @@
 
 The system is accepted when all of the following are true.
 
-Each criterion is classified by defect impact (see [CONTRIBUTING.md § Acceptance Criteria](../../CONTRIBUTING.md#acceptance-criteria)):
+Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Acceptance Criteria](../../CONTRIBUTING.md#acceptance-criteria) and [conventions.md S-G1](conventions.md#g-acceptance-criteria)):
 
 - **`[crit]`** — **Critical**: a defect means data corruption, financial impact, authentication/authorization failure, data integrity violation, or misleading state that causes wrong user decisions. Verified by unit and/or integration test.
 - **`[vis]`** — **Visual / Design**: specifies expected behavior that does not guard a critical path. Verified by visual regression (E2E screenshot diff).
-
-Criteria without a marker are structural or infrastructure constraints verified by CI gates, linting, or deployment procedures.
+- **`[infra]`** — **Infrastructure / Structural**: a constraint on the deployed environment, the build pipeline, or the source-tree organization. Verified by deployment procedures, CI gates, lint, or code review — not by tests against the running system.
 
 ### 15.1 Core
 
@@ -40,7 +39,7 @@ Criteria without a marker are structural or infrastructure constraints verified 
 - **AC-17** `[crit]`: `Erledigt` is terminal — both transition buttons are hidden.
 - **AC-18** `[crit]`: `Anfrage` hides the backward transition button.
 - **AC-19** `[vis]`: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
-- **AC-20** `[vis]`: UI does not crash on projects with missing optional fields.
+- **AC-20** `[vis]`: Kanban, Calendar, and the Project Detail Panel render without errors when `customer`, `plannedStart`, `plannedEnd`, `notes`, `assignedWorkers`, or `estimatedValue` are absent.
 - **AC-53** `[crit]`: A failed mutation displays a German error message and reverts the optimistic UI update.
 
 ### 15.4 Authentication
@@ -57,28 +56,28 @@ Criteria without a marker are structural or infrastructure constraints verified 
 
 ### 15.5 Multi-User
 
-- **AC-29** `[vis]`: Two users logged in simultaneously see each other's changes after refreshing.
+- **AC-29** `[crit]`: Two users logged in simultaneously see each other's changes after refreshing.
 
 ### 15.6 Deployment
 
-- **AC-30**: The application is reachable by authorized clients over HTTPS. HTTPS is non-negotiable (see AC-45). Network reachability is scoped by [ADR-0008](../adr/0008-vpn-first-network-access.md); see also AC-49.
-- **AC-31**: A CI-built image can be promoted to the hosted environment via manual, pull-based deploy over VPN (see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)).
+- **AC-30** `[infra]`: The application is reachable by authorized clients over HTTPS. HTTPS is required by default; the only documented exception is the guarded evaluation mode (see AC-45). Network reachability is scoped by [ADR-0008](../adr/0008-vpn-first-network-access.md); see also AC-49.
+- **AC-31** `[infra]`: A CI-built image can be promoted to the hosted environment via manual, pull-based deploy over VPN (see [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)).
 - **AC-45** `[crit]`: HTTPS is enforced by default. HTTP-only mode requires an explicit opt-in flag AND a non-production environment (neither alone is sufficient). When HTTP mode is active, the UI shows a non-dismissible warning banner on every page. Enabling the insecure flag in production causes the server to refuse to start. See [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
-- **AC-46**: A failed deployment leaves the previously running version running.
-- **AC-47**: A previously deployed commit can be redeployed (rollback) by the operator over VPN. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
-- **AC-48**: After every deploy, an automated smoke test verifies the health endpoint. Failure aborts the deploy.
-- **AC-49**: The hosted environment is reachable only via VPN. See [ADR-0008](../adr/0008-vpn-first-network-access.md).
-- **AC-50**: Database and object storage data persist across container restarts and redeploys.
-- **AC-51**: Deployments use a specific commit SHA, not a moving tag.
+- **AC-46** `[infra]`: A failed deployment leaves the previously running version running.
+- **AC-47** `[infra]`: A previously deployed commit can be redeployed (rollback) by the operator over VPN. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
+- **AC-48** `[infra]`: After every deploy, an automated smoke test verifies the health endpoint. Failure aborts the deploy.
+- **AC-49** `[infra]`: The hosted environment is reachable only via VPN. See [ADR-0008](../adr/0008-vpn-first-network-access.md).
+- **AC-50** `[infra]`: Database and object storage data persist across container restarts and redeploys.
+- **AC-51** `[infra]`: Deployments use a specific commit SHA, not a moving tag.
 
 ### 15.7 Engineering
 
-- **AC-32**: Code structure and dependency direction follow [architecture.md §11.2](architecture.md#112-responsibility-boundaries). No reverse imports.
-- **AC-33**: Mutation boundary per [architecture.md §11.1](architecture.md#111-mandatory-constraints) is enforced. UI components dispatch through the state layer, not directly to the API client.
-- **AC-34**: State configuration (labels, colors, thresholds) is centralized, not scattered.
-- **AC-35**: Dependency direction is enforced by linter import restriction zones.
-- **AC-36**: Linting and formatting pass.
-- **AC-37**: Tests defined in section 16 pass. Push/PR gate runs unit, component, and API integration tests. E2E tests run on-demand (see [architecture.md §11.7](architecture.md#117-continuous-delivery-pipeline)).
+- **AC-32** `[infra]`: Code structure and dependency direction follow [architecture.md §11.2](architecture.md#112-responsibility-boundaries). No reverse imports.
+- **AC-33** `[infra]`: Mutation boundary per [architecture.md §11.1](architecture.md#111-mandatory-constraints) is enforced. UI components dispatch through the state layer, not directly to the API client.
+- **AC-34** `[infra]`: State configuration (labels, colors, thresholds) is centralized, not scattered.
+- **AC-35** `[infra]`: Dependency direction is enforced by linter import restriction zones.
+- **AC-36** `[infra]`: Linting and formatting pass.
+- **AC-37** `[infra]`: Tests defined in section 16 pass. Push/PR gate runs unit, component, and API integration tests. E2E tests run on-demand (see [architecture.md §11.7](architecture.md#117-continuous-delivery-pipeline)).
 
 ### 15.8 Configurability
 
@@ -104,8 +103,8 @@ Criteria without a marker are structural or infrastructure constraints verified 
 - **AC-57** `[crit]`: Getting a customer returns the full customer object and a count of associated projects.
 - **AC-58** `[crit]`: A project references a customer via `customerId`. The API returns the full customer object nested in project responses.
 - **AC-91** `[crit]`: Deleting a customer with no active projects succeeds (hard delete). Any archived projects are purged atomically with the customer. The customer no longer appears in list or get responses.
-- **AC-92** `[crit]`: Deleting a customer that has active (non-archived) projects is rejected (409 Conflict). The customer and its projects remain unchanged.
-- **AC-93** `[crit]`: Deleting a customer requires `customer:delete` permission. Users without this permission receive 403.
+- **AC-92** `[crit]`: Deleting a customer that has active (non-archived) projects is rejected as a conflict (per the conflict error category in [api.md §14.4.1](api.md#1441-error-categories)). The customer and its projects remain unchanged.
+- **AC-93** `[crit]`: Deleting a customer requires `customer:delete` permission. Users without this permission receive an authorization error.
 
 ### 15.12 Project Management
 
@@ -149,15 +148,6 @@ Criteria without a marker are structural or infrastructure constraints verified 
 - **AC-84** `[vis]`: Deactivating a user from the management view prevents that user from logging in and invalidates their active sessions.
 - **AC-85** `[vis]`: The critical path "create customer → create project referencing that customer" works without page reload or manual refresh.
 
-### 15.18 Data Integrity
-
-- **AC-94** `[crit]`: A concurrent state transition on the same project is rejected with a 409 Conflict error. The project remains in the state produced by the first transition.
-- **AC-95** `[crit]`: Mutations (transition, date update, PATCH update, soft-delete) on a soft-deleted project are rejected with 404 Not Found.
-- **AC-96** `[crit]`: The database rejects a project row with a `status` value outside the valid workflow states (defense-in-depth CHECK constraint).
-- **AC-97** `[crit]`: The database rejects a project row where `plannedEnd < plannedStart` (defense-in-depth CHECK constraint).
-- **AC-98** `[crit]`: Deleting a user sets `customers.createdBy` / `customers.updatedBy` to null for any customer records that user created or last modified (FK with ON DELETE SET NULL).
-- **AC-99** `[crit]`: Project creation (insert + worker assignment) is atomic. If worker assignment fails (e.g., invalid user ID), the project row is not persisted.
-
 ### 15.17 Import/Export UI
 
 - **AC-86** `[vis]`: Uploading a JSON file to the import UI produces a preview table of parsed records before submission.
@@ -165,6 +155,15 @@ Criteria without a marker are structural or infrastructure constraints verified 
 - **AC-88** `[vis]`: Exporting projects produces a downloadable JSON file containing all non-deleted projects matching the selected filters.
 - **AC-89** `[vis]`: Exporting customers produces a downloadable JSON file containing all customers matching the selected filters.
 - **AC-90** `[vis]`: Import operations respect permissions: project import requires `project:create`, customer import requires `customer:write`. Unauthorized users see the import UI but cannot submit.
+
+### 15.18 Data Integrity
+
+- **AC-94** `[crit]`: A concurrent state transition on the same project is rejected as a conflict (per the conflict error category in [api.md §14.4.1](api.md#1441-error-categories)). The project remains in the state produced by the first transition.
+- **AC-95** `[crit]`: Mutations (transition, date update, PATCH update, soft-delete) on a soft-deleted project are rejected as not found.
+- **AC-96** `[crit]`: The database rejects a project row with a `status` value outside the valid workflow states (defense-in-depth CHECK constraint).
+- **AC-97** `[crit]`: The database rejects a project row where `plannedEnd < plannedStart` (defense-in-depth CHECK constraint).
+- **AC-98** `[crit]`: Deleting a user nullifies the audit references (`createdBy` / `updatedBy`) on any customer records that user created or last modified.
+- **AC-99** `[crit]`: Project creation (insert + worker assignment) is atomic. If worker assignment fails (e.g., invalid user ID), the project row is not persisted.
 
 ---
 
@@ -225,9 +224,9 @@ These tests run against a real (test) database, not mocks.
 - **AT-39**: List projects with status filter returns only matching projects.
 - **AT-40**: List projects with search parameter filters across number, title, and customer name.
 - **AT-41**: List projects with `hasNoDates` filter returns only projects without planned dates.
-- **AT-42**: Transition on a soft-deleted project returns 404 Not Found.
-- **AT-43**: Date update on a soft-deleted project returns 404 Not Found.
-- **AT-44**: PATCH update on a soft-deleted project returns 404 Not Found.
+- **AT-42**: Transition on a soft-deleted project is rejected as not found.
+- **AT-43**: Date update on a soft-deleted project is rejected as not found.
+- **AT-44**: PATCH update on a soft-deleted project is rejected as not found.
 - **AT-45**: Direct INSERT of a project with an invalid status is rejected by the database CHECK constraint.
 - **AT-46**: Direct INSERT of a project with `plannedEnd < plannedStart` is rejected by the database CHECK constraint.
 - **AT-47**: Deleting a user nullifies `createdBy`/`updatedBy` on customer records that user created or last modified.
@@ -266,11 +265,11 @@ The end-to-end path is covered by focused, isolated test files rather than a sin
 
 ## 17. Risks and Mitigations
 
-| Risk                                               | Impact                             | Mitigation                                                                                                                        |
-| -------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| 9 Kanban columns too tight on screen               | Usability                          | Horizontal scroll; responsive collapse tiers ([ui.md §10](ui.md#10-responsive-behavior)).                                         |
-| Over-styling action columns                        | Defeats Kanban principle           | Trust board structure; resist decorative urgency.                                                                                 |
-| API latency makes transitions feel sluggish        | Interaction feels unresponsive     | Optimistic UI updates + sub-300ms API target ([architecture.md §13.2](architecture.md#132-performance)).                          |
-| Session management edge cases                      | User loses work or sees stale data | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose). |
-| Seed data dates become stale over time             | Demo loses impact                  | Dates are relative to deployment date ([data-model.md §7.5](data-model.md#75-date-range)). A re-seed operation refreshes them.    |
-| Soft-deleted projects consume storage indefinitely | Database growth                    | Low risk at current scale (10-30 projects). Periodic cleanup can be added as an operational procedure if needed.                  |
+| Risk                                               | Impact                             | Mitigation                                                                                                                                                    |
+| -------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 9 Kanban columns too tight on screen               | Usability                          | Horizontal scroll; responsive collapse tiers ([ui.md §10](ui.md#10-responsive-behavior)).                                                                     |
+| Over-styling action columns                        | Defeats Kanban principle           | Trust board structure; resist decorative urgency.                                                                                                             |
+| API latency makes transitions feel sluggish        | Interaction feels unresponsive     | Optimistic UI updates + sub-300ms API target ([architecture.md §13.2](architecture.md#132-performance)).                                                      |
+| Session management edge cases                      | User loses work or sees stale data | Sessions are checked on every API call. Expiry redirects to login cleanly. All mutations are immediate (no local drafts to lose).                             |
+| Seed data dates become stale over time             | Demo loses impact                  | Dates are relative to deployment date ([data-model.md §7.5](data-model.md#75-date-range)). A re-seed operation refreshes them.                                |
+| Soft-deleted projects consume storage indefinitely | Database growth                    | Archived projects are purged when their customer is deleted ([ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Customer deletion is the cleanup path. |

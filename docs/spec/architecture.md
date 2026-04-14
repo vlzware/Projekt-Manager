@@ -17,15 +17,15 @@
 
 The system is organized into seven responsibility layers. The split between **Routes**, **Services**, and **Storage** on the server side is load-bearing — routes never reach into the database directly; they delegate to services, which orchestrate repositories and emit domain events.
 
-| Layer        | Responsibility                                                                                                                                                                                                                                                                                                                                        |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Config**   | State definitions, thresholds, colors, company assumptions, role definitions, German strings, validated env. Imported by other layers, imports nothing application-internal.                                                                                                                                                                          |
-| **Domain**   | Pure functions: transition rules, aging calculation, date/session validation, summary computation, types. Never imports from state, API, routes, services, storage, or UI.                                                                                                                                                                            |
-| **Storage**  | Encapsulates all database and object storage operations. Repository modules expose typed query/mutation functions; the object storage client wraps the S3-compatible SDK. Imported primarily by the Services layer. Exception: authentication middleware reads the session repository directly — architecturally this is part of the route auth hook. |
-| **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, domain event emission. Imports from domain, storage, config. Never imports from routes or middleware.                                                                                                 |
-| **Routes**   | Thin HTTP adapters: request schema validation, cookie handling, authentication and authorization pre-handlers, response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                 |
-| **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports.                                                                                                                                                                                                          |
-| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared hooks are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                            |
+| Layer        | Responsibility                                                                                                                                                                                                                                                                                                                                                    |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Config**   | State definitions, thresholds, colors, company assumptions, role definitions, German strings, validated env. Imported by other layers, imports nothing application-internal.                                                                                                                                                                                      |
+| **Domain**   | Pure functions: transition rules, aging calculation, date/session validation, summary computation, types. Never imports from state, API, routes, services, storage, or UI.                                                                                                                                                                                        |
+| **Storage**  | Encapsulates all database and object storage operations. Repository modules expose typed query/mutation functions; the object storage client wraps the underlying object-storage SDK. Imported primarily by the Services layer. Exception: authentication middleware reads the session repository directly — architecturally this is part of the route auth hook. |
+| **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, domain event emission. Imports from domain, storage, config. Never imports from routes or middleware.                                                                                                             |
+| **Routes**   | Thin HTTP adapters: request schema validation, cookie handling, authentication and authorization pre-handlers, response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                             |
+| **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports.                                                                                                                                                                                                                      |
+| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared hooks are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                                        |
 
 **Dependency direction** (no reverse imports):
 
@@ -95,7 +95,7 @@ Events carry the entity ID, the acting user ID, and a timestamp at minimum. Payl
 
 ### 11.4 Object Storage Module
 
-The object storage module encapsulates all binary/file storage operations. It is wired as an infrastructure module and exercised in test and deployed environments against real object storage. The storage plumbing exists so that adding user-facing upload paths requires only a new API endpoint and UI component.
+The object storage module encapsulates all binary/file storage operations. It is wired as an infrastructure module and exercised in test and deployed environments against real object storage.
 
 Capabilities at minimum:
 
@@ -106,7 +106,7 @@ Capabilities at minimum:
 
 ### 11.5 Extensibility Checklist
 
-Structural requirements that keep future extensions cheap. Each row states a contract the codebase must uphold and the failure mode that would close the door.
+Structural requirements for the system's documented extension paths. Each row states a contract the codebase must uphold and the failure mode that would close the door.
 
 | Door                                             | Contract                                                                                                          | Closed if...                                                                                                 |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -131,7 +131,7 @@ The deployed system consists of four components:
 | **Reverse proxy**  | TLS termination, HTTP → HTTPS redirect or non-binding, request forwarding to the application. Production uses automated certificate management — see [ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) and AC-45. The evaluation (HTTP-only) mode substitutes an HTTP-only configuration per [ADR-0013](../adr/0013-http-only-evaluation-mode.md). |
 | **Application**    | Serves the front end and exposes the API. Frontend and backend may be a single deployable unit or separate services — this is an ADR decision. The app container listens only on the reverse-proxy-visible network, never on the public interface directly.                                                                                                                             |
 | **Database**       | Persistent storage for projects, users, and sessions.                                                                                                                                                                                                                                                                                                                                   |
-| **Object storage** | Binary/file storage for future attachments.                                                                                                                                                                                                                                                                                                                                             |
+| **Object storage** | Binary/file storage.                                                                                                                                                                                                                                                                                                                                                                    |
 
 These components may run on the same provider or on separate providers. The spec does not prescribe hosting vendors, managed services, or container strategies — those are ADR decisions. Network topology is further constrained by [ADR-0008](../adr/0008-vpn-first-network-access.md) (VPN-first access) and by the AC-45 HTTPS-or-nothing rule.
 
@@ -234,7 +234,19 @@ The UI must tolerate incomplete project data without crashing:
 - API endpoints validate authentication and authorization on every request. No security-by-obscurity.
 - API input is validated and sanitized. No raw user input reaches the database.
 - Error messages do not leak internal details (no stack traces, no database field names, no path information).
-- HTTPS is required in the deployed environment. The application does not serve over plain HTTP in production.
+- HTTPS is required in the deployed environment. The application does not serve over plain HTTP in production. The guarded evaluation mode (see [§13.6.1](#1361-insecure-mode-behavior), [AC-45](verification.md#156-deployment), and [ADR-0013](../adr/0013-http-only-evaluation-mode.md)) is the only documented exception, restricted to non-production environments.
+
+#### 13.6.1 Insecure-mode behavior
+
+When the application is run in insecure (HTTP-only) evaluation mode:
+
+- Session cookies omit the `Secure` attribute so authentication works over plain HTTP.
+- HSTS is not sent.
+- The Content Security Policy does not upgrade insecure requests.
+- The UI shows a non-dismissible warning banner on every page; the browser tab title is prefixed to indicate insecure mode.
+- The server refuses to start if insecure mode is active in production (fail-closed).
+
+The activation mechanism (env var, compose override) and CSP wiring details are operational concerns — see [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
 
 ### 13.7 Observability
 
