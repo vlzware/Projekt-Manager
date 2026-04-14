@@ -55,11 +55,27 @@ Claude Opus has currently 1M context limit. Yet, after some exchanges it starts 
 
 #### A night owl
 
-It happens over and over and I am still open to the possibility that I am imagining it, but it seems Claude is much smarter outside of working hours. Having "API overloaded" errors strangely is always on the same sessions where it disappoints me the most. Further investigation might be warranted, as this might just lead to more effective sessions.
+It happens over and over and I am still open to the possibility that I am imagining it, but it seems Claude is much smarter outside of working hours. Having "API overloaded" errors strangely is always on the same sessions where it disappoints me the most. Further investigation might be warranted, as this might just lead to more effective sessions. (Update: bad experiences happened on the weekend as well, so maybe it is just me again searching patterns in randomness)
 
 ---
 
 ## Timeline
+
+### 2026-04-14
+
+#### Focus is everything
+
+Iteration 5 was a disaster - 114 commits of back and forth and not much to really show for it. I was too lax with the agents and let them follow through on tangents. The drift led to big roundabouts.
+
+The next - 6 - made up for it though. I was much stricter, hit the brakes much earlier and readjusted constantly to stay focused and on track. Also, finally made the decision to ditch tests which use mocks to test e2e behaviour and switched to visual regressions on the real app. The complexity of tests was exploding and the burden to maintain them was not bearable for long. Now, there is the negative side-effect that almost every commit needs to establish new baselines, as we are working on UI, but it is well worth it in the end.
+
+This, combined with underplanning after the bad experience, led to a nice over-achievement of goals, including some sweet new features to impress the users with.
+
+#### Data integrity = top priority
+
+The app runs behind a VPN as we assume it is not secure by default and targeted attacks are beyond scope anyway. This makes data loss, corruption or staleness the absolute top priority, given we'll work with real data at some point.
+
+This is not to say security reviews will be dropped, it is just that the main focus shifts to actionable tasks instead of far-fetched scenarios, which I can't protect against anyway. This reminds me again of the joke about the bear chase - you don't have to be the fastest, just not the slowest...
 
 ### 2026-04-11
 

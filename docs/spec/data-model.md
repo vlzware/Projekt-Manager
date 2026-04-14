@@ -27,17 +27,7 @@ interface Project {
   status: WorkflowState;
   statusChangedAt: string; // ISO 8601 — for aging calculations
 
-  customer: {
-    name: string; // "Familie Müller"
-    phone?: string; // "+49 221 1234567"
-    email?: string; // "mueller@example.de"
-  };
-
-  address?: {
-    street: string; // "Hauptstr. 12"
-    zip: string; // "51465"
-    city: string; // "Bergisch Gladbach"
-  };
+  customerId: string; // references Customer.id (§5.6)
 
   plannedStart?: string; // ISO 8601 date
   plannedEnd?: string; // ISO 8601 date
@@ -45,6 +35,8 @@ interface Project {
   assignedWorkers?: { userId: string; displayName: string }[]; // references UserAccount via project_workers join table
   estimatedValue?: number; // EUR net
   notes?: string;
+
+  deleted: boolean; // soft-delete flag — excluded from queries when true
 
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
@@ -56,14 +48,10 @@ interface Project {
 Design notes:
 
 - `statusChangedAt` is separate from `updatedAt` — editing notes must not reset aging calculations.
-- Customer and address are nested objects. `customer` is stored inline (denormalized) as part of the Project entity; the nesting keeps extraction into a separate `Customer` entity cheap (see §6.2).
-- `assignedWorkers` references `UserAccount` entries via a `project_workers` join table (m:n). The API returns `{ userId, displayName }` objects; writes accept `assignedWorkerIds: string[]` (user UUIDs).
-- `estimatedValue` is `number` in the API contract. The database stores it as `numeric(12,2)` for precision. The ORM converts between the two representations; clients always receive and send a JSON number.
-- No `priority` field — priority is implicit in state aging and column accumulation.
-- No stored boolean flags for warnings — these are derived from state and timestamps at render time.
-- Internal keys use English; German labels are applied at the UI layer.
-- The `WorkflowState` type shown here reflects the current default configuration. In implementation, the state set is driven by the configuration array — the type is derived from configuration, not hardcoded independently (see [index.md, section 3](index.md#3-workflow-states)).
-- `createdBy` / `updatedBy` follow the audit metadata rules defined in section 5.5.
+- `customerId` references Customer (§5.6). The API nests the full customer object in responses; writes accept `customerId`.
+- `assignedWorkers` is m:n via a join table. API returns `{ userId, displayName }`; writes accept `assignedWorkerIds: string[]`.
+- `WorkflowState` reflects the default configuration. The type is derived from the configuration array (see [index.md §3](index.md#3-workflow-states)).
+- Warnings and aging are derived from state and timestamps at render time — not stored.
 
 ### 5.2 State Metadata
 
@@ -116,17 +104,14 @@ interface UserAccount {
 
 Design notes:
 
-- `createdBy` / `updatedBy` follow the audit metadata pattern (section 5.5). **No self-referential FK**: a foreign key from `users.createdBy` back to `users.id` would complicate bootstrapping (the first admin user cannot reference a creator that doesn't exist yet) and deletion cascades, without adding meaningful integrity guarantees. The columns are nullable UUIDs with no constraint.
-- `roles` is an array. This supports multi-role assignments (owner, office, worker, bookkeeper, admin, or company-specific roles) without schema changes. The default role set is configurable **[C]**.
-- **[C]** `AccountRole` values are internal keys. German display labels (e.g. "Eigentümer", "Büro", "Arbeiter", "Buchhalter") are applied by configuration — the same pattern as workflow state labels.
-- `passwordHash` is included in the entity definition for completeness but is **never** included in API responses or the client-side data model. The hashing algorithm is an infrastructure concern (not specified here).
-- `active` allows disabling a user without deleting their records, preserving referential integrity for historical project assignments. Users are deactivated, not deleted.
-- `lastLoginAt` is optional; populated on successful authentication.
-- Worker assignment is linked to `UserAccount` via the `project_workers` join table.
+- `createdBy` / `updatedBy` are nullable UUIDs with no FK constraint (bootstrapping the first admin would create a circular dependency).
+- `roles` is an array — supports multi-role assignment without schema changes. Role set is configurable **[C]**. Role labels are applied by configuration.
+- `passwordHash` is **never** included in API responses.
+- Users can be deactivated (`active = false`) or hard-deleted (owner only). See [§6.9](#69-soft-deletes).
 
 ### 5.4 Session
 
-The session model is intentionally minimal and mechanism-agnostic. The spec defines what is tracked, not the transport mechanism (cookie vs. token is an implementation/ADR decision).
+Minimal session model. Transport mechanism is an implementation decision (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md)).
 
 ```typescript
 interface Session {
@@ -138,11 +123,11 @@ interface Session {
 }
 ```
 
-Design note: The `token` field is the value delivered to the client (e.g., via cookie). It is cryptographically random and opaque. The delivery mechanism (HttpOnly cookie vs. bearer token) is an ADR decision.
+Design note: The `token` field is a cryptographically random, opaque value delivered to the client. The delivery mechanism is defined in [ADR-0005](../adr/0005-session-management-httponly-cookies.md).
 
 Session validation must verify that the referenced user is still active (`active = true`). If the user has been deactivated, the session is treated as invalid regardless of its `expiresAt`.
 
-Password changes invalidate all other sessions for the affected user (`AuthService.changePassword()`).
+**Password-change session side effects:** when a user changes their own password, all **other** sessions for that user are invalidated (the current session survives). When an administrator resets another user's password, **all** sessions for the target user are invalidated.
 
 ### 5.5 Audit Metadata
 
@@ -162,7 +147,36 @@ Rules:
 - `createdAt` and `updatedAt` are managed by the server. Clients never send these fields in mutations.
 - User-triggered mutations must set `updatedBy` to the authenticated user's ID and update `updatedAt`.
 - `createdBy` and `updatedBy` are optional because seeded, imported, or system-generated records may not have a known actor.
-- This pattern applies to `Project` and `UserAccount`. `Session` uses `createdAt` and `expiresAt` only (sessions are not user-editable).
+- This pattern applies to `Project`, `Customer`, and `UserAccount`. `Session` uses `createdAt` and `expiresAt` only (sessions are not user-editable).
+
+### 5.6 Customer Entity
+
+```typescript
+interface Customer {
+  id: string; // UUID
+  name: string; // "Familie Müller"
+  phone?: string; // "+49 221 1234567"
+  email?: string; // "mueller@example.de"
+  address?: {
+    street: string; // "Hauptstr. 12"
+    zip: string; // "51465"
+    city: string; // "Bergisch Gladbach"
+  };
+  notes?: string;
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+  createdBy?: string; // UserAccount.id
+  updatedBy?: string; // UserAccount.id
+}
+```
+
+Design notes:
+
+- Address is an optional nested object within Customer.
+- Follows the audit metadata pattern (§5.5).
+- `name` is required; all other fields are optional.
+- A customer may exist without any projects (e.g., imported from an external system before project creation).
+- Customers can be deleted (hard delete) only when no projects reference them. The `ON DELETE no action` FK constraint on `projects.customer_id` enforces this at the database level — a delete attempt on a customer with projects is rejected. Deletion requires the `customer:delete` permission (owner only). A customer without projects is a normal state (e.g., imported before project creation) and deleting such a record is a cleanup operation, not a data-integrity concern.
 
 ---
 
@@ -175,17 +189,9 @@ The product specification defines persistence behavior, not a concrete database 
 - Project data must survive page reloads, browser restarts, and deployment restarts.
 - The application must read and write data only through a backend/API boundary.
 
-### 6.2 Future Entity Extraction
+### 6.2 Entity Extraction
 
-The persistence design must support extraction of additional entities without rewriting the project UI:
-
-- `Customer` — extracted from inline `Project.customer`
-- `Attachment` — file references for worker uploads (Aufmaß, photos)
-- `NotificationRule` — event-based notification configuration
-- `Invoice` — invoice tracking for the bookkeeper view
-- `CompanySettings` — per-company configuration
-
-Some data may be stored denormalized for simplicity, but the storage shape must not make normalization prohibitively expensive.
+The persistence design must support extraction of additional entities without rewriting existing domain logic.
 
 ### 6.3 Record Identity
 
@@ -205,7 +211,7 @@ Low write concurrency is assumed, but the design must tolerate multiple concurre
 
 ### 6.6 Referential Integrity
 
-- The database enforces foreign keys where relationships exist (e.g., `Session.userId` references `UserAccount.id`, `Project.createdBy`/`updatedBy` reference `UserAccount.id`).
+- The database enforces foreign keys where relationships exist (e.g., `Session.userId` references `UserAccount.id`, `Project.customerId` references `Customer.id`, `Project.createdBy`/`updatedBy` reference `UserAccount.id`).
 - **Exception**: `UserAccount.createdBy`/`updatedBy` are nullable UUIDs with no FK constraint. A self-referential FK on the users table would complicate bootstrapping and deletion without adding meaningful integrity (see §5.3 design notes).
 - Orphaned records are not acceptable.
 
@@ -213,7 +219,7 @@ Low write concurrency is assumed, but the design must tolerate multiple concurre
 
 Timestamp ownership rules are defined in section 5.5. Additionally, `statusChangedAt` is set by the server on state transitions, never by client input.
 
-**Storage vs. API representation**: the database stores timestamps as PostgreSQL `timestamp with time zone`. The API serializes them as ISO 8601 strings (e.g., `"2026-04-10T14:30:00.000Z"`). The client receives and sends ISO 8601 strings; the ORM handles conversion transparently. The spec uses `string` (ISO 8601) in entity type definitions to describe the API contract, not the storage type.
+**Storage vs. API representation**: the database stores timestamps with timezone awareness. The API serializes them as ISO 8601 strings (e.g., `"2026-04-10T14:30:00.000Z"`). The client receives and sends ISO 8601 strings; the persistence layer handles conversion transparently. The spec uses `string` (ISO 8601) in entity type definitions to describe the API contract, not the storage type.
 
 ### 6.8 Date Validation
 
@@ -224,8 +230,12 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 
 ### 6.9 Soft Deletes
 
-- Users are deactivated (`active = false`), not deleted. This preserves referential integrity and supports audit trail.
-- Project deletion is not part of this specification.
+- Users can be deactivated (`active = false`) or hard-deleted. Deactivation is the default for preserving assignment history. Hard deletion is available to the owner role and cascades sessions and worker assignments; `createdBy`/`updatedBy` references are set to null. Self-deletion is rejected by the API.
+- Projects are soft-deleted (`deleted = true`) as an **archive-from-board** mechanism (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Archived projects are excluded from active views (Kanban, Calendar, list endpoints) but retained in the database as historical reference. This is not an audit trail — there is no immutability guarantee.
+  - Archived projects are **immutable via the API**: transitions, date updates, PATCH, and re-delete are rejected with 404 (AC-95).
+  - When a customer is deleted, their archived projects are **purged atomically** with the customer — the archive has no value without the customer relationship. Active (non-archived) projects still block customer deletion (409).
+  - The API exposes `archivedProjectCount` on `GET /api/customers/:id` so the UI can warn before destructive customer deletion.
+  - No restore path exists via the API. Recovery requires database access.
 
 ---
 
@@ -268,16 +278,40 @@ In the default configuration, the `owner` role carries administrator privileges 
 
 Names are assumed and fictional (per [ADR-0001](../adr/0001-generalized-system-with-configurable-customer-specifics.md)).
 
-### 7.3 Edge Cases
+### 7.3 Customer Dataset
+
+**8–10 customers**, covering a range of data completeness and project associations:
+
+| Name                      | Phone           | Email                    | Address                                 | Notes                                 |
+| ------------------------- | --------------- | ------------------------ | --------------------------------------- | ------------------------------------- |
+| Familie Müller            | +49 221 1234567 | mueller@example.de       | Hauptstr. 12, 51465 Bergisch Gladbach   | Stammkunde seit 2019                  |
+| Schmidt GmbH              | +49 221 9876543 | info@schmidt-gmbh.de     | Industriestr. 8, 50968 Köln             | Gewerblicher Kunde                    |
+| Petra Wagner              | +49 2202 54321  | p.wagner@email.de        | Am Stadtpark 3, 51429 Bergisch Gladbach | —                                     |
+| Hausverwaltung Rheinblick | +49 221 5551234 | verwaltung@rheinblick.de | Rheinuferstr. 44, 50996 Köln            | Mehrere Objekte                       |
+| Andreas Hoffmann          | +49 221 7773456 | —                        | Lindenweg 7, 51109 Köln                 | —                                     |
+| Familie Yılmaz            | +49 2202 88990  | yilmaz.familie@email.de  | Gartenstr. 21, 51465 Bergisch Gladbach  | —                                     |
+| Karl-Heinz Becker         | —               | —                        | —                                       | Nur Telefonkontakt — Nummer verlegt   |
+| Weber Immobilien KG       | +49 221 4449876 | kontakt@weber-immo.de    | Aachener Str. 155, 50931 Köln           | Rahmenvertrag für Instandhaltung      |
+| Schulz & Partner PartG    | +49 2204 61234  | office@schulz-partner.de | Kölner Str. 90, 51429 Bergisch Gladbach | Import aus orgaMAX, noch kein Projekt |
+| Monika Engel              | +49 221 3336789 | —                        | —                                       | Import aus orgaMAX, noch kein Projekt |
+
+Design notes:
+
+- Customers with full data (name, phone, email, address): Familie Müller, Schmidt GmbH, Petra Wagner, Hausverwaltung Rheinblick, Familie Yılmaz, Weber Immobilien KG.
+- Customers with minimal data (name only or name + phone): Karl-Heinz Becker (name only), Andreas Hoffmann (no email).
+- Customers linked to multiple seed projects: Familie Müller (2 projects), Schmidt GmbH (2 projects), Hausverwaltung Rheinblick (3 projects).
+- Customers with no projects yet: Schulz & Partner PartG, Monika Engel — these represent records imported from an external system (e.g., orgaMAX) before project creation.
+
+### 7.4 Edge Cases
 
 The seed dataset should include varied data (missing dates, minimal fields, aged entries) to exercise edge cases. Specific edge case coverage is verified through the test specifications (see [verification.md §16](verification.md#16-test-specification)).
 
-### 7.4 Date Range
+### 7.5 Date Range
 
 Seed data dates must be **relative to the deployment date**, not hardcoded calendar dates. The seed loader calculates dates relative to "today" so the data is meaningful whenever it is first loaded.
 
 The overall range covers roughly the past 4 weeks to the coming 4 weeks, providing meaningful content for both views.
 
-### 7.5 Realism
+### 7.6 Realism
 
 Project titles, customer names, and addresses should be domain-representative for a German Handwerker company (see [index.md, section 4.1](index.md#41-company-profile)). Example: "Fassadenanstrich Müller", "Treppenhaussanierung Schmidt", "Malerarbeiten Bürokomplex Weber".

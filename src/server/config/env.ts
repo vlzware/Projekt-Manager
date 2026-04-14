@@ -35,6 +35,10 @@ const envSchema = z.object({
   BOOTSTRAP_ADMIN_USERNAME: z.string().optional(),
   BOOTSTRAP_ADMIN_PASSWORD: z.string().optional(),
   BOOTSTRAP_ADMIN_DISPLAY_NAME: z.string().optional(),
+  // OpenRouter LLM extraction (ADR-0016). Optional — feature is disabled
+  // when the key is absent.
+  OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_MODEL: z.string().default('google/gemini-2.5-flash-lite'),
 });
 
 export type Env = z.infer<typeof envSchema>;

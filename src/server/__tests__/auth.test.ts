@@ -245,6 +245,7 @@ describe('Authentication & Session Management', () => {
 
   // ---------------------------------------------------------------
   // AT-3: Login with an inactive user account returns a generic error
+  // AC-28 [crit]
   // ---------------------------------------------------------------
   describe('AT-3: Login with inactive user', () => {
     it('returns 401 with INVALID_CREDENTIALS (same as wrong password)', async () => {
@@ -373,6 +374,7 @@ describe('Authentication & Session Management', () => {
   // ---------------------------------------------------------------
   // AT-7: A request with a valid session token for a deactivated user
   //        returns an authentication error
+  // AC-28 [crit]
   // ---------------------------------------------------------------
   describe('AT-7: Valid session for deactivated user', () => {
     it('returns 401 when the user has been deactivated after login', async () => {
@@ -432,6 +434,7 @@ describe('Authentication & Session Management', () => {
   // ---------------------------------------------------------------
   // Logout: Session invalidation
   // Covers api.md §14.2.1: "Invalidates the specific session."
+  // AC-25 [crit]
   // ---------------------------------------------------------------
   describe('Logout: Session invalidation', () => {
     it('invalidates the session so the token no longer works', async () => {

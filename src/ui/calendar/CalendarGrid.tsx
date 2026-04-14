@@ -96,8 +96,15 @@ export function CalendarGrid({ month, projects, view = 'month' }: CalendarGridPr
           });
           const weekProjects = getProjectsForWeek(weekStart);
 
+          // Grow the week row to fit all project bars (24px header + 22px per bar + 4px padding)
+          const minRowHeight = Math.max(80, 24 + weekProjects.length * 22 + 4);
+
           return (
-            <div key={weekStart.toISOString()} className={styles.weekRow}>
+            <div
+              key={weekStart.toISOString()}
+              className={styles.weekRow}
+              style={{ minHeight: minRowHeight }}
+            >
               {days.map((day) => {
                 const sameMonth = isSameMonth(day, month);
                 const todayFlag = isToday(day);

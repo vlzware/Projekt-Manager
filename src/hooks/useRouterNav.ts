@@ -17,11 +17,19 @@ import type { ViewMode } from '@/domain/types';
 const PATH_TO_VIEW: Record<string, ViewMode> = {
   '/kanban': 'kanban',
   '/calendar': 'kalender',
+  '/customers': 'kunden',
+  '/projects': 'projekte',
+  '/users': 'benutzer',
+  '/data': 'daten',
 };
 
 const VIEW_TO_PATH: Record<ViewMode, string> = {
   kanban: '/kanban',
   kalender: '/calendar',
+  kunden: '/customers',
+  projekte: '/projects',
+  benutzer: '/users',
+  daten: '/data',
 };
 
 export function viewFromPath(pathname: string): ViewMode {

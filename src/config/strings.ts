@@ -35,6 +35,8 @@ export const STRINGS = {
 
   entities: {
     project: 'Projekt',
+    customer: 'Kunde',
+    user: 'Benutzer',
     resource: 'Ressource',
   },
 
@@ -71,6 +73,8 @@ export const STRINGS = {
     duplicateNumber: 'Projektnummer ist bereits vergeben.',
     foreignKeyViolation: 'Verknüpfter Datensatz existiert nicht (z. B. zugeordnete Mitarbeiter).',
     dateConstraintViolation: 'Datumsangaben verletzen eine Integritätsregel.',
+    concurrentModification:
+      'Der Projektstatus wurde zwischenzeitlich geändert. Bitte Seite neu laden.',
   },
 
   validation: {
@@ -81,12 +85,51 @@ export const STRINGS = {
     mustBeObject: (field: string) => `${field} muss ein Objekt sein.`,
     mustBeUuidArray: (field: string) => `${field} muss ein Array von UUIDs sein.`,
     mustBeNumeric: (field: string) => `${field} muss eine Zahl oder ein numerischer String sein.`,
+    mustBeUuid: (field: string) => `${field} muss eine gültige UUID sein.`,
+    maxLength: (field: string, max: number) => `${field} darf maximal ${max} Zeichen lang sein.`,
   },
+
+  customers: {
+    duplicateName: 'Ein Kunde mit diesem Namen existiert bereits.',
+    nameRequired: 'Kundenname ist erforderlich.',
+    hasProjects: 'Kunde kann nicht gelöscht werden, da noch aktive Projekte zugeordnet sind.',
+    deleteWithArchived: (n: number) =>
+      `Achtung: ${n} archivierte Projekt${n === 1 ? '' : 'e'} werden dabei endgültig gelöscht. Fortfahren?`,
+    ambiguousName: 'Mehrere Kunden mit diesem Namen gefunden. Import-Zuordnung nicht eindeutig.',
+  },
+
+  extraction: {
+    notConfigured: 'E-Mail-Extraktion ist nicht konfiguriert (OPENROUTER_API_KEY fehlt).',
+    emptyInput: 'E-Mail-Text darf nicht leer sein.',
+  },
+
+  users: {
+    duplicateUsername: 'Benutzername ist bereits vergeben.',
+    cannotDeactivateSelf: 'Sie können sich nicht selbst deaktivieren.',
+    cannotDeleteSelf: 'Sie können sich nicht selbst löschen.',
+    alreadyActive: 'Benutzer ist bereits aktiv.',
+    alreadyInactive: 'Benutzer ist bereits deaktiviert.',
+  },
+
+  roles: {
+    owner: 'Inhaber',
+    office: 'Büro',
+    worker: 'Mitarbeiter',
+    bookkeeper: 'Buchhalter',
+  } as Record<string, string>,
 
   password: {
     tooShort: 'Neues Passwort ist zu kurz (mindestens 8 Zeichen).',
     tooLong: 'Neues Passwort ist zu lang.',
     tooCommon: 'Dieses Passwort ist zu häufig. Bitte ein sichereres Passwort wählen.',
+    confirm: 'Passwort bestätigen',
+    mismatch: 'Passwörter stimmen nicht überein.',
+    change: 'Passwort ändern',
+    currentPassword: 'Aktuelles Passwort',
+    newPassword: 'Neues Passwort',
+    changeSuccess: 'Passwort wurde geändert.',
+    resetPassword: 'Passwort zurücksetzen',
+    resetSuccess: 'Passwort wurde zurückgesetzt.',
   },
 
   ui: {
@@ -115,8 +158,74 @@ export const STRINGS = {
     openMaps: 'In Google Maps öffnen',
     viewKanban: 'Kanban',
     viewCalendar: 'Kalender',
+    viewCustomers: 'Kunden',
+    viewProjects: 'Projekte',
+    viewUsers: 'Benutzer',
+    viewData: 'Daten',
     viewMonth: 'Monat',
     viewWeek: 'Woche',
+
+    // Management actions
+    create: 'Erstellen',
+    save: 'Speichern',
+    edit: 'Bearbeiten',
+    delete: 'Löschen',
+    search: 'Suchen...',
+    noResults: 'Keine Ergebnisse.',
+    name: 'Name',
+    phone: 'Telefon',
+    email: 'E-Mail',
+    street: 'Straße',
+    zip: 'PLZ',
+    city: 'Ort',
+    status: 'Status',
+    number: 'Nummer',
+    title: 'Titel',
+    active: 'Aktiv',
+    inactive: 'Deaktiviert',
+    username: 'Benutzername',
+    displayName: 'Anzeigename',
+    roles: 'Rollen',
+    actions: 'Aktionen',
+    projectCount: 'Projekte',
+    value: 'Wert',
+    deactivate: 'Deaktivieren',
+    reactivate: 'Reaktivieren',
+    deactivateConfirm: (name: string) => `${name} wirklich deaktivieren?`,
+    reactivateConfirm: (name: string) => `${name} wirklich reaktivieren?`,
+    deleteConfirm: (item: string) => `${item} wirklich löschen?`,
+
+    // Extraction
+    extractEmail: 'E-Mail Import',
+    extractButton: 'Daten extrahieren',
+    extractPlaceholder: 'E-Mail-Text hier einfügen...',
+    extracting: 'Extrahiere Daten...',
+    customerData: 'Kundendaten',
+    projectData: 'Projektdaten',
+    existingCustomer: 'Vorhandener Kunde',
+    newCustomer: 'Neuer Kunde',
+    description: 'Beschreibung',
+
+    // Import/Export
+    import: 'Import',
+    export: 'Export',
+    importSubmit: 'Importieren',
+    exportDownload: 'Exportieren',
+    entityType: 'Datentyp',
+    customers: 'Kunden',
+    projects: 'Projekte',
+    preview: 'Vorschau',
+    importResult: 'Ergebnis',
+    importedCount: (n: number) => `${n} importiert`,
+    errorCount: (n: number) => `${n} Fehler`,
+    row: 'Zeile',
+    uploadFile: 'JSON-Datei auswählen',
+    statusFilter: 'Status-Filter',
+    all: 'Alle',
+    withProjects: 'Mit Projekten',
+    withoutProjects: 'Ohne Projekte',
+    fileTooLarge: (maxMb: number) => `Datei zu groß. Maximal ${maxMb} MB erlaubt.`,
+    noPermission: 'Keine Berechtigung.',
   },
 
   aging: {

@@ -149,6 +149,17 @@ export async function authPatch(token: string, url: string, payload?: Record<str
 }
 
 /**
+ * Make an authenticated DELETE request.
+ */
+export async function authDelete(token: string, url: string) {
+  return getApp().inject({
+    method: 'DELETE',
+    url,
+    headers: { cookie: `session=${token}` },
+  });
+}
+
+/**
  * Create an expired session for the given user and return its token.
  *
  * The session must be a real database row whose expiresAt is in the past.
@@ -181,7 +192,7 @@ export async function createExpiredSession(userId: string): Promise<string> {
  * updatedBy to be null for system/test-fixture actions (data-model.md §5.5).
  */
 export async function deactivateUser(userId: string): Promise<void> {
-  return deactivateUserRepo(db, userId, null);
+  await deactivateUserRepo(db, userId, null);
 }
 
 /**

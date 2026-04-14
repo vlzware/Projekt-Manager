@@ -11,6 +11,7 @@ import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fastifyStatic from '@fastify/static';
+import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { STRINGS } from '../config/strings.js';
 import { buildApp } from './app.js';
@@ -20,6 +21,7 @@ import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
+import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
 
 const HOST = '0.0.0.0';
@@ -48,6 +50,27 @@ function rejectDevCredentials(): void {
           'Set a secure value for production.',
       );
     }
+  }
+}
+
+/**
+ * Verify that every `status` value in the projects table is present in
+ * the configured workflow states. Refuses to start if orphaned statuses
+ * exist — prevents silent data loss when states are removed or renamed
+ * without a data migration.
+ */
+async function validateWorkflowStates(db: ReturnType<typeof createDatabase>['db']): Promise<void> {
+  const validSet = new Set<string>(STATE_KEYS);
+  const rows = await db.execute<{ status: string }>(
+    sql`SELECT DISTINCT status FROM projects WHERE deleted = false`,
+  );
+  const orphaned = rows.rows.filter((r) => !validSet.has(r.status)).map((r) => r.status);
+  if (orphaned.length > 0) {
+    throw new Error(
+      `Refusing to start: ${orphaned.length} project(s) have status values not in the current ` +
+        `workflow configuration: ${orphaned.join(', ')}. Run a data migration to reassign these ` +
+        `projects before changing the workflow states.`,
+    );
   }
 }
 
@@ -101,6 +124,12 @@ async function start(): Promise<void> {
     },
     { warn: (m) => console.warn(m), error: (m) => console.error(m) },
   );
+
+  // Verify all project status values in the DB are known to the current
+  // configuration. If a state was removed or renamed without migrating
+  // existing projects, those projects become invisible and untransitionable.
+  // Refuse to start rather than silently hiding data.
+  await validateWorkflowStates(db);
 
   // Clean up expired sessions on startup
   const deleted = await deleteExpiredSessions(db);

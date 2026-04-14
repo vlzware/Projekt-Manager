@@ -31,7 +31,7 @@ operator (over WireGuard):                                        v
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 
 # Deploy an iteration branch
-sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/iteration/5-consolidation
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/iteration/N-name
 
 # Deploy a specific SHA (rollback)
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh <sha>

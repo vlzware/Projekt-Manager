@@ -1,6 +1,6 @@
 # Architecture
 
-Onboarding document. Read this first, then navigate to the module you need.
+Navigation guide to the implementation. Use it to locate modules, understand dependency rules, and find the right file before diving into code. Not a substitute for reading the code itself.
 
 For the full product specification, see [docs/spec/](docs/spec/index.md).
 
@@ -50,30 +50,44 @@ Seven responsibility layers. Dependency flows left-to-right only, never reversed
 
 ## Module Map
 
-| Directory                  | Owns                                                                                                                                | Must NOT                                                |
-| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions, insecure-connection detection                                 | Import anything outside `src/config/`                   |
-| `src/domain/`              | Types, transition rules, aging calc, summary computation, session expiry, date formatting                                           | Import from state, API, storage, or UI                  |
-| `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)                                                     | Contain business logic or import from layers above      |
-| `src/server/db/`           | Drizzle schema, connection, SQL migrations                                                                                          | Contain business logic                                  |
-| `src/server/services/`     | Business logic orchestration (AuthService, ProjectService), domain events, logger interface                                         | Know about HTTP, Fastify, or request objects            |
-| `src/server/repositories/` | Database queries (project, user, session)                                                                                           | Know about HTTP or contain business rules               |
-| `src/server/storage/`      | S3/MinIO client, upload/download/presign ops                                                                                        | Be called from anywhere except API routes               |
-| `src/server/middleware/`   | Cookie parsing, session auth, request decoration                                                                                    | Contain route handlers or business logic                |
-| `src/server/routes/`       | Route definitions, request validation, response serialization                                                                       | Access repositories directly (must go through services) |
-| `src/server/data/`         | Static data files (e.g. common-passwords list)                                                                                      | Contain logic or import from other modules              |
-| `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), bootstrap, health probe, seed, password hashing, error types                     | -                                                       |
-| `src/state/`               | Zustand stores (authStore, projectStore, uiStore, confirmStore), barrel re-export + cross-store reset (store.ts), client-side cache | Access the database or import server code               |
-| `src/api/`                 | Centralized API client, typed fetch wrappers                                                                                        | Contain business logic or UI concerns                   |
-| `src/hooks/`               | Shared React hooks (transitions, routing)                                                                                           | Contain API calls directly (must use stores)            |
-| `src/ui/`                  | React components (kanban, calendar, detail, auth, layout)                                                                           | Contain business logic beyond dispatching to state      |
-| `src/test/`                | Shared test setup, API test helpers, and seed fixtures                                                                              | Be imported in production code                          |
+| Directory                  | Owns                                                                                                                                                                                                                                                                                                                                                                             | Must NOT                                                |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `src/config/`              | State definitions, colors, thresholds, branding, company assumptions, insecure-connection detection                                                                                                                                                                                                                                                                              | Import anything outside `src/config/`                   |
+| `src/domain/`              | Types, transition rules, aging calc, summary computation, session expiry, date formatting                                                                                                                                                                                                                                                                                        | Import from state, API, storage, or UI                  |
+| `src/server/config/`       | Env validation (Zod), centralized policy constants (auth, rate limits, storage)                                                                                                                                                                                                                                                                                                  | Contain business logic or import from layers above      |
+| `src/server/db/`           | Drizzle schema, connection, SQL migrations                                                                                                                                                                                                                                                                                                                                       | Contain business logic                                  |
+| `src/server/services/`     | Business logic orchestration (`AuthService.ts`, `ProjectService.ts`), domain event bus (`events.ts` — currently emits `project.transitioned` and `project.dates_changed`; subscribers attach here for audit, notifications), service-layer logger interface (`Logger.ts`)                                                                                                        | Know about HTTP, Fastify, or request objects            |
+| `src/server/repositories/` | Database queries: project split by concern (`project-read.ts`, `project-transitions.ts`, `project-dates.ts`, barrel `project.ts`), `user.ts`, `session.ts`                                                                                                                                                                                                                       | Know about HTTP or contain business rules               |
+| `src/server/storage/`      | S3/MinIO client (`client.ts`), upload/download/presign ops (`index.ts`)                                                                                                                                                                                                                                                                                                          | Be called outside routes and `start.ts` (health probe)  |
+| `src/server/middleware/`   | Cookie parsing, session auth, request decoration                                                                                                                                                                                                                                                                                                                                 | Contain route handlers or business logic                |
+| `src/server/routes/`       | Route definitions, request validation, response serialization                                                                                                                                                                                                                                                                                                                    | Access repositories directly (must go through services) |
+| `src/server/data/`         | Static data files (e.g. common-passwords list)                                                                                                                                                                                                                                                                                                                                   | Contain logic or import from other modules              |
+| `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), first-run admin bootstrap (`bootstrap.ts`), health probe (`health.ts`), seed loader (`seed.ts`), password hashing (`password.ts` — bcrypt; truncates at 72 UTF-8 bytes, so the password policy enforces a ceiling there), error factories (`errors.ts` — `notFound()`, `validationError()`, etc. return `AppError` instances) | -                                                       |
+| `src/state/`               | Zustand stores (authStore, projectStore, uiStore, confirmStore), barrel re-export + cross-store reset (store.ts), client-side cache                                                                                                                                                                                                                                              | Access the database or import server code               |
+| `src/api/`                 | Centralized API client, typed fetch wrappers                                                                                                                                                                                                                                                                                                                                     | Contain business logic or UI concerns                   |
+| `src/hooks/`               | Shared React hooks (transitions, routing)                                                                                                                                                                                                                                                                                                                                        | Contain API calls directly (must use stores)            |
+| `src/ui/`                  | React components (kanban, calendar, detail, auth, layout)                                                                                                                                                                                                                                                                                                                        | Contain business logic beyond dispatching to state      |
+| `src/test/`                | Shared test setup, API test helpers, and seed fixtures                                                                                                                                                                                                                                                                                                                           | Be imported in production code                          |
+
+### Configuration Files
+
+Maps spec `[C]` markers (values that vary per deployment) to files.
+
+| What                                                                      | File                                   |
+| ------------------------------------------------------------------------- | -------------------------------------- |
+| App name, branding, footer text                                           | `src/config/brandingConfig.ts`         |
+| Workflow states (labels, colors, order, aging thresholds, collapse tiers) | `src/config/stateConfig.ts`            |
+| German UI and error strings                                               | `src/config/strings.ts`                |
+| Date and locale display settings                                          | `src/config/localeConfig.ts`           |
+| Insecure-connection detection                                             | `src/config/insecureConnection.ts`     |
+| Password policy (min length, max bytes, blocklist)                        | `src/server/config/password-policy.ts` |
+| Session duration, rate-limit windows                                      | `src/server/config/index.ts`           |
+| Role set and per-role permission matrix                                   | `src/server/config/permissions.ts`     |
+| Seed default password                                                     | `src/test/seedAssumptions.ts`          |
 
 ---
 
 ## Request Lifecycle
-
-A typical authenticated API call, end to end:
 
 ```
 Browser (React)
@@ -131,10 +145,24 @@ All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives h
 | POST   | `/api/projects/:id/transition/backward` | session | `project:transition`   | none       | Reverse status by one step                                                                                                                                   |
 | PATCH  | `/api/projects/:id/dates`               | session | `project:dates`        | none       | Update `plannedStart` / `plannedEnd`                                                                                                                         |
 | POST   | `/api/projects/bulk/import`             | session | `project:create`       | none       | Import an array of projects (schema cap: 1000 items)                                                                                                         |
+| GET    | `/api/customers`                        | session | `customer:read`        | none       | List customers (optional `search`, `offset`, `limit`)                                                                                                        |
+| GET    | `/api/customers/:id`                    | session | `customer:read`        | none       | Single customer with associated project count                                                                                                                |
+| POST   | `/api/customers`                        | session | `customer:write`       | none       | Create customer                                                                                                                                              |
+| PATCH  | `/api/customers/:id`                    | session | `customer:write`       | none       | Update customer (PATCH semantics)                                                                                                                            |
+| DELETE | `/api/customers/:id`                    | session | `customer:delete`      | none       | Hard-delete customer; rejected if projects reference it (FK constraint)                                                                                      |
+| POST   | `/api/customers/bulk/import`            | session | `customer:write`       | none       | Import an array of customers (schema cap: 1000 items)                                                                                                        |
+| GET    | `/api/users`                            | session | `user:read`            | none       | List users                                                                                                                                                   |
+| GET    | `/api/users/:id`                        | session | `user:read`            | none       | Single user                                                                                                                                                  |
+| PATCH  | `/api/users/:id`                        | session | `user:manage`          | none       | Update user (roles, active, displayName, email)                                                                                                              |
+| POST   | `/api/users`                            | session | `user:manage`          | none       | Create user                                                                                                                                                  |
+| POST   | `/api/users/:id/reset-password`         | session | `user:manage`          | none       | Admin password reset                                                                                                                                         |
+| GET    | `/api/export/projects`                  | session | `project:read`         | none       | Export non-deleted projects as JSON (filters: status, customerId, date range)                                                                                |
+| GET    | `/api/export/customers`                 | session | `customer:read`        | none       | Export all customers as JSON                                                                                                                                 |
+| POST   | `/api/extract`                          | session | `customer:write`       | none       | LLM email extraction via OpenRouter (ADR-0016). Requires `OPENROUTER_API_KEY` env var.                                                                       |
 
-Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Authentication is enforced by `createAuthMiddleware(db)` in `src/server/middleware/auth.ts` (applied as a plugin-level `preHandler` hook). **Permission** is enforced at the **route level** by `requirePermission('...')` preHandlers defined in `src/server/routes/*.ts` and checked against the role matrix in `src/server/config/permissions.ts` — see [spec §14.3](docs/spec/api.md#143-authorization-rules).
+Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Authentication is enforced by `createAuthMiddleware(db)` in `src/server/middleware/auth.ts` (applied as a plugin-level `preHandler` hook). **Permission** is enforced at the **route level** by `requirePermission('...')` preHandlers defined in `src/server/middleware/auth.ts` and checked against the role matrix in `src/server/config/permissions.ts` — see [spec §14.3](docs/spec/api.md#143-authorization-rules).
 
-Route definitions live in `src/server/routes/auth.ts`, `src/server/routes/projects.ts`, and `src/server/routes/projects-bulk.ts`. The health endpoint is registered in `src/server/start.ts`.
+Route definitions live in `src/server/routes/`. The health endpoint is registered in `src/server/start.ts`.
 
 **Keep this table in sync** when adding or changing endpoints. It is the onboarding reference and is cross-checked by the spec (`docs/spec/api.md`) for abstract-operation coverage.
 
@@ -142,48 +170,48 @@ Route definitions live in `src/server/routes/auth.ts`, `src/server/routes/projec
 
 ## How to Extend
 
-The four scenarios below are the most common changes. Each lists exact files to read first (the existing pattern) and the files to add or edit. The dependency direction in [Architecture Overview](#architecture-overview) is the only invariant — everything else is convention.
+Common changes and where to look. The dependency direction in [Architecture Overview](#architecture-overview) is the only invariant. Conventions are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Adding a new entity (e.g., Supplier)
 
-**Pattern to copy**: the `Project` entity. Read `src/server/db/schema.ts` (`projects` table definition), `src/domain/types.ts` (`Project` interface), `src/server/repositories/project-read.ts` (repo with `toProject` projection), `src/server/repositories/project.ts` (barrel re-export), `src/server/services/ProjectService.ts` (`ProjectService` class — CRUD, transitions, bulk import), `src/server/routes/projects.ts` (routes), `src/state/projectStore.ts` (store).
+**Pattern to copy**: the `Project` entity — read `schema.ts`, `types.ts`, the repo/service/route/store/UI chain for projects.
 
-1. **Schema**: add the table in `src/server/db/schema.ts`. Use the same audit-field pattern as `projects` (`createdAt`/`updatedAt`/`createdBy`/`updatedBy`). Generate the migration with `npx drizzle-kit generate`. Never edit an existing migration file — always generate a new one.
-2. **Domain types**: add the TypeScript interface in `src/domain/types.ts`. Keep optional fields optional so the UI tolerates missing data ([spec §13.5](docs/spec/architecture.md#135-robustness)).
-3. **Repository**: create `src/server/repositories/supplier-read.ts`, `supplier-transitions.ts`, etc. — split by concern as the project repos do (`project-read.ts`, `project-transitions.ts`, `project-dates.ts`). Re-export through a barrel `supplier.ts`. Add a `toSupplier(row)` projection so Drizzle types do not leak upward.
-4. **Service**: create `src/server/services/SupplierService.ts`. Keep it framework-agnostic — the service layer must not import `fastify` types ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
-5. **Routes**: create `src/server/routes/suppliers.ts`. Register it in `src/server/app.ts` next to the existing `projectRoutes(db)` registration. Always go through the service — never call repositories from a route handler.
-6. **API client**: add a `supplierApi` block in `src/api/client.ts` (same pattern as the `projectApi` export). One typed function per operation, ~3 lines each.
-7. **State**: add `src/state/supplierStore.ts` modeled on `src/state/projectStore.ts`. Use optimistic updates with rollback for mutations.
-8. **UI**: add components under `src/ui/suppliers/`. One component per file with a sibling `.module.css` (per [CONTRIBUTING.md](CONTRIBUTING.md#code-style)).
-9. **Tests**: unit tests in `src/domain/__tests__/` for any pure functions, integration tests in `src/server/__tests__/` (copy `projects-list.test.ts` as a starting point), component tests in `src/ui/__tests__/`.
-10. **Seed data**: extend `src/server/seed.ts` if the entity needs demo records.
-11. **Spec**: update `docs/spec/data-model.md` (add the entity), `docs/spec/api.md §14.2` (add the operations), and `docs/spec/verification.md` (add ACs).
+1. **Schema**: add table in `src/server/db/schema.ts` (same audit-field pattern as `projects`). `npx drizzle-kit generate`. Never edit an existing migration.
+2. **Domain types**: add interface in `src/domain/types.ts`. Optional fields stay optional ([spec §13.5](docs/spec/architecture.md#135-robustness)).
+3. **Repository**: split by concern (`supplier-read.ts`, etc.), barrel re-export. Add a `toSupplier(row)` projection so Drizzle types don't leak upward.
+4. **Service**: `src/server/services/SupplierService.ts`. Must not import `fastify` types ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
+5. **Routes**: `src/server/routes/suppliers.ts`, register in `app.ts`. Routes go through the service, never call repos directly.
+6. **API client**: add a `supplierApi` block in `src/api/client.ts` (same shape as `projectApi`).
+7. **State**: `src/state/supplierStore.ts` (model on `projectStore.ts`, optimistic updates with rollback).
+8. **UI**: components under `src/ui/suppliers/`.
+9. **Tests**: domain in `src/domain/__tests__/`, integration in `src/server/__tests__/` (copy `projects-list.test.ts`), component in `src/ui/__tests__/`.
+10. **Seed**: extend `src/server/seed.ts` if needed.
+11. **Spec**: update `docs/spec/data-model.md`, `docs/spec/api.md §14.2`, `docs/spec/verification.md`.
 
 ### Adding a new view (e.g., Worker view)
 
-**Pattern to copy**: the existing Kanban view consumes `useProjectStore` independently of the Calendar view. Read `src/ui/kanban/KanbanBoard.tsx` (the view component), `src/state/projectStore.ts` (`getProjectsByState` selector), `src/App.tsx` (route registration), `src/domain/types.ts` (`ViewMode` union).
+**Pattern to copy**: `src/ui/kanban/KanbanBoard.tsx`, `src/state/projectStore.ts` (`getProjectsByState`), `src/App.tsx` (route registration), `src/domain/types.ts` (`ViewMode` union).
 
-1. **View type**: add the new view name to the `ViewMode` union in `src/domain/types.ts` (e.g., `'worker' | 'bookkeeper'`).
-2. **Component**: create `src/ui/worker/WorkerView.tsx` with its own `WorkerView.module.css`. The component reads from `useProjectStore` and filters in JSX — for example, `projects.filter(p => p.assignedWorkers?.some(w => w.userId === user.id))`.
-3. **Route**: register in `src/App.tsx` next to the existing kanban/calendar routes.
-4. **Navigation**: extend the header dropdown or sidebar so users can switch to the new view.
-5. **Tests**: copy the structure from `src/ui/__tests__/KanbanBoard.test.tsx`.
+1. Add view name to `ViewMode` in `src/domain/types.ts`.
+2. Create component under `src/ui/worker/`. Reads from `useProjectStore`, filters client-side.
+3. Register route in `src/App.tsx`.
+4. Extend header/sidebar navigation.
+5. Tests: copy structure from `src/ui/__tests__/KanbanBoard.test.tsx`.
 
-**Backend changes are usually not needed.** The store already exposes the full project list, and any filter that can be expressed against it is a frontend concern. If the view introduces a new query the store cannot answer, add the query to `projectStore.ts` rather than to a new store — that keeps the cache coherent.
+Backend changes are usually not needed — the store exposes the full project list. If the view needs a query the store can't answer, add it to `projectStore.ts` (keeps the cache coherent) rather than a new store.
 
 ### Adding a new API endpoint
 
-**Pattern to copy**: read `src/server/routes/projects.ts` (route definitions), `src/server/services/ProjectService.ts` (service orchestration), and `docs/spec/api.md §14.2` (how operations are documented).
+**Pattern to copy**: `src/server/routes/projects.ts`, `src/server/services/ProjectService.ts`, `docs/spec/api.md §14.2`.
 
-1. **Decide where the route lives**: extend an existing file (`projects.ts`, `auth.ts`, `projects-bulk.ts`) if it belongs to an existing entity/group; create a new route file otherwise.
-2. **Define the schema**: every route uses Fastify's JSON Schema for the request body (see `projects.ts` for examples). This is your input validation — don't validate inside the handler.
-3. **Auth & permission**: apply `createAuthMiddleware(db)` as a `preHandler` for the plugin, and `requirePermission('your:permission')` per route. Add the new permission key to `src/server/config/permissions.ts` if it doesn't exist.
-4. **Delegate to a service method**. Routes never call repositories directly — see [spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries). If the service method doesn't exist yet, add it to the appropriate `*Service.ts`.
-5. **Errors**: throw `notFound(...)`, `validationError(...)`, etc. from `src/server/errors.ts`. Never throw raw `Error` from a route — the global handler in `src/server/app.ts` normalizes `AppError`, Fastify validation errors, and rate-limit errors; unknown errors are wrapped as a generic server error so internals never leak.
-6. **Register**: add the route plugin in `src/server/app.ts`.
-7. **Tests**: integration test in `src/server/__tests__/` using `api-helpers.ts` (`startApp()`, `login()`, `authPost()`/`authGet()`).
-8. **Spec**: add the operation to `docs/spec/api.md §14.2` and an AC in `docs/spec/verification.md`.
+1. **Where**: extend an existing route file if it belongs to that entity/group; create a new one otherwise.
+2. **Validation**: Fastify JSON Schema on the route (see `projects.ts`). Don't validate inside the handler.
+3. **Auth**: `createAuthMiddleware(db)` as plugin `preHandler`; `requirePermission('...')` per route. Add new keys to `src/server/config/permissions.ts`.
+4. **Delegate to service**. Never call repos from a route ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
+5. **Errors**: use factories from `src/server/errors.ts` (`notFound()`, `validationError()`, etc.). Never throw raw `Error`. For bulk operations, translate DB constraint violations to German user-facing messages via the service layer (see `ProjectService.translatePgError()`).
+6. **Register** in `src/server/app.ts`.
+7. **Tests**: integration in `src/server/__tests__/` using `api-helpers.ts` (`startApp()`, `login()`, `authPost()`/`authGet()`).
+8. **Spec**: add operation to `docs/spec/api.md §14.2`, AC in `docs/spec/verification.md`.
 
 ### Adding a new workflow state
 
@@ -196,6 +224,16 @@ Most of the Kanban, calendar, and aging rendering is genuinely config-driven. Tw
 5. Re-seed the database if existing data must be migrated to a new state (`SEED=force npm run dev`).
 
 This is not a zero-code-change operation. Improving it toward full configurability is tracked in [spec §3](docs/spec/index.md#3-workflow-states).
+
+### Seeding modes
+
+The seed loader (`src/server/seed.ts`) is controlled by environment:
+
+- **Production** (`NODE_ENV=production`): seeding is skipped entirely — the start-up path in `src/server/start.ts` never calls it.
+- **`SEED=true`** (default in dev): loads seed data if the database is empty; no-ops if data already exists.
+- **`SEED=force`**: drops all seed records and reloads from scratch. Use after schema changes or to refresh stale demo dates.
+
+Run via `SEED=force npm run dev` or set in `.env`.
 
 ---
 
@@ -224,7 +262,7 @@ One GitHub Actions workflow (`ci.yml`) produces an image; one operator-run scrip
 1. `npm audit` with the suppressed-advisory handling from [ADR-0007](docs/adr/0007-suppress-esbuild-dev-server-advisory.md).
 2. `npm run lint`, `npm run format:check`, `npx tsc --noEmit`.
 3. `bash scripts/check-env-drift.sh` — regression guard that every `env.ts` variable is forwarded via `docker-compose.yml`'s `services.app.environment`. Added after the incident where `BOOTSTRAP_ADMIN_*` landed in the Zod schema but were forgotten in compose.
-4. Postgres service container + MinIO container started as steps; `npm run test:coverage` runs unit + integration against real Postgres and real MinIO. Playwright is **not** part of the push/PR gate — the on-demand workflow `.github/workflows/e2e.yml` (added in iteration 5) runs it on `workflow_dispatch` only, so CI green on push does not imply E2E green. See [docs/spec/architecture.md §11.7](docs/spec/architecture.md#117-ci-gate) and [docs/spec/verification.md AC-37](docs/spec/verification.md#157-non-functional-requirements).
+4. Postgres service container + MinIO container started as steps; `npm run test:coverage` runs unit + integration against real Postgres and real MinIO. Playwright is **not** part of the push/PR gate — the on-demand workflow `.github/workflows/e2e.yml` (added in iteration 5) runs it on `workflow_dispatch` only, so CI green on push does not imply E2E green. See [docs/spec/architecture.md §11.7](docs/spec/architecture.md#117-ci-gate) and [docs/spec/verification.md AC-37](docs/spec/verification.md#157-engineering).
 5. `npm run build`.
 6. On push events only: `docker/build-push-action` builds the app image and pushes it to GHCR tagged `sha-<commit>` and `<branch-slug>`. PR events do not push.
 
@@ -238,6 +276,15 @@ One GitHub Actions workflow (`ci.yml`) produces an image; one operator-run scrip
 6. Smoke test: `docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"` polls for up to 60 s. Failure dumps the last 50 lines of compose logs and exits non-zero, leaving the previously running version in place.
 
 No automatic deploy. Rationale: [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md). Day-to-day procedure: [docs/ops/manual-deploy.md](docs/ops/manual-deploy.md). Bootstrap (first-run) procedure: [docs/ops/manual-deploy.md#bootstrap-first-run-on-fresh-vps](docs/ops/manual-deploy.md#bootstrap-first-run-on-fresh-vps).
+
+---
+
+## Design Decisions (Not ADR-Worthy)
+
+- **Export format**: JSON only. `format` parameter reserved for future use.
+- **Project number format**: configurable `[C]`, enforced only for uniqueness.
+- **Customer duplicates on import**: single-create offers to edit existing; bulk import warns and requires confirmation before overwriting. No merge.
+- **Bulk transitions**: not supported. Users transition individually.
 
 ---
 

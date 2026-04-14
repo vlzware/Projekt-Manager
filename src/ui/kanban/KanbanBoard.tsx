@@ -28,6 +28,17 @@ export function KanbanBoard() {
     });
   }, []);
 
+  // When a filter badge is clicked, expand only the matching column and
+  // collapse all others — draws attention to the relevant column.
+  // When cleared, reset so auto-collapse tiers take over again.
+  // Uses "adjust state during render" (React docs) instead of useEffect
+  // to avoid cascading renders.
+  const [prevFilter, setPrevFilter] = useState(activeFilter);
+  if (prevFilter !== activeFilter) {
+    setPrevFilter(activeFilter);
+    setExpanded(activeFilter ? new Set([activeFilter]) : new Set());
+  }
+
   // Filters are mutually exclusive (see uiStore). Apply whichever is active.
   const filteredProjects = filterNoDates
     ? projects.filter((p) => !p.plannedStart && !p.plannedEnd)

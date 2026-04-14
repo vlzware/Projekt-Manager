@@ -186,7 +186,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 
 // --- Typed API functions -----------------------------------------------------
 
-import type { Project } from '@/domain/types';
+import type { Project, Customer, User, ImportResult } from '@/domain/types';
 
 interface AuthUser {
   id: string;
@@ -205,6 +205,24 @@ interface ProjectListResponse {
   total: number;
 }
 
+interface CustomerListResponse {
+  customers: Customer[];
+  total: number;
+}
+
+interface UserListResponse {
+  users: User[];
+  total: number;
+}
+
+/** Build a query string from an object, skipping undefined values. */
+function toQuery(params?: Record<string, string | number | boolean | undefined>): string {
+  if (!params) return '';
+  const entries = Object.entries(params).filter(([, v]) => v !== undefined);
+  if (entries.length === 0) return '';
+  return '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
+}
+
 export const authApi = {
   login: (username: string, password: string) =>
     apiCall<LoginResponse>('/api/auth/login', {
@@ -214,17 +232,53 @@ export const authApi = {
 
   logout: () => apiCall<{ success: boolean }>('/api/auth/logout', { method: 'POST' }),
 
-  // Same `{ user: AuthUser }` envelope as login — see consolidation
-  // review E F-7. Kept as LoginResponse rather than renaming to a
-  // neutral AuthEnvelope because both endpoints are the only consumers
-  // and the shape is already documented alongside login below.
   me: () => apiCall<LoginResponse>('/api/auth/me'),
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    apiCall<{ success: boolean }>('/api/auth/change-password', {
+      method: 'POST',
+      body: { currentPassword, newPassword },
+    }),
 };
 
 export const projectApi = {
-  list: () => apiCall<ProjectListResponse>('/api/projects'),
+  list: (params?: {
+    status?: string;
+    search?: string;
+    customerId?: string;
+    hasNoDates?: boolean;
+  }) =>
+    apiCall<ProjectListResponse>(
+      '/api/projects' + toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
 
   get: (id: string) => apiCall<Project>(`/api/projects/${id}`),
+
+  create: (data: {
+    number: string;
+    title: string;
+    customerId: string;
+    status?: string;
+    plannedStart?: string | null;
+    plannedEnd?: string | null;
+    assignedWorkerIds?: string[];
+    estimatedValue?: number | null;
+    notes?: string | null;
+  }) => apiCall<Project>('/api/projects', { method: 'POST', body: data }),
+
+  update: (
+    id: string,
+    data: {
+      title?: string;
+      customerId?: string;
+      assignedWorkerIds?: string[];
+      estimatedValue?: number | null;
+      notes?: string | null;
+    },
+  ) => apiCall<Project>(`/api/projects/${id}`, { method: 'PATCH', body: data }),
+
+  delete: (id: string) =>
+    apiCall<{ success: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
 
   transitionForward: (id: string) =>
     apiCall<Project>(`/api/projects/${id}/transition/forward`, { method: 'POST' }),
@@ -237,6 +291,121 @@ export const projectApi = {
       method: 'PATCH',
       body: dates,
     }),
+
+  bulkImport: (projects: Record<string, unknown>[]) =>
+    apiCall<ImportResult>('/api/projects/bulk/import', {
+      method: 'POST',
+      body: { projects },
+    }),
+};
+
+export const customerApi = {
+  list: (params?: { offset?: number; limit?: number; search?: string }) =>
+    apiCall<CustomerListResponse>(
+      '/api/customers' + toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
+
+  get: (id: string) => apiCall<Customer & { projectCount: number }>(`/api/customers/${id}`),
+
+  create: (data: {
+    name: string;
+    phone?: string | null;
+    email?: string | null;
+    address?: { street: string; zip: string; city: string } | null;
+    notes?: string | null;
+  }) => apiCall<Customer>('/api/customers', { method: 'POST', body: data }),
+
+  update: (
+    id: string,
+    data: {
+      name?: string;
+      phone?: string | null;
+      email?: string | null;
+      address?: { street: string; zip: string; city: string } | null;
+      notes?: string | null;
+    },
+  ) => apiCall<Customer>(`/api/customers/${id}`, { method: 'PATCH', body: data }),
+
+  delete: (id: string) =>
+    apiCall<{ success: boolean }>(`/api/customers/${id}`, { method: 'DELETE' }),
+
+  bulkImport: (customers: Record<string, unknown>[]) =>
+    apiCall<ImportResult>('/api/customers/bulk/import', {
+      method: 'POST',
+      body: { customers },
+    }),
+};
+
+export const userApi = {
+  list: (params?: { offset?: number; limit?: number }) =>
+    apiCall<UserListResponse>(
+      '/api/users' + toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
+
+  get: (id: string) => apiCall<User>(`/api/users/${id}`),
+
+  create: (data: {
+    username: string;
+    displayName: string;
+    password: string;
+    roles: string[];
+    email?: string | null;
+  }) => apiCall<User>('/api/users', { method: 'POST', body: data }),
+
+  update: (
+    id: string,
+    data: {
+      displayName?: string;
+      roles?: string[];
+      email?: string | null;
+    },
+  ) => apiCall<User>(`/api/users/${id}`, { method: 'PATCH', body: data }),
+
+  deactivate: (id: string) => apiCall<User>(`/api/users/${id}/deactivate`, { method: 'POST' }),
+
+  reactivate: (id: string) => apiCall<User>(`/api/users/${id}/reactivate`, { method: 'POST' }),
+
+  delete: (id: string) => apiCall<void>(`/api/users/${id}`, { method: 'DELETE' }),
+
+  resetPassword: (id: string, newPassword: string) =>
+    apiCall<{ success: boolean }>(`/api/users/${id}/reset-password`, {
+      method: 'POST',
+      body: { newPassword },
+    }),
+};
+
+export const exportApi = {
+  projects: (params?: { status?: string; customerId?: string }) =>
+    apiCall<Project[]>(
+      '/api/export/projects' +
+        toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
+
+  customers: (params?: { hasProjects?: string }) =>
+    apiCall<Customer[]>(
+      '/api/export/customers' +
+        toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
+};
+
+export interface ExtractionResult {
+  customer: {
+    name: string | null;
+    phone: string | null;
+    email: string | null;
+    street: string | null;
+    zip: string | null;
+    city: string | null;
+  };
+  project: {
+    title: string | null;
+    description: string | null;
+  };
+}
+
+export const extractApi = {
+  extract: (text: string) =>
+    apiCall<ExtractionResult>('/api/extract', { method: 'POST', body: { text } }),
 };
 
 export type { AuthUser };

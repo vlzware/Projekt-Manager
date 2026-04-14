@@ -69,14 +69,21 @@ describe('Project Operations — List', () => {
       }
     });
 
-    it('seed mixes projects with and without addresses', async () => {
+    it('seed mixes customers with and without addresses', async () => {
       const res = await authGet(token, '/api/projects');
       const body = res.json();
 
       // Coverage claim about the seed: both variants must be present so
-      // UI tests downstream can exercise both branches.
-      const withAddress = body.data.filter((p: Record<string, unknown>) => p.address != null);
-      const withoutAddress = body.data.filter((p: Record<string, unknown>) => p.address == null);
+      // UI tests downstream can exercise both branches. Address now lives
+      // on the nested customer entity (data-model.md §5.6).
+      const withAddress = body.data.filter((p: Record<string, unknown>) => {
+        const c = p.customer as Record<string, unknown> | null;
+        return c?.address != null;
+      });
+      const withoutAddress = body.data.filter((p: Record<string, unknown>) => {
+        const c = p.customer as Record<string, unknown> | null;
+        return c?.address == null;
+      });
       expect(withAddress.length).toBeGreaterThan(0);
       expect(withoutAddress.length).toBeGreaterThan(0);
     });

@@ -145,15 +145,36 @@ Systematic check that the base is aligned and nothing is lagging or missing befo
 
 ## Iteration 6 - Specification expansion
 
-- [ ] security review (deferred from iteration 5)
-- [ ] spec expansion — API and UI for: data import/export, user management, project management, customer management
+- [x] security review (deferred from iteration 5)
+- [x] spec expansion — API and UI for: data import/export, user management, project management, customer management
+
+**Unplanned work**
+
+- tests for the new ACs
+- implementation of API and UI for these
+- implementation of API/UI for the LLM-email-extraction feature
+- a presentation[^1]
 
 **Artifacts**
 
 - new spec sections regarding the above
 - ACs for the above
 
-Next presentation checkpoint: iteration 7 or 8, once at least one feature vertical (e.g., import/export or user management) has a working UI.
+## Iteration 7 - Cleanup and Data
+
+- [ ] cleanup: UI, open issues
+- [ ] data: import/export consolidation
+- [ ] data: alignment of workflows for testing and deployment, migrations
+- [ ] data: R2 integration
+- [ ] data: automated and manual backup and recovery
+
+**Artifacts**
+
+- polished UI
+- new workflows defined, scripts added
+- spec updated
+- new tests
+- docs updated
 
 ## Next iterations
 

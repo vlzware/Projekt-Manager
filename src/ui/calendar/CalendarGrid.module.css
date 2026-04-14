@@ -6,6 +6,7 @@
   border-radius: 6px;
   overflow: hidden;
   min-height: 0;
+  background: #ffffff;
 }
 
 .headerRow {
@@ -35,15 +36,18 @@
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   min-height: 80px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
   position: relative;
+}
+
+.weekRow:nth-child(even) {
+  background: #f1f5f9;
 }
 
 .dayCell {
   padding: 4px;
   border-right: 1px solid #f8fafc;
   position: relative;
-  min-height: 80px;
 }
 
 .dayCell:last-child {

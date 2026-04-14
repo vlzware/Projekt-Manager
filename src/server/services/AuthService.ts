@@ -10,6 +10,9 @@
  */
 
 import type { Database } from '../db/connection.js';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type DbLike = any;
 import {
   findByUsername,
   updateLastLogin,
@@ -116,11 +119,15 @@ export class AuthService {
     // the self-service password change (data-model.md §5.5 audit
     // metadata contract). A future admin-reset endpoint would pass the
     // admin's id instead.
+    // Hash before the transaction (CPU-bound, no DB needed)
     const newHash = await hashPassword(newPassword);
-    await changePasswordRepo(this.db, user.id, newHash, user.id);
 
-    // Invalidate all other sessions (keep the current one alive)
-    await deleteSessionsByUserId(this.db, user.id, currentToken);
+    // Atomic: password change + session invalidation in one transaction.
+    // If session cleanup fails, the password change rolls back.
+    await this.db.transaction(async (tx) => {
+      await changePasswordRepo(tx as DbLike, user.id, newHash, user.id);
+      await deleteSessionsByUserId(tx as DbLike, user.id, currentToken);
+    });
 
     log.info({ userId, ip }, 'password_change');
   }

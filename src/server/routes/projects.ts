@@ -20,7 +20,7 @@ export function projectRoutes(db: Database) {
     app.addHook('preHandler', authenticate);
 
     // ---------------------------------------------------------------
-    // GET /api/projects
+    // GET /api/projects — list with filters
     // ---------------------------------------------------------------
     app.get(
       '/api/projects',
@@ -30,20 +30,78 @@ export function projectRoutes(db: Database) {
             type: 'object',
             properties: {
               offset: { type: 'integer', minimum: 0 },
-              limit: { type: 'integer', minimum: 0, maximum: 100 },
+              limit: { type: 'integer', minimum: 0, maximum: 200 },
+              status: {}, // Accept string or array — Fastify querystring parsing handles both
+              search: { type: 'string' },
+              hasNoDates: { type: 'string' },
+              customerId: { type: 'string', format: 'uuid' },
             },
           },
         },
         preHandler: requirePermission('project:read'),
       },
       async (request, reply) => {
-        const query = request.query as { offset?: number; limit?: number };
+        const query = request.query as {
+          offset?: number;
+          limit?: number;
+          status?: string | string[];
+          search?: string;
+          hasNoDates?: string;
+          customerId?: string;
+        };
         const result = await projectService.listProjects({
           offset: query.offset,
           limit: query.limit,
+          status: query.status,
+          search: query.search,
+          hasNoDates: query.hasNoDates === 'true',
+          customerId: query.customerId,
         });
 
         return reply.code(200).send({ data: result.data, total: result.total });
+      },
+    );
+
+    // ---------------------------------------------------------------
+    // POST /api/projects — create project
+    // ---------------------------------------------------------------
+    app.post(
+      '/api/projects',
+      {
+        schema: {
+          body: {
+            type: 'object',
+            required: ['number', 'title', 'customerId'],
+            additionalProperties: false,
+            properties: {
+              number: { type: 'string', minLength: 1 },
+              title: { type: 'string', minLength: 1 },
+              customerId: { type: 'string', format: 'uuid' },
+              status: { type: 'string' },
+              plannedStart: { type: ['string', 'null'], format: 'date' },
+              plannedEnd: { type: ['string', 'null'], format: 'date' },
+              assignedWorkerIds: { type: 'array', items: { type: 'string', format: 'uuid' } },
+              estimatedValue: { type: ['number', 'null'] },
+              notes: { type: ['string', 'null'] },
+            },
+          },
+        },
+        preHandler: requirePermission('project:create'),
+      },
+      async (request, reply) => {
+        const body = request.body as {
+          number: string;
+          title: string;
+          customerId: string;
+          status?: string;
+          plannedStart?: string | null;
+          plannedEnd?: string | null;
+          assignedWorkerIds?: string[];
+          estimatedValue?: number | null;
+          notes?: string | null;
+        };
+        const project = await projectService.createProject(body, request.user!.id, request.log);
+        return reply.code(201).send(project);
       },
     );
 
@@ -158,6 +216,69 @@ export function projectRoutes(db: Database) {
 
         const project = await projectService.updateDates(id, request.user!.id, body, request.log);
         return reply.code(200).send(project);
+      },
+    );
+
+    // ---------------------------------------------------------------
+    // PATCH /api/projects/:id — update project fields
+    // ---------------------------------------------------------------
+    app.patch(
+      '/api/projects/:id',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', format: 'uuid' } },
+          },
+          body: {
+            type: 'object',
+            additionalProperties: false,
+            minProperties: 1,
+            properties: {
+              title: { type: 'string', minLength: 1 },
+              customerId: { type: 'string', format: 'uuid' },
+              assignedWorkerIds: { type: 'array', items: { type: 'string', format: 'uuid' } },
+              estimatedValue: { type: ['number', 'null'] },
+              notes: { type: ['string', 'null'] },
+            },
+          },
+        },
+        preHandler: requirePermission('project:update'),
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const body = request.body as {
+          title?: string;
+          customerId?: string;
+          assignedWorkerIds?: string[];
+          estimatedValue?: number | null;
+          notes?: string | null;
+        };
+        const project = await projectService.updateProject(id, body, request.user!.id, request.log);
+        return reply.code(200).send(project);
+      },
+    );
+
+    // ---------------------------------------------------------------
+    // DELETE /api/projects/:id — soft-delete
+    // ---------------------------------------------------------------
+    app.delete(
+      '/api/projects/:id',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', format: 'uuid' } },
+          },
+        },
+        preHandler: requirePermission('project:delete'),
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        await projectService.deleteProject(id, request.user!.id, request.log);
+        return reply.code(200).send({ success: true, deleted: true });
       },
     );
   };

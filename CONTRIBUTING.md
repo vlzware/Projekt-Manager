@@ -45,10 +45,12 @@ Steps happen in this order. Skipping or reordering must be flagged.
 Each test references the criterion it covers (e.g., `// AC-3: Projects in "Anfrage" appear in first column`). After tests are written, an independent reviewer:
 
 1. Lists all acceptance criteria from the spec
-2. Maps each to its test(s)
-3. Flags unmapped criteria as gaps
+2. Classifies each as **critical** or **design** (see § Acceptance Criteria)
+3. Maps critical ACs to their unit/integration test(s)
+4. Maps design ACs to their visual regression screenshot(s)
+5. Flags unmapped criteria as gaps
 
-Gaps block implementation (step 4). The reviewer must be different from the test author. The maintained map lives in [docs/testing/traceability.md](docs/testing/traceability.md).
+Gaps in critical ACs block implementation (step 4). The reviewer must be different from the test author. The maintained map lives in [docs/testing/traceability.md](docs/testing/traceability.md).
 
 ### Security audit
 
@@ -65,6 +67,32 @@ Triggers include:
 Does NOT trigger for: UI styling, refactoring, test changes, documentation, domain logic that doesn't touch boundaries.
 
 The audit uses adversarial framing — reviewers with a security-specific lens, separate from the code quality review in step 6. Automated checks (`npm audit`, dependency scanning) run in CI on every push and complement but do not replace the manual audit.
+
+## Acceptance Criteria
+
+Not every AC warrants a unit or integration test. ACs are classified into two tiers based on what they guard:
+
+### Critical AC
+
+Guards a critical path — a defect here means data corruption, financial impact, authentication/authorization failure, data integrity violation, or misleading state that causes wrong user decisions.
+
+- **Verified by:** unit and/or integration test
+- **Traceability:** must appear in the test-spec traceability map with a test reference
+- **Examples:** "Deleting a project requires confirmation and is irreversible", "Only authenticated users can access the API", "A failed mutation reverts the optimistic UI update"
+
+### Design AC
+
+Specifies expected behavior that does not guard a critical path — layout, interaction flow, status display, sorting, visual state.
+
+- **Verified by:** visual regression (E2E screenshot diff)
+- **Traceability:** tracked in spec, mapped to a visual regression screenshot in the traceability review
+- **Examples:** "Projects in 'Anfrage' appear in the first column", "The export button is disabled when no projects are selected"
+
+### Classification test
+
+> **If this breaks, does the user lose data, money, access, or act on wrong information?**
+> Yes → Critical AC → unit/integration test.
+> No → Design AC → visual regression.
 
 ## Code Style
 

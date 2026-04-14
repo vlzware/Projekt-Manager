@@ -56,13 +56,28 @@ export function getCookieSecure(): boolean {
 
 // --- Rate Limiting -----------------------------------------------------------
 
-export const RATE_LIMIT = {
-  /** Login endpoint. */
-  login: { max: 5, timeWindow: '1 minute' },
+/**
+ * Rate limits.
+ *
+ * Returned by a function (not a module-level const) so the env read
+ * happens at call time — consistent with getCookieSecure() and the
+ * file-level rule that process.env is never read at import time.
+ *
+ * The login limit can be raised via LOGIN_RATE_LIMIT_MAX for
+ * environments where multiple browser contexts log in rapidly
+ * (e.g. Playwright E2E tests with fresh-context assertions).
+ * Production default: 5 per minute.
+ */
+export function getRateLimit() {
+  const loginRateMax = Number(process.env.LOGIN_RATE_LIMIT_MAX) || 5;
+  return {
+    /** Login endpoint. */
+    login: { max: loginRateMax, timeWindow: '1 minute' as const },
 
-  /** Password change endpoint. */
-  passwordChange: { max: 5, timeWindow: '1 minute' },
-} as const;
+    /** Password change endpoint. */
+    passwordChange: { max: 5, timeWindow: '1 minute' as const },
+  };
+}
 
 // --- Storage -----------------------------------------------------------------
 

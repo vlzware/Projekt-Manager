@@ -1,0 +1,47 @@
+/**
+ * Extraction-modal actions — thin wrappers around API calls with session handling.
+ *
+ * The UI layer must not import @/api/client directly (AC-33). These functions
+ * provide the same operations the EmailExtractModal needs, routed through
+ * the state layer with proper session-expiry delegation.
+ */
+
+import { extractApi, customerApi, projectApi } from '@/api/client';
+import { handleSessionExpired } from './sessionExpired';
+import type { Customer } from '@/domain/types';
+
+export async function extractFromEmail(text: string) {
+  const result = await extractApi.extract(text);
+  if (!result.ok && result.sessionExpired) handleSessionExpired();
+  return result;
+}
+
+export async function searchCustomers(query: string): Promise<Customer[]> {
+  const result = await customerApi.list({ search: query });
+  if (!result.ok) {
+    if (result.sessionExpired) handleSessionExpired();
+    return [];
+  }
+  return result.data.customers;
+}
+
+export async function createCustomerFromExtraction(data: {
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: { street: string; zip: string; city: string } | null;
+}) {
+  const result = await customerApi.create(data);
+  if (!result.ok && result.sessionExpired) handleSessionExpired();
+  return result;
+}
+
+export async function createProjectFromExtraction(data: {
+  number: string;
+  title: string;
+  customerId: string;
+}) {
+  const result = await projectApi.create(data);
+  if (!result.ok && result.sessionExpired) handleSessionExpired();
+  return result;
+}

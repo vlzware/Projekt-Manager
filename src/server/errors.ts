@@ -13,6 +13,7 @@ export type ErrorCode =
   | 'SESSION_EXPIRED'
   | 'NOT_PERMITTED'
   | 'VALIDATION_ERROR'
+  | 'CONFLICT'
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
   | 'SERVER_ERROR';
@@ -69,6 +70,27 @@ export function notPermitted(): AppError {
 
 export function validationError(message: string, details?: unknown): AppError {
   return new AppError('VALIDATION_ERROR', message, 422, details);
+}
+
+export function conflict(message: string): AppError {
+  return new AppError('CONFLICT', message, 409);
+}
+
+/**
+ * Walk a (possibly wrapped) Error chain looking for a 5-char SQLSTATE code.
+ * Returns null when no code is found.
+ */
+export function extractSqlState(err: unknown): string | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (!(current instanceof Error)) break;
+    const withCode = current as Error & { code?: string };
+    if (typeof withCode.code === 'string' && /^[0-9A-Z]{5}$/.test(withCode.code)) {
+      return withCode.code;
+    }
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 export function notFound(entity: string = STRINGS.entities.resource): AppError {

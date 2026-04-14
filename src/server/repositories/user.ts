@@ -2,11 +2,119 @@
  * User repository — database operations for the users table.
  */
 
-import { eq } from 'drizzle-orm';
+import { eq, count } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { users } from '../db/schema.js';
 
 export type UserRow = typeof users.$inferSelect;
+
+/** API-facing user shape (never includes passwordHash). */
+export function toUserResponse(row: UserRow) {
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.displayName,
+    roles: row.roles,
+    email: row.email ?? null,
+    active: row.active,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
+    createdBy: row.createdBy ?? null,
+    updatedBy: row.updatedBy ?? null,
+  };
+}
+
+export async function listUsers(
+  db: Database,
+  opts: { offset?: number; limit?: number } = {},
+): Promise<{ users: ReturnType<typeof toUserResponse>[]; total: number }> {
+  const baseQuery = db.select().from(users);
+  const paginatedQuery =
+    opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
+
+  const [rows, countResult] = await Promise.all([
+    paginatedQuery,
+    db.select({ value: count() }).from(users),
+  ]);
+
+  return {
+    users: rows.map(toUserResponse),
+    total: countResult[0]?.value ?? 0,
+  };
+}
+
+export async function createUser(
+  db: Database,
+  data: {
+    username: string;
+    displayName: string;
+    passwordHash: string;
+    roles: string[];
+    email?: string | null;
+    createdBy?: string | null;
+    updatedBy?: string | null;
+  },
+): Promise<ReturnType<typeof toUserResponse>> {
+  const rows = await db
+    .insert(users)
+    .values({
+      username: data.username,
+      displayName: data.displayName,
+      passwordHash: data.passwordHash,
+      roles: data.roles,
+      email: data.email ?? null,
+      active: true,
+      createdBy: data.createdBy ?? null,
+      updatedBy: data.updatedBy ?? null,
+    })
+    .returning();
+
+  return toUserResponse(rows[0]!);
+}
+
+export async function updateUser(
+  db: Database,
+  id: string,
+  actorId: string,
+  data: {
+    displayName?: string;
+    roles?: string[];
+    email?: string | null;
+  },
+): Promise<ReturnType<typeof toUserResponse> | null> {
+  const setClause: Record<string, unknown> = {
+    updatedAt: new Date(),
+    updatedBy: actorId,
+  };
+  if (data.displayName !== undefined) setClause.displayName = data.displayName;
+  if (data.roles !== undefined) setClause.roles = data.roles;
+  if ('email' in data) setClause.email = data.email;
+
+  const rows = await db.update(users).set(setClause).where(eq(users.id, id)).returning();
+  if (rows.length === 0) return null;
+  return toUserResponse(rows[0]!);
+}
+
+export async function reactivateUser(
+  db: Database,
+  id: string,
+  actorId: string,
+): Promise<ReturnType<typeof toUserResponse> | null> {
+  const rows = await db
+    .update(users)
+    .set({ active: true, updatedAt: new Date(), updatedBy: actorId })
+    .where(eq(users.id, id))
+    .returning();
+
+  if (rows.length === 0) return null;
+  return toUserResponse(rows[0]!);
+}
+
+export async function deleteUser(db: Database, id: string): Promise<boolean> {
+  const rows = await db.delete(users).where(eq(users.id, id)).returning({ id: users.id });
+  return rows.length > 0;
+}
 
 export async function findByUsername(db: Database, username: string): Promise<UserRow | null> {
   const rows = await db.select().from(users).where(eq(users.username, username)).limit(1);
@@ -33,11 +141,15 @@ export async function deactivateUser(
   db: Database,
   id: string,
   actorId: string | null,
-): Promise<void> {
-  await db
+): Promise<ReturnType<typeof toUserResponse> | null> {
+  const rows = await db
     .update(users)
     .set({ active: false, updatedAt: new Date(), updatedBy: actorId })
-    .where(eq(users.id, id));
+    .where(eq(users.id, id))
+    .returning();
+
+  if (rows.length === 0) return null;
+  return toUserResponse(rows[0]!);
 }
 
 /**

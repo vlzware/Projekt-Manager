@@ -6,6 +6,8 @@ import type { ViewMode } from '@/domain/types';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
 import { SummaryArea } from './SummaryArea';
+import { EmailExtractModal } from '../extraction/EmailExtractModal';
+import { PasswordChangeModal } from './PasswordChangeModal';
 import styles from './Header.module.css';
 
 export function Header() {
@@ -14,6 +16,8 @@ export function Header() {
   const logout = useAuthStore((s) => s.logout);
   const { navigateTo } = useRouterNav();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [extractOpen, setExtractOpen] = useState(false);
+  const [pwChangeOpen, setPwChangeOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -27,9 +31,16 @@ export function Header() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [dropdownOpen]);
 
+  const canReadUsers = authUser?.roles.some((r) => r === 'owner' || r === 'office') ?? false;
+  const canExtract = canReadUsers; // owner and office can use extraction
+
   const views: { key: ViewMode; label: string }[] = [
     { key: 'kanban', label: STRINGS.ui.viewKanban },
     { key: 'kalender', label: STRINGS.ui.viewCalendar },
+    { key: 'projekte', label: STRINGS.ui.viewProjects },
+    { key: 'kunden', label: STRINGS.ui.viewCustomers },
+    ...(canReadUsers ? [{ key: 'benutzer' as ViewMode, label: STRINGS.ui.viewUsers }] : []),
+    { key: 'daten', label: STRINGS.ui.viewData },
   ];
 
   const handleLogout = async () => {
@@ -41,7 +52,7 @@ export function Header() {
   };
 
   return (
-    <header className={styles.header}>
+    <header className={styles.header} data-testid="header">
       <div className={styles.navGroup}>
         <div className={styles.appName}>{BRANDING.appName}</div>
         <div className={styles.viewToggle}>
@@ -57,6 +68,28 @@ export function Header() {
           ))}
         </div>
       </div>
+      {canExtract && (
+        <button
+          className={styles.extractButton}
+          onClick={() => setExtractOpen(true)}
+          data-testid="extract-button"
+          title={STRINGS.ui.extractEmail}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <rect x="2" y="4" width="20" height="16" rx="2" />
+            <path d="M22 4L12 13L2 4" />
+          </svg>
+        </button>
+      )}
       <div className={styles.summaryWrapper}>
         <SummaryArea />
       </div>
@@ -73,6 +106,16 @@ export function Header() {
             <div className={styles.dropdown}>
               <button
                 className={styles.dropdownItem}
+                data-testid="pw-change-button"
+                onClick={() => {
+                  setDropdownOpen(false);
+                  setPwChangeOpen(true);
+                }}
+              >
+                {STRINGS.password.change}
+              </button>
+              <button
+                className={styles.dropdownItem}
                 data-testid="logout-button"
                 onClick={handleLogout}
               >
@@ -82,6 +125,8 @@ export function Header() {
           )}
         </div>
       )}
+      {extractOpen && <EmailExtractModal onClose={() => setExtractOpen(false)} />}
+      {pwChangeOpen && <PasswordChangeModal onClose={() => setPwChangeOpen(false)} />}
     </header>
   );
 }

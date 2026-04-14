@@ -16,7 +16,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createDatabase } from '../db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../seed.js';
-import { projects } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
+import { projects, customers } from '../db/schema.js';
 import type { Database } from '../db/connection.js';
 import type pg from 'pg';
 import path from 'path';
@@ -27,49 +28,55 @@ const migrationsFolder = path.resolve(__dirname, '../db/migrations');
 
 let db: Database;
 let pool: pg.Pool;
+/** A customer ID created for constraint tests. */
+let testCustomerId: string;
 
 describe('DB CHECK constraints — projects.planned_end requires planned_start', () => {
   beforeAll(async () => {
     const conn = createDatabase();
     db = conn.db;
     pool = conn.pool;
-    // Verify the new pool is live and PG has released prior connections
     await pool.query('SELECT 1');
     await migrate(db, { migrationsFolder });
     await seed(db, { force: true });
+
+    // Create a test customer for direct-insert tests
+    const rows = await db
+      .insert(customers)
+      .values({ name: 'Constraint Test Kunde' })
+      .returning({ id: customers.id });
+    testCustomerId = rows[0]!.id;
   });
 
   afterAll(async () => {
+    // Clean up test artifacts so they don't leak into the dev database
+    await db.delete(projects).where(eq(projects.customerId, testCustomerId));
+    await db.delete(customers).where(eq(customers.id, testCustomerId));
     await pool.end();
   });
 
   it('rejects direct INSERT of plannedEnd without plannedStart', async () => {
-    // Use the raw pg pool so the constraint name surfaces in the error
-    // (drizzle's wrapper hides it).
     let pgError: { code?: string; constraint?: string } | null = null;
     try {
       await pool.query(
-        `INSERT INTO projects (number, title, customer, planned_start, planned_end)
+        `INSERT INTO projects (number, title, customer_id, planned_start, planned_end)
          VALUES ($1, $2, $3, NULL, $4)`,
-        ['CHK-01', 'end without start', { name: 'Test' }, '2026-06-10T00:00:00Z'],
+        ['CHK-01', 'end without start', testCustomerId, '2026-06-10T00:00:00Z'],
       );
     } catch (err) {
       pgError = err as { code?: string; constraint?: string };
     }
 
     expect(pgError).not.toBeNull();
-    // PG error code 23514 = check_violation
     expect(pgError!.code).toBe('23514');
     expect(pgError!.constraint).toBe('projects_end_requires_start');
   });
 
   it('allows start without end, both dates, and neither', async () => {
-    // All three valid combinations must insert cleanly. If the constraint is
-    // written incorrectly (e.g., rejects start-only), this test surfaces it.
     const base = {
       title: 'constraint positive case',
-      customer: { name: 'Test' },
-    } as const;
+      customerId: testCustomerId,
+    };
 
     // Neither date
     await db

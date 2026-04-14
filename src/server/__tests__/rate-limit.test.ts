@@ -64,7 +64,7 @@ describe('Login rate limiting (end-to-end)', () => {
   });
 
   // The production limit is `{ max: 5, timeWindow: '1 minute' }` per IP for
-  // POST /api/auth/login — see `RATE_LIMIT.login` in src/server/config/index.ts.
+  // POST /api/auth/login — see `getRateLimit().login` in src/server/config/index.ts.
   // Using wrong credentials so we don't burn a valid session + deliberately
   // get 401s on the first 5 attempts; the 6th must be rejected by the limiter
   // BEFORE the credentials check runs, so it becomes 429.
@@ -114,7 +114,7 @@ describe('Login rate limiting (end-to-end)', () => {
   });
 
   // The change-password limit is `{ max: 5, timeWindow: '1 minute' }` per IP,
-  // declared the same way as the login limit (see RATE_LIMIT.passwordChange in
+  // declared the same way as the login limit (see getRateLimit().passwordChange in
   // src/server/config/index.ts). Before this test the limit was wired but
   // unverified — a regression that dropped the config from the route would
   // slip through login-only coverage. We use a distinct remoteAddress so the

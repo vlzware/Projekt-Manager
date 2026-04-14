@@ -35,6 +35,8 @@ function makeEnv(overrides: Partial<Env>): Env {
     BOOTSTRAP_ADMIN_USERNAME: undefined,
     BOOTSTRAP_ADMIN_PASSWORD: undefined,
     BOOTSTRAP_ADMIN_DISPLAY_NAME: undefined,
+    OPENROUTER_API_KEY: undefined,
+    OPENROUTER_MODEL: 'google/gemini-2.5-flash-lite',
     ...overrides,
   };
 }

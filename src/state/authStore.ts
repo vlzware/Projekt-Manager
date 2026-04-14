@@ -10,6 +10,10 @@ import { authApi, type AuthUser } from '@/api/client';
 import { STRINGS } from '@/config/strings';
 import { useProjectStore } from './projectStore';
 import { useUIStore } from './uiStore';
+import { useCustomerStore } from './customerStore';
+import { useUserStore } from './userStore';
+import { useProjectManagementStore } from './projectManagementStore';
+import { useImportExportStore } from './importExportStore';
 
 interface AuthState {
   authUser: AuthUser | null;
@@ -50,6 +54,33 @@ function clearDownstreamState(): void {
     filterAgedOnly: false,
     filterNoDates: false,
     activeView: 'kanban',
+  });
+  useCustomerStore.setState({
+    customers: [],
+    total: 0,
+    loading: false,
+    error: null,
+  });
+  useUserStore.setState({
+    users: [],
+    total: 0,
+    loading: false,
+    error: null,
+  });
+  useProjectManagementStore.setState({
+    projects: [],
+    customers: [],
+    loading: false,
+    error: null,
+  });
+  useImportExportStore.setState({
+    importData: null,
+    importResult: null,
+    importError: null,
+    importing: false,
+    exportCustomerFilter: '',
+    exporting: false,
+    exportError: null,
   });
 }
 
@@ -114,3 +145,16 @@ export const useAuthStore = create<AuthState>((set) => ({
     clearDownstreamState();
   },
 }));
+
+/**
+ * Standalone password-change action. Does not affect auth state (the session
+ * stays valid), so it lives outside the store. UI components can import this
+ * instead of reaching for @/api/client directly.
+ */
+export async function changePassword(currentPassword: string, newPassword: string) {
+  const result = await authApi.changePassword(currentPassword, newPassword);
+  if (!result.ok && result.sessionExpired) {
+    useAuthStore.getState().handleSessionExpired();
+  }
+  return result;
+}

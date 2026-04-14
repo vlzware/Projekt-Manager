@@ -86,6 +86,7 @@ describe('Object Storage Module', () => {
   // The cost is a few extra uploads per run. Storage tests are
   // integration-level and not performance-critical — isolation wins.
   // Do not "optimize" this back into a shared key.
+  // AC-40 [crit]
   describe('AT-16: Upload, retrieve, and verify', () => {
     const testContent = Buffer.from(
       'AT-16 Testdatei: Projekt-Manager Objekt-Speicher Integrationstest.',

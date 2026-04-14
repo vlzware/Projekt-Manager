@@ -1,7 +1,7 @@
 /**
  * Drizzle ORM schema — PostgreSQL tables for Projekt-Manager.
  *
- * Three tables: projects, users, sessions.
+ * Five tables: customers, projects, project_workers, users, sessions.
  * See data-model.md for entity definitions.
  */
 
@@ -13,6 +13,7 @@ import {
   text,
   boolean,
   timestamp,
+  date,
   jsonb,
   numeric,
   index,
@@ -62,8 +63,27 @@ export const sessions = pgTable(
 );
 
 // ---------------------------------------------------------------
+// Customers (data-model.md §5.6)
+// ---------------------------------------------------------------
+export const customers = pgTable('customers', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull(),
+  phone: varchar('phone', { length: 100 }),
+  email: varchar('email', { length: 255 }),
+  address: jsonb('address').$type<{
+    street: string;
+    zip: string;
+    city: string;
+  } | null>(),
+  notes: text('notes'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+});
+
+// ---------------------------------------------------------------
 // Projects (data-model.md §5.1)
-// Customer and address stored as JSONB.
 // ---------------------------------------------------------------
 export const projects = pgTable(
   'projects',
@@ -74,44 +94,37 @@ export const projects = pgTable(
     status: varchar('status', { length: 50 }).notNull().default('anfrage'),
     statusChangedAt: timestamp('status_changed_at', { withTimezone: true }).notNull().defaultNow(),
 
-    customer: jsonb('customer').notNull().$type<{
-      name: string;
-      phone?: string;
-      email?: string;
-    }>(),
+    customerId: uuid('customer_id')
+      .notNull()
+      .references(() => customers.id),
 
-    address: jsonb('address').$type<{
-      street: string;
-      zip: string;
-      city: string;
-    } | null>(),
-
-    plannedStart: timestamp('planned_start', { withTimezone: true }),
-    plannedEnd: timestamp('planned_end', { withTimezone: true }),
+    plannedStart: date('planned_start', { mode: 'date' }),
+    plannedEnd: date('planned_end', { mode: 'date' }),
 
     estimatedValue: numeric('estimated_value', { precision: 12, scale: 2 }),
     notes: text('notes'),
+    deleted: boolean('deleted').notNull().default(false),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-    // Audit references — nullable for seeded/imported records (data-model.md §5.5).
-    // ON DELETE SET NULL: a user is deactivated rather than deleted (§6.9), but
-    // if a user is ever hard-deleted we keep the project rather than orphan it.
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
     updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
   },
   (table) => [
-    // Used by future dashboard queries (count by status, filter by status).
     index('idx_projects_status').on(table.status),
-    // Used by future "recently changed" and aging threshold queries.
     index('idx_projects_status_changed_at').on(table.statusChangedAt),
-    // Invariant: an end date cannot exist without a start date.
-    // The API already rejects this combination in project-dates.ts; the
-    // constraint is defense in depth against direct DB writes (migrations,
-    // seed scripts, manual SQL) that bypass the route layer. See #54.
+    index('idx_projects_customer_id').on(table.customerId),
     check(
       'projects_end_requires_start',
       sql`${table.plannedEnd} IS NULL OR ${table.plannedStart} IS NOT NULL`,
+    ),
+    check(
+      'projects_end_not_before_start',
+      sql`${table.plannedEnd} IS NULL OR ${table.plannedStart} IS NULL OR ${table.plannedEnd} >= ${table.plannedStart}`,
+    ),
+    check(
+      'projects_valid_status',
+      sql`${table.status} IN ('anfrage', 'angebot', 'beauftragt', 'geplant', 'in_arbeit', 'abnahme', 'rechnung_faellig', 'abgerechnet', 'erledigt')`,
     ),
   ],
 );

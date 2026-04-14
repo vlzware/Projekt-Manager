@@ -8,24 +8,24 @@
 
 ### 11.1 Mandatory Constraints
 
-- Language: **TypeScript** (type safety for the data model is non-negotiable) — applies to both client and server code.
-- Testing: unit tests + component tests + API integration tests + at least one E2E smoke test.
+- Type-safe language for both client and server code.
+- Testing: unit + component + API integration + at least one E2E smoke test.
 - All data mutations go through the API. The front end never accesses the database directly.
-- Stack decisions are recorded in ADR documents (see [ADR-0002](../adr/0002-tech-stack-typescript-react-vite-zustand.md) for the front-end stack, [ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) for deployment infrastructure, [ADR-0004](../adr/0004-backend-stack-fastify-drizzle-node-postgres.md) for the backend stack).
+- Decisions that need context and rationale are recorded in [ADRs](../adr/index.md). All important implementation choices are visible in [ARCHITECTURE.md](../../ARCHITECTURE.md).
 
 ### 11.2 Responsibility Boundaries
 
 The system is organized into seven responsibility layers. The split between **Routes**, **Services**, and **Storage** on the server side is load-bearing — routes never reach into the database directly; they delegate to services, which orchestrate repositories and emit domain events.
 
-| Layer        | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Config**   | State definitions, thresholds, colors, company assumptions, role definitions, German strings, validated env. Imported by other layers, imports nothing application-internal.                                                                                                                                                                                                                                               |
-| **Domain**   | Pure functions: transition rules, aging calculation, date/session validation, summary computation, types. Never imports from state, API, routes, services, storage, or UI.                                                                                                                                                                                                                                                 |
-| **Storage**  | Encapsulates all database and object storage operations. Repository modules (`src/server/repositories/`) expose typed query/mutation functions; the object storage client (`src/server/storage/`) wraps the S3 SDK. Imported primarily by the Services layer. Exception: authentication middleware (`src/server/middleware/`) reads the session repository directly — architecturally this is part of the route auth hook. |
-| **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, event emission via `services/events.ts`. Imports from domain, storage, config. Never imports from routes or middleware.                                                                                                                                                    |
-| **Routes**   | Thin HTTP adapters: Fastify schema validation, cookie handling, preHandlers (`authenticate`, `requirePermission`), response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                                                                                  |
-| **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports. Stores live in `src/state/`.                                                                                                                                                                                                                                                  |
-| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared React hooks (`src/hooks/`) — e.g. `useProjectTransition`, `useRouterNav` — are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                            |
+| Layer        | Responsibility                                                                                                                                                                                                                                                                                                                                        |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Config**   | State definitions, thresholds, colors, company assumptions, role definitions, German strings, validated env. Imported by other layers, imports nothing application-internal.                                                                                                                                                                          |
+| **Domain**   | Pure functions: transition rules, aging calculation, date/session validation, summary computation, types. Never imports from state, API, routes, services, storage, or UI.                                                                                                                                                                            |
+| **Storage**  | Encapsulates all database and object storage operations. Repository modules expose typed query/mutation functions; the object storage client wraps the S3-compatible SDK. Imported primarily by the Services layer. Exception: authentication middleware reads the session repository directly — architecturally this is part of the route auth hook. |
+| **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, domain event emission. Imports from domain, storage, config. Never imports from routes or middleware.                                                                                                 |
+| **Routes**   | Thin HTTP adapters: request schema validation, cookie handling, authentication and authorization pre-handlers, response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                 |
+| **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports.                                                                                                                                                                                                          |
+| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared hooks are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                            |
 
 **Dependency direction** (no reverse imports):
 
@@ -36,34 +36,66 @@ config  ←  domain  ←  storage  ←  services  ←  routes
 
 The domain layer is shared: both the server (services, routes) and the client (state, UI) import domain types and pure functions. This ensures that type definitions, transition rules, and aging calculations exist in a single place.
 
-**Enforcement:** the layering rules above are the contract. They are enforced by review plus automated `no-restricted-imports` ESLint zones — a PR that imports `src/server/db/schema.js` from `src/ui/**` or `src/server/repositories/**` from `src/server/routes/**` fails lint. See [`eslint.config.js`](../../eslint.config.js) for the authoritative zone list.
+**Enforcement:** the layering rules above are the contract. They are enforced by review plus automated linter import restriction zones — a PR that imports storage modules from UI code or repository modules from route code fails lint.
 
 ### 11.3 State Layer Behavioral Contract
 
 The state layer is a client-side cache delegating to the API.
 
-**State:** the full project list (fetched from API), the authenticated user, an optional active filter (by workflow state or aged-buffer subset), the active view (Kanban or Kalender), a confirm-dialog store (modal state for transition confirmations), mutation tracking (in-flight flag, error message), selected project ID (detail panel), and session-checked flag.
+**State:** the state layer manages the following data domains:
 
-**Mutations** (all persisted mutations go through the API):
+- **Projects** — the full project list (fetched from API), grouped by workflow state for Kanban rendering.
+- **Customers** — the full customer list, used in project forms and the customer management view.
+- **Users** — the user list (for admin views and worker assignment dropdowns). Only fetched when needed and when the user has `user:read` permission.
+- **Auth** — the authenticated user profile and session state.
+- **View state** — active view, active filter (by workflow state, aged-buffer subset, or custom criteria), selected entity ID for detail views.
+- **Mutation tracking** — in-flight flags and error messages per mutation. Confirm-dialog state for transition confirmations.
+- **Import state** — parsed file contents, validation preview, submission progress, result summary.
 
-- Transition a project forward or backward by one state → call API, update local state on success
-- Update a project's planned start/end dates → call API, update local state on success
-- Login / logout → call API, update auth state
-- Fetch all projects → call API, replace local project list
-- Set or clear a filter by workflow state (local only — no API call)
+**Mutations** (per [§11.1](#111-mandatory-constraints)):
+
+- Transition a project forward or backward by one state
+- Update a project's planned start/end dates
+- Create, update, or soft-delete a project
+- Create or update a customer
+- Create, update, deactivate, or reactivate a user (admin)
+- Reset a user's password (admin); change own password
+- Bulk import projects or customers
+- Login / logout
+- Fetch or refresh project list, customer list, user list
+- Set or clear a filter (local only — no API call)
 - Switch between views (local only — clears active filter)
 
 **Queries** (derived from locally cached data):
 
 - Projects grouped by workflow state
+- Projects filtered by search, status, customer, date range, or composite criteria
+- Customers filtered by search
 - Summary: count of projects per action state, count of aged buffer items per state with threshold, count of projects without planned dates
-- Current authenticated user
+- Current authenticated user and permissions
 
-The server-side event bus (`events.ts`) provides the hook mechanism — `project.transitioned` and `project.dates_changed` events are emitted by the service layer so that subscribers (audit logger, notification sender) can attach without modifying transition or update logic.
+**Server-side event bus.** Events are emitted by the service layer so that subscribers (audit logger, notification sender, analytics) can attach without modifying the originating logic.
+
+| Event                   | Emitted when                                        |
+| ----------------------- | --------------------------------------------------- |
+| `project.created`       | A project is created (single or bulk)               |
+| `project.updated`       | A project's fields are updated                      |
+| `project.transitioned`  | A project changes workflow state                    |
+| `project.dates_changed` | A project's planned dates are modified              |
+| `project.deleted`       | A project is soft-deleted                           |
+| `customer.created`      | A customer is created (single or bulk)              |
+| `customer.updated`      | A customer's fields are updated                     |
+| `user.created`          | A user account is created                           |
+| `user.updated`          | A user account is updated (profile or role changes) |
+| `user.deactivated`      | A user account is deactivated                       |
+| `user.reactivated`      | A user account is reactivated                       |
+| `user.password_changed` | A user's password is changed (self or admin reset)  |
+
+Events carry the entity ID, the acting user ID, and a timestamp at minimum. Payload shape is an implementation decision.
 
 ### 11.4 Object Storage Module
 
-The object storage module encapsulates all binary/file storage operations. It is wired as an infrastructure module and exercised in test and deployed environments against real object storage. User-facing upload paths (worker uploads, Aufmaß, photos per [kickoff](../project/kickoff.md)) are not part of this specification; the storage plumbing exists so that adding them requires only a new API endpoint and UI component.
+The object storage module encapsulates all binary/file storage operations. It is wired as an infrastructure module and exercised in test and deployed environments against real object storage. The storage plumbing exists so that adding user-facing upload paths requires only a new API endpoint and UI component.
 
 Capabilities at minimum:
 
@@ -76,31 +108,30 @@ Capabilities at minimum:
 
 Structural requirements that keep future extensions cheap. Each row states a contract the codebase must uphold and the failure mode that would close the door.
 
-| Door                                             | Contract                                                                                                                                   | Closed if...                                                                                  |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| Adding/removing workflow states                  | States driven by a configuration array, not hardcoded logic                                                                                | Column count or state names are hardcoded in components                                       |
-| Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently                                                                                         | Kanban and Calendar are coupled to each other                                                 |
-| Adding fields to Project                         | Interface with optional fields; UI tolerates missing data                                                                                  | Components crash on undefined fields                                                          |
-| Adding file uploads / attachments                | Object storage module exists at the infrastructure layer (§11.4); Project model accepts optional attachments                               | Data layer assumes all project data fits in a single flat object                              |
-| Adding authentication / roles                    | Authentication and a role-based permission matrix sit behind the API (`requirePermission()`); identity never baked into components         | User identity baked into component logic                                                      |
-| Adding notifications                             | Server-side event bus (§11.3) provides `project.transitioned` / `project.dates_changed` hooks so subscribers attach without touching flows | Transitions are handled inline in UI event handlers                                           |
-| Adding project creation / deletion               | API surface is open to additive operations; the bulk-import shape (§14.2.4) generalizes to further bulk operations                         | API designed only for reads + transitions with no room for new operations                     |
-| Extracting Customer entity                       | Customer is a nested object in Project, ready to be normalized into a separate table with a foreign key                                    | Customer fields are spread across multiple flat columns with no grouping                      |
-| Connecting Worker entities to Users              | `project_workers` join table links projects to `UserAccount` with FK constraints                                                           | Worker assignment is an unstructured string with no path to a User reference                  |
-| Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                                             | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers) |
-| Multi-tenancy / multi-company                    | Configs are per-instance via environment; data model does not preclude adding tenant scoping                                               | Company names, branding, or workflow definitions are hardcoded in application code            |
-| Multi-language                                   | All user-facing strings are centralized in `src/config/strings.ts`; no inline literals in components                                       | Inline literals in components; strings.ts bypassed                                            |
+| Door                                             | Contract                                                                                                          | Closed if...                                                                                                 |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Adding/removing workflow states                  | States driven by a configuration array, not hardcoded logic                                                       | Column count or state names are hardcoded in components                                                      |
+| Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently                                                                | Kanban and Calendar are coupled to each other                                                                |
+| Adding fields to Project                         | Interface with optional fields; UI tolerates missing data                                                         | Components crash on undefined fields                                                                         |
+| Adding file uploads / attachments                | Object storage module exists at the infrastructure layer (§11.4); Project model accepts optional attachments      | Data layer assumes all project data fits in a single flat object                                             |
+| Adding authentication / roles                    | Authentication and a role-based permission matrix sit behind the API; identity never baked into components        | User identity baked into component logic                                                                     |
+| Adding notifications                             | Server-side event bus (§11.3) provides hooks for all CRUD operations so subscribers attach without touching flows | Transitions are handled inline in UI event handlers                                                          |
+| Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                    | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers)                |
+| Multi-language                                   | All user-facing strings are centralized in configuration; no inline literals in components                        | Inline literals in components; string configuration bypassed                                                 |
+| Adding management views for new entities         | Management views follow a uniform pattern (searchable table + CRUD forms) and consume the shared state layer      | Entity-specific CRUD logic is wired directly into view components instead of through the state layer and API |
+| Adding export formats (e.g. CSV)                 | Export operations accept a `format` parameter; the API contract does not assume JSON-only responses               | Export logic is hardcoded to produce JSON with no format dispatch                                            |
+| Adding bulk operations for new entities          | Bulk import/export follow a uniform result shape (`{ imported, errors }` for import; entity array for export)     | Each bulk operation has a bespoke result format                                                              |
 
 ### 11.6 Deployment Topology
 
 The deployed system consists of four components:
 
-| Component          | Role                                                                                                                                                                                                                                                                                                                                                                           |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Reverse proxy**  | TLS termination, HTTP → HTTPS redirect or non-binding, request forwarding to the application. Production uses Caddy with Cloudflare DNS-01 ACME — see [ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) and AC-45. The evaluation (HTTP-only) mode substitutes `Caddyfile.http` per [ADR-0013](../adr/0013-http-only-evaluation-mode.md). |
-| **Application**    | Serves the front end and exposes the API. Frontend and backend may be a single deployable unit or separate services — this is an ADR decision. The app container listens only on the reverse-proxy-visible network, never on the public interface directly.                                                                                                                    |
-| **Database**       | Persistent storage for projects, users, and sessions.                                                                                                                                                                                                                                                                                                                          |
-| **Object storage** | Binary/file storage for future attachments.                                                                                                                                                                                                                                                                                                                                    |
+| Component          | Role                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reverse proxy**  | TLS termination, HTTP → HTTPS redirect or non-binding, request forwarding to the application. Production uses automated certificate management — see [ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) and AC-45. The evaluation (HTTP-only) mode substitutes an HTTP-only configuration per [ADR-0013](../adr/0013-http-only-evaluation-mode.md). |
+| **Application**    | Serves the front end and exposes the API. Frontend and backend may be a single deployable unit or separate services — this is an ADR decision. The app container listens only on the reverse-proxy-visible network, never on the public interface directly.                                                                                                                             |
+| **Database**       | Persistent storage for projects, users, and sessions.                                                                                                                                                                                                                                                                                                                                   |
+| **Object storage** | Binary/file storage for future attachments.                                                                                                                                                                                                                                                                                                                                             |
 
 These components may run on the same provider or on separate providers. The spec does not prescribe hosting vendors, managed services, or container strategies — those are ADR decisions. Network topology is further constrained by [ADR-0008](../adr/0008-vpn-first-network-access.md) (VPN-first access) and by the AC-45 HTTPS-or-nothing rule.
 
@@ -108,9 +139,9 @@ Any deployed environment must exercise all four components end-to-end. A topolog
 
 ### 11.7 Continuous Delivery Pipeline
 
-- **CI gate** (`.github/workflows/ci.yml`): runs on every push and PR to protected branches. Pipeline: `npm audit`, lint, format check, type check, env-drift check, unit + component + API-integration tests against real Postgres and real MinIO, and `npm run build`. Image is built and pushed to GHCR on push events (not on PRs). Playwright is **not** part of this gate.
-- **On-demand E2E gate** (`.github/workflows/e2e.yml`): Playwright runs on manual trigger, with the same Postgres + MinIO + seed shape as the CI gate. Intended to be run before a manual deploy. AC-37 in [verification.md §15.7](verification.md#157-engineering) documents the topology from the acceptance-criteria side.
-- **Deploy:** manual, pull-based. The operator promotes a CI-built image to the hosted environment over WireGuard. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
+- **CI gate**: runs on every push and PR to protected branches. Pipeline: dependency audit, lint, format check, type check, env-drift check, unit + component + API-integration tests against real database and real object storage, and build. Image is built and pushed to the container registry on push events (not on PRs). E2E tests are **not** part of this gate.
+- **On-demand E2E gate**: the E2E test framework runs on manual trigger, with the same database + object storage + seed shape as the CI gate. Intended to be run before a manual deploy. AC-37 in [verification.md §15.7](verification.md#157-engineering) documents the topology from the acceptance-criteria side.
+- **Deploy:** manual, pull-based. The operator promotes a CI-built image to the hosted environment over VPN. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
 - A failed deployment must not take down the currently running system. The deploy script polls the health endpoint after container swap.
 - Environment separation and rollback mechanisms are documented in [docs/ops/manual-deploy.md](../../docs/ops/manual-deploy.md).
 
@@ -118,11 +149,9 @@ Any deployed environment must exercise all four components end-to-end. A topolog
 
 ## 12. Configuration Boundaries
 
-Per [ADR-0001](../adr/0001-generalized-system-with-configurable-customer-specifics.md) and the [kickoff](../project/kickoff.md), company-specific assumptions must remain adjustable. This section distinguishes what is universal from what is company-configurable.
-
 ### 12.1 Universal Domain Rules
 
-Rules that define the generic workflow behavior of the product — these apply to all installations:
+Rules that apply to all installations:
 
 - Adjacent-only forward/backward transitions
 - Terminal state concept (no transitions out of the final state)
@@ -132,17 +161,17 @@ Rules that define the generic workflow behavior of the product — these apply t
 
 ### 12.2 Company-Configurable Settings
 
-The following values are centralized as single-source constants in `src/config/` (client) or `src/server/config/` (server) and may vary per deployment without code changes elsewhere. Each corresponds to a `[C]` marker somewhere in this spec.
+The following values are centralized as single-source constants and may vary per deployment without code changes elsewhere. Each corresponds to a `[C]` marker somewhere in this spec.
 
-- App name, branding, footer text (`src/config/brandingConfig.ts`)
-- Workflow state configuration — labels, colors, order, count, aging thresholds, collapse tiers (`src/config/stateConfig.ts`)
-- German UI and error strings (`src/config/strings.ts`)
-- Date and locale display settings (`src/config/localeConfig.ts`)
+- App name, branding, footer text
+- Workflow state configuration — labels, colors, order, count, aging thresholds, collapse tiers
+- German UI and error strings
+- Date and locale display settings
 - Project numbering format — year + sequential (see [data-model.md §5.1](data-model.md#51-project-entity))
-- Password policy — minimum length, maximum byte length, blocklist (`src/server/config/password-policy.ts`)
-- Session duration (`src/server/config/index.ts`)
-- Role set and per-role permission matrix (`src/server/config/permissions.ts`)
-- Seed default password (`src/test/seedAssumptions.ts`)
+- Password policy — minimum length, maximum byte length, blocklist
+- Session duration
+- Role set and per-role permission matrix
+- Seed default password
 
 ### 12.3 Configuration Requirements
 
@@ -200,7 +229,7 @@ The UI must tolerate incomplete project data without crashing:
 
 ### 13.6 Security
 
-- Passwords are hashed using a modern, slow hashing algorithm (bcrypt, argon2, or equivalent). Plaintext passwords are never stored or logged.
+- Passwords are hashed using a modern, slow hashing algorithm. Plaintext passwords are never stored or logged.
 - Session tokens are cryptographically random and opaque. They carry no user data themselves.
 - API endpoints validate authentication and authorization on every request. No security-by-obscurity.
 - API input is validated and sanitized. No raw user input reaches the database.
@@ -209,16 +238,16 @@ The UI must tolerate incomplete project data without crashing:
 
 ### 13.7 Observability
 
-At minimum, the deployed system logs authentication events and API errors to standard output. Log aggregation, metrics, and alerting are outside the scope of this specification.
+At minimum, the deployed system logs authentication events and API errors to standard output.
 
 ### 13.8 Security Checklist for New Endpoints
 
 Every new API endpoint must satisfy:
 
 1. **Authentication**: valid, active session required (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md), [api.md section 14.3](api.md#143-authorization-rules)).
-2. **Authorization**: role-based permission check via `requirePermission()` (see `src/server/config/permissions.ts`).
-3. **Input validation**: Fastify JSON schema on request body and params (see [api.md section 14.2](api.md#142-operations)). For bulk operations, per-item semantic validation may live in the service layer per §11.2.
-4. **Error handling**: use `AppError`, no stack traces or DB field names leaked (see `src/server/errors.ts`).
+2. **Authorization**: role-based permission check on every protected route.
+3. **Input validation**: request schema validation on request body and params (see [api.md section 14.2](api.md#142-operations)). For bulk operations, per-item semantic validation may live in the service layer per §11.2.
+4. **Error handling**: use application error types, no stack traces or DB field names leaked.
 5. **Rate limiting**: configured on authentication endpoints (login, password change). Mutation endpoints are not rate-limited — at current scale with VPN-only access ([ADR-0008](../adr/0008-vpn-first-network-access.md)), this is a known, accepted limitation.
-6. **CSRF protection**: `SameSite=Strict` cookies + CSP headers (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md)).
+6. **CSRF protection**: mechanism defined in [ADR-0005](../adr/0005-session-management-httponly-cookies.md).
 7. **Password handling**: never log or store plaintext (see [ADR-0006](../adr/0006-password-policy-nist-blocklist.md)).

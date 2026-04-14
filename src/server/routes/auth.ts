@@ -9,7 +9,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
-import { AUTH_CONFIG, RATE_LIMIT, getCookieSecure } from '../config/index.js';
+import { AUTH_CONFIG, getRateLimit, getCookieSecure } from '../config/index.js';
 import { AuthService } from '../services/AuthService.js';
 
 export function authRoutes(db: Database) {
@@ -35,7 +35,7 @@ export function authRoutes(db: Database) {
           },
         },
         config: {
-          rateLimit: RATE_LIMIT.login,
+          rateLimit: getRateLimit().login,
         },
       },
       async (request, reply) => {
@@ -104,7 +104,7 @@ export function authRoutes(db: Database) {
           },
         },
         config: {
-          rateLimit: RATE_LIMIT.passwordChange,
+          rateLimit: getRateLimit().passwordChange,
         },
       },
       async (request, reply) => {

@@ -9,11 +9,19 @@
 
 export {
   type ProjectRow,
+  type ListProjectsOpts,
   toProject,
   listProjects,
   getProject,
   insertProject,
+  updateProject,
+  softDeleteProject,
   ProjectNotFoundError,
 } from './project-read.js';
-export { transitionForward, transitionBackward, TransitionError } from './project-transitions.js';
+export {
+  transitionForward,
+  transitionBackward,
+  TransitionError,
+  ConcurrentModificationError,
+} from './project-transitions.js';
 export { updateDates, DateValidationError } from './project-dates.js';

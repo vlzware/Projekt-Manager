@@ -31,6 +31,8 @@ If the environment cannot meet a security or quality requirement, the correct be
 
 Concrete anchor: HTTPS must always terminate; the VPN does **not** substitute for TLS (defense in depth). See [ADR-0008](docs/adr/0008-vpn-first-network-access.md) and [#47](https://github.com/vlzware/Projekt-Manager/issues/47). If a review proposes removing an HTTPS-enforcement AC because the Caddyfile isn't yet configured, the answer is to configure the Caddyfile — the AC was right.
 
+**No backwards-compatibility work.** The project has no consumers; backwards-compatibility is a non-issue. Any code dealing with backwards-compatibility (shims, re-exports, deprecated wrappers, migration paths for removed APIs) is technical debt. When this changes, this section will say so.
+
 ## Undecided Specifics
 
 Many details are deliberately left open until their iteration. When work hits something undefined:
@@ -42,5 +44,8 @@ Many details are deliberately left open until their iteration. When work hits so
 ## Testing
 
 - **Touching anything under `e2e/` means running Playwright (`npx playwright test` or `npm run test:e2e`) before declaring done.** `npm run test` / `vitest` does not cover E2E — the vitest config excludes `e2e/**`. A refactor that compiles and type-checks can still fail Playwright (e.g. state pollution between split tests). CI runs Playwright only on **manual dispatch** via `.github/workflows/e2e.yml` (added in iteration 5 consolidation); the push/PR gate in `ci.yml` deliberately skips it. "CI green on push" is therefore **not** a substitute for running Playwright locally before calling a change done. If Playwright cannot run in the current environment, say so explicitly — do not silently skip.
+- **Memory: close the MCP browser before running E2E tests.** The Playwright MCP server keeps a persistent Chromium instance (~4 GB). Playwright E2E tests spawn additional browser instances per worker. Running both simultaneously on the 24 GB VM can OOM Chrome. Close the MCP browser (`browser_close`) or limit workers (`--workers=2`) before invoking `npx playwright test`.
 - Touching anything under `src/` means running `vitest` (via `npm run test` or `npm run test:coverage`) as part of the DoD.
+- **Touching anything under `src/` means running `npm run lint` as part of the DoD.** Lint enforces architecture layer boundaries (AC-33), React best-practice rules, and import restrictions that type-checking alone does not catch. The pre-commit hook now runs ESLint via lint-staged, but agents should verify lint _before_ attempting to commit — discovering violations at hook time wastes a round-trip.
 - Changing a test file is not done until it has been executed. "Written" ≠ "passed".
+- **Do not generate unit or integration tests for design ACs.** Only critical ACs (data corruption, money, auth, data integrity, misleading state) warrant unit/integration tests. Design ACs are covered by E2E visual regression. See CONTRIBUTING.md § Acceptance Criteria and [ADR-0014](docs/adr/0014-ac-tier-system-critical-vs-design.md).
