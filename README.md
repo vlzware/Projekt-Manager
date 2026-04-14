@@ -4,7 +4,7 @@ A centralized system for consolidation, control, and viewing of data and process
 
 ## Status
 
-**Iteration 6 — Specification expansion**: extending the spec for data import/export and the management surfaces (user, project, customer), plus a security review deferred from iteration 5. Walking skeleton live at `https://prmng.org` behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME and first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
+**Iteration 7 — Cleanup and Data**: UI polish, import/export consolidation, workflow alignment for testing/deployment/migrations, R2 integration, and automated plus manual backup and recovery. Walking skeleton live at `https://prmng.org` behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME and first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
 
 ## Prerequisites
 
