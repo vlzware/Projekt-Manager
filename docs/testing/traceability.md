@@ -118,12 +118,12 @@ This document is maintained as part of the workflow's test-spec traceability rev
 | AC-106 | [vis]   | §15.19 | Extract: modal textarea + action             |              |                   |                                                  |                                      |
 | AC-107 | [vis]   | §15.19 | Extract: review fields + existing match      |              |                   |                                                  |                                      |
 | AC-108 | [infra] | §15.20 | Tokens in single source, no palette leaks    |              |                   |                                                  | N/A — structural / repo-scan         |
-| AC-109 | [vis]   | §15.20 | `[data-theme]` overrides semantic layer      |              |                   | theming.spec.ts                                  |                                      |
-| AC-110 | [vis]   | §15.20 | Dark mode surfaces + WCAG AA contrast        |              |                   | theming.spec.ts (dark)                           |                                      |
-| AC-111 | [vis]   | §15.20 | Theme attribute applied before CSS parse     |              |                   | theming.spec.ts (no-FOUC)                        |                                      |
+| AC-109 | [vis]   | §15.20 | `[data-theme]` overrides semantic layer      |              |                   |                                                  | Awaiting VR baseline                 |
+| AC-110 | [vis]   | §15.20 | Dark mode surfaces + WCAG AA contrast        |              |                   |                                                  | Awaiting VR baseline                 |
+| AC-111 | [vis]   | §15.20 | Theme attribute applied before first paint   |              |                   | theming.spec.ts (no-FOUC)                        |                                      |
 | AC-112 | [vis]   | §15.20 | `'system'` tracks OS scheme changes          |              |                   | theming.spec.ts (matchMedia)                     |                                      |
 | AC-113 | [infra] | §15.20 | Accent from config, no hardcoded accent      |              |                   |                                                  | N/A — structural / repo-scan         |
-| AC-114 | [vis]   | §15.20 | Changing accent propagates to all surfaces   |              |                   | theming.spec.ts (accent)                         |                                      |
+| AC-114 | [vis]   | §15.20 | Changing accent propagates to all surfaces   |              |                   |                                                  | Awaiting VR baseline                 |
 | AC-115 | [crit]  | §15.21 | themePreference stored + default + CHECK     |              | AT-56, AT-57      |                                                  | Defense-in-depth CHECK               |
 | AC-116 | [crit]  | §15.21 | Self-update round-trips through API          |              | AT-58             |                                                  |                                      |
 | AC-117 | [crit]  | §15.21 | Self-update without session rejected         |              | AT-59             |                                                  |                                      |

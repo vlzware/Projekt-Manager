@@ -24,6 +24,8 @@
   min-width: 220px;
   margin-left: auto;
   outline: none;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   transition: border-color 0.15s;
 }
 
@@ -163,6 +165,8 @@
   font-size: 0.875rem;
   outline: none;
   box-sizing: border-box;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   transition: border-color 0.15s;
 }
 
@@ -179,6 +183,7 @@
   outline: none;
   box-sizing: border-box;
   background: var(--color-surface-raised);
+  color: var(--color-text);
   cursor: pointer;
 }
 
@@ -194,6 +199,8 @@
   font-size: 0.875rem;
   outline: none;
   box-sizing: border-box;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   resize: vertical;
   min-height: 80px;
   font-family: inherit;

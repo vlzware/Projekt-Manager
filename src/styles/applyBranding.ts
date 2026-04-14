@@ -28,18 +28,34 @@
 
 import { BRANDING } from '../config/brandingConfig';
 
-// Property names are pinned by AC-114 / e2e/theming.spec.ts. Do not rename.
-const BRAND_ACCENT_LIGHT = '--brand-accent-light';
-const BRAND_ACCENT_DARK = '--brand-accent-dark';
+// Stylesheet id used to find and replace the brand sheet on subsequent
+// calls (e.g. HMR or test re-mounts). Keeping a single owned <style>
+// element avoids accumulating duplicates.
+const BRAND_STYLE_ID = 'brand-accent';
 
 export function applyBranding(): void {
   // SSR / non-browser safety. The app is CSR-only today, but the guard is
   // cheap and keeps the module import-safe in test runners that stub the
   // DOM after module load.
   if (typeof document === 'undefined') return;
-  const root = document.documentElement;
-  if (!root) return;
+  const head = document.head;
+  if (!head) return;
 
-  root.style.setProperty(BRAND_ACCENT_LIGHT, BRANDING.accent.light);
-  root.style.setProperty(BRAND_ACCENT_DARK, BRANDING.accent.dark);
+  // Inject as a CSS rule (not inline style on <html>) so the cascade
+  // composes normally — later <style> tags injected by tests, themes,
+  // or build-time substitution can override the brand without fighting
+  // inline-style specificity. Property names --brand-accent-light /
+  // --brand-accent-dark are pinned by AC-114 / e2e/theming.spec.ts.
+  const css = `:root {
+  --brand-accent-light: ${BRANDING.accent.light};
+  --brand-accent-dark: ${BRANDING.accent.dark};
+}`;
+
+  let sheet = document.getElementById(BRAND_STYLE_ID) as HTMLStyleElement | null;
+  if (!sheet) {
+    sheet = document.createElement('style');
+    sheet.id = BRAND_STYLE_ID;
+    head.appendChild(sheet);
+  }
+  sheet.textContent = css;
 }

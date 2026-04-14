@@ -61,6 +61,8 @@
   border-radius: 6px;
   font-size: 1rem;
   outline: none;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   transition: border-color 0.15s;
 }
 
