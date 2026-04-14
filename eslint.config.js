@@ -100,6 +100,7 @@ export default tseslint.config(
       'src/ui/**/*.{ts,tsx}',
       'src/hooks/**/*.{ts,tsx}',
       'src/api/**/*.{ts,tsx}',
+      'src/styles/**/*.{ts,tsx}',
       'src/App.tsx',
       'src/main.tsx',
     ],
@@ -108,6 +109,7 @@ export default tseslint.config(
       'src/ui/**/__tests__/**',
       'src/hooks/**/__tests__/**',
       'src/api/**/__tests__/**',
+      'src/styles/**/__tests__/**',
     ],
     rules: {
       'no-restricted-imports': [

@@ -21,11 +21,14 @@
   --color-slate-600: #475569;
   --color-slate-700: #334155;
   --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
 
   /* Pure */
   --color-white: #ffffff;
 
   /* Blue (accent) */
+  --color-blue-400: #60a5fa;
   --color-blue-500: #3b82f6;
   --color-blue-600: #2563eb;
   --color-blue-950: #1e3a5f;
@@ -34,6 +37,7 @@
   --color-red-50: #fef2f2;
   --color-red-200: #fecaca;
   --color-red-300: #fca5a5;
+  --color-red-400: #f87171;
   --color-red-500: #ef4444;
   --color-red-600: #dc2626;
   --color-red-900: #7f1d1d;
@@ -41,6 +45,7 @@
 
   /* Amber / yellow (warning) */
   --color-amber-100: #fef3c7;
+  --color-amber-300: #fcd34d;
   --color-amber-400: #fbbf24;
   --color-amber-500: #f59e0b;
   --color-amber-700: #b45309;
@@ -53,8 +58,11 @@
   /* Green (success) */
   --color-green-50: #f0fdf4;
   --color-green-200: #bbf7d0;
+  --color-green-300: #86efac;
+  --color-green-400: #4ade80;
   --color-green-500: #22c55e;
   --color-green-800: #166534;
+  --color-green-950: #052e16;
 
   /* ----- Semantic layer ------------------------------------------------- */
 
@@ -73,7 +81,10 @@
   --color-text-muted: var(--color-slate-500);
   --color-text-subtle: var(--color-slate-400);
   --color-text-strong: var(--color-slate-700);
-  --color-text-on-accent: var(--color-white);
+  /* Dark text on blue accents — both blue-500 (light) and blue-400 (dark) are
+     too light for white text to meet WCAG AA (2.54:1 and 3.68:1 respectively).
+     Slate-900 reaches 4.97:1 / 7.31:1. */
+  --color-text-on-accent: var(--color-slate-900);
   --color-text-on-inverse: var(--color-slate-50);
   --color-text-on-inverse-muted: var(--color-slate-200);
   --color-text-on-inverse-subtle: var(--color-slate-400);
@@ -124,6 +135,79 @@
   --color-focus-ring-rgb: 59, 130, 246; /* --color-blue-500 */
   --color-warning-rgb: 245, 158, 11; /* --color-amber-500 */
   --color-on-inverse-rgb: 255, 255, 255; /* --color-white */
+}
+
+/*
+ * Dark theme override — overrides the semantic layer only; primitives are
+ * shared with :root. Inverse chrome goes deeper than surface-base so the
+ * header/footer remain a grounded dark frame distinct from the body.
+ */
+[data-theme='dark'] {
+  /* Surface */
+  --color-surface-base: var(--color-slate-900);
+  --color-surface-raised: var(--color-slate-800);
+  --color-surface-muted: var(--color-slate-700);
+  --color-surface-sunken: var(--color-slate-950);
+  --color-surface-inverse: var(--color-slate-950);
+  --color-surface-inverse-raised: var(--color-slate-800);
+  --color-surface-inverse-hover: var(--color-slate-700);
+
+  /* Text */
+  --color-text: var(--color-slate-100);
+  --color-text-secondary: var(--color-slate-300);
+  --color-text-muted: var(--color-slate-400);
+  --color-text-subtle: var(--color-slate-500);
+  --color-text-strong: var(--color-slate-50);
+  --color-text-on-accent: var(--color-slate-900);
+  --color-text-on-inverse: var(--color-slate-100);
+  --color-text-on-inverse-muted: var(--color-slate-300);
+  --color-text-on-inverse-subtle: var(--color-slate-500);
+
+  /* Border */
+  --color-border: var(--color-slate-700);
+  --color-border-subtle: var(--color-slate-800);
+  --color-border-muted: var(--color-slate-800);
+  --color-border-inverse: var(--color-slate-700);
+
+  /* Accent */
+  --color-accent: var(--color-blue-400);
+  --color-accent-hover: var(--color-blue-500);
+  --color-accent-active-surface: var(--color-blue-950);
+  --color-focus-ring: var(--color-blue-400);
+
+  /* Status — danger */
+  --color-danger: var(--color-red-400);
+  --color-danger-strong: var(--color-red-500);
+  --color-danger-bg: var(--color-red-950);
+  --color-danger-border: var(--color-red-900);
+  --color-danger-text: var(--color-red-300);
+  --color-danger-inverse-bg: var(--color-red-950);
+  --color-danger-inverse-hover: var(--color-red-900);
+  --color-danger-inverse-text: var(--color-red-300);
+
+  /* Status — warning */
+  --color-warning: var(--color-amber-400);
+  --color-warning-bg: var(--color-amber-950);
+  --color-warning-text: var(--color-amber-300);
+  --color-warning-on-inverse-text: var(--color-amber-300);
+  --color-warning-hint-bg: var(--color-amber-950);
+  --color-warning-hint-border: var(--color-amber-800);
+  --color-warning-hint-text: var(--color-amber-300);
+  --color-warning-inverse-bg: var(--color-amber-950);
+  --color-warning-inverse-border: var(--color-amber-800);
+
+  /* Status — success */
+  --color-success: var(--color-green-400);
+  --color-success-bg: var(--color-green-950);
+  --color-success-border: var(--color-green-800);
+  --color-success-text: var(--color-green-300);
+
+  /* Alpha overlays — overlay kept black (shadows over a dark surface still
+     read as depth); other triplets re-mirror their dark-mode semantic target. */
+  --color-overlay-rgb: 0, 0, 0; /* black */
+  --color-focus-ring-rgb: 96, 165, 250; /* --color-blue-400 */
+  --color-warning-rgb: 251, 191, 36; /* --color-amber-400 */
+  --color-on-inverse-rgb: 241, 245, 249; /* --color-slate-100 */
 }
 
 body {
