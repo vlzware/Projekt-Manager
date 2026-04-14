@@ -33,6 +33,7 @@ interface RoleCase {
   canUpdateDates: boolean;
   canCreateCustomer: boolean;
   canDeleteCustomer: boolean;
+  canImport: boolean;
 }
 
 /**
@@ -53,6 +54,7 @@ const roleCases: Record<Role, RoleCase> = {
     canUpdateDates: true,
     canCreateCustomer: true,
     canDeleteCustomer: true,
+    canImport: true,
   },
   office: {
     username: 'buero',
@@ -67,6 +69,7 @@ const roleCases: Record<Role, RoleCase> = {
     canUpdateDates: true,
     canCreateCustomer: true,
     canDeleteCustomer: false,
+    canImport: true,
   },
   worker: {
     username: 'arbeiter1',
@@ -81,6 +84,7 @@ const roleCases: Record<Role, RoleCase> = {
     canUpdateDates: false,
     canCreateCustomer: false,
     canDeleteCustomer: false,
+    canImport: false,
   },
   bookkeeper: {
     username: 'buchhalter',
@@ -95,6 +99,7 @@ const roleCases: Record<Role, RoleCase> = {
     canUpdateDates: false,
     canCreateCustomer: false,
     canDeleteCustomer: false,
+    canImport: false,
   },
 };
 
@@ -186,6 +191,16 @@ test.describe('AC-121: permission-based UI visibility', () => {
       } else {
         expect(await customerDeleteBtns.count()).toBe(0);
       }
+
+      // -- Daten (Import/Export) view ------------------------------------
+      // AC-90: import section hidden when user has neither project:create
+      // nor customer:write. Export section always visible (all roles have
+      // project:read and customer:read).
+      await page.getByTestId('view-toggle-daten').click();
+      await page.getByTestId('import-export-view').waitFor();
+
+      await expect(page.getByTestId('import-entity-select')).toHaveCount(c.canImport ? 1 : 0);
+      await expect(page.getByTestId('export-entity-select')).toHaveCount(1);
 
       // -- Benutzer management view (only if user:read) ------------------
       if (c.canReadUsers) {

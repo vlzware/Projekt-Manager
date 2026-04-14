@@ -7,7 +7,7 @@
 
 import { STRINGS } from '@/config/strings';
 import { STATE_CONFIGS } from '@/config/stateConfig';
-import { useAuthStore } from '@/state/authStore';
+import { usePermission } from '@/hooks/usePermission';
 import { useImportExportStore } from '@/state/importExportStore';
 import styles from './Management.module.css';
 
@@ -15,8 +15,15 @@ const MAX_IMPORT_FILE_MB = 5;
 const MAX_IMPORT_FILE_BYTES = MAX_IMPORT_FILE_MB * 1024 * 1024;
 
 export function ImportExportView() {
-  const authUser = useAuthStore((s) => s.authUser);
-  const canImport = authUser?.roles.some((r) => r === 'owner' || r === 'office') ?? false;
+  // AC-90: gated by the union of project:create (for project import) and
+  // customer:write (for customer import). Today the role matrix grants
+  // both to the same set (owner, office); if that ever diverges the
+  // entity selector should start filtering its options — currently out
+  // of scope per YAGNI. Both hooks called unconditionally so `||` short-
+  // circuit does not skip the second call across renders.
+  const canImportProjects = usePermission('project:create');
+  const canImportCustomers = usePermission('customer:write');
+  const canImport = canImportProjects || canImportCustomers;
 
   const importEntity = useImportExportStore((s) => s.importEntity);
   const importData = useImportExportStore((s) => s.importData);
@@ -93,111 +100,105 @@ export function ImportExportView() {
   return (
     <div className={styles.container} data-testid="import-export-view">
       {/* ---- IMPORT SECTION ---- */}
-      <div className={styles.section}>
-        <h3 className={styles.sectionTitle}>{STRINGS.ui.import}</h3>
+      {canImport && (
+        <div className={styles.section}>
+          <h3 className={styles.sectionTitle}>{STRINGS.ui.import}</h3>
 
-        <div className={styles.inlineGroup}>
-          <label className={styles.formLabel}>{STRINGS.ui.entityType}</label>
-          <select
-            className={styles.formSelect}
-            value={importEntity}
-            onChange={(e) => setImportEntity(e.target.value as 'customers' | 'projects')}
-            data-testid="import-entity-select"
-            disabled={!canImport}
-            style={{ width: 'auto' }}
-          >
-            <option value="customers">{STRINGS.ui.customers}</option>
-            <option value="projects">{STRINGS.ui.projects}</option>
-          </select>
-        </div>
-
-        {!canImport && (
-          <div className={styles.permissionHint} data-testid="import-permission-hint">
-            {STRINGS.auth.notPermitted}
-          </div>
-        )}
-
-        <div className={styles.formGroup} style={{ marginTop: 12 }}>
-          <label className={styles.formLabel}>{STRINGS.ui.uploadFile}</label>
-          <input
-            type="file"
-            accept=".json"
-            onChange={handleFileChange}
-            data-testid="import-file-input"
-            disabled={!canImport}
-          />
-        </div>
-
-        {importData && importData.length > 0 && (
-          <>
-            <table
-              className={styles.table}
-              data-testid="import-preview-table"
-              style={{ marginTop: 12 }}
+          <div className={styles.inlineGroup}>
+            <label className={styles.formLabel}>{STRINGS.ui.entityType}</label>
+            <select
+              className={styles.formSelect}
+              value={importEntity}
+              onChange={(e) => setImportEntity(e.target.value as 'customers' | 'projects')}
+              data-testid="import-entity-select"
+              style={{ width: 'auto' }}
             >
-              <thead>
-                <tr>
-                  <th>#</th>
-                  {importEntity === 'customers' ? (
-                    <>
-                      <th>{STRINGS.ui.name}</th>
-                      <th>{STRINGS.ui.phone}</th>
-                      <th>{STRINGS.ui.email}</th>
-                    </>
-                  ) : (
-                    <>
-                      <th>{STRINGS.ui.number}</th>
-                      <th>{STRINGS.ui.title}</th>
-                      <th>{STRINGS.ui.status}</th>
-                    </>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {importData.map((item, i) => previewColumns(item as Record<string, unknown>, i))}
-              </tbody>
-            </table>
-
-            <div style={{ marginTop: 12 }}>
-              <button
-                className={styles.submitButton}
-                onClick={runImport}
-                disabled={importing || !canImport}
-                data-testid="import-submit"
-              >
-                {STRINGS.ui.importSubmit}
-              </button>
-            </div>
-          </>
-        )}
-
-        {importError && (
-          <div className={styles.error} style={{ marginTop: 12 }}>
-            {importError}
+              <option value="customers">{STRINGS.ui.customers}</option>
+              <option value="projects">{STRINGS.ui.projects}</option>
+            </select>
           </div>
-        )}
 
-        {importResult && (
-          <div style={{ marginTop: 12 }} data-testid="import-result">
-            <div className={styles.resultBox}>
-              {STRINGS.ui.importedCount(importResult.imported)}
-              {importResult.errors.length > 0 &&
-                ` · ${STRINGS.ui.errorCount(importResult.errors.length)}`}
-            </div>
-            {importResult.errors.map((err) => (
-              <div
-                key={err.index}
-                className={styles.errorRow}
-                data-testid={`import-error-row-${err.index}`}
+          <div className={styles.formGroup} style={{ marginTop: 12 }}>
+            <label className={styles.formLabel}>{STRINGS.ui.uploadFile}</label>
+            <input
+              type="file"
+              accept=".json"
+              onChange={handleFileChange}
+              data-testid="import-file-input"
+            />
+          </div>
+
+          {importData && importData.length > 0 && (
+            <>
+              <table
+                className={styles.table}
+                data-testid="import-preview-table"
+                style={{ marginTop: 12 }}
               >
-                <span className={styles.resultBoxError}>
-                  {STRINGS.ui.row} {err.index}: {err.message}
-                </span>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    {importEntity === 'customers' ? (
+                      <>
+                        <th>{STRINGS.ui.name}</th>
+                        <th>{STRINGS.ui.phone}</th>
+                        <th>{STRINGS.ui.email}</th>
+                      </>
+                    ) : (
+                      <>
+                        <th>{STRINGS.ui.number}</th>
+                        <th>{STRINGS.ui.title}</th>
+                        <th>{STRINGS.ui.status}</th>
+                      </>
+                    )}
+                  </tr>
+                </thead>
+                <tbody>
+                  {importData.map((item, i) => previewColumns(item as Record<string, unknown>, i))}
+                </tbody>
+              </table>
+
+              <div style={{ marginTop: 12 }}>
+                <button
+                  className={styles.submitButton}
+                  onClick={runImport}
+                  disabled={importing}
+                  data-testid="import-submit"
+                >
+                  {STRINGS.ui.importSubmit}
+                </button>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            </>
+          )}
+
+          {importError && (
+            <div className={styles.error} style={{ marginTop: 12 }}>
+              {importError}
+            </div>
+          )}
+
+          {importResult && (
+            <div style={{ marginTop: 12 }} data-testid="import-result">
+              <div className={styles.resultBox}>
+                {STRINGS.ui.importedCount(importResult.imported)}
+                {importResult.errors.length > 0 &&
+                  ` · ${STRINGS.ui.errorCount(importResult.errors.length)}`}
+              </div>
+              {importResult.errors.map((err) => (
+                <div
+                  key={err.index}
+                  className={styles.errorRow}
+                  data-testid={`import-error-row-${err.index}`}
+                >
+                  <span className={styles.resultBoxError}>
+                    {STRINGS.ui.row} {err.index}: {err.message}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---- EXPORT SECTION ---- */}
       <div className={styles.section}>

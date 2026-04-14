@@ -405,16 +405,6 @@
   font-size: 0.8rem;
 }
 
-.permissionHint {
-  padding: 8px 12px;
-  background: var(--color-warning-hint-bg);
-  border: 1px solid var(--color-warning-hint-border);
-  border-radius: 6px;
-  color: var(--color-warning-hint-text);
-  font-size: 0.8rem;
-  margin-top: 8px;
-}
-
 .sectionDivider {
   margin-top: 12px;
   padding-top: 12px;

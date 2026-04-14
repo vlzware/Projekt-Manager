@@ -130,9 +130,6 @@
   --color-warning-bg: var(--color-amber-100);
   --color-warning-text: var(--color-amber-700);
   --color-warning-on-inverse-text: var(--color-amber-400);
-  --color-warning-hint-bg: var(--color-yellow-50);
-  --color-warning-hint-border: var(--color-yellow-200);
-  --color-warning-hint-text: var(--color-amber-800);
   --color-warning-inverse-bg: var(--color-amber-950);
   --color-warning-inverse-border: var(--color-amber-900);
 
@@ -210,9 +207,6 @@
   --color-warning-bg: var(--color-amber-950);
   --color-warning-text: var(--color-amber-300);
   --color-warning-on-inverse-text: var(--color-amber-300);
-  --color-warning-hint-bg: var(--color-amber-950);
-  --color-warning-hint-border: var(--color-amber-800);
-  --color-warning-hint-text: var(--color-amber-300);
   --color-warning-inverse-bg: var(--color-amber-950);
   --color-warning-inverse-border: var(--color-amber-800);
 
