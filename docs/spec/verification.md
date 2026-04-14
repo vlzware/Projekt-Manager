@@ -155,7 +155,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-87** `[vis]`: Submitting an import displays a result summary: count of imported records and a list of failed rows with index and German error message.
 - **AC-88** `[vis]`: Exporting projects produces a downloadable JSON file containing all non-deleted projects matching the selected filters.
 - **AC-89** `[vis]`: Exporting customers produces a downloadable JSON file containing all customers matching the selected filters.
-- **AC-90** `[vis]`: Import operations respect permissions: project import requires `project:create`, customer import requires `customer:write`. Unauthorized users see the import UI but cannot submit.
+- **AC-90** `[crit]`: Import operations are gated by permissions: project import requires `project:create`, customer import requires `customer:write`. Users without the required permission do not see the import controls — a specialization of [AC-121](#1516-management-views) for this view.
 
 ### 15.18 Data Integrity
 
