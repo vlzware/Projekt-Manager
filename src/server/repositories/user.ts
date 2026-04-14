@@ -5,8 +5,18 @@
 import { eq, count } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { users } from '../db/schema.js';
+import type { ThemePreference } from '../../config/themeStorage.js';
 
 export type UserRow = typeof users.$inferSelect;
+
+/**
+ * Narrow the raw `text` column type from Drizzle to the domain literal
+ * union. The DB-level CHECK constraint `users_valid_theme_preference`
+ * (migration 0013) guarantees the cast is sound at read time.
+ */
+function narrowThemePreference(value: string): ThemePreference {
+  return value as ThemePreference;
+}
 
 /** API-facing user shape (never includes passwordHash). */
 export function toUserResponse(row: UserRow) {
@@ -17,6 +27,7 @@ export function toUserResponse(row: UserRow) {
     roles: row.roles,
     email: row.email ?? null,
     active: row.active,
+    themePreference: narrowThemePreference(row.themePreference),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
@@ -92,6 +103,33 @@ export async function updateUser(
   if ('email' in data) setClause.email = data.email;
 
   const rows = await db.update(users).set(setClause).where(eq(users.id, id)).returning();
+  if (rows.length === 0) return null;
+  return toUserResponse(rows[0]!);
+}
+
+/**
+ * Self-scope update — the authenticated user mutating their own row.
+ *
+ * The signature is deliberately narrow: only fields the user themselves
+ * is allowed to change appear here. Identity-bearing fields (`username`,
+ * `roles`, `active`) are excluded at the type level so that a mistake
+ * in the route layer (e.g. forwarding an attacker-controlled body verbatim)
+ * cannot reach the repository. See api.md §14.2.1 design notes.
+ */
+export async function updateSelf(
+  db: Database,
+  userId: string,
+  patch: { themePreference?: ThemePreference },
+): Promise<ReturnType<typeof toUserResponse> | null> {
+  const setClause: Record<string, unknown> = {
+    updatedAt: new Date(),
+    updatedBy: userId,
+  };
+  if (patch.themePreference !== undefined) {
+    setClause.themePreference = patch.themePreference;
+  }
+
+  const rows = await db.update(users).set(setClause).where(eq(users.id, userId)).returning();
   if (rows.length === 0) return null;
   return toUserResponse(rows[0]!);
 }

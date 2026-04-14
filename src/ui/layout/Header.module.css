@@ -142,6 +142,32 @@
   background: var(--color-surface-inverse-raised);
 }
 
+/* Theme-selector section sits above the other dropdown actions. The label
+   is non-interactive; the options below are standard dropdown items with
+   a visual "selected" affordance. */
+.dropdownSection {
+  border-bottom: 1px solid var(--color-border-inverse);
+  padding: 4px 0;
+}
+
+.dropdownSectionLabel {
+  padding: 6px 14px 4px;
+  color: var(--color-text-on-inverse-subtle);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.dropdownItemSelected {
+  background: var(--color-surface-inverse-raised);
+  color: var(--color-text-on-inverse);
+}
+
+.dropdownItemSelected:hover {
+  background: var(--color-surface-inverse-hover);
+}
+
 @media (max-width: 1200px) {
   .summaryWrapper {
     flex-basis: 100%;

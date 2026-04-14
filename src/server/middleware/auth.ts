@@ -12,6 +12,7 @@ import { findSession } from '../repositories/session.js';
 import { unauthenticated, sessionExpired, notPermitted } from '../errors.js';
 import { hasPermission, type Permission } from '../config/permissions.js';
 import type { Database } from '../db/connection.js';
+import type { ThemePreference } from '../../config/themeStorage.js';
 
 export interface AuthUser {
   id: string;
@@ -19,6 +20,7 @@ export interface AuthUser {
   displayName: string;
   roles: string[];
   email: string | null;
+  themePreference: ThemePreference;
 }
 
 declare module 'fastify' {
@@ -66,6 +68,7 @@ export function createAuthMiddleware(db: Database) {
       displayName: result.user.displayName,
       roles: result.user.roles,
       email: result.user.email,
+      themePreference: result.user.themePreference,
     };
   };
 }

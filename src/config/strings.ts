@@ -132,6 +132,15 @@ export const STRINGS = {
     resetSuccess: 'Passwort wurde zurückgesetzt.',
   },
 
+  // Theme selector in the user menu — labels pinned by spec §8.7.2 and by
+  // the e2e contract in e2e/theme-preference.spec.ts.
+  theme: {
+    section: 'Darstellung',
+    light: 'Hell',
+    dark: 'Dunkel',
+    system: 'Systemstandard',
+  },
+
   ui: {
     confirm: 'Bestätigen',
     ok: 'OK',

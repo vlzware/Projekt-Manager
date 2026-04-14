@@ -42,6 +42,23 @@ function applyScheme(scheme: ResolvedTheme): void {
   }
 }
 
+/**
+ * Resolve a theme preference to a concrete scheme and apply it to the
+ * document root. Shared by the startup runtime below, the authStore's
+ * `updateThemePreference` action, and the session-hydration path so all
+ * three touch the same resolve/apply pair — the inline FOUC script in
+ * index.html is the one deliberate duplicate (it has to stay import-free
+ * for the pre-JS frame to work).
+ *
+ * Safe to call in non-browser contexts (SSR, tests without a DOM); it
+ * no-ops when `window`/`document` are undefined.
+ */
+export function applyThemePreference(preference: ThemePreference): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const mql = typeof window.matchMedia === 'function' ? window.matchMedia(DARK_SCHEME_QUERY) : null;
+  applyScheme(resolveScheme(preference, mql));
+}
+
 export function startThemeRuntime(): void {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
 

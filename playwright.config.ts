@@ -28,7 +28,8 @@ const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/user.json');
  * visual-regression) run in parallel in a separate project that
  * completes before this one starts.
  */
-const MUTATING_TESTS = /kanban-flows|management-flows|import-export-flows|visual-regression-management|visual-regression-import-export/;
+const MUTATING_TESTS =
+  /kanban-flows|management-flows|import-export-flows|visual-regression-management|visual-regression-import-export|theme-preference/;
 const DEMO_TESTS = /demo-.*\.spec\.ts/;
 
 export default defineConfig({

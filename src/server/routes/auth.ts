@@ -71,13 +71,65 @@ export function authRoutes(db: Database) {
     // GET /api/auth/me
     // ---------------------------------------------------------------
     app.get('/api/auth/me', { preHandler: authenticate }, async (request, reply) => {
-      const { id, username, displayName, roles, email } = request.user!;
+      const { id, username, displayName, roles, email, themePreference } = request.user!;
       // Enveloped under `user` to match POST /api/auth/login — both
       // endpoints return the same user profile shape, so a single
       // `{ user: AuthUser }` contract lets typed clients share types.
       // See iteration-5 consolidation review E F-7.
-      return reply.code(200).send({ user: { id, username, displayName, roles, email } });
+      return reply
+        .code(200)
+        .send({ user: { id, username, displayName, roles, email, themePreference } });
     });
+
+    // ---------------------------------------------------------------
+    // PATCH /api/auth/me — self-scope preference update (api.md §14.2.1)
+    //
+    // Body is open-ended by design: future iterations may add further
+    // user-controlled fields alongside themePreference. The JSON-Schema
+    // pin below enforces the allowed set, so any unknown key is
+    // rejected via the standard Fastify validation path (VALIDATION_ERROR).
+    // ---------------------------------------------------------------
+    app.patch(
+      '/api/auth/me',
+      {
+        preHandler: authenticate,
+        schema: {
+          body: {
+            type: 'object',
+            additionalProperties: false,
+            minProperties: 1,
+            properties: {
+              themePreference: {
+                type: 'string',
+                // data-model.md §5.7 — the accepted set. Kept in sync with
+                // the DB CHECK `users_valid_theme_preference` (migration 0013).
+                enum: ['light', 'dark', 'system'],
+              },
+            },
+          },
+        },
+      },
+      async (request, reply) => {
+        const body = request.body as { themePreference?: 'light' | 'dark' | 'system' };
+        const updated = await authService.updateSelfPreferences(
+          request.user!.id,
+          body,
+          request.log,
+        );
+        // Same envelope shape as GET /api/auth/me and login — a typed
+        // client consumes one response type across all three endpoints.
+        return reply.code(200).send({
+          user: {
+            id: updated.id,
+            username: updated.username,
+            displayName: updated.displayName,
+            roles: updated.roles,
+            email: updated.email,
+            themePreference: updated.themePreference,
+          },
+        });
+      },
+    );
 
     // ---------------------------------------------------------------
     // POST /api/auth/change-password

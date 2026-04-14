@@ -92,6 +92,13 @@
       "when": 1776364800000,
       "tag": "0012_planned_dates_to_date_type",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1776451200000,
+      "tag": "0013_users_theme_preference",
+      "breakpoints": true
     }
   ]
 }

@@ -1,20 +1,21 @@
 /**
- * Data integrity tests — AC-94 through AC-99.
+ * Data integrity tests — AC-94 through AC-99, AC-115 (CHECK half).
  *
  * Verifies defense-in-depth constraints identified by the data integrity
  * audit: optimistic locking on transitions, soft-delete immutability,
  * DB-level CHECK constraints, FK integrity on audit columns, and atomic
- * project creation.
+ * project creation. Also pins the users.theme_preference CHECK constraint
+ * (AC-115 defense in depth — see data-model.md §5.3, §5.7).
  *
- * AT-42 to AT-48 (verification.md §16.2).
+ * AT-42 to AT-49, AT-57 (verification.md §16.2).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createDatabase } from '../db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../seed.js';
-import { eq } from 'drizzle-orm';
-import { projects, customers } from '../db/schema.js';
+import { eq, like } from 'drizzle-orm';
+import { projects, customers, users } from '../db/schema.js';
 import type { Database } from '../db/connection.js';
 import type pg from 'pg';
 import path from 'path';
@@ -336,5 +337,86 @@ describe('AC-99: Atomic project creation', () => {
       .json()
       .data.find((p: Record<string, unknown>) => p.number === 'ATOMIC-FAIL-01');
     expect(orphan).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------
+// §15.21 AC-115: users.theme_preference CHECK constraint
+// AT-57
+//
+// Defense in depth — the API validator already rejects an invalid
+// themePreference (covered by AT-60). But the DB is the last line:
+// migrations, seeds, `psql` sessions, or any future service that
+// bypasses the route layer must not be able to persist a value
+// outside the allowed set. This test pins the CHECK constraint
+// presence the same way AT-45 pins projects_valid_status.
+// ---------------------------------------------------------------
+describe('AC-115: users.theme_preference CHECK constraint', () => {
+  let db: Database;
+  let pool: pg.Pool;
+
+  beforeAll(async () => {
+    const conn = createDatabase();
+    db = conn.db;
+    pool = conn.pool;
+    await pool.query('SELECT 1');
+    await migrate(db, { migrationsFolder });
+    await seed(db, { force: true });
+  });
+
+  afterAll(async () => {
+    // Cleanup: any rows created by the positive-case loop below. The
+    // negative case never committed, so there is nothing to delete for
+    // that. Scope the cleanup by username prefix so a regression that
+    // causes the INSERT to succeed does not leave orphan rows behind.
+    await db.delete(users).where(like(users.username, 'chk_theme_%'));
+    await pool.end();
+  });
+
+  it("AT-57: rejects direct INSERT of a user with themePreference='ultraviolet'", async () => {
+    // Raw SQL so we observe the actual PG error object (the drizzle
+    // `insert()` helper would still hit the constraint, but going
+    // through pool.query keeps the test symmetrical with AT-45/AT-46
+    // and makes the SQLSTATE + constraint name assertions load-bearing.
+    let pgError: { code?: string; constraint?: string } | null = null;
+    try {
+      await pool.query(
+        `INSERT INTO users (username, display_name, password_hash, theme_preference)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          'chk_theme_bad',
+          'CHECK reject test',
+          'placeholder-hash',
+          // 'ultraviolet' is intentionally NOT in {'light','dark','system'}
+          'ultraviolet',
+        ],
+      );
+    } catch (err) {
+      pgError = err as { code?: string; constraint?: string };
+    }
+
+    expect(pgError).not.toBeNull();
+    // 23514 = check_violation — pins that this rejection came from
+    // the CHECK constraint, not from a NOT NULL / type error / trigger.
+    expect(pgError!.code).toBe('23514');
+    // The constraint name is the contract that the migration must
+    // produce. Keep the expected name aligned with data-model.md §5.7.
+    expect(pgError!.constraint).toBe('users_valid_theme_preference');
+  });
+
+  it('AT-57: accepts all three allowed theme_preference values', async () => {
+    const validValues = ['light', 'dark', 'system'];
+    for (let i = 0; i < validValues.length; i++) {
+      await pool.query(
+        `INSERT INTO users (username, display_name, password_hash, theme_preference)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          `chk_theme_ok_${i}`,
+          `CHECK accept ${validValues[i]}`,
+          'placeholder-hash',
+          validValues[i]!,
+        ],
+      );
+    }
   });
 });

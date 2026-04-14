@@ -9,6 +9,7 @@
  */
 
 import { STRINGS } from '@/config/strings';
+import type { ThemePreference } from '@/config/themeStorage';
 
 export interface ApiError {
   code: string;
@@ -194,6 +195,7 @@ interface AuthUser {
   displayName: string;
   roles: string[];
   email: string | null;
+  themePreference: ThemePreference;
 }
 
 interface LoginResponse {
@@ -239,6 +241,9 @@ export const authApi = {
       method: 'POST',
       body: { currentPassword, newPassword },
     }),
+
+  updateSelf: (patch: { themePreference?: ThemePreference }) =>
+    apiCall<LoginResponse>('/api/auth/me', { method: 'PATCH', body: patch }),
 };
 
 export const projectApi = {

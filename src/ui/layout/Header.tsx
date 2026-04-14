@@ -5,15 +5,23 @@ import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
 import type { ViewMode } from '@/domain/types';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
+import type { ThemePreference } from '@/config/themeStorage';
 import { SummaryArea } from './SummaryArea';
 import { EmailExtractModal } from '../extraction/EmailExtractModal';
 import { PasswordChangeModal } from './PasswordChangeModal';
 import styles from './Header.module.css';
 
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: 'light', label: STRINGS.theme.light },
+  { value: 'dark', label: STRINGS.theme.dark },
+  { value: 'system', label: STRINGS.theme.system },
+];
+
 export function Header() {
   const activeView = useUIStore((s) => s.activeView);
   const authUser = useAuthStore((s) => s.authUser);
   const logout = useAuthStore((s) => s.logout);
+  const updateThemePreference = useAuthStore((s) => s.updateThemePreference);
   const { navigateTo } = useRouterNav();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [extractOpen, setExtractOpen] = useState(false);
@@ -49,6 +57,13 @@ export function Header() {
     // so the session-expired path and the interactive logout path
     // cannot diverge (consolidation review C F-6).
     await logout();
+  };
+
+  const handleThemeSelect = (value: ThemePreference) => {
+    // Fire-and-forget: the store handles optimistic update, server
+    // round-trip, and revert-on-failure. Swallow the returned promise so
+    // the click handler stays synchronous from React's perspective.
+    void updateThemePreference(value);
   };
 
   return (
@@ -104,6 +119,24 @@ export function Header() {
           </button>
           {dropdownOpen && (
             <div className={styles.dropdown}>
+              <div className={styles.dropdownSection}>
+                <div className={styles.dropdownSectionLabel}>{STRINGS.theme.section}</div>
+                {THEME_OPTIONS.map((opt) => {
+                  const selected = authUser.themePreference === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={`${styles.dropdownItem} ${selected ? styles.dropdownItemSelected : ''}`}
+                      aria-pressed={selected}
+                      data-testid={`theme-option-${opt.value}`}
+                      onClick={() => handleThemeSelect(opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
               <button
                 className={styles.dropdownItem}
                 data-testid="pw-change-button"
