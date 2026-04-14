@@ -47,7 +47,7 @@ The state layer is a client-side cache delegating to the API.
 - **Projects** — the full project list (fetched from API), grouped by workflow state for Kanban rendering.
 - **Customers** — the full customer list, used in project forms and the customer management view.
 - **Users** — the user list (for admin views and worker assignment dropdowns). Only fetched when needed and when the user has `user:read` permission.
-- **Auth** — the authenticated user profile and session state.
+- **Auth** — the authenticated user profile (including theme preference) and session state.
 - **View state** — active view, active filter (by workflow state, aged-buffer subset, or custom criteria), selected entity ID for detail views.
 - **Mutation tracking** — in-flight flags and error messages per mutation. Confirm-dialog state for transition confirmations.
 - **Import state** — parsed file contents, validation preview, submission progress, result summary.
@@ -60,6 +60,7 @@ The state layer is a client-side cache delegating to the API.
 - Create or update a customer
 - Create, update, deactivate, or reactivate a user (admin)
 - Reset a user's password (admin); change own password
+- Update own preferences (theme preference)
 - Bulk import projects or customers
 - Login / logout
 - Fetch or refresh project list, customer list, user list
@@ -175,6 +176,7 @@ Rules that apply to all installations:
 The following values are centralized as single-source constants and may vary per deployment without code changes elsewhere. Each corresponds to a `[C]` marker somewhere in this spec.
 
 - App name, branding, footer text
+- Brand accent color — explicit light and dark values (see [§12.5](#125-theming-model))
 - Workflow state configuration — labels, colors, order, count, aging thresholds, collapse tiers
 - German UI and error strings
 - Date and locale display settings
@@ -188,6 +190,22 @@ The following values are centralized as single-source constants and may vary per
 
 - Configuration must be represented explicitly, not scattered as literals across the codebase.
 - Configuration sources may be static (environment variables, config files), but API and domain boundaries must not assume configuration can only live in source code — the design must permit a move to persisted company settings without restructuring those layers.
+
+### 12.4 User-Configurable Settings
+
+Values controlled per user, independent of the deployment-level configuration in §12.2. Stored on the user record and updated via the self-update API operation.
+
+- Theme preference — `'light' | 'dark' | 'system'`, default `'system'` (see [data-model.md §5.7](data-model.md#57-user-theme-preference))
+
+### 12.5 Theming Model
+
+The visual theme (color scheme) is expressed through a two-layer token system. Components consume only the semantic layer; the primitive layer is an implementation detail.
+
+- **Primitive tokens** — the raw palette, no semantics. Defined once.
+- **Semantic tokens** — roles that components reference (surface, text, border, accent, …). Mapped to primitive values.
+- **Theme overrides** — a non-default theme (e.g. dark) is a set of semantic-layer overrides scoped by an attribute on the document root. Component stylesheets render different palettes without code changes.
+- **Data-driven colors** — state colors from the workflow state configuration remain data-driven and are the single exception to the "no palette values outside the tokens source" rule.
+- **Brand accent [C]** — supplied by the branding configuration (§12.2); components consume it via a single semantic token.
 
 ---
 

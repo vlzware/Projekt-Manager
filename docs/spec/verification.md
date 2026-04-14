@@ -176,6 +176,25 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-106** `[vis]`: The extraction modal presents a paste textarea and an extract action. The action is disabled while the textarea is empty or an extraction is in flight.
 - **AC-107** `[vis]`: After extraction, the modal presents editable customer and project fields for review and supports selecting an existing customer by name to avoid duplicates.
 
+### 15.20 Theming
+
+- **AC-108** `[infra]`: Palette and semantic color tokens are defined in a single source consumed by all components. No component or stylesheet references a palette color outside that source. State colors, applied from the state configuration array, are the single exception. A repository-wide check enforces this boundary.
+- **AC-109** `[vis]`: Applying a non-default theme override on the document root replaces the semantic token layer. Components render with the overridden palette without code changes.
+- **AC-110** `[vis]`: Dark mode renders via a dark theme override. Every semantic surface has a dark-appropriate value. All text/surface semantic pairs meet WCAG AA contrast — 4.5:1 for normal text and 3:1 for large text — in both light and dark.
+- **AC-111** `[vis]`: The theme override is resolved and applied to the document root before the first paint of themed content. Reloading a session with a non-default preference shows no flash of the default theme.
+- **AC-112** `[vis]`: When the user's theme preference is `'system'`, operating-system color-scheme changes propagate to the UI without a reload.
+- **AC-113** `[infra]`: The brand accent is supplied by the branding configuration with explicit light and dark values. No component or stylesheet hardcodes the accent. A repository-wide check enforces this boundary.
+- **AC-114** `[vis]`: Changing the configured accent value updates every accent-using surface — primary actions, links, focus rings, selection highlights, form input indicators — in both modes.
+
+### 15.21 User Theme Preference
+
+- **AC-115** `[crit]`: `themePreference` is stored on each user with a value from `'light' | 'dark' | 'system'`. New users default to `'system'`. The database enforces the allowed set via a CHECK constraint (defense in depth).
+- **AC-116** `[crit]`: An authenticated user can update their own theme preference via the self-update API operation. Subsequent responses for the current user return the updated value.
+- **AC-117** `[crit]`: A self-update request without a valid session is rejected with an authentication error.
+- **AC-118** `[crit]`: A self-update request with an invalid theme value is rejected with a validation error.
+- **AC-119** `[vis]`: The user menu exposes a 3-way theme selector ("Hell", "Dunkel", "Systemstandard"). Selecting an option updates the UI immediately and persists server-side; the selection survives a page reload.
+- **AC-120** `[vis]`: On session hydration, the server-stored preference replaces any locally cached value. A client on a different device reflects the updated preference after the next session start.
+
 ---
 
 ## 16. Test Specification
@@ -249,6 +268,11 @@ These tests run against a real (test) database, not mocks.
 - **AT-53**: Email extraction with text exceeding 50,000 characters is rejected as a validation error.
 - **AT-54**: Email extraction with valid input (mocked upstream) returns structured customer and project fields.
 - **AT-55**: Upstream extraction failure returns a server error without leaking internal details.
+- **AT-56**: A newly created user has `themePreference = 'system'` when the field is not supplied.
+- **AT-57**: Direct INSERT of a user with an invalid `themePreference` value is rejected by the database CHECK constraint.
+- **AT-58**: Self-update with a valid `themePreference` updates the user row. A subsequent `GET /api/auth/me` returns the new value.
+- **AT-59**: Self-update without a valid session is rejected with an authentication error.
+- **AT-60**: Self-update with an invalid `themePreference` value is rejected with a validation error.
 
 ### 16.3 E2E Tests
 

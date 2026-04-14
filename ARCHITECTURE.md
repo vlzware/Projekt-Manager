@@ -75,7 +75,8 @@ Maps spec `[C]` markers (values that vary per deployment) to files.
 
 | What                                                                      | File                                   |
 | ------------------------------------------------------------------------- | -------------------------------------- |
-| App name, branding, footer text                                           | `src/config/brandingConfig.ts`         |
+| App name, branding, footer text, brand accent (light + dark)              | `src/config/brandingConfig.ts`         |
+| Color design tokens — primitive palette, semantic tokens, dark overrides  | `src/styles/tokens.css`                |
 | Workflow states (labels, colors, order, aging thresholds, collapse tiers) | `src/config/stateConfig.ts`            |
 | German UI and error strings                                               | `src/config/strings.ts`                |
 | Date and locale display settings                                          | `src/config/localeConfig.ts`           |
@@ -138,6 +139,7 @@ All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives h
 | POST   | `/api/auth/login`                       | none    | —                      | 5 / 1 min  | Login; sets HttpOnly `session` cookie                                                                                                                        |
 | POST   | `/api/auth/logout`                      | session | —                      | none       | Invalidates the current session                                                                                                                              |
 | GET    | `/api/auth/me`                          | session | —                      | none       | Current user profile (no permission — the caller is always looking up themselves)                                                                            |
+| PATCH  | `/api/auth/me`                          | session | —                      | none       | Update own preferences (theme preference). Self-scope only — cannot affect another user.                                                                     |
 | POST   | `/api/auth/change-password`             | session | `auth:change-password` | 5 / 1 min  | Change own password (requires current password)                                                                                                              |
 | GET    | `/api/projects`                         | session | `project:read`         | none       | List projects (optional `offset`, `limit`)                                                                                                                   |
 | GET    | `/api/projects/:id`                     | session | `project:read`         | none       | Single project                                                                                                                                               |

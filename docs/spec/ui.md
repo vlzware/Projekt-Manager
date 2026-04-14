@@ -206,6 +206,7 @@ Views that the user lacks permission to access are hidden from navigation. Serve
 The user menu (accessible from the header area) provides:
 
 - Display of the authenticated user's `displayName`
+- "Darstellung" — a 3-way theme selector with options "Hell" (light), "Dunkel" (dark), "Systemstandard" (system). Selecting an option applies immediately and persists server-side (see [§9.6](#96-theme-handling)).
 - "Passwort ändern" — opens a password change form (current password, new password, confirmation)
 - "Abmelden" — logs out and returns to the login screen
 
@@ -447,6 +448,19 @@ Mutations (state transitions, date updates) go through the API (see [API](api.md
 - **Loading state**: brief indicator (disabled button, spinner) while mutation is in flight. No double-submit on the same project.
 - **Optimistic update**: the UI may update locally before the server responds, but must reconcile with the server response (revert on failure).
 - **Error feedback**: failed mutation shows German-language error message, reverts local state. `"Änderung fehlgeschlagen. Bitte erneut versuchen."` **[C]**
+
+### 9.6 Theme Handling
+
+The application renders in light or dark color scheme based on the user's theme preference (see [data-model.md §5.7](data-model.md#57-user-theme-preference)).
+
+- **Authoritative source**: the server value on `UserAccount.themePreference`. The client mirrors the preference value locally only to avoid a flash of the wrong theme on page load.
+- **Local cache semantics**: the cache holds the preference value (`'light' | 'dark' | 'system'`), not the resolved light/dark scheme. When the cached value is `'system'`, the client resolves the scheme from the operating system at each render.
+- **Initial resolution** (before first paint): the client reads its local cache; if absent, it falls back to the operating-system `prefers-color-scheme`. This runs before themed content is first painted.
+- **Session hydration**: after the authenticated session is established, the client replaces the local cache with the server value and re-applies the theme.
+- **`'system'` mode**: the client subscribes to operating-system color-scheme changes and updates the UI without a reload.
+- **Updates**: the user selects a theme via the user menu ([§8.7.2](#872-user-menu)). The selection is sent to the server via the self-update operation ([api.md §14.2.1](api.md#1421-authentication)) and applied optimistically — a failed mutation reverts the local theme per [§9.5](#95-asynchronous-mutation-behavior).
+- **Unauthenticated screens**: the login screen and insecure banner follow the client's initial resolution (local cache or operating-system preference); no server value is available yet.
+- **Logout and session expiry**: the local cache is retained across logout so the returning user does not see a theme flash at the login screen. Logging in as a different user replaces the cache on the next session hydration.
 
 ---
 

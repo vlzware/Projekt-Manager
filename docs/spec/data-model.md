@@ -86,6 +86,8 @@ This configuration drives Kanban column rendering, color coding, and aging indic
 ```typescript
 type AccountRole = string; // internal key — e.g. 'owner', 'office', 'worker', 'bookkeeper' [C]
 
+type ThemePreference = 'light' | 'dark' | 'system';
+
 interface UserAccount {
   id: string; // UUID
   username: string; // unique, used for login
@@ -94,6 +96,7 @@ interface UserAccount {
   roles: AccountRole[]; // array — see design notes
   email?: string;
   active: boolean; // soft-disable without deletion
+  themePreference: ThemePreference; // default 'system' — see §5.7
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
   lastLoginAt?: string; // ISO 8601
@@ -107,6 +110,7 @@ Design notes:
 - `createdBy` / `updatedBy` are nullable UUIDs with no FK constraint (bootstrapping the first admin would create a circular dependency).
 - `roles` is an array — supports multi-role assignment without schema changes. Role set is configurable **[C]**. Role labels are applied by configuration.
 - `passwordHash` is **never** included in API responses.
+- `themePreference` controls the rendered color scheme per user (see [§5.7](#57-user-theme-preference)). The value must be one of the allowed literals; the database enforces this via a CHECK constraint (defense in depth).
 - Users can be deactivated (`active = false`) or hard-deleted (owner only). See [§6.9](#69-soft-deletes).
 
 ### 5.4 Session
@@ -177,6 +181,20 @@ Design notes:
 - `name` is required; all other fields are optional.
 - A customer may exist without any projects (e.g., imported from an external system before project creation).
 - Customers can be hard-deleted via the API when no **active** (non-archived) projects reference them. Archived projects are purged atomically with the customer (see [§6.9](#69-soft-deletes) and [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Deletion requires the `customer:delete` permission (owner only). A customer without projects is a normal state (e.g., imported before project creation) and deleting such a record is a cleanup operation, not a data-integrity concern.
+
+### 5.7 User Theme Preference
+
+`UserAccount.themePreference` is the server-authoritative source for the user's chosen color scheme.
+
+| Value      | Effect                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------- |
+| `'light'`  | The UI renders the light theme regardless of operating-system scheme.                                   |
+| `'dark'`   | The UI renders the dark theme regardless of operating-system scheme.                                    |
+| `'system'` | The UI follows the operating system's color-scheme preference and updates when that preference changes. |
+
+- New users default to `'system'`.
+- The value is updated by the authenticated user via the self-update API operation (see [api.md §14.2.1](api.md#1421-authentication)).
+- The server value is authoritative. Clients may cache the value locally to prevent a flash of the wrong theme on page load, but must replace any cached value with the server value on session hydration.
 
 ---
 
