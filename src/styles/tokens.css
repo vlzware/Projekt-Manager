@@ -1,0 +1,132 @@
+/*
+ * Design tokens — two layers.
+ *
+ *   1. Primitive layer: raw palette, no semantics. Grouped by hue.
+ *   2. Semantic layer: role names that components reference.
+ *
+ * Components consume only the semantic layer. A sibling [data-theme="..."]
+ * block may override semantic values without touching primitives.
+ */
+
+:root {
+  /* ----- Primitive palette --------------------------------------------- */
+
+  /* Neutral (slate) */
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+
+  /* Pure */
+  --color-white: #ffffff;
+
+  /* Blue (accent) */
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+  --color-blue-950: #1e3a5f;
+
+  /* Red (danger) */
+  --color-red-50: #fef2f2;
+  --color-red-200: #fecaca;
+  --color-red-300: #fca5a5;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+  --color-red-900: #7f1d1d;
+  --color-red-950: #450a0a;
+
+  /* Amber / yellow (warning) */
+  --color-amber-100: #fef3c7;
+  --color-amber-400: #fbbf24;
+  --color-amber-500: #f59e0b;
+  --color-amber-700: #b45309;
+  --color-amber-800: #92400e;
+  --color-amber-900: #854d0e;
+  --color-amber-950: #422006;
+  --color-yellow-50: #fefce8;
+  --color-yellow-200: #fde68a;
+
+  /* Green (success) */
+  --color-green-50: #f0fdf4;
+  --color-green-200: #bbf7d0;
+  --color-green-500: #22c55e;
+  --color-green-800: #166534;
+
+  /* ----- Semantic layer ------------------------------------------------- */
+
+  /* Surface */
+  --color-surface-base: var(--color-slate-50);
+  --color-surface-raised: var(--color-white);
+  --color-surface-muted: var(--color-slate-100);
+  --color-surface-sunken: var(--color-slate-200);
+  --color-surface-inverse: var(--color-slate-800);
+  --color-surface-inverse-raised: var(--color-slate-700);
+  --color-surface-inverse-hover: var(--color-slate-600);
+
+  /* Text */
+  --color-text: var(--color-slate-800);
+  --color-text-secondary: var(--color-slate-600);
+  --color-text-muted: var(--color-slate-500);
+  --color-text-subtle: var(--color-slate-400);
+  --color-text-strong: var(--color-slate-700);
+  --color-text-on-accent: var(--color-white);
+  --color-text-on-inverse: var(--color-slate-50);
+  --color-text-on-inverse-muted: var(--color-slate-200);
+  --color-text-on-inverse-subtle: var(--color-slate-400);
+
+  /* Border */
+  --color-border: var(--color-slate-300);
+  --color-border-subtle: var(--color-slate-200);
+  --color-border-muted: var(--color-slate-100);
+  --color-border-inverse: var(--color-slate-600);
+
+  /* Accent */
+  --color-accent: var(--color-blue-500);
+  --color-accent-hover: var(--color-blue-600);
+  --color-accent-active-surface: var(--color-blue-950);
+  --color-focus-ring: var(--color-blue-500);
+
+  /* Status — danger */
+  --color-danger: var(--color-red-600);
+  --color-danger-strong: var(--color-red-500);
+  --color-danger-bg: var(--color-red-50);
+  --color-danger-border: var(--color-red-200);
+  --color-danger-text: var(--color-red-600);
+  --color-danger-inverse-bg: var(--color-red-950);
+  --color-danger-inverse-hover: var(--color-red-900);
+  --color-danger-inverse-text: var(--color-red-300);
+
+  /* Status — warning */
+  --color-warning: var(--color-amber-500);
+  --color-warning-bg: var(--color-amber-100);
+  --color-warning-text: var(--color-amber-700);
+  --color-warning-on-inverse-text: var(--color-amber-400);
+  --color-warning-hint-bg: var(--color-yellow-50);
+  --color-warning-hint-border: var(--color-yellow-200);
+  --color-warning-hint-text: var(--color-amber-800);
+  --color-warning-inverse-bg: var(--color-amber-950);
+  --color-warning-inverse-border: var(--color-amber-900);
+
+  /* Status — success */
+  --color-success: var(--color-green-500);
+  --color-success-bg: var(--color-green-50);
+  --color-success-border: var(--color-green-200);
+  --color-success-text: var(--color-green-800);
+
+  /* Alpha overlays — rgb triplets for rgba() usage. Each mirrors a
+     primitive above; CSS cannot convert hex → triplet, so they are
+     maintained by hand. Keep in sync with the referenced primitive. */
+  --color-overlay-rgb: 0, 0, 0; /* black */
+  --color-focus-ring-rgb: 59, 130, 246; /* --color-blue-500 */
+  --color-warning-rgb: 245, 158, 11; /* --color-amber-500 */
+  --color-on-inverse-rgb: 255, 255, 255; /* --color-white */
+}
+
+body {
+  background: var(--color-surface-base);
+  color: var(--color-text);
+}

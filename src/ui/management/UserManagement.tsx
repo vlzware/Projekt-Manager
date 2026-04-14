@@ -323,7 +323,7 @@ export function UserManagement() {
 
             {/* Reset password section (owner only) */}
             {canManage && resetOpen && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e2e8f0' }}>
+              <div className={styles.sectionDivider}>
                 {resetSuccess ? (
                   <div className={styles.resultBox}>{STRINGS.password.resetSuccess}</div>
                 ) : (

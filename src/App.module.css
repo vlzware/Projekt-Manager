@@ -3,7 +3,7 @@
   flex-direction: column;
   height: 100vh;
   min-width: 1024px;
-  background: #f8fafc;
+  background: var(--color-surface-base);
 }
 
 .main {
@@ -19,8 +19,8 @@
   align-items: center;
   justify-content: center;
   padding: 8px 20px;
-  background: #dc2626;
-  color: #ffffff;
+  background: var(--color-danger);
+  color: var(--color-text-on-accent);
   font-weight: 700;
   font-size: 0.875rem;
   letter-spacing: 0.025em;
@@ -32,9 +32,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 20px;
-  background: #fef2f2;
-  border-bottom: 1px solid #fecaca;
-  color: #dc2626;
+  background: var(--color-danger-bg);
+  border-bottom: 1px solid var(--color-danger-border);
+  color: var(--color-danger-text);
   font-size: 0.875rem;
   flex-shrink: 0;
 }
@@ -42,7 +42,7 @@
 .mutationErrorDismiss {
   background: none;
   border: none;
-  color: #dc2626;
+  color: var(--color-danger-text);
   font-size: 1rem;
   cursor: pointer;
   padding: 0 0 0 12px;
@@ -55,5 +55,5 @@
   justify-content: center;
   height: 100vh;
   font-size: 1rem;
-  color: #64748b;
+  color: var(--color-text-muted);
 }

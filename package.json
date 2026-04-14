@@ -20,6 +20,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "check:tokens": "bash scripts/check-theme-tokens.sh",
     "prepare": "husky || true"
   },
   "lint-staged": {

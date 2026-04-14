@@ -1,8 +1,8 @@
 .footer {
   padding: 8px 20px;
-  background: #1e293b;
-  color: #64748b;
+  background: var(--color-surface-inverse);
+  color: var(--color-text-muted);
   text-align: center;
   font-size: 0.8rem;
-  border-top: 1px solid #334155;
+  border-top: 1px solid var(--color-surface-inverse-raised);
 }

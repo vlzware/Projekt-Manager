@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { STRINGS } from '@/config/strings';
-import { STATE_CONFIGS } from '@/config/stateConfig';
+import { STATE_CONFIGS, STATE_FALLBACK_COLOR } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
@@ -155,7 +155,7 @@ export function ProjectManagement() {
 
   const stateColor = (status: string) => {
     const cfg = STATE_CONFIGS.find((c) => c.key === status);
-    return cfg?.color ?? '#94a3b8';
+    return cfg?.color ?? STATE_FALLBACK_COLOR;
   };
 
   return (

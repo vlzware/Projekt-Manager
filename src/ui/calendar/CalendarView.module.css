@@ -16,23 +16,23 @@
 
 .navButton {
   padding: 4px 12px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: #f8fafc;
-  color: #475569;
+  background: var(--color-surface-base);
+  color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 0.875rem;
   transition: background 0.15s;
 }
 
 .navButton:hover {
-  background: #e2e8f0;
+  background: var(--color-surface-sunken);
 }
 
 .monthLabel {
   font-size: 1.1rem;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--color-text);
   min-width: 160px;
   text-align: center;
 }
@@ -41,7 +41,7 @@
   display: flex;
   gap: 0;
   margin-left: 16px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
   overflow: hidden;
 }
@@ -49,8 +49,8 @@
 .toggleButton {
   padding: 4px 10px;
   border: none;
-  background: #f8fafc;
-  color: #475569;
+  background: var(--color-surface-base);
+  color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 0.8rem;
   transition:
@@ -59,27 +59,27 @@
 }
 
 .toggleButton:not(:last-child) {
-  border-right: 1px solid #cbd5e1;
+  border-right: 1px solid var(--color-border);
 }
 
 .toggleButton:hover {
-  background: #e2e8f0;
+  background: var(--color-surface-sunken);
 }
 
 .toggleActive {
-  background: #3b82f6;
-  color: #ffffff;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
 }
 
 .toggleActive:hover {
-  background: #2563eb;
+  background: var(--color-accent-hover);
 }
 
 .noDatesCounter {
   margin-top: 10px;
   text-align: center;
   font-size: 0.85rem;
-  color: #64748b;
+  color: var(--color-text-muted);
   cursor: pointer;
   padding: 6px;
   border-radius: 4px;
@@ -87,6 +87,6 @@
 }
 
 .noDatesCounter:hover {
-  background: #f1f5f9;
-  color: #334155;
+  background: var(--color-surface-muted);
+  color: var(--color-text-strong);
 }

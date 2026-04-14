@@ -4,7 +4,7 @@
   border-radius: 3px;
   padding: 0 6px;
   font-size: 0.68rem;
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -18,5 +18,5 @@
 
 .bar:hover {
   opacity: 1;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 1px 4px rgba(var(--color-overlay-rgb), 0.2);
 }
