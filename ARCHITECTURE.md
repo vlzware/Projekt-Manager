@@ -65,7 +65,7 @@ Seven responsibility layers. Dependency flows left-to-right only, never reversed
 | `src/server/` (root files) | App assembly (`app.ts`), entry point (`start.ts`), first-run admin bootstrap (`bootstrap.ts`), health probe (`health.ts`), seed loader (`seed.ts`), password hashing (`password.ts` — thin `bcryptjs` wrapper; bcrypt's silent 72-UTF-8-byte truncation is fenced off by the ceiling in `src/server/config/password-policy.ts`), error factories (`errors.ts` — `notFound()`, `validationError()`, etc. return `AppError` instances) | -                                                       |
 | `src/state/`               | Zustand stores (`authStore`, `confirmStore`, `customerStore`, `extractionActions`, `importExportStore`, `projectManagementStore`, `projectStore`, `sessionExpired`, `uiStore`, `userStore`), barrel re-export (`store.ts`), client-side cache                                                                                                                                                                                        | Access the database or import server code               |
 | `src/api/`                 | Centralized API client, typed fetch wrappers                                                                                                                                                                                                                                                                                                                                                                                         | Contain business logic or UI concerns                   |
-| `src/hooks/`               | Shared React hooks (transitions, routing)                                                                                                                                                                                                                                                                                                                                                                                            | Contain API calls directly (must use stores)            |
+| `src/hooks/`               | Shared React hooks (transitions, routing, permission gating)                                                                                                                                                                                                                                                                                                                                                                         | Contain API calls directly (must use stores)            |
 | `src/ui/`                  | React components (`auth`, `calendar`, `common`, `detail`, `extraction`, `kanban`, `layout`, `management`)                                                                                                                                                                                                                                                                                                                            | Contain business logic beyond dispatching to state      |
 | `src/test/`                | Shared test setup, API test helpers, and seed fixtures                                                                                                                                                                                                                                                                                                                                                                               | Be imported in production code                          |
 
@@ -83,7 +83,7 @@ Maps spec `[C]` markers (values that vary per deployment) to files.
 | Insecure-connection detection                                             | `src/config/insecureConnection.ts`     |
 | Password policy (min length, max bytes, blocklist)                        | `src/server/config/password-policy.ts` |
 | Session duration, rate-limit windows                                      | `src/server/config/index.ts`           |
-| Role set and per-role permission matrix                                   | `src/server/config/permissions.ts`     |
+| Role set and per-role permission matrix                                   | `src/config/permissions.ts`            |
 | Seed default password                                                     | `src/test/seedAssumptions.ts`          |
 
 ---
@@ -168,11 +168,17 @@ All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives h
 | GET    | `/api/export/customers`                 | session | `customer:read`        | none       | Export all customers as JSON                                                                                                                                 |
 | POST   | `/api/extract`                          | session | `customer:write`       | none       | LLM email extraction via OpenRouter (ADR-0016). Requires `OPENROUTER_API_KEY` env var.                                                                       |
 
-Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Authentication is enforced by `createAuthMiddleware(db)` in `src/server/middleware/auth.ts` (applied as a plugin-level `preHandler` hook). **Permission** is enforced at the **route level** by `requirePermission('...')` preHandlers defined in `src/server/middleware/auth.ts` and checked against the role matrix in `src/server/config/permissions.ts` — see [spec §14.3](docs/spec/api.md#143-authorization-rules).
+Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Authentication is enforced by `createAuthMiddleware(db)` in `src/server/middleware/auth.ts` (applied as a plugin-level `preHandler` hook). **Permission** is enforced at the **route level** by `requirePermission('...')` preHandlers defined in `src/server/middleware/auth.ts` and checked against the role matrix in `src/config/permissions.ts` — see [spec §14.3](docs/spec/api.md#143-authorization-rules).
 
 Route definitions live in `src/server/routes/`. The health endpoint is registered in `src/server/start.ts`.
 
 **Keep this table in sync** when adding or changing endpoints. It is the onboarding reference and is cross-checked by the spec (`docs/spec/api.md`) for abstract-operation coverage.
+
+---
+
+## Permission Gating
+
+The role-to-permission matrix in `src/config/permissions.ts` is the single source of truth for both layers: server routes import `hasPermission` via `requirePermission(...)` (403 on violation), and UI components import it via the `usePermission('<permission>')` hook in `src/hooks/usePermission.ts` (hide the affordance). Client-side gating is UX, not security — the server check is always authoritative. UI code never hardcodes role names; it asks for a permission. See [spec AC-121](docs/spec/verification.md) for the invariant and [§14.3](docs/spec/api.md#143-authorization-rules) for the server contract.
 
 ---
 
@@ -214,7 +220,7 @@ Backend changes are usually not needed — the store exposes the full project li
 
 1. **Where**: extend an existing route file if it belongs to that entity/group; create a new one otherwise.
 2. **Validation**: Fastify JSON Schema on the route (see `projects.ts`). Don't validate inside the handler.
-3. **Auth**: `createAuthMiddleware(db)` as plugin `preHandler`; `requirePermission('...')` per route. Add new keys to `src/server/config/permissions.ts`.
+3. **Auth**: `createAuthMiddleware(db)` as plugin `preHandler`; `requirePermission('...')` per route. Add new keys to `src/config/permissions.ts` (shared with the client-side `usePermission` hook — see [§ Permission Gating](#permission-gating)).
 4. **Delegate to service**. Never call repos from a route ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
 5. **Errors**: use factories from `src/server/errors.ts` (`notFound()`, `validationError()`, etc.). Never throw raw `Error`. For bulk operations, translate DB constraint violations to German user-facing messages via the service layer (see `ProjectService.translatePgError()`).
 6. **Register** in `src/server/app.ts`.

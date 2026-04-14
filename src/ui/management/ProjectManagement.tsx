@@ -10,11 +10,15 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { STRINGS } from '@/config/strings';
 import { STATE_CONFIGS, STATE_FALLBACK_COLOR } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
+import { usePermission } from '@/hooks/usePermission';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
 import styles from './Management.module.css';
 
 export function ProjectManagement() {
+  const canCreate = usePermission('project:create');
+  const canUpdate = usePermission('project:update');
+  const canDelete = usePermission('project:delete');
   const projects = useProjectManagementStore((s) => s.projects);
   const customers = useProjectManagementStore((s) => s.customers);
   const loading = useProjectManagementStore((s) => s.loading);
@@ -161,18 +165,20 @@ export function ProjectManagement() {
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
-        <button
-          className={styles.createButton}
-          onClick={() => {
-            clearError();
-            resetForm();
-            setEditProject(null);
-            setFormOpen(true);
-          }}
-          data-testid="project-create-button"
-        >
-          {STRINGS.ui.create}
-        </button>
+        {canCreate && (
+          <button
+            className={styles.createButton}
+            onClick={() => {
+              clearError();
+              resetForm();
+              setEditProject(null);
+              setFormOpen(true);
+            }}
+            data-testid="project-create-button"
+          >
+            {STRINGS.ui.create}
+          </button>
+        )}
         <input
           className={styles.searchInput}
           placeholder={STRINGS.ui.search}
@@ -193,7 +199,7 @@ export function ProjectManagement() {
             <th>{STRINGS.ui.status}</th>
             <th>{STRINGS.ui.dates}</th>
             <th>{STRINGS.ui.value}</th>
-            <th>{STRINGS.ui.actions}</th>
+            {canDelete && <th>{STRINGS.ui.actions}</th>}
           </tr>
         </thead>
         <tbody>
@@ -220,11 +226,13 @@ export function ProjectManagement() {
                     })
                   : '—'}
               </td>
-              <td>
-                <button className={styles.dangerButton} onClick={(e) => handleDelete(e, p)}>
-                  {STRINGS.ui.delete}
-                </button>
-              </td>
+              {canDelete && (
+                <td>
+                  <button className={styles.dangerButton} onClick={(e) => handleDelete(e, p)}>
+                    {STRINGS.ui.delete}
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -399,14 +407,16 @@ export function ProjectManagement() {
               <button className={styles.cancelButton} onClick={() => setEditProject(null)}>
                 {STRINGS.ui.cancel}
               </button>
-              <button
-                className={styles.submitButton}
-                onClick={handleSaveEdit}
-                disabled={submitting || !title.trim()}
-                data-testid="project-save"
-              >
-                {STRINGS.ui.save}
-              </button>
+              {canUpdate && (
+                <button
+                  className={styles.submitButton}
+                  onClick={handleSaveEdit}
+                  disabled={submitting || !title.trim()}
+                  data-testid="project-save"
+                >
+                  {STRINGS.ui.save}
+                </button>
+              )}
             </div>
           </div>
         </div>

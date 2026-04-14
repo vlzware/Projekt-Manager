@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUserStore } from '@/state/userStore';
 import { useConfirmStore } from '@/state/confirmStore';
+import { usePermission } from '@/hooks/usePermission';
 import { STRINGS } from '@/config/strings';
 import type { User } from '@/domain/types';
 import styles from './Management.module.css';
@@ -18,7 +19,8 @@ const AVAILABLE_ROLES = Object.keys(STRINGS.roles);
 
 export function UserManagement() {
   const authUser = useAuthStore((s) => s.authUser);
-  const canManage = authUser?.roles.some((r) => r === 'owner') ?? false;
+  const canManage = usePermission('user:manage');
+  const canDelete = usePermission('user:delete');
 
   const users = useUserStore((s) => s.users);
   const loading = useUserStore((s) => s.loading);
@@ -423,7 +425,7 @@ export function UserManagement() {
                   {STRINGS.ui.reactivate}
                 </button>
               )}
-              {canManage && selectedUser.id !== authUser?.id && (
+              {canDelete && selectedUser.id !== authUser?.id && (
                 <button
                   className={styles.dangerButton}
                   onClick={() => handleDelete(selectedUser)}

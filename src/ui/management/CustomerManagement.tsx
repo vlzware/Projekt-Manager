@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import { useCustomerStore } from '@/state/customerStore';
-import { useAuthStore } from '@/state/authStore';
+import { usePermission } from '@/hooks/usePermission';
 import { useConfirmStore } from '@/state/confirmStore';
 import { STRINGS } from '@/config/strings';
 import type { Customer } from '@/domain/types';
@@ -22,10 +22,10 @@ export function CustomerManagement() {
   const updateCustomer = useCustomerStore((s) => s.updateCustomer);
   const deleteCustomer = useCustomerStore((s) => s.deleteCustomer);
   const clearError = useCustomerStore((s) => s.clearError);
-  const authUser = useAuthStore((s) => s.authUser);
   const requestConfirm = useConfirmStore((s) => s.request);
 
-  const canDelete = authUser?.roles.some((r: string) => r === 'owner') ?? false;
+  const canWrite = usePermission('customer:write');
+  const canDelete = usePermission('customer:delete');
 
   const [formOpen, setFormOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
@@ -121,18 +121,20 @@ export function CustomerManagement() {
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
-        <button
-          className={styles.createButton}
-          onClick={() => {
-            clearError();
-            resetForm();
-            setEditCustomer(null);
-            setFormOpen(true);
-          }}
-          data-testid="customer-create-button"
-        >
-          {STRINGS.ui.create}
-        </button>
+        {canWrite && (
+          <button
+            className={styles.createButton}
+            onClick={() => {
+              clearError();
+              resetForm();
+              setEditCustomer(null);
+              setFormOpen(true);
+            }}
+            data-testid="customer-create-button"
+          >
+            {STRINGS.ui.create}
+          </button>
+        )}
       </div>
 
       {error && !formOpen && !editCustomer && <div className={styles.error}>{error}</div>}
@@ -215,14 +217,16 @@ export function CustomerManagement() {
               <button className={styles.cancelButton} onClick={() => setEditCustomer(null)}>
                 {STRINGS.ui.cancel}
               </button>
-              <button
-                className={styles.submitButton}
-                onClick={handleUpdate}
-                disabled={submitting || !name.trim()}
-                data-testid="customer-save"
-              >
-                {STRINGS.ui.save}
-              </button>
+              {canWrite && (
+                <button
+                  className={styles.submitButton}
+                  onClick={handleUpdate}
+                  disabled={submitting || !name.trim()}
+                  data-testid="customer-save"
+                >
+                  {STRINGS.ui.save}
+                </button>
+              )}
             </div>
           </div>
         </div>

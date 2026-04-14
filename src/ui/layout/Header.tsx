@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
+import { usePermission } from '@/hooks/usePermission';
 import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
 import type { ViewMode } from '@/domain/types';
 import { BRANDING } from '@/config/brandingConfig';
@@ -39,8 +40,8 @@ export function Header() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [dropdownOpen]);
 
-  const canReadUsers = authUser?.roles.some((r) => r === 'owner' || r === 'office') ?? false;
-  const canExtract = canReadUsers; // owner and office can use extraction
+  const canReadUsers = usePermission('user:read');
+  const canExtract = usePermission('customer:write');
 
   const views: { key: ViewMode; label: string }[] = [
     { key: 'kanban', label: STRINGS.ui.viewKanban },

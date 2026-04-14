@@ -10,7 +10,7 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { isSessionExpired } from '../../domain/session.js';
 import { findSession } from '../repositories/session.js';
 import { unauthenticated, sessionExpired, notPermitted } from '../errors.js';
-import { hasPermission, type Permission } from '../config/permissions.js';
+import { hasPermission, type Permission } from '../../config/permissions.js';
 import type { Database } from '../db/connection.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
 

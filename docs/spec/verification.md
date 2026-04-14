@@ -147,6 +147,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-83** `[vis]`: Creating a user from the management view produces an account that can log in immediately with the provided credentials.
 - **AC-84** `[vis]`: Deactivating a user from the management view prevents that user from logging in and invalidates their active sessions.
 - **AC-85** `[vis]`: The critical path "create customer → create project referencing that customer" works without page reload or manual refresh.
+- **AC-121** `[crit]`: Any UI control that triggers a mutation requiring a permission the current user lacks is hidden, not rendered and server-rejected. Covers action buttons (create, delete, save, transition, forward) and auto-save inputs (date fields) across the kanban board, management views (projects, customers, users), and the project detail panel. Rationale: rendering an affordance that always 403s is misleading state — the user cannot know in advance which of their actions will succeed.
 
 ### 15.17 Import/Export UI
 
