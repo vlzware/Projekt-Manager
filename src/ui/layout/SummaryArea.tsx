@@ -1,5 +1,6 @@
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
+import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import { STRINGS } from '@/config/strings';
 import type { WorkflowState } from '@/config/stateConfig';
@@ -12,6 +13,7 @@ export function SummaryArea() {
   const setFilter = useUIStore((s) => s.setFilter);
   const clearFilters = useUIStore((s) => s.clearFilters);
   const getSummary = useProjectStore((s) => s.getSummary);
+  const { navigateTo } = useRouterNav();
 
   const summary = getSummary();
   const anyFilterActive = activeFilter !== null || filterNoDates;
@@ -20,7 +22,18 @@ export function SummaryArea() {
 
   const handleFilterClick = (state: WorkflowState, agedOnly = false) => {
     const isSameFilter = activeFilter === state && filterAgedOnly === agedOnly;
-    setFilter(isSameFilter ? null : state, isSameFilter ? false : agedOnly);
+    if (isSameFilter) {
+      // Toggle off the active filter — stay on the current view.
+      setFilter(null, false);
+      return;
+    }
+    // Activating a filter always brings the user to the Kanban view, where
+    // the filter is most legible. Order matters: navigateTo calls setView
+    // which clears filters as a side effect (see uiStore), so the filter
+    // must be set AFTER the navigation. Same pattern as
+    // CalendarView.handleNoDatesClick.
+    navigateTo(pathFromView('kanban'));
+    setFilter(state, agedOnly);
   };
 
   // Filter out action states with zero projects

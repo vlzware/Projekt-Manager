@@ -156,7 +156,7 @@ Displayed in the header. Shows aggregate counts computed from current project da
 - Count of projects in each action state: e.g., `"3× Rechnung fällig"`, `"2× Anfrage"`
 - Count of projects in buffer states exceeding aging thresholds: e.g., `"1 Angebot seit >14 Tagen"`
 
-Clicking an indicator filters the current view to show only the affected projects. For action-state indicators, this filters to all projects in that state. For aged buffer indicators, this filters to only the projects exceeding the threshold — not all projects in that buffer state. The filter state must distinguish between "all projects in state X" (action-state filter) and "only aged projects in state X" (buffer-aging filter). Non-matching cards are hidden (not dimmed). A `"Filter aufheben"` (clear filter) button appears in the summary area while a filter is active. Switching views clears the filter.
+Indicators remain visible across all views as reminders of open items requiring attention. Clicking an indicator from any view navigates to the Kanban view and applies the filter; clicking the same active indicator clears it without navigating. For action-state indicators, this filters to all projects in that state. For aged buffer indicators, this filters to only the projects exceeding the threshold — not all projects in that buffer state. The filter state must distinguish between "all projects in state X" (action-state filter) and "only aged projects in state X" (buffer-aging filter). Non-matching cards are hidden (not dimmed). A `"Filter aufheben"` (clear filter) button appears in the summary area while a filter is active. Switching views clears the filter.
 
 Summary values update immediately after any state change.
 
@@ -461,6 +461,12 @@ The application renders in light or dark color scheme based on the user's theme 
 - **Updates**: the user selects a theme via the user menu ([§8.7.2](#872-user-menu)). The selection is sent to the server via the self-update operation ([api.md §14.2.1](api.md#1421-authentication)) and applied optimistically — a failed mutation reverts the local theme per [§9.5](#95-asynchronous-mutation-behavior).
 - **Unauthenticated screens**: the login screen and insecure banner follow the client's initial resolution (local cache or operating-system preference); no server value is available yet.
 - **Logout and session expiry**: the local cache is retained across logout so the returning user does not see a theme flash at the login screen. Logging in as a different user replaces the cache on the next session hydration.
+
+### 9.7 Modal Interaction
+
+All modals close on Escape (equivalent to the cancel action). Form modals submit the primary action on Enter when focus is within the form. Modals without a primary action — read-only detail views, success-state confirmations — accept Escape but do not submit on Enter.
+
+Form modals and confirmation dialogs do not close on backdrop click — only via Escape or the explicit cancel action. Non-editing side panels close on backdrop click as the cancel equivalent.
 
 ---
 

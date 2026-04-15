@@ -178,6 +178,7 @@ export const STRINGS = {
     create: 'Erstellen',
     save: 'Speichern',
     edit: 'Bearbeiten',
+    viewDetails: 'Details',
     delete: 'Löschen',
     search: 'Suchen...',
     noResults: 'Keine Ergebnisse.',

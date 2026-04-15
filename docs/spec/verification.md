@@ -22,7 +22,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-6** `[crit]`: Backward transition via the detail panel moves a project to the previous state. The change persists across page reloads.
 - **AC-7** `[crit]`: Changing a date in the detail panel updates `plannedStart`/`plannedEnd` and is reflected in both views. The change persists across page reloads.
 - **AC-8** `[vis]`: Summary area shows counts for action states and aged buffer items.
-- **AC-9** `[vis]`: Clicking a summary indicator filters the view to affected projects.
+- **AC-9** `[vis]`: Clicking a summary indicator from any view switches to the Kanban view and applies the filter to affected projects. Clicking the same active indicator clears the filter without navigating.
 - **AC-10** `[vis]`: "X Projekte ohne Termin" counter appears below the calendar.
 
 ### 15.2 Visual
@@ -41,6 +41,8 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-19** `[vis]`: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
 - **AC-20** `[vis]`: Kanban, Calendar, and the Project Detail Panel render without errors when `customer`, `plannedStart`, `plannedEnd`, `notes`, `assignedWorkers`, or `estimatedValue` are absent.
 - **AC-53** `[crit]`: A failed mutation displays a German error message and reverts the optimistic UI update.
+- **AC-122** `[vis]`: Modals close on Escape. Form modals submit the primary action on Enter when focus is within the form. Read-only modals accept Escape but do not submit on Enter.
+- **AC-123** `[vis]`: Form modals and confirmation dialogs do not close on backdrop click — only via Escape or the explicit cancel action. Non-editing side panels close on backdrop click.
 
 ### 15.4 Authentication
 

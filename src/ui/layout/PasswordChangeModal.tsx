@@ -7,6 +7,7 @@
 
 import { useState } from 'react';
 import { changePassword } from '@/state/authStore';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
 import styles from '../management/Management.module.css';
 
@@ -26,6 +27,8 @@ export function PasswordChangeModal({ onClose }: Props) {
   const canSubmit =
     currentPassword.trim() && newPassword.trim() && confirmPassword.trim() && passwordsMatch;
 
+  useEscapeKey(onClose);
+
   const handleSubmit = async () => {
     if (!canSubmit) return;
     setSubmitting(true);
@@ -43,80 +46,86 @@ export function PasswordChangeModal({ onClose }: Props) {
   };
 
   return (
-    <div className={styles.formOverlay} onClick={onClose}>
-      <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
-        <h2 className={styles.formTitle}>{STRINGS.password.change}</h2>
+    <div className={styles.formOverlay}>
+      {success ? (
+        <div className={styles.formPanel}>
+          <h2 className={styles.formTitle}>{STRINGS.password.change}</h2>
+          <div className={styles.resultBox}>{STRINGS.password.changeSuccess}</div>
+          <div className={styles.formActions}>
+            <button
+              type="button"
+              className={styles.submitButton}
+              onClick={onClose}
+              data-testid="pw-change-done"
+            >
+              {STRINGS.ui.ok}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className={styles.formPanel}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleSubmit();
+          }}
+        >
+          <h2 className={styles.formTitle}>{STRINGS.password.change}</h2>
 
-        {success ? (
-          <>
-            <div className={styles.resultBox}>{STRINGS.password.changeSuccess}</div>
-            <div className={styles.formActions}>
-              <button
-                className={styles.submitButton}
-                onClick={onClose}
-                data-testid="pw-change-done"
-              >
-                {STRINGS.ui.ok}
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.password.currentPassword} *</label>
-              <input
-                className={styles.formInput}
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                data-testid="pw-change-current"
-                autoFocus
-              />
-            </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>{STRINGS.password.currentPassword} *</label>
+            <input
+              className={styles.formInput}
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              data-testid="pw-change-current"
+              autoFocus
+            />
+          </div>
 
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.password.newPassword} *</label>
-              <input
-                className={styles.formInput}
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                data-testid="pw-change-new"
-              />
-            </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>{STRINGS.password.newPassword} *</label>
+            <input
+              className={styles.formInput}
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              data-testid="pw-change-new"
+            />
+          </div>
 
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.password.confirm} *</label>
-              <input
-                className={styles.formInput}
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                data-testid="pw-change-confirm"
-              />
-              {newPassword && confirmPassword && !passwordsMatch && (
-                <div className={styles.error}>{STRINGS.password.mismatch}</div>
-              )}
-            </div>
+          <div className={styles.formGroup}>
+            <label className={styles.formLabel}>{STRINGS.password.confirm} *</label>
+            <input
+              className={styles.formInput}
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              data-testid="pw-change-confirm"
+            />
+            {newPassword && confirmPassword && !passwordsMatch && (
+              <div className={styles.error}>{STRINGS.password.mismatch}</div>
+            )}
+          </div>
 
-            {error && <div className={styles.error}>{error}</div>}
+          {error && <div className={styles.error}>{error}</div>}
 
-            <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={onClose}>
-                {STRINGS.ui.cancel}
-              </button>
-              <button
-                className={styles.submitButton}
-                onClick={handleSubmit}
-                disabled={submitting || !canSubmit}
-                data-testid="pw-change-submit"
-              >
-                {STRINGS.password.change}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
+          <div className={styles.formActions}>
+            <button type="button" className={styles.cancelButton} onClick={onClose}>
+              {STRINGS.ui.cancel}
+            </button>
+            <button
+              type="submit"
+              className={styles.submitButton}
+              disabled={submitting || !canSubmit}
+              data-testid="pw-change-submit"
+            >
+              {STRINGS.password.change}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }

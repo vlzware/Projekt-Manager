@@ -16,6 +16,7 @@ import {
 import { useCustomerStore } from '@/state/customerStore';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useProjectStore } from '@/state/projectStore';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
 import type { Customer } from '@/domain/types';
 import styles from '../management/Management.module.css';
@@ -55,6 +56,8 @@ export function EmailExtractModal({ onClose }: Props) {
 
   const fetchCustomers = useCustomerStore((s) => s.fetchCustomers);
   const fetchMgmtProjects = useProjectManagementStore((s) => s.fetchProjects);
+
+  useEscapeKey(onClose);
 
   // Search for existing customers when match search changes.
   // Empty search is handled via derivation (effectiveMatchResults below)
@@ -172,8 +175,20 @@ export function EmailExtractModal({ onClose }: Props) {
   };
 
   return (
-    <div className={styles.formOverlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
+    <div className={styles.formOverlay}>
+      <form
+        className={styles.formPanel}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!extracted) {
+            if (extracting || !emailText.trim()) return;
+            void handleExtract();
+          } else {
+            if (saving || (!selectedCustomerId && !customerName.trim())) return;
+            void handleSave();
+          }
+        }}
+      >
         <h2 className={styles.formTitle}>{STRINGS.ui.extractEmail}</h2>
 
         {!extracted ? (
@@ -193,12 +208,12 @@ export function EmailExtractModal({ onClose }: Props) {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={onClose}>
+              <button type="button" className={styles.cancelButton} onClick={onClose}>
                 {STRINGS.ui.cancel}
               </button>
               <button
+                type="submit"
                 className={styles.submitButton}
-                onClick={handleExtract}
                 disabled={extracting || !emailText.trim()}
                 data-testid="extract-submit"
               >
@@ -339,12 +354,12 @@ export function EmailExtractModal({ onClose }: Props) {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={onClose}>
+              <button type="button" className={styles.cancelButton} onClick={onClose}>
                 {STRINGS.ui.cancel}
               </button>
               <button
+                type="submit"
                 className={styles.submitButton}
-                onClick={handleSave}
                 disabled={saving || (!selectedCustomerId && !customerName.trim())}
                 data-testid="extract-save"
               >
@@ -353,7 +368,7 @@ export function EmailExtractModal({ onClose }: Props) {
             </div>
           </>
         )}
-      </div>
+      </form>
     </div>
   );
 }

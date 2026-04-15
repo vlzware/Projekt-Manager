@@ -63,6 +63,22 @@ export function KanbanColumn({ config, projects, collapsed, onToggleExpand }: Ka
         <span className={styles.label}>
           {config.label} (<span data-testid={`column-count-${config.key}`}>{projects.length}</span>)
         </span>
+        {onToggleExpand && (
+          <span className={styles.collapseChevron} aria-hidden="true">
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="15 6 9 12 15 18" />
+            </svg>
+          </span>
+        )}
       </div>
       <div className={styles.cards}>
         {projects.map((project) => (

@@ -196,8 +196,8 @@ export function UserManagement() {
 
       {/* Create form */}
       {formOpen && (
-        <div className={styles.formOverlay} onClick={() => setFormOpen(false)}>
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.formOverlay}>
+          <div className={styles.formPanel}>
             <h2 className={styles.formTitle}>
               {STRINGS.entities.user} {STRINGS.ui.create}
             </h2>
@@ -293,15 +293,8 @@ export function UserManagement() {
 
       {/* User detail / deactivate / reactivate / reset password */}
       {selectedUser && !formOpen && (
-        <div
-          className={styles.formOverlay}
-          onClick={() => {
-            setSelectedUser(null);
-            setResetOpen(false);
-            setResetSuccess(false);
-          }}
-        >
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.formOverlay}>
+          <div className={styles.formPanel}>
             <h2 className={styles.formTitle}>{selectedUser.displayName}</h2>
 
             <div className={styles.formGroup}>

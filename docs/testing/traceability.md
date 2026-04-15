@@ -130,3 +130,5 @@ This document is maintained as part of the workflow's test-spec traceability rev
 | AC-118 | [crit]  | §15.21 | Self-update with invalid value rejected      |              | AT-60             |                                                  |                                      |
 | AC-119 | [vis]   | §15.21 | User menu theme selector + persistence       |              |                   | theming.spec.ts (selector)                       |                                      |
 | AC-120 | [vis]   | §15.21 | Server value wins on hydration               |              |                   | theming.spec.ts (hydration)                      |                                      |
+| AC-122 | [vis]   | §15.3  | Modal keyboard contract (Esc/Enter)          |              |                   | management-flows.spec.ts (modal keyboard)        |                                      |
+| AC-123 | [vis]   | §15.3  | Modal backdrop click does not close forms    |              |                   | management-flows.spec.ts (backdrop click)        |                                      |

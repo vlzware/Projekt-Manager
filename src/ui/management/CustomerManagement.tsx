@@ -5,10 +5,11 @@
  * See e2e/management-flows.spec.ts steps 18.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useCustomerStore } from '@/state/customerStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useConfirmStore } from '@/state/confirmStore';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
 import type { Customer } from '@/domain/types';
 import styles from './Management.module.css';
@@ -118,6 +119,16 @@ export function CustomerManagement() {
     clearError();
   };
 
+  const closeCreateForm = useCallback(() => {
+    setFormOpen(false);
+  }, []);
+  const closeEditForm = useCallback(() => {
+    setEditCustomer(null);
+  }, []);
+
+  useEscapeKey(closeCreateForm, formOpen);
+  useEscapeKey(closeEditForm, !!editCustomer && !formOpen);
+
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
@@ -174,53 +185,66 @@ export function CustomerManagement() {
 
       {/* Create form */}
       {formOpen && (
-        <div className={styles.formOverlay} onClick={() => setFormOpen(false)}>
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.formOverlay}>
+          <form
+            className={styles.formPanel}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreate();
+            }}
+          >
             <h2 className={styles.formTitle}>
               {STRINGS.entities.customer} {STRINGS.ui.create}
             </h2>
 
-            {renderFormFields()}
+            {renderFormFields(false)}
 
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setFormOpen(false)}>
+              <button type="button" className={styles.cancelButton} onClick={closeCreateForm}>
                 {STRINGS.ui.cancel}
               </button>
               <button
+                type="submit"
                 className={styles.submitButton}
-                onClick={handleCreate}
                 disabled={submitting || !name.trim()}
                 data-testid="customer-submit"
               >
                 {STRINGS.ui.create}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 
       {/* Edit form (click row) */}
       {editCustomer && !formOpen && (
-        <div className={styles.formOverlay} onClick={() => setEditCustomer(null)}>
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.formOverlay}>
+          <form
+            className={styles.formPanel}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!canWrite) return;
+              void handleUpdate();
+            }}
+          >
             <h2 className={styles.formTitle}>
-              {STRINGS.entities.customer} {STRINGS.ui.edit}
+              {STRINGS.entities.customer} {canWrite ? STRINGS.ui.edit : STRINGS.ui.viewDetails}
             </h2>
 
-            {renderFormFields()}
+            {renderFormFields(!canWrite)}
 
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setEditCustomer(null)}>
+              <button type="button" className={styles.cancelButton} onClick={closeEditForm}>
                 {STRINGS.ui.cancel}
               </button>
               {canWrite && (
                 <button
+                  type="submit"
                   className={styles.submitButton}
-                  onClick={handleUpdate}
                   disabled={submitting || !name.trim()}
                   data-testid="customer-save"
                 >
@@ -228,13 +252,13 @@ export function CustomerManagement() {
                 </button>
               )}
             </div>
-          </div>
+          </form>
         </div>
       )}
     </div>
   );
 
-  function renderFormFields() {
+  function renderFormFields(readOnly: boolean) {
     return (
       <>
         <div className={styles.formGroup}>
@@ -243,6 +267,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={name}
             onChange={(e) => setName(e.target.value)}
+            disabled={readOnly}
             data-testid="customer-name-input"
             autoFocus
           />
@@ -254,6 +279,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={street}
             onChange={(e) => setStreet(e.target.value)}
+            disabled={readOnly}
             data-testid="customer-street-input"
           />
         </div>
@@ -264,6 +290,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={zip}
             onChange={(e) => setZip(e.target.value)}
+            disabled={readOnly}
             data-testid="customer-zip-input"
           />
         </div>
@@ -274,6 +301,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={city}
             onChange={(e) => setCity(e.target.value)}
+            disabled={readOnly}
             data-testid="customer-city-input"
           />
         </div>
@@ -284,6 +312,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
+            disabled={readOnly}
           />
         </div>
 
@@ -293,6 +322,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            disabled={readOnly}
           />
         </div>
       </>

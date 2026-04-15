@@ -11,6 +11,7 @@ import { STRINGS } from '@/config/strings';
 import { STATE_CONFIGS, STATE_FALLBACK_COLOR } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
 import { usePermission } from '@/hooks/usePermission';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
 import styles from './Management.module.css';
@@ -152,6 +153,16 @@ export function ProjectManagement() {
     clearError();
   };
 
+  const closeCreateForm = useCallback(() => {
+    setFormOpen(false);
+  }, []);
+  const closeEditForm = useCallback(() => {
+    setEditProject(null);
+  }, []);
+
+  useEscapeKey(closeCreateForm, formOpen);
+  useEscapeKey(closeEditForm, !!editProject && !formOpen);
+
   const stateLabel = (status: string) => {
     const cfg = STATE_CONFIGS.find((c) => c.key === status);
     return cfg?.label ?? status;
@@ -244,8 +255,14 @@ export function ProjectManagement() {
 
       {/* Create form */}
       {formOpen && (
-        <div className={styles.formOverlay} onClick={() => setFormOpen(false)}>
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.formOverlay}>
+          <form
+            className={styles.formPanel}
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleCreate();
+            }}
+          >
             <h2 className={styles.formTitle}>
               {STRINGS.entities.project} {STRINGS.ui.create}
             </h2>
@@ -307,28 +324,35 @@ export function ProjectManagement() {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setFormOpen(false)}>
+              <button type="button" className={styles.cancelButton} onClick={closeCreateForm}>
                 {STRINGS.ui.cancel}
               </button>
               <button
+                type="submit"
                 className={styles.submitButton}
-                onClick={handleCreate}
                 disabled={submitting || !number.trim() || !title.trim() || !customerId}
                 data-testid="project-submit"
               >
                 {STRINGS.ui.create}
               </button>
             </div>
-          </div>
+          </form>
         </div>
       )}
 
       {/* Edit panel (click row → edit project) */}
       {editProject && !formOpen && (
-        <div className={styles.formOverlay} onClick={() => setEditProject(null)}>
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
+        <div className={styles.formOverlay}>
+          <form
+            className={styles.formPanel}
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!canUpdate) return;
+              void handleSaveEdit();
+            }}
+          >
             <h2 className={styles.formTitle}>
-              {editProject.number} — {STRINGS.ui.edit}
+              {editProject.number} — {canUpdate ? STRINGS.ui.edit : STRINGS.ui.viewDetails}
             </h2>
 
             <div className={styles.formGroup}>
@@ -337,6 +361,7 @@ export function ProjectManagement() {
                 className={styles.formInput}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                disabled={!canUpdate}
                 data-testid="project-title-edit"
                 autoFocus
               />
@@ -363,6 +388,7 @@ export function ProjectManagement() {
                   // Clear end if start is cleared (same rule as detail panel)
                   if (!e.target.value) setPlannedEnd('');
                 }}
+                disabled={!canUpdate}
                 data-testid="project-start-edit"
               />
             </div>
@@ -375,7 +401,7 @@ export function ProjectManagement() {
                 value={plannedEnd}
                 onChange={(e) => setPlannedEnd(e.target.value)}
                 min={plannedStart || undefined}
-                disabled={!plannedStart}
+                disabled={!canUpdate || !plannedStart}
                 data-testid="project-end-edit"
               />
             </div>
@@ -387,6 +413,7 @@ export function ProjectManagement() {
                 value={estimatedValue}
                 onChange={(e) => setEstimatedValue(e.target.value)}
                 placeholder="0,00"
+                disabled={!canUpdate}
                 data-testid="project-value-edit"
               />
             </div>
@@ -397,6 +424,7 @@ export function ProjectManagement() {
                 className={styles.formTextarea}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
+                disabled={!canUpdate}
                 data-testid="project-notes-input"
               />
             </div>
@@ -404,13 +432,13 @@ export function ProjectManagement() {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setEditProject(null)}>
+              <button type="button" className={styles.cancelButton} onClick={closeEditForm}>
                 {STRINGS.ui.cancel}
               </button>
               {canUpdate && (
                 <button
+                  type="submit"
                   className={styles.submitButton}
-                  onClick={handleSaveEdit}
                   disabled={submitting || !title.trim()}
                   data-testid="project-save"
                 >
@@ -418,7 +446,7 @@ export function ProjectManagement() {
                 </button>
               )}
             </div>
-          </div>
+          </form>
         </div>
       )}
     </div>
