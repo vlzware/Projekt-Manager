@@ -24,17 +24,64 @@ import {
 } from '../../domain/dataExchange.js';
 
 /**
- * Within-envelope referential integrity — every project's `customerId`
- * resolves to an envelope customer; every `project_worker.projectId` resolves
- * to an envelope project. Row-level column validation is left to the DB
- * constraints on insert. This pre-check exists so dry-run reports structural
- * issues without writes, and so non-dry-run fails cleanly before TRUNCATE.
+ * Within-envelope structural checks — uniqueness of keys that become DB
+ * constraints on insert, plus referential integrity between tables. Row-level
+ * column validation is left to the DB. This pre-check exists so dry-run
+ * reports issues without writes, and so non-dry-run fails cleanly (422)
+ * before TRUNCATE rather than bubbling a 23505 through as a generic 500.
  */
-function validateEnvelopeReferences(envelope: Envelope): ValidationIssue[] {
+function validateEnvelope(envelope: Envelope): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
-  const customerIds = new Set(envelope.customers.map((c) => c.id));
-  const projectIds = new Set(envelope.projects.map((p) => p.id));
 
+  // Uniqueness: customer id (pkey)
+  const customerIds = new Set<string>();
+  for (let i = 0; i < envelope.customers.length; i++) {
+    const c = envelope.customers[i]!;
+    if (customerIds.has(c.id)) {
+      issues.push({
+        path: `customers[${i}].id`,
+        message: `duplicate customer id ${c.id} within envelope`,
+      });
+    }
+    customerIds.add(c.id);
+  }
+
+  // Uniqueness: project id (pkey) and project number (unique)
+  const projectIds = new Set<string>();
+  const projectNumbers = new Set<string>();
+  for (let i = 0; i < envelope.projects.length; i++) {
+    const p = envelope.projects[i]!;
+    if (projectIds.has(p.id)) {
+      issues.push({
+        path: `projects[${i}].id`,
+        message: `duplicate project id ${p.id} within envelope`,
+      });
+    }
+    projectIds.add(p.id);
+    if (projectNumbers.has(p.number)) {
+      issues.push({
+        path: `projects[${i}].number`,
+        message: `duplicate project number ${p.number} within envelope`,
+      });
+    }
+    projectNumbers.add(p.number);
+  }
+
+  // Uniqueness: project_workers composite (projectId, userId)
+  const assignmentKeys = new Set<string>();
+  for (let i = 0; i < envelope.project_workers.length; i++) {
+    const pw = envelope.project_workers[i]!;
+    const key = `${pw.projectId}|${pw.userId}`;
+    if (assignmentKeys.has(key)) {
+      issues.push({
+        path: `project_workers[${i}]`,
+        message: `duplicate project_worker assignment (projectId=${pw.projectId}, userId=${pw.userId}) within envelope`,
+      });
+    }
+    assignmentKeys.add(key);
+  }
+
+  // Referential integrity: project→customer, assignment→project
   for (let i = 0; i < envelope.projects.length; i++) {
     const p = envelope.projects[i]!;
     if (!customerIds.has(p.customerId)) {
@@ -105,7 +152,7 @@ export class ImportService {
       throw schemaVersionMismatch(SCHEMA_VERSION, envelope.schema_version);
     }
 
-    const validationIssues = validateEnvelopeReferences(envelope);
+    const validationIssues = validateEnvelope(envelope);
 
     if (opts.dryRun) {
       // Read-only snapshot matches the ExportService pattern — the preview

@@ -581,6 +581,239 @@ describe('Unified Data Exchange', () => {
   });
 
   // ---------------------------------------------------------------
+  // Envelope uniqueness validation
+  //
+  // Referential integrity alone is not enough: an envelope with two
+  // customers sharing the same id (or two projects sharing the same id /
+  // the same number, or two project_workers rows with the same composite
+  // key) currently slips past `validateEnvelopeReferences` and reaches the
+  // INSERT, where Postgres raises a 23505 unique-violation that surfaces
+  // to the caller as a generic 500. The validation layer must catch these
+  // collisions up-front and return the same 422 VALIDATION_ERROR shape
+  // used by the referential-integrity checks — so dry-run can preview
+  // them without a write, and non-dry-run never touches the DB at all.
+  // ---------------------------------------------------------------
+  describe('Envelope uniqueness validation', () => {
+    // Start from an empty DB so a duplicate-detection failure cannot be
+    // confused with TARGET_NOT_EMPTY (AC-138) or with a collision against
+    // the seed. The seed is restored in the finally of each test.
+    //
+    // Note: `wipeBusinessData()` truncates business tables only — the
+    // `users` table survives, so seeded user IDs (if any are needed in a
+    // test) remain valid. The tests below do not rely on that, because
+    // validation must reject duplicate composite keys before any insert.
+
+    it('rejects duplicate customer ids (non-dry-run) with 422 VALIDATION_ERROR', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const dupId = envelope.customers[0]!.id;
+        envelope.customers.push({
+          ...envelope.customers[0]!,
+          // Same id as customers[0] — intentional collision.
+          id: dupId,
+          name: 'Duplicate Kunde',
+          email: 'duplicate@example.de',
+          createdAt: '2026-01-03T00:00:00.000Z',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+        });
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+
+        // `details` carries the validation issues. The existing
+        // referential-integrity path stores them as a plain array;
+        // accept either the array-directly or a {validation_errors:[…]}
+        // wrapper so the test pins structure, not incidental nesting.
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const dup = issues!.find((i) => /customers\[1\]/.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        // No rows written — DB remains empty. This is the point of
+        // validating before the transaction opens.
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+        expect(out.project_workers.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('reports duplicate customer ids in dry-run validation_errors without writes', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const dupId = envelope.customers[0]!.id;
+        envelope.customers.push({
+          ...envelope.customers[0]!,
+          id: dupId,
+          name: 'Duplicate Kunde',
+          email: 'duplicate2@example.de',
+          createdAt: '2026-01-03T00:00:00.000Z',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+        });
+
+        const res = await authPost(ownerToken, '/api/import?dry_run=true', envelope);
+        // Dry-run never throws for invalid envelopes — the preview carries
+        // the errors so the UI can render them. This is the clean proof
+        // that validation (not the DB) surfaces the issue.
+        expect(res.statusCode).toBe(200);
+
+        const preview = res.json() as {
+          validation_errors: Array<{ path: string; message: string }>;
+        };
+        expect(Array.isArray(preview.validation_errors)).toBe(true);
+        const dup = preview.validation_errors.find((i) => /customers\[1\]/.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        // No state change.
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('rejects duplicate project ids (non-dry-run) with 422 VALIDATION_ERROR', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const dupId = envelope.projects[0]!.id;
+        envelope.projects.push({
+          ...envelope.projects[0]!,
+          // Same id as projects[0] — intentional collision.
+          id: dupId,
+          // Different number so the test isolates duplicate-id detection
+          // from duplicate-number detection (covered by the next test).
+          number: '2026-901',
+          title: 'Duplicate Projekt',
+          createdAt: '2026-01-06T00:00:00.000Z',
+          updatedAt: '2026-01-06T00:00:00.000Z',
+        });
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const dup = issues!.find((i) => /projects\[1\]/.test(i.path) && /id/i.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('rejects two projects sharing a number (different ids) with 422', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const sharedNumber = envelope.projects[0]!.number;
+        envelope.projects.push({
+          ...envelope.projects[0]!,
+          // Different id — uniqueness collision is on `number` only.
+          id: uuid('proj', 2),
+          number: sharedNumber,
+          title: 'Same Number Projekt',
+          createdAt: '2026-01-07T00:00:00.000Z',
+          updatedAt: '2026-01-07T00:00:00.000Z',
+        });
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const dup = issues!.find((i) => /projects\[1\]/.test(i.path) && /number/i.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('rejects duplicate project_workers composite key with 422', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const projectId = envelope.projects[0]!.id;
+        // userId can be any UUID: uniqueness validation must run before
+        // the FK check against users. If the impl instead tried the insert,
+        // it would FK-fail on this id — but the test pins that the
+        // VALIDATION path rejects first, so the FK is never consulted.
+        const userId = uuid('user', 1);
+        envelope.project_workers = [
+          { projectId, userId },
+          { projectId, userId },
+        ];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const dup = issues!.find((i) => /project_workers\[1\]/.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+        expect(out.project_workers.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
   // AC-138: non-empty target refused without override
   // ---------------------------------------------------------------
   describe('AC-138: non-empty target refused without override', () => {
