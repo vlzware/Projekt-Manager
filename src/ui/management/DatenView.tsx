@@ -82,6 +82,7 @@ export function DatenView() {
               type="file"
               accept=".json,application/json"
               onChange={handleFileChange}
+              disabled={importing}
               data-testid="data-import-file-input"
             />
             {file && <div className={styles.fileName}>{file.name}</div>}

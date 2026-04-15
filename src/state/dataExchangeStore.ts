@@ -96,6 +96,11 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
   exportError: null,
 
   setFile: async (file: File | null) => {
+    // Mid-commit, refuse to touch state. Racing a new selection against an
+    // in-flight import would leave `importResult` landing into a store that
+    // already advanced to the next file, misleading the user into thinking
+    // file B was imported when actually file A was.
+    if (get().importing) return;
     // Reset every derived field when the selection changes — the old
     // preview is about the old file and would mislead the commit button.
     if (!file) {
@@ -193,7 +198,11 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
   setWarnAcknowledged: (v) => set({ warnAcknowledged: v }),
 
   commit: async () => {
-    const { envelope, preview, warnAcknowledged } = get();
+    const { envelope, preview, warnAcknowledged, importing } = get();
+    // Guard against re-entry — a rapid double-click on the commit button
+    // would otherwise fire two parallel imports whose responses race to
+    // overwrite `importResult`.
+    if (importing) return;
     if (!envelope || !preview) return;
     if (preview.validation_errors.length > 0) return;
     if (preview.target_non_empty && !warnAcknowledged) return;
