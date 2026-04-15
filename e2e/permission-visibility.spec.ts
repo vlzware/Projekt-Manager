@@ -33,7 +33,10 @@ interface RoleCase {
   canUpdateDates: boolean;
   canCreateCustomer: boolean;
   canDeleteCustomer: boolean;
-  canImport: boolean;
+  /** `data:export` — gates Daten tab visibility and the export action. */
+  canExportData: boolean;
+  /** `data:restore` — gates the import form inside the Daten view. */
+  canRestoreData: boolean;
 }
 
 /**
@@ -54,7 +57,8 @@ const roleCases: Record<Role, RoleCase> = {
     canUpdateDates: true,
     canCreateCustomer: true,
     canDeleteCustomer: true,
-    canImport: true,
+    canExportData: true,
+    canRestoreData: true,
   },
   office: {
     username: 'buero',
@@ -69,7 +73,8 @@ const roleCases: Record<Role, RoleCase> = {
     canUpdateDates: true,
     canCreateCustomer: true,
     canDeleteCustomer: false,
-    canImport: true,
+    canExportData: true,
+    canRestoreData: false,
   },
   worker: {
     username: 'arbeiter1',
@@ -84,7 +89,8 @@ const roleCases: Record<Role, RoleCase> = {
     canUpdateDates: false,
     canCreateCustomer: false,
     canDeleteCustomer: false,
-    canImport: false,
+    canExportData: false,
+    canRestoreData: false,
   },
   bookkeeper: {
     username: 'buchhalter',
@@ -99,7 +105,8 @@ const roleCases: Record<Role, RoleCase> = {
     canUpdateDates: false,
     canCreateCustomer: false,
     canDeleteCustomer: false,
-    canImport: false,
+    canExportData: false,
+    canRestoreData: false,
   },
 };
 
@@ -192,15 +199,22 @@ test.describe('AC-121: permission-based UI visibility', () => {
         expect(await customerDeleteBtns.count()).toBe(0);
       }
 
-      // -- Daten (Import/Export) view ------------------------------------
-      // AC-90: import section hidden when user has neither project:create
-      // nor customer:write. Export section always visible (all roles have
-      // project:read and customer:read).
-      await page.getByTestId('view-toggle-daten').click();
-      await page.getByTestId('import-export-view').waitFor();
+      // -- Daten (unified data-exchange) view ----------------------------
+      // AC-142: the Daten tab itself is gated on `data:export`. Roles
+      // without it must not see the nav toggle at all. Inside the view,
+      // the import sub-form is gated on `data:restore` (owner only).
+      await expect(page.getByTestId('view-toggle-daten')).toHaveCount(
+        c.canExportData ? 1 : 0,
+      );
+      if (c.canExportData) {
+        await page.getByTestId('view-toggle-daten').click();
+        await page.getByTestId('daten-view').waitFor();
 
-      await expect(page.getByTestId('import-entity-select')).toHaveCount(c.canImport ? 1 : 0);
-      await expect(page.getByTestId('export-entity-select')).toHaveCount(1);
+        await expect(page.getByTestId('data-export-button')).toHaveCount(1);
+        await expect(page.getByTestId('data-import-file-input')).toHaveCount(
+          c.canRestoreData ? 1 : 0,
+        );
+      }
 
       // -- Benutzer management view (only if user:read) ------------------
       if (c.canReadUsers) {

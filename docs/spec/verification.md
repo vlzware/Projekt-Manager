@@ -289,6 +289,15 @@ These tests run against a real (test) database, not mocks.
 - **AT-66**: Two concurrent creates for a customer with the same client-supplied id and identical body result in status codes `{201, 201}` and a single persisted row whose id matches the supplied value.
 - **AT-67**: Two concurrent creates for a project with the same client-supplied id and differing bodies result in status codes `{201, 409}`; the 409 response carries `IDEMPOTENCY_CONFLICT`, and the committed row's fields match the 201 winner.
 - **AT-68**: The periodic session reaper deletes expired session rows on its configured interval; a graceful `stop()` awaits any in-flight sweep before resolving.
+- **AT-69**: `GET /api/export` rejects unauthenticated requests (401) and authenticated requests from roles without `data:export` (403 `NOT_PERMITTED`); owner and office return 200.
+- **AT-70**: `POST /api/import` rejects unauthenticated requests (401) and authenticated requests from roles without `data:restore` — including office (403 `NOT_PERMITTED`); owner with a valid envelope into an empty DB returns 200.
+- **AT-71**: The export envelope contains `schema_version`, `exported_at`, `customers`, `projects`, `project_workers` with row-level fidelity. Projects soft-deleted before export are present with `deleted = true`. Users, sessions, and password hashes are absent from the serialized body.
+- **AT-72**: An import envelope whose `schema_version` differs from the current value (both `+1` and `-1`) is rejected with a specific error code and the database remains unchanged.
+- **AT-73**: An import into an empty database with a valid envelope returns 200, preserves IDs exactly, and is transactional — an envelope whose last row references a non-existent customer aborts with zero writes persisted.
+- **AT-74**: An import into a non-empty database without the `override` flag is rejected with a specific error code; the original data is unchanged.
+- **AT-75**: An import into a non-empty database with `override=true` wipes existing business data and restores atomically. An invalid row inside an override import rolls back to the original seeded state.
+- **AT-76**: A dry-run import (`dry_run=true`) validates the envelope, returns a preview shape containing would-write counts and validation errors, and writes nothing — both for valid and invalid envelopes.
+- **AT-77**: A full roundtrip — seed → export → wipe → import (override) → export — produces content-equivalent envelopes (`schema_version`, `customers`, `projects`, `project_workers` deep-equal; `exported_at` excluded).
 
 ### 16.3 E2E Tests
 

@@ -15,7 +15,7 @@ import { useUIStore } from './uiStore';
 import { useCustomerStore } from './customerStore';
 import { useUserStore } from './userStore';
 import { useProjectManagementStore } from './projectManagementStore';
-import { useImportExportStore } from './importExportStore';
+import { useDataExchangeStore } from './dataExchangeStore';
 
 interface AuthState {
   authUser: AuthUser | null;
@@ -106,12 +106,15 @@ function clearDownstreamState(): void {
     loading: false,
     error: null,
   });
-  useImportExportStore.setState({
-    importData: null,
+  useDataExchangeStore.setState({
+    file: null,
+    envelope: null,
+    preview: null,
+    previewError: null,
+    warnAcknowledged: false,
+    importing: false,
     importResult: null,
     importError: null,
-    importing: false,
-    exportCustomerFilter: '',
     exporting: false,
     exportError: null,
   });

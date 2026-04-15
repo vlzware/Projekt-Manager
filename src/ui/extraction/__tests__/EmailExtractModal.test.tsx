@@ -48,7 +48,6 @@ vi.mock('@/api/client', () => ({
     delete: vi.fn(),
     transitionForward: vi.fn(),
     transitionBackward: vi.fn(),
-    bulkImport: vi.fn(),
   },
   authApi: {
     me: vi.fn().mockResolvedValue({ ok: false }),

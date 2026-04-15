@@ -27,7 +27,8 @@ const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/user.json');
  * permission-visibility, theming) run in parallel in a separate project
  * that completes before this one starts.
  */
-const MUTATING_TESTS = /kanban-flows|management-flows|import-export-flows|theme-preference/;
+const MUTATING_TESTS =
+  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange/;
 const DEMO_TESTS = /demo-.*\.spec\.ts/;
 
 export default defineConfig({

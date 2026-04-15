@@ -21,7 +21,6 @@ vi.mock('@/api/client', () => ({
     update: vi.fn(),
     updateDates: vi.fn(),
     delete: vi.fn(),
-    bulkImport: vi.fn(),
     get: vi.fn(),
   },
   authApi: {

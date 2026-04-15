@@ -32,7 +32,6 @@ vi.mock('@/api/client', () => ({
     updateDates: vi.fn(),
     transitionForward: vi.fn(),
     transitionBackward: vi.fn(),
-    bulkImport: vi.fn(),
   },
   customerApi: {
     list: (...args: unknown[]) =>

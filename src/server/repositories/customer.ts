@@ -162,21 +162,3 @@ export async function deleteCustomer(db: Database, id: string): Promise<boolean>
     .returning({ id: customers.id });
   return rows.length > 0;
 }
-
-/**
- * Find customers by exact name match (case-insensitive, trimmed).
- * Returns an array so the caller can detect ambiguous matches.
- * Uses ILIKE with escaped metacharacters for exact case-insensitive match.
- */
-export async function findCustomersByName(db: Database, name: string): Promise<CustomerRow[]> {
-  return db
-    .select()
-    .from(customers)
-    .where(ilike(customers.name, escapeLike(name.trim())));
-}
-
-/** @deprecated Use findCustomersByName (plural) for ambiguity detection. */
-export async function findCustomerByName(db: Database, name: string): Promise<CustomerRow | null> {
-  const rows = await findCustomersByName(db, name);
-  return rows[0] ?? null;
-}

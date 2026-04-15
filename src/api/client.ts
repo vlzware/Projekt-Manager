@@ -187,7 +187,14 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 
 // --- Typed API functions -----------------------------------------------------
 
-import type { Project, Customer, User, ImportResult } from '@/domain/types';
+import type {
+  Project,
+  Customer,
+  User,
+  Envelope,
+  DryRunPreview,
+  ImportResult,
+} from '@/domain/types';
 
 interface AuthUser {
   id: string;
@@ -297,12 +304,6 @@ export const projectApi = {
       method: 'PATCH',
       body: dates,
     }),
-
-  bulkImport: (projects: Record<string, unknown>[]) =>
-    apiCall<ImportResult>('/api/projects/bulk/import', {
-      method: 'POST',
-      body: { projects },
-    }),
 };
 
 export const customerApi = {
@@ -335,12 +336,6 @@ export const customerApi = {
 
   delete: (id: string) =>
     apiCall<{ success: boolean }>(`/api/customers/${id}`, { method: 'DELETE' }),
-
-  bulkImport: (customers: Record<string, unknown>[]) =>
-    apiCall<ImportResult>('/api/customers/bulk/import', {
-      method: 'POST',
-      body: { customers },
-    }),
 };
 
 export const userApi = {
@@ -381,18 +376,27 @@ export const userApi = {
     }),
 };
 
-export const exportApi = {
-  projects: (params?: { status?: string; customerId?: string }) =>
-    apiCall<Project[]>(
-      '/api/export/projects' +
-        toQuery(params as Record<string, string | number | boolean | undefined>),
-    ),
+/**
+ * Unified business-data export/import (ADR-0018, api.md §14.2.4).
+ *
+ * Export is GET /api/export (permission: data:export).
+ * Import is POST /api/import?dry_run=&override= (permission: data:restore).
+ * The dry-run response is a DryRunPreview; the non-dry response is an
+ * ImportResult. The caller disambiguates via the `dryRun` option.
+ */
+export const dataApi = {
+  export: () => apiCall<Envelope>('/api/export'),
 
-  customers: (params?: { hasProjects?: string }) =>
-    apiCall<Customer[]>(
-      '/api/export/customers' +
-        toQuery(params as Record<string, string | number | boolean | undefined>),
-    ),
+  import: (envelope: Envelope, opts: { dryRun: boolean; override: boolean }) => {
+    const params = new URLSearchParams();
+    if (opts.dryRun) params.set('dry_run', 'true');
+    if (opts.override) params.set('override', 'true');
+    const qs = params.toString();
+    return apiCall<ImportResult | DryRunPreview>('/api/import' + (qs ? '?' + qs : ''), {
+      method: 'POST',
+      body: envelope,
+    });
+  },
 };
 
 export interface ExtractionResult {

@@ -104,30 +104,18 @@ describe('Project Operations — Transitions', () => {
       const customerList = customerRes.json().customers ?? customerRes.json().data;
       const custId = customerList[0].id;
 
-      // Bulk-import a fresh project with two assigned workers — avoids
-      // depending on seed shape (seed.ts does not pre-populate the
-      // project_workers join table).
-      const importRes = await authPost(token, '/api/projects/bulk/import', {
-        projects: [
-          {
-            number: 'IMP-BF1-WORKERS',
-            title: 'workers-in-response regression fixture',
-            customerId: custId,
-            status: 'geplant',
-            assignedWorkerIds: workerIds,
-          },
-        ],
+      // Create a fresh project with two assigned workers — avoids depending
+      // on seed shape (seed.ts does not pre-populate the project_workers
+      // join table).
+      const createRes = await authPost(token, '/api/projects', {
+        number: 'IMP-BF1-WORKERS',
+        title: 'workers-in-response regression fixture',
+        customerId: custId,
+        status: 'geplant',
+        assignedWorkerIds: workerIds,
       });
-      expect(importRes.statusCode).toBe(200);
-      expect(importRes.json().imported).toBe(1);
-
-      // Fetch it back to get the id.
-      const listRes = await authGet(token, '/api/projects');
-      const fixture = listRes
-        .json()
-        .data.find((p: Record<string, unknown>) => p.number === 'IMP-BF1-WORKERS');
-      expect(fixture).toBeDefined();
-      projectId = fixture.id;
+      expect(createRes.statusCode).toBe(201);
+      projectId = createRes.json().id;
 
       // Sanity: GET returns both workers — baseline for the mutation tests.
       const getRes = await authGet(token, `/api/projects/${projectId}`);

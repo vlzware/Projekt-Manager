@@ -42,6 +42,11 @@ export function Header() {
 
   const canReadUsers = usePermission('user:read');
   const canExtract = usePermission('customer:write');
+  // AC-142: the Daten tab is only shown to users who can export business
+  // data. The server still authorises /api/export independently — this
+  // is the client-side half of the "don't render actions you cannot
+  // perform" rule (AC-121).
+  const canExportData = usePermission('data:export');
 
   const views: { key: ViewMode; label: string }[] = [
     { key: 'kanban', label: STRINGS.ui.viewKanban },
@@ -49,7 +54,7 @@ export function Header() {
     { key: 'projekte', label: STRINGS.ui.viewProjects },
     { key: 'kunden', label: STRINGS.ui.viewCustomers },
     ...(canReadUsers ? [{ key: 'benutzer' as ViewMode, label: STRINGS.ui.viewUsers }] : []),
-    { key: 'daten', label: STRINGS.ui.viewData },
+    ...(canExportData ? [{ key: 'daten' as ViewMode, label: STRINGS.ui.viewData }] : []),
   ];
 
   const handleLogout = async () => {

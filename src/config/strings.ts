@@ -32,6 +32,10 @@ export const STRINGS = {
     invalidInput: 'Ungültige Eingabe.',
     notFound: (entity: string) => `${entity} nicht gefunden.`,
     idempotencyConflict: 'Diese Anfrage-ID wurde bereits mit abweichenden Daten verwendet.',
+    schemaVersionMismatch:
+      'Die Datenformat-Version der Datei passt nicht zur aktuellen Version des Systems.',
+    targetNotEmpty:
+      'Die Datenbank ist nicht leer. Bestätigen Sie das Überschreiben, um fortzufahren.',
   },
 
   entities: {
@@ -222,26 +226,37 @@ export const STRINGS = {
     newCustomer: 'Neuer Kunde',
     description: 'Beschreibung',
 
-    // Import/Export
-    import: 'Import',
-    export: 'Export',
-    importSubmit: 'Importieren',
-    exportDownload: 'Exportieren',
+    // Data exchange (Daten view) — kept here for shared labels.
     entityType: 'Datentyp',
     customers: 'Kunden',
     projects: 'Projekte',
-    preview: 'Vorschau',
-    importResult: 'Ergebnis',
-    importedCount: (n: number) => `${n} importiert`,
-    errorCount: (n: number) => `${n} Fehler`,
-    row: 'Zeile',
-    uploadFile: 'JSON-Datei auswählen',
-    statusFilter: 'Status-Filter',
     all: 'Alle',
-    withProjects: 'Mit Projekten',
-    withoutProjects: 'Ohne Projekte',
+    uploadFile: 'JSON-Datei auswählen',
     fileTooLarge: (maxMb: number) => `Datei zu groß. Maximal ${maxMb} MB erlaubt.`,
     noPermission: 'Keine Berechtigung.',
+  },
+
+  /**
+   * Unified data-exchange surface (ADR-0018, ui.md §8.11). Strings pinned
+   * here so the Daten view and any future CLI-parity message share one
+   * source. German copy reflects the spec: a single "Herunterladen" action
+   * for export, a two-step upload→commit flow for import.
+   */
+  dataExchange: {
+    exportHeading: 'Export',
+    exportDescription: 'Lädt alle Kunden, Projekte und Zuordnungen als eine JSON-Datei herunter.',
+    exportAction: 'Herunterladen',
+
+    importHeading: 'Import',
+    importDescription:
+      'Stellt den Datenbestand aus einer zuvor exportierten JSON-Datei wieder her.',
+    importAction: 'Importieren',
+    projectWorkers: 'Zuordnungen',
+    wouldWriteHeader: 'Anzahl',
+    validationErrorsHeading: 'Validierungsfehler',
+    overrideWarning:
+      'Die bestehenden Daten werden ersetzt. Hiermit bestätige ich, dass ich dies möchte.',
+    importSuccessHeading: 'Wiederherstellung erfolgreich.',
   },
 
   aging: {

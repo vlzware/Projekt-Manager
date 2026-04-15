@@ -12,7 +12,6 @@ import {
   deleteCustomer as deleteCustomerRepo,
   getCustomerRow,
   toCustomerResponse,
-  findCustomersByName,
 } from '../repositories/customer.js';
 import { projects } from '../db/schema.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
@@ -164,89 +163,5 @@ export class CustomerService {
     });
 
     log.info({ customerId: id }, 'customer_deleted');
-  }
-
-  async bulkImport(
-    items: {
-      name?: unknown;
-      phone?: unknown;
-      email?: unknown;
-      address?: unknown;
-      notes?: unknown;
-    }[],
-    userId: string,
-    log: ServiceLogger,
-  ): Promise<{ imported: number; updated: number; errors: { index: number; message: string }[] }> {
-    const errors: { index: number; message: string }[] = [];
-    let imported = 0;
-    let updated = 0;
-
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i]!;
-
-      if (typeof item.name !== 'string' || item.name.trim() === '') {
-        errors.push({ index: i, message: STRINGS.customers.nameRequired });
-        continue;
-      }
-      if (item.name.length > 255) {
-        errors.push({ index: i, message: STRINGS.validation.maxLength('name', 255) });
-        continue;
-      }
-
-      // Validate address structure if present — must have street, zip, city as strings
-      let address: { street: string; zip: string; city: string } | null = null;
-      if (item.address !== undefined && item.address !== null) {
-        if (typeof item.address !== 'object' || Array.isArray(item.address)) {
-          errors.push({ index: i, message: STRINGS.validation.mustBeObject('address') });
-          continue;
-        }
-        const addr = item.address as Record<string, unknown>;
-        if (
-          typeof addr.street !== 'string' ||
-          typeof addr.zip !== 'string' ||
-          typeof addr.city !== 'string'
-        ) {
-          errors.push({
-            index: i,
-            message: STRINGS.validation.mustBeObject('address (street, zip, city)'),
-          });
-          continue;
-        }
-        address = { street: addr.street, zip: addr.zip, city: addr.city };
-      }
-
-      const data = {
-        name: item.name,
-        phone: typeof item.phone === 'string' ? item.phone : null,
-        email: typeof item.email === 'string' ? item.email : null,
-        address,
-        notes: typeof item.notes === 'string' ? item.notes : null,
-      };
-
-      try {
-        const matches = await findCustomersByName(this.db, data.name);
-        if (matches.length > 1) {
-          // Ambiguous: multiple customers share this name — refuse to guess
-          errors.push({ index: i, message: STRINGS.customers.ambiguousName });
-          continue;
-        }
-        if (matches.length === 1) {
-          await updateCustomerRepo(this.db, matches[0]!.id, userId, data);
-          updated++;
-        } else {
-          await createCustomerRepo(this.db, {
-            ...data,
-            createdBy: userId,
-            updatedBy: userId,
-          });
-          imported++;
-        }
-      } catch (err) {
-        log.error({ err, index: i }, 'Customer bulk import row failed');
-        errors.push({ index: i, message: STRINGS.errors.mutationFailed });
-      }
-    }
-
-    return { imported, updated, errors };
   }
 }

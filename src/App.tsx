@@ -13,7 +13,7 @@ import { CalendarView } from '@/ui/calendar/CalendarView';
 import { CustomerManagement } from '@/ui/management/CustomerManagement';
 import { ProjectManagement } from '@/ui/management/ProjectManagement';
 import { UserManagement } from '@/ui/management/UserManagement';
-import { ImportExportView } from '@/ui/management/ImportExportView';
+import { DatenView } from '@/ui/management/DatenView';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
@@ -118,7 +118,7 @@ export function App() {
             </RequireRoles>
           }
         />
-        <Route path="/data" element={<ImportExportView />} />
+        <Route path="/data" element={<DatenView />} />
         <Route path="/" element={<Navigate to="/kanban" replace />} />
         <Route path="*" element={<Navigate to="/kanban" replace />} />
       </Routes>
@@ -138,7 +138,7 @@ export function App() {
         <KanbanBoard />
       )
     ) : activeView === 'daten' ? (
-      <ImportExportView />
+      <DatenView />
     ) : (
       <KanbanBoard />
     );

@@ -446,3 +446,35 @@
   color: var(--color-text-muted);
   font-size: 0.8rem;
 }
+
+/* Data-exchange view (Daten) */
+.sectionDescription {
+  margin: 0 0 12px;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.previewPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fileName {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--color-text-subtle);
+}
+
+.validationList {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--color-danger-text);
+  font-size: 0.8rem;
+}
+
+.resultList {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 0.875rem;
+}

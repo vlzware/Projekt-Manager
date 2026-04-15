@@ -17,6 +17,8 @@ export type ErrorCode =
   | 'IDEMPOTENCY_CONFLICT'
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
+  | 'SCHEMA_VERSION_MISMATCH'
+  | 'TARGET_NOT_EMPTY'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
@@ -79,6 +81,17 @@ export function conflict(message: string): AppError {
 
 export function idempotencyConflict(): AppError {
   return new AppError('IDEMPOTENCY_CONFLICT', STRINGS.errors.idempotencyConflict, 409);
+}
+
+export function schemaVersionMismatch(expected: number, got: number): AppError {
+  return new AppError('SCHEMA_VERSION_MISMATCH', STRINGS.errors.schemaVersionMismatch, 422, {
+    expected,
+    got,
+  });
+}
+
+export function targetNotEmpty(): AppError {
+  return new AppError('TARGET_NOT_EMPTY', STRINGS.errors.targetNotEmpty, 409);
 }
 
 /**
