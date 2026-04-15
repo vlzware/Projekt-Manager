@@ -12,6 +12,7 @@
  */
 
 import type { WorkflowState } from '../../config/stateConfig.js';
+import { formatDateOnly } from '../../domain/dateFormat.js';
 
 export interface CustomerIncoming {
   name: string;
@@ -78,7 +79,7 @@ export interface ProjectStored {
 }
 
 function dateToIsoDay(d: Date | null): string | null {
-  return d ? d.toISOString().slice(0, 10) : null;
+  return d ? formatDateOnly(d) : null;
 }
 
 function sortedUnique(ids: string[]): string[] {

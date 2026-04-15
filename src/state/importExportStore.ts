@@ -8,6 +8,7 @@
 import { create } from 'zustand';
 import type { ImportResult } from '@/domain/types';
 import { customerApi, projectApi, exportApi } from '@/api/client';
+import { formatDateOnly } from '@/domain/dateFormat';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';
 import { useCustomerStore } from './customerStore';
@@ -126,7 +127,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const entityLabel = exportEntity === 'projects' ? 'projekte' : 'kunden';
-    const datePart = new Date().toISOString().slice(0, 10);
+    const datePart = formatDateOnly(new Date());
     a.href = url;
     a.download = `${entityLabel}-${datePart}.json`;
     document.body.appendChild(a);

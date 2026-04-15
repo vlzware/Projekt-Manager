@@ -7,15 +7,11 @@ import type { Database } from '../db/connection.js';
 import { projects, projectWorkers, users, customers } from '../db/schema.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
+import { formatDateOnly } from '../../domain/dateFormat.js';
 
 /** Escape LIKE-pattern metacharacters so user input is treated literally. */
 function escapeLike(value: string): string {
   return value.replace(/[%_\\]/g, '\\$&');
-}
-
-/** Format a Date from a `date` column as YYYY-MM-DD (no time component). */
-function toDateString(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
 
 export type ProjectRow = typeof projects.$inferSelect;
@@ -57,8 +53,8 @@ export function toProject(
     statusChangedAt: row.statusChangedAt.toISOString(),
     customerId: row.customerId,
     customer: customer ? toCustomer(customer) : null,
-    plannedStart: row.plannedStart ? toDateString(row.plannedStart) : null,
-    plannedEnd: row.plannedEnd ? toDateString(row.plannedEnd) : null,
+    plannedStart: row.plannedStart ? formatDateOnly(row.plannedStart) : null,
+    plannedEnd: row.plannedEnd ? formatDateOnly(row.plannedEnd) : null,
     assignedWorkers: workers.length > 0 ? workers : null,
     estimatedValue: row.estimatedValue ? Number(row.estimatedValue) : null,
     notes: row.notes ?? null,
