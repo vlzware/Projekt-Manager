@@ -47,6 +47,12 @@ services:
       # disabled when the key is absent.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-2.5-flash-lite}
+      # Periodic session-reaper cadence. Default 60 min matches env.ts;
+      # lower values tighten revocation latency at the cost of more DB
+      # traffic. Forwarded explicitly so the container sees the override
+      # — without this line, the Zod schema silently falls back to its
+      # default at runtime (the failure mode check-env-drift.sh guards).
+      SESSION_CLEANUP_INTERVAL_MINUTES: ${SESSION_CLEANUP_INTERVAL_MINUTES:-60}
     healthcheck:
       test:
         [
