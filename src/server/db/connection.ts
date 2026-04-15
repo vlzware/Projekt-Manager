@@ -14,6 +14,16 @@ const { Pool } = pg;
 
 export type Database = ReturnType<typeof drizzle<typeof schema>>;
 
+/**
+ * A `Database` or a transaction handle. Repository functions that are
+ * called from both top-level code and inside `db.transaction(tx => ...)`
+ * accept this so the type system tracks the caller's context without
+ * services having to cast.
+ */
+export type TransactionalDatabase =
+  | Database
+  | Parameters<Parameters<Database['transaction']>[0]>[0];
+
 export interface ConnectionOptions {
   connectionString?: string;
 }

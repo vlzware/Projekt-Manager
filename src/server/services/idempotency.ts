@@ -1,5 +1,5 @@
 /**
- * Idempotency comparators for client-supplied create IDs.
+ * Idempotency comparators and orchestrator for client-supplied create IDs.
  *
  * When a client POSTs a create with its own UUID, a retry after a lost
  * response can land on a row that already exists. We replay the create
@@ -13,6 +13,7 @@
 
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { formatDateOnly } from '../../domain/dateFormat.js';
+import { extractSqlState, extractPgConstraint, idempotencyConflict } from '../errors.js';
 
 export interface CustomerIncoming {
   name: string;
@@ -127,4 +128,51 @@ export function projectMatches(incoming: ProjectIncoming, stored: ProjectStored)
 
   if ((incoming.notes ?? null) !== stored.notes) return false;
   return true;
+}
+
+/**
+ * Create-or-replay orchestrator for entities that support client-supplied
+ * IDs (projects, customers). Pattern:
+ *
+ *   1. Pre-SELECT by id. If the row exists, replay (or conflict on mismatch).
+ *   2. Otherwise INSERT. On success, done.
+ *   3. On 23505, disambiguate: if the constraint is the id's PK (or the driver
+ *      omitted it), re-read the id and replay. Otherwise defer to the caller
+ *      to map the other unique constraint to an entity-specific conflict.
+ *
+ * `replayFromRow` returns `null` on mismatch so the helper can throw
+ * `idempotencyConflict()`. This lets callers collapse match-check and
+ * hydration into one pass (projects, for instance, fetch workers exactly
+ * once on the replay path).
+ */
+export async function createIdempotent<T, Row>(opts: {
+  preSelectRow: () => Promise<Row | null>;
+  replayFromRow: (row: Row) => Promise<T | null>;
+  insert: () => Promise<T>;
+  isIdRaceConstraint: (constraint: string | null) => boolean;
+  onNonIdRaceConstraint: (err: unknown, constraint: string | null) => never;
+}): Promise<T> {
+  const tryReplay = async (row: Row): Promise<T> => {
+    const replay = await opts.replayFromRow(row);
+    if (replay === null) throw idempotencyConflict();
+    return replay;
+  };
+
+  const existing = await opts.preSelectRow();
+  if (existing) return tryReplay(existing);
+
+  try {
+    return await opts.insert();
+  } catch (err) {
+    if (extractSqlState(err) !== '23505') throw err;
+    const constraint = extractPgConstraint(err);
+    if (!opts.isIdRaceConstraint(constraint)) opts.onNonIdRaceConstraint(err, constraint);
+
+    const raced = await opts.preSelectRow();
+    if (raced) return tryReplay(raced);
+
+    // Re-read found nothing — the driver omitted `constraint` and the
+    // 23505 was on some other unique key after all. Caller maps it.
+    opts.onNonIdRaceConstraint(err, constraint);
+  }
 }

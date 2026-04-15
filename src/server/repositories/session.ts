@@ -4,7 +4,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { and, eq, lt, ne } from 'drizzle-orm';
-import type { Database } from '../db/connection.js';
+import type { Database, TransactionalDatabase } from '../db/connection.js';
 import { sessions, users } from '../db/schema.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
 
@@ -91,7 +91,7 @@ export async function deleteSession(db: Database, token: string): Promise<void> 
  * (e.g. the current session on password change).
  */
 export async function deleteSessionsByUserId(
-  db: Database,
+  db: TransactionalDatabase,
   userId: string,
   excludeToken?: string,
 ): Promise<void> {

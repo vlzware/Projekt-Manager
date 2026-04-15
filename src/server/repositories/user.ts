@@ -3,7 +3,7 @@
  */
 
 import { eq, count, asc } from 'drizzle-orm';
-import type { Database } from '../db/connection.js';
+import type { Database, TransactionalDatabase } from '../db/connection.js';
 import { users } from '../db/schema.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
 
@@ -149,7 +149,7 @@ export async function reactivateUser(
   return toUserResponse(rows[0]!);
 }
 
-export async function deleteUser(db: Database, id: string): Promise<boolean> {
+export async function deleteUser(db: TransactionalDatabase, id: string): Promise<boolean> {
   const rows = await db.delete(users).where(eq(users.id, id)).returning({ id: users.id });
   return rows.length > 0;
 }
@@ -176,7 +176,7 @@ export async function updateLastLogin(db: Database, id: string): Promise<void> {
  * data-model.md §5.5. See consolidation review B F-3 / round-2 B M-1.
  */
 export async function deactivateUser(
-  db: Database,
+  db: TransactionalDatabase,
   id: string,
   actorId: string | null,
 ): Promise<ReturnType<typeof toUserResponse> | null> {
@@ -198,7 +198,7 @@ export async function deactivateUser(
  * data-model.md §5.5. See consolidation review B F-3.
  */
 export async function changePassword(
-  db: Database,
+  db: TransactionalDatabase,
   id: string,
   newPasswordHash: string,
   actorId: string | null,

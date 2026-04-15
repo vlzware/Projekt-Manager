@@ -30,15 +30,8 @@ import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
-import {
-  notFound,
-  validationError,
-  conflict,
-  idempotencyConflict,
-  extractSqlState,
-  extractPgConstraint,
-} from '../errors.js';
-import { projectMatches } from './idempotency.js';
+import { notFound, validationError, conflict, extractSqlState } from '../errors.js';
+import { projectMatches, createIdempotent } from './idempotency.js';
 import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
 
@@ -134,68 +127,51 @@ export class ProjectService {
       notes: data.notes ?? null,
     };
 
-    // Pre-SELECT is best-effort — under READ COMMITTED a concurrent insert
-    // can still slip between this lookup and the INSERT below. The 23505
-    // catch block is the actual race handler.
-    const existing = await getProjectRowById(this.db, data.id);
-    if (existing) {
-      const workers = await fetchWorkersForProject(this.db, data.id);
-      if (!this.storedMatchesIncoming(existing, workers, matchInput)) {
-        throw idempotencyConflict();
-      }
-      log.info({ projectId: data.id }, 'project_create_replayed');
-      return this.hydrateReplayedProject(existing, workers);
-    }
-
-    try {
-      const inserted = await insertProjectRepo(this.db, {
-        id: data.id,
-        number: data.number,
-        title: data.title,
-        status: data.status,
-        customerId: data.customerId,
-        plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
-        plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
-        assignedWorkerIds: data.assignedWorkerIds ?? null,
-        estimatedValue: data.estimatedValue != null ? String(data.estimatedValue) : null,
-        notes: data.notes ?? null,
-        createdBy: userId,
-        updatedBy: userId,
-      });
-      log.info({ projectId: data.id }, 'project_created');
-      return inserted;
-    } catch (err) {
-      const sqlState = extractSqlState(err);
-      if (sqlState !== '23505') {
-        if (sqlState === '23503') throw validationError(STRINGS.projects.foreignKeyViolation);
-        throw err;
-      }
-
-      // 23505 with client-supplied id has two plausible constraints:
-      //   projects_pkey         — racing idempotent replay on the same id
-      //   projects_number_unique — real number collision
-      // Use the pg-attached `constraint` to disambiguate; fall back to a
-      // post-hoc id lookup when the driver omits it (node-postgres sets it
-      // reliably for unique_violation, but defense-in-depth).
-      const constraint = extractPgConstraint(err);
-      if (constraint === DB_CONSTRAINTS.projects.numberUnique) {
-        throw conflict(STRINGS.projects.duplicateNumber(data.number));
-      }
-      if (constraint === DB_CONSTRAINTS.projects.pkey || constraint === null) {
-        const row = await getProjectRowById(this.db, data.id);
-        if (row) {
-          const workers = await fetchWorkersForProject(this.db, data.id);
-          if (!this.storedMatchesIncoming(row, workers, matchInput)) {
-            throw idempotencyConflict();
+    return createIdempotent({
+      preSelectRow: () => getProjectRowById(this.db, data.id),
+      replayFromRow: async (row) => {
+        const workers = await fetchWorkersForProject(this.db, data.id);
+        if (!this.storedMatchesIncoming(row, workers, matchInput)) return null;
+        log.info({ projectId: data.id }, 'project_create_replayed');
+        return this.hydrateReplayedProject(row, workers);
+      },
+      insert: async () => {
+        try {
+          const inserted = await insertProjectRepo(this.db, {
+            id: data.id,
+            number: data.number,
+            title: data.title,
+            status: data.status,
+            customerId: data.customerId,
+            plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
+            plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
+            assignedWorkerIds: data.assignedWorkerIds ?? null,
+            estimatedValue: data.estimatedValue != null ? String(data.estimatedValue) : null,
+            notes: data.notes ?? null,
+            createdBy: userId,
+            updatedBy: userId,
+          });
+          log.info({ projectId: data.id }, 'project_created');
+          return inserted;
+        } catch (err) {
+          // 23503 is customerId FK violation — map before the idempotency
+          // helper sees it, since 23503 is not in its 23505 branch anyway.
+          if (extractSqlState(err) === '23503') {
+            throw validationError(STRINGS.projects.foreignKeyViolation);
           }
-          log.info({ projectId: data.id }, 'project_create_replayed');
-          return this.hydrateReplayedProject(row, workers);
+          throw err;
         }
-        // No matching id → it must have been the number constraint after all.
+      },
+      // Id race: pkey, or driver omitted the constraint name.
+      isIdRaceConstraint: (c) => c === DB_CONSTRAINTS.projects.pkey || c === null,
+      // Any other 23505 — or pkey/null with no matching row on re-read — is
+      // a real `number` collision. (Re-read finding nothing under pkey/null
+      // means the 23505 was actually on number_unique; the driver just
+      // didn't attach the constraint name.)
+      onNonIdRaceConstraint: () => {
         throw conflict(STRINGS.projects.duplicateNumber(data.number));
-      }
-      throw err;
-    }
+      },
+    });
   }
 
   private storedMatchesIncoming(

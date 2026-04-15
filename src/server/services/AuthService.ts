@@ -12,8 +12,6 @@
 import type { Database } from '../db/connection.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbLike = any;
 import {
   findByUsername,
   updateLastLogin,
@@ -149,8 +147,8 @@ export class AuthService {
     // Atomic: password change + session invalidation in one transaction.
     // If session cleanup fails, the password change rolls back.
     await this.db.transaction(async (tx) => {
-      await changePasswordRepo(tx as DbLike, user.id, newHash, user.id);
-      await deleteSessionsByUserId(tx as DbLike, user.id, currentToken);
+      await changePasswordRepo(tx, user.id, newHash, user.id);
+      await deleteSessionsByUserId(tx, user.id, currentToken);
     });
 
     log.info({ userId, ip }, 'password_change');

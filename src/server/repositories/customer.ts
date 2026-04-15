@@ -3,7 +3,7 @@
  */
 
 import { eq, and, count, ilike, asc } from 'drizzle-orm';
-import type { Database } from '../db/connection.js';
+import type { Database, TransactionalDatabase } from '../db/connection.js';
 import { customers, projects } from '../db/schema.js';
 
 /** Escape LIKE-pattern metacharacters so user input is treated literally. */
@@ -155,7 +155,7 @@ export async function updateCustomer(
   return toCustomerResponse(rows[0]!);
 }
 
-export async function deleteCustomer(db: Database, id: string): Promise<boolean> {
+export async function deleteCustomer(db: TransactionalDatabase, id: string): Promise<boolean> {
   const rows = await db
     .delete(customers)
     .where(eq(customers.id, id))
