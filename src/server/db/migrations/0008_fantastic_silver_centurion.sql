@@ -1,1 +1,0 @@
-ALTER TABLE "projects" ADD CONSTRAINT "projects_number_unique" UNIQUE("number");
