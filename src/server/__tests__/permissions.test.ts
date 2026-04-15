@@ -77,7 +77,9 @@ describe('Role-based Permission Enforcement', () => {
         const token = tokenFor(role);
         const project = await findProjectByStatus(token, 'geplant');
 
-        const res = await authPost(token, `/api/projects/${project.id}/transition/forward`);
+        const res = await authPost(token, `/api/projects/${project.id}/transition/forward`, {
+          expectedStatus: 'geplant',
+        });
 
         expect(res.statusCode).toBe(403);
 
@@ -94,7 +96,9 @@ describe('Role-based Permission Enforcement', () => {
         const token = tokenFor(role);
         const project = await findProjectByStatus(token, 'in_arbeit');
 
-        const res = await authPost(token, `/api/projects/${project.id}/transition/backward`);
+        const res = await authPost(token, `/api/projects/${project.id}/transition/backward`, {
+          expectedStatus: 'in_arbeit',
+        });
 
         expect(res.statusCode).toBe(403);
 
@@ -140,7 +144,9 @@ describe('Role-based Permission Enforcement', () => {
     it('can transition forward — returns 200', async () => {
       const project = await findProjectByStatus(ownerToken, 'abnahme');
 
-      const res = await authPost(ownerToken, `/api/projects/${project.id}/transition/forward`);
+      const res = await authPost(ownerToken, `/api/projects/${project.id}/transition/forward`, {
+        expectedStatus: 'abnahme',
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -159,7 +165,9 @@ describe('Role-based Permission Enforcement', () => {
       // anfrage -> angebot is safe since seed has 2 anfrage projects.
       const project = await findProjectByStatus(officeToken, 'anfrage');
 
-      const res = await authPost(officeToken, `/api/projects/${project.id}/transition/forward`);
+      const res = await authPost(officeToken, `/api/projects/${project.id}/transition/forward`, {
+        expectedStatus: 'anfrage',
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -215,7 +223,9 @@ describe('Role-based Permission Enforcement', () => {
 
     it('cannot transition a project — returns 403 NOT_PERMITTED', async () => {
       const project = await findProjectByStatus(ownerToken, 'anfrage');
-      const res = await authPost(noPermsToken, `/api/projects/${project.id}/transition/forward`);
+      const res = await authPost(noPermsToken, `/api/projects/${project.id}/transition/forward`, {
+        expectedStatus: 'anfrage',
+      });
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe('NOT_PERMITTED');
     });

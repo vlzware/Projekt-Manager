@@ -42,7 +42,9 @@ describe('Project Operations — Transitions', () => {
       const originalStatusChangedAt = geplantProject.statusChangedAt;
       const originalUpdatedAt = geplantProject.updatedAt;
 
-      const res = await authPost(token, `/api/projects/${geplantProject.id}/transition/forward`);
+      const res = await authPost(token, `/api/projects/${geplantProject.id}/transition/forward`, {
+        expectedStatus: 'geplant',
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -65,7 +67,9 @@ describe('Project Operations — Transitions', () => {
       const meRes = await authGet(token, '/api/auth/me');
       const me = meRes.json().user;
 
-      const res = await authPost(token, `/api/projects/${project.id}/transition/forward`);
+      const res = await authPost(token, `/api/projects/${project.id}/transition/forward`, {
+        expectedStatus: 'beauftragt',
+      });
 
       const updated = res.json();
       expect(updated.updatedBy).toBe(me.id);
@@ -125,7 +129,9 @@ describe('Project Operations — Transitions', () => {
     });
 
     it('transitionForward response includes assignedWorkers', async () => {
-      const res = await authPost(token, `/api/projects/${projectId}/transition/forward`);
+      const res = await authPost(token, `/api/projects/${projectId}/transition/forward`, {
+        expectedStatus: 'geplant',
+      });
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(body.id).toBe(projectId);
@@ -140,7 +146,9 @@ describe('Project Operations — Transitions', () => {
     it('transitionBackward response includes assignedWorkers', async () => {
       // After the forward test the project is in `in_arbeit`; move it
       // back to `geplant` for a symmetric assertion.
-      const res = await authPost(token, `/api/projects/${projectId}/transition/backward`);
+      const res = await authPost(token, `/api/projects/${projectId}/transition/backward`, {
+        expectedStatus: 'in_arbeit',
+      });
       expect(res.statusCode).toBe(200);
       const body = res.json();
       expect(Array.isArray(body.assignedWorkers)).toBe(true);
@@ -172,7 +180,9 @@ describe('Project Operations — Transitions', () => {
       );
       expect(erledigtProject).toBeDefined();
 
-      const res = await authPost(token, `/api/projects/${erledigtProject.id}/transition/forward`);
+      const res = await authPost(token, `/api/projects/${erledigtProject.id}/transition/forward`, {
+        expectedStatus: 'erledigt',
+      });
 
       expect(res.statusCode).toBe(422);
 
@@ -194,7 +204,9 @@ describe('Project Operations — Transitions', () => {
       const anfrageProject = projects.find((p: Record<string, unknown>) => p.status === 'anfrage');
       expect(anfrageProject).toBeDefined();
 
-      const res = await authPost(token, `/api/projects/${anfrageProject.id}/transition/backward`);
+      const res = await authPost(token, `/api/projects/${anfrageProject.id}/transition/backward`, {
+        expectedStatus: 'anfrage',
+      });
 
       expect(res.statusCode).toBe(422);
 
@@ -211,7 +223,9 @@ describe('Project Operations — Transitions', () => {
       );
       expect(erledigtProject).toBeDefined();
 
-      const res = await authPost(token, `/api/projects/${erledigtProject.id}/transition/backward`);
+      const res = await authPost(token, `/api/projects/${erledigtProject.id}/transition/backward`, {
+        expectedStatus: 'erledigt',
+      });
 
       expect(res.statusCode).toBe(422);
 
@@ -238,7 +252,11 @@ describe('Project Operations — Transitions', () => {
         .data.find((p: Record<string, unknown>) => p.status === 'geplant');
       expect(geplantProject).toBeDefined();
 
-      const fwdRes = await authPost(token, `/api/projects/${geplantProject.id}/transition/forward`);
+      const fwdRes = await authPost(
+        token,
+        `/api/projects/${geplantProject.id}/transition/forward`,
+        { expectedStatus: 'geplant' },
+      );
       expect(fwdRes.statusCode).toBe(200);
       const inArbeitProject = fwdRes.json();
       expect(inArbeitProject.status).toBe('in_arbeit');
@@ -247,7 +265,9 @@ describe('Project Operations — Transitions', () => {
       const originalUpdatedAt = inArbeitProject.updatedAt;
 
       // Now the actual assertion: backward from in_arbeit returns to geplant.
-      const res = await authPost(token, `/api/projects/${inArbeitProject.id}/transition/backward`);
+      const res = await authPost(token, `/api/projects/${inArbeitProject.id}/transition/backward`, {
+        expectedStatus: 'in_arbeit',
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -269,7 +289,11 @@ describe('Project Operations — Transitions', () => {
       expect(angebotProject).toBeDefined();
 
       // Forward: angebot -> beauftragt
-      const fwdRes = await authPost(token, `/api/projects/${angebotProject.id}/transition/forward`);
+      const fwdRes = await authPost(
+        token,
+        `/api/projects/${angebotProject.id}/transition/forward`,
+        { expectedStatus: 'angebot' },
+      );
       expect(fwdRes.statusCode).toBe(200);
       expect(fwdRes.json().status).toBe('beauftragt');
 
@@ -281,6 +305,7 @@ describe('Project Operations — Transitions', () => {
       const bwdRes = await authPost(
         token,
         `/api/projects/${angebotProject.id}/transition/backward`,
+        { expectedStatus: 'beauftragt' },
       );
       expect(bwdRes.statusCode).toBe(200);
 
@@ -312,9 +337,12 @@ describe('Project Operations — Transitions', () => {
       // Walk every forward edge: each call should move the status from
       // WORKFLOW_ORDER[i] to WORKFLOW_ORDER[i+1]. The id never changes.
       for (let i = 0; i < WORKFLOW_ORDER.length - 1; i++) {
+        const expectedBefore = WORKFLOW_ORDER[i]!;
         const expectedAfter = WORKFLOW_ORDER[i + 1]!;
 
-        const res = await authPost(token, `/api/projects/${currentId}/transition/forward`);
+        const res = await authPost(token, `/api/projects/${currentId}/transition/forward`, {
+          expectedStatus: expectedBefore,
+        });
         expect(res.statusCode).toBe(200);
 
         const updated = res.json();
@@ -333,7 +361,9 @@ describe('Project Operations — Transitions', () => {
   describe('transition on nonexistent project', () => {
     it('returns 404 NOT_FOUND when forwarding a well-formed but nonexistent UUID', async () => {
       const fakeId = '00000000-0000-0000-0000-000000000000';
-      const res = await authPost(token, `/api/projects/${fakeId}/transition/forward`);
+      const res = await authPost(token, `/api/projects/${fakeId}/transition/forward`, {
+        expectedStatus: 'anfrage',
+      });
 
       expect(res.statusCode).toBe(404);
       expect(res.json().code).toBe('NOT_FOUND');
@@ -341,7 +371,9 @@ describe('Project Operations — Transitions', () => {
 
     it('returns 404 NOT_FOUND when going backward on a nonexistent UUID', async () => {
       const fakeId = '00000000-0000-0000-0000-000000000000';
-      const res = await authPost(token, `/api/projects/${fakeId}/transition/backward`);
+      const res = await authPost(token, `/api/projects/${fakeId}/transition/backward`, {
+        expectedStatus: 'angebot',
+      });
 
       expect(res.statusCode).toBe(404);
       expect(res.json().code).toBe('NOT_FOUND');

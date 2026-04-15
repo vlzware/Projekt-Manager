@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
 import { ProjectService } from '../services/ProjectService.js';
+import { STATE_KEYS, type WorkflowState } from '../../config/stateConfig.js';
 
 export function projectRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
@@ -145,12 +146,26 @@ export function projectRoutes(db: Database) {
               id: { type: 'string', format: 'uuid' },
             },
           },
+          body: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['expectedStatus'],
+            properties: {
+              expectedStatus: { type: 'string', enum: STATE_KEYS },
+            },
+          },
         },
         preHandler: requirePermission('project:transition'),
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.transitionForward(id, request.user!.id, request.log);
+        const { expectedStatus } = request.body as { expectedStatus: WorkflowState };
+        const project = await projectService.transitionForward(
+          id,
+          request.user!.id,
+          expectedStatus,
+          request.log,
+        );
         return reply.code(200).send(project);
       },
     );
@@ -169,12 +184,26 @@ export function projectRoutes(db: Database) {
               id: { type: 'string', format: 'uuid' },
             },
           },
+          body: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['expectedStatus'],
+            properties: {
+              expectedStatus: { type: 'string', enum: STATE_KEYS },
+            },
+          },
         },
         preHandler: requirePermission('project:transition'),
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.transitionBackward(id, request.user!.id, request.log);
+        const { expectedStatus } = request.body as { expectedStatus: WorkflowState };
+        const project = await projectService.transitionBackward(
+          id,
+          request.user!.id,
+          expectedStatus,
+          request.log,
+        );
         return reply.code(200).send(project);
       },
     );

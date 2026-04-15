@@ -507,6 +507,7 @@ describe('Authentication & Session Management', () => {
       const transitionRes = await authPost(
         mutatorToken,
         `/api/projects/${targetId}/transition/forward`,
+        { expectedStatus: initialStatus },
       );
       expect(transitionRes.statusCode).toBe(200);
       const transitioned = transitionRes.json() as Record<string, unknown>;

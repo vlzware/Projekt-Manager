@@ -188,6 +188,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 // --- Typed API functions -----------------------------------------------------
 
 import type { Project, Customer, User } from '@/domain/types';
+import type { WorkflowState } from '@/config/stateConfig';
 import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 
 interface AuthUser {
@@ -287,11 +288,17 @@ export const projectApi = {
   delete: (id: string) =>
     apiCall<{ success: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
 
-  transitionForward: (id: string) =>
-    apiCall<Project>(`/api/projects/${id}/transition/forward`, { method: 'POST' }),
+  transitionForward: (id: string, expectedStatus: WorkflowState) =>
+    apiCall<Project>(`/api/projects/${id}/transition/forward`, {
+      method: 'POST',
+      body: { expectedStatus },
+    }),
 
-  transitionBackward: (id: string) =>
-    apiCall<Project>(`/api/projects/${id}/transition/backward`, { method: 'POST' }),
+  transitionBackward: (id: string, expectedStatus: WorkflowState) =>
+    apiCall<Project>(`/api/projects/${id}/transition/backward`, {
+      method: 'POST',
+      body: { expectedStatus },
+    }),
 
   updateDates: (id: string, dates: { plannedStart?: string | null; plannedEnd?: string | null }) =>
     apiCall<Project>(`/api/projects/${id}/dates`, {

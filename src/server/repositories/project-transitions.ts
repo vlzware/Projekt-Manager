@@ -11,144 +11,107 @@ import { STRINGS } from '../../config/strings.js';
 import { toProject, fetchWorkersForProject, ProjectNotFoundError } from './project-read.js';
 
 /**
- * Result of a transition: both the previous status and the updated project,
- * captured atomically inside the same transaction. The `before` field is what
- * audit subscribers (event seam) need to construct a from→to event without a
- * second read against a state that may already have moved.
+ * Result of a transition: both the previous status and the updated project.
+ * `before` equals the client's `expectedStatus` — the guard that `before` did
+ * not drift from the client's view is enforced by the conditional UPDATE, so
+ * returning the asserted value is accurate for audit/event subscribers.
  */
 export interface TransitionResult {
-  /** The status the project held immediately before the update committed. */
   before: WorkflowState;
-  /** The updated project after the transition. */
   project: ReturnType<typeof toProject>;
 }
 
 /**
  * Transition a project forward by one state.
- * Rejects terminal state (erledigt).
+ *
+ * The caller supplies `expectedStatus` — the status the client observed in its
+ * last read. A single conditional UPDATE advances the row only when the stored
+ * status still matches that value; a sequential double-advance (two clicks in
+ * sequence, two tabs, etc.) deterministically resolves to CONFLICT on the
+ * second attempt because its `expectedStatus` no longer matches the DB.
  */
 export async function transitionForward(
   db: Database,
   id: string,
   userId: string,
+  expectedStatus: WorkflowState,
 ): Promise<TransitionResult> {
-  const txResult = await db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
-      .from(projects)
-      .where(and(eq(projects.id, id), eq(projects.deleted, false)))
-      .limit(1);
-
-    if (rows.length === 0) {
-      throw new ProjectNotFoundError();
-    }
-
-    const project = rows[0]!;
-    const before = project.status as WorkflowState;
-    const currentIndex = WORKFLOW_ORDER.indexOf(before);
-
-    if (currentIndex === -1 || currentIndex === WORKFLOW_ORDER.length - 1) {
-      throw new TransitionError(STRINGS.projects.cannotAdvanceTerminal);
-    }
-
-    const nextStatus = WORKFLOW_ORDER[currentIndex + 1]!;
-    const now = new Date();
-
-    // Optimistic lock: WHERE status = :before rejects concurrent transitions.
-    // Under READ COMMITTED, a competing UPDATE waits for this tx to commit,
-    // then re-evaluates the WHERE — if the status moved, 0 rows match.
-    const updated = await tx
-      .update(projects)
-      .set({
-        status: nextStatus,
-        statusChangedAt: now,
-        updatedAt: now,
-        updatedBy: userId,
-      })
-      .where(and(eq(projects.id, id), eq(projects.status, before)))
-      .returning();
-
-    if (updated.length === 0) {
-      throw new ConcurrentModificationError();
-    }
-
-    return { before, row: updated[0]! };
-  });
-
-  // Hydrate workers + customer into the API response. Transitions do not
-  // touch project_workers or customers, so reading outside the tx is safe.
-  const [workers, customerRows] = await Promise.all([
-    fetchWorkersForProject(db, id),
-    db.select().from(customers).where(eq(customers.id, txResult.row.customerId)).limit(1),
-  ]);
-  return {
-    before: txResult.before,
-    project: toProject(txResult.row, customerRows[0] ?? null, workers),
-  };
+  const currentIndex = WORKFLOW_ORDER.indexOf(expectedStatus);
+  if (currentIndex === -1 || currentIndex === WORKFLOW_ORDER.length - 1) {
+    throw new TransitionError(STRINGS.projects.cannotAdvanceTerminal);
+  }
+  const nextStatus = WORKFLOW_ORDER[currentIndex + 1]!;
+  return applyTransition(db, id, userId, expectedStatus, nextStatus);
 }
 
 /**
  * Transition a project backward by one state.
- * Rejects first state (anfrage) and terminal state (erledigt).
+ *
+ * Same `expectedStatus` contract as `transitionForward`.
  */
 export async function transitionBackward(
   db: Database,
   id: string,
   userId: string,
+  expectedStatus: WorkflowState,
 ): Promise<TransitionResult> {
-  const txResult = await db.transaction(async (tx) => {
-    const rows = await tx
-      .select()
+  const currentIndex = WORKFLOW_ORDER.indexOf(expectedStatus);
+  if (currentIndex === -1) {
+    throw new TransitionError(STRINGS.projects.cannotRevertFirst);
+  }
+  if (currentIndex === 0) {
+    throw new TransitionError(STRINGS.projects.cannotRevertFirst);
+  }
+  if (currentIndex === WORKFLOW_ORDER.length - 1) {
+    throw new TransitionError(STRINGS.projects.cannotRevertTerminal);
+  }
+  const prevStatus = WORKFLOW_ORDER[currentIndex - 1]!;
+  return applyTransition(db, id, userId, expectedStatus, prevStatus);
+}
+
+async function applyTransition(
+  db: Database,
+  id: string,
+  userId: string,
+  expectedStatus: WorkflowState,
+  nextStatus: WorkflowState,
+): Promise<TransitionResult> {
+  const now = new Date();
+
+  const updated = await db
+    .update(projects)
+    .set({
+      status: nextStatus,
+      statusChangedAt: now,
+      updatedAt: now,
+      updatedBy: userId,
+    })
+    .where(
+      and(eq(projects.id, id), eq(projects.deleted, false), eq(projects.status, expectedStatus)),
+    )
+    .returning();
+
+  if (updated.length === 0) {
+    // Disambiguate: is the row missing/soft-deleted (404) or just stale (409)?
+    const probe = await db
+      .select({ id: projects.id })
       .from(projects)
       .where(and(eq(projects.id, id), eq(projects.deleted, false)))
       .limit(1);
-
-    if (rows.length === 0) {
+    if (probe.length === 0) {
       throw new ProjectNotFoundError();
     }
+    throw new ConcurrentModificationError();
+  }
 
-    const project = rows[0]!;
-    const before = project.status as WorkflowState;
-    const currentIndex = WORKFLOW_ORDER.indexOf(before);
-
-    if (currentIndex === -1 || currentIndex === 0) {
-      throw new TransitionError(STRINGS.projects.cannotRevertFirst);
-    }
-
-    // Terminal state also rejects backward
-    if (currentIndex === WORKFLOW_ORDER.length - 1) {
-      throw new TransitionError(STRINGS.projects.cannotRevertTerminal);
-    }
-
-    const prevStatus = WORKFLOW_ORDER[currentIndex - 1]!;
-    const now = new Date();
-
-    // Optimistic lock: WHERE status = :before rejects concurrent transitions.
-    const updated = await tx
-      .update(projects)
-      .set({
-        status: prevStatus,
-        statusChangedAt: now,
-        updatedAt: now,
-        updatedBy: userId,
-      })
-      .where(and(eq(projects.id, id), eq(projects.status, before)))
-      .returning();
-
-    if (updated.length === 0) {
-      throw new ConcurrentModificationError();
-    }
-
-    return { before, row: updated[0]! };
-  });
-
+  const row = updated[0]!;
   const [workers, customerRows] = await Promise.all([
     fetchWorkersForProject(db, id),
-    db.select().from(customers).where(eq(customers.id, txResult.row.customerId)).limit(1),
+    db.select().from(customers).where(eq(customers.id, row.customerId)).limit(1),
   ]);
   return {
-    before: txResult.before,
-    project: toProject(txResult.row, customerRows[0] ?? null, workers),
+    before: expectedStatus,
+    project: toProject(row, customerRows[0] ?? null, workers),
   };
 }
 

@@ -246,10 +246,15 @@ export class ProjectService {
     }
   }
 
-  async transitionForward(projectId: string, userId: string, log: ServiceLogger) {
+  async transitionForward(
+    projectId: string,
+    userId: string,
+    expectedStatus: WorkflowState,
+    log: ServiceLogger,
+  ) {
     let result;
     try {
-      result = await transitionForwardRepo(this.db, projectId, userId);
+      result = await transitionForwardRepo(this.db, projectId, userId, expectedStatus);
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
@@ -273,10 +278,15 @@ export class ProjectService {
     return result.project;
   }
 
-  async transitionBackward(projectId: string, userId: string, log: ServiceLogger) {
+  async transitionBackward(
+    projectId: string,
+    userId: string,
+    expectedStatus: WorkflowState,
+    log: ServiceLogger,
+  ) {
     let result;
     try {
-      result = await transitionBackwardRepo(this.db, projectId, userId);
+      result = await transitionBackwardRepo(this.db, projectId, userId, expectedStatus);
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);

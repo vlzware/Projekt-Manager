@@ -67,13 +67,17 @@ describe('AC-95: Mutations on soft-deleted projects', () => {
   });
 
   it('AT-42: transition on a soft-deleted project returns 404', async () => {
-    const res = await authPost(token, `/api/projects/${deletedProjectId}/transition/forward`);
+    const res = await authPost(token, `/api/projects/${deletedProjectId}/transition/forward`, {
+      expectedStatus: 'angebot',
+    });
     expect(res.statusCode).toBe(404);
     expect(res.json().code).toBe('NOT_FOUND');
   });
 
   it('AT-42: backward transition on a soft-deleted project returns 404', async () => {
-    const res = await authPost(token, `/api/projects/${deletedProjectId}/transition/backward`);
+    const res = await authPost(token, `/api/projects/${deletedProjectId}/transition/backward`, {
+      expectedStatus: 'angebot',
+    });
     expect(res.statusCode).toBe(404);
     expect(res.json().code).toBe('NOT_FOUND');
   });
@@ -121,12 +125,20 @@ describe('AC-94: Concurrent state transitions', () => {
     expect(target).toBeDefined();
     const projectId = target.id;
 
-    // Fire two concurrent forward transitions on the same project.
-    // The optimistic lock at project-transitions.ts:60 (WHERE status = :before)
-    // ensures the second UPDATE matches 0 rows once the first commits.
+    // Both clients assert they observed status='beauftragt'. The conditional
+    // UPDATE (project-transitions.ts) advances only when the stored status
+    // still matches; after the first commit, the second request's predicate
+    // no longer holds and the row miss is surfaced as CONFLICT. This holds
+    // regardless of whether the two requests actually overlap in time —
+    // unlike the prior SELECT-then-UPDATE approach, which flaked under
+    // sequential execution (see api.md § Transitions / optimistic concurrency).
     const [resA, resB] = await Promise.all([
-      authPost(token, `/api/projects/${projectId}/transition/forward`),
-      authPost(token, `/api/projects/${projectId}/transition/forward`),
+      authPost(token, `/api/projects/${projectId}/transition/forward`, {
+        expectedStatus: 'beauftragt',
+      }),
+      authPost(token, `/api/projects/${projectId}/transition/forward`, {
+        expectedStatus: 'beauftragt',
+      }),
     ]);
 
     // Exactly one must succeed (200), the other must conflict (409).
