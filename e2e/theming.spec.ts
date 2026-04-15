@@ -14,11 +14,14 @@ import { test, expect } from '@playwright/test';
  * Scope notes:
  *   - Other [vis] ACs in §15.20 (AC-109 token override, AC-110 dark
  *     palette + WCAG contrast, AC-114 configured-accent propagation)
- *     are VR-tier per ADR-0014 and deliberately NOT covered here.
- *     Attempting them via getComputedStyle + addStyleTag leads to the
- *     computed-style-assertion trap the project rejected in iteration
- *     5 (brittle, fights transitions / specificity, low defect-
- *     detection value). Those ACs await a visual-regression baseline.
+ *     are NOT covered here. They are tracked as gaps in
+ *     docs/testing/traceability.md and need E2E specs that drive the
+ *     scenario so a reviewer can judge the result in Playwright UI
+ *     mode (per ADR-0014). Earlier attempts to verify them via
+ *     getComputedStyle + addStyleTag produced the brittle
+ *     computed-style-assertion pattern the project rejected in
+ *     iteration 5; a proper E2E that exercises the real surfaces is
+ *     the replacement path.
  *   - Uses the `chromium` project (parallel, read-only). Empty
  *     storageState forces the unauthenticated login view.
  *   - The localStorage key `theme-preference` is pinned as the

@@ -1,9 +1,11 @@
 /**
  * Integration tests: client-supplied id / idempotent create.
  *
- * Covers POST /api/customers and POST /api/projects with the optional
- * `id` field: fresh insert, replay on identical body, IDEMPOTENCY_CONFLICT
- * on mismatched body, malformed id rejection, and the two race cases
+ * Covers AC-124 (customer idempotent create), AC-125 (project idempotent
+ * create), and AC-127 (IDEMPOTENCY_CONFLICT on body mismatch). Exercises
+ * POST /api/customers and POST /api/projects with the optional `id` field:
+ * fresh insert, replay on identical body, IDEMPOTENCY_CONFLICT on
+ * mismatched body, malformed id rejection, and the two race cases
  * (same id + same body, same id + different body).
  *
  * The race cases mirror the shape of AC-94 (data-integrity.test.ts), using

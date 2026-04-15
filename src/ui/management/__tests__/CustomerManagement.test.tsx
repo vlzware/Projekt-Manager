@@ -216,6 +216,9 @@ describe('CustomerManagement — name autocomplete', () => {
   });
 });
 
+// AC-131: in-flight mutation lock covers the soft-confirm dialog — a
+// second submit opened while the confirm is awaiting user input must
+// not fire a second create when the confirm resolves.
 describe('CustomerManagement — soft-confirm double-click protection', () => {
   it('fires only one create call when the user double-clicks during the confirm dialog', async () => {
     // One existing customer whose name collides case-insensitively →
