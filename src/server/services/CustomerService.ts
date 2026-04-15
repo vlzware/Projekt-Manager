@@ -10,11 +10,15 @@ import {
   createCustomer as createCustomerRepo,
   updateCustomer as updateCustomerRepo,
   deleteCustomer as deleteCustomerRepo,
+  getCustomerRow,
+  toCustomerResponse,
   findCustomersByName,
 } from '../repositories/customer.js';
 import { projects } from '../db/schema.js';
+import { DB_CONSTRAINTS } from '../db/constraints.js';
 import { STRINGS } from '../../config/strings.js';
-import { notFound, conflict } from '../errors.js';
+import { notFound, conflict, idempotencyConflict, extractPgConstraint } from '../errors.js';
+import { customerMatches } from './idempotency.js';
 import type { ServiceLogger } from './Logger.js';
 
 export class CustomerService {
@@ -32,6 +36,7 @@ export class CustomerService {
 
   async createCustomer(
     data: {
+      id?: string;
       name: string;
       phone?: string | null;
       email?: string | null;
@@ -41,6 +46,10 @@ export class CustomerService {
     userId: string,
     log: ServiceLogger,
   ) {
+    if (data.id !== undefined) {
+      return this.createCustomerWithClientId(data, data.id, userId, log);
+    }
+
     const customer = await createCustomerRepo(this.db, {
       ...data,
       createdBy: userId,
@@ -48,6 +57,59 @@ export class CustomerService {
     });
     log.info({ customerId: customer.id }, 'customer_created');
     return customer;
+  }
+
+  private async createCustomerWithClientId(
+    data: {
+      name: string;
+      phone?: string | null;
+      email?: string | null;
+      address?: { street: string; zip: string; city: string } | null;
+      notes?: string | null;
+    },
+    id: string,
+    userId: string,
+    log: ServiceLogger,
+  ) {
+    // Pre-SELECT is best-effort — under READ COMMITTED a concurrent insert
+    // can still slip between this lookup and the INSERT below. The 23505
+    // catch block is the actual race handler.
+    const existing = await getCustomerRow(this.db, id);
+    if (existing) {
+      if (!customerMatches(data, existing)) {
+        throw idempotencyConflict();
+      }
+      log.info({ customerId: id }, 'customer_create_replayed');
+      return toCustomerResponse(existing);
+    }
+
+    try {
+      const inserted = await createCustomerRepo(this.db, {
+        id,
+        ...data,
+        createdBy: userId,
+        updatedBy: userId,
+      });
+      log.info({ customerId: id }, 'customer_created');
+      return inserted;
+    } catch (err) {
+      // Re-read on any 23505: the committed row is authoritative. When the
+      // driver omits `constraint`, a concurrent id clash is the only way a
+      // second caller reaches this branch after the pre-select found
+      // nothing, so the fallback re-read still does the right thing.
+      const constraintName = extractPgConstraint(err);
+      if (constraintName === DB_CONSTRAINTS.customers.pkey || constraintName === null) {
+        const row = await getCustomerRow(this.db, id);
+        if (row) {
+          if (!customerMatches(data, row)) {
+            throw idempotencyConflict();
+          }
+          log.info({ customerId: id }, 'customer_create_replayed');
+          return toCustomerResponse(row);
+        }
+      }
+      throw err;
+    }
   }
 
   async updateCustomer(

@@ -50,6 +50,7 @@ export function LoginForm() {
             className={styles.input}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            disabled={isSubmitting}
           />
         </div>
 
@@ -64,6 +65,7 @@ export function LoginForm() {
             className={styles.input}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            disabled={isSubmitting}
           />
         </div>
 

@@ -231,7 +231,7 @@ Accessible via a primary action button. Requires `project:create` permission (bu
 
 Fields:
 
-- **Project number** — auto-suggested from the configured format **[C]**, editable by the user, immutable after creation.
+- **Project number** — auto-suggested from the configured format **[C]**, editable by the user, immutable after creation. On blur, the field shows a green "available" indicator if the number is free and a red "taken" indicator if an existing project already uses it. The indicator is UX feedback only — the server's uniqueness constraint is authoritative (see [api.md §14.2.2](api.md#1422-projects)) and is what ultimately produces or rejects the create. Editing the field after a verdict clears the indicator until the next blur.
 - **Title** — required.
 - **Customer** — required. Selection from existing customers, with an option to create a new customer inline (see [§8.9.4](#894-inline-customer-creation)).
 - **Status** — defaults to the first workflow state. Optionally selectable if configuration allows **[C]**.
@@ -241,6 +241,8 @@ Fields:
 - **Notes** — optional free text.
 
 On success, the new project appears in the list and in Kanban/Calendar views.
+
+**In-flight mutation lock** and **idempotency-conflict recovery** apply as defined in [§9.5](#95-asynchronous-mutation-behavior).
 
 #### 8.8.3 Edit Project
 
@@ -287,9 +289,15 @@ Fields:
 - **Address** — optional nested group: street, zip, city.
 - **Notes** — optional free text.
 
-If a customer with the same name already exists, the UI offers to navigate to the existing record for editing instead of creating a duplicate.
+**Duplicate-name suggestions (as-you-type).** While the user types in the name field, the form runs a debounced search against the customer list and presents matching customers in a dropdown below the input. Clicking a suggested customer closes the create form and opens that customer's edit form. The dropdown is an advisory hint — the user may ignore it and continue creating a new customer.
+
+**Soft confirm on exact-name match.** On submit, if any existing customer's name matches the entered name (case-insensitive, whitespace-normalized), a confirmation dialog appears before the create is dispatched. The user must explicitly opt in via "Trotzdem erstellen" to proceed; cancelling returns to the form without sending a request. Creating legitimate duplicates is allowed — the confirm is a guard against accidental ones.
 
 On success, the new customer appears in the list and is immediately available in project creation/editing dropdowns.
+
+**In-flight mutation lock.** See [§9.5](#95-asynchronous-mutation-behavior). The lock covers the soft-confirm dialog — submitting once while the confirm is open does not permit a second submit to fire through.
+
+**Idempotency-conflict recovery.** A rare server-side conflict (see [api.md §14.4](api.md#144-error-handling)) closes the create form, refreshes the customer list, and surfaces the German error message via the mutation error banner ([§8.1.2](#812-authenticated-state)). The user is not invited to retry the same submission.
 
 #### 8.9.3 Edit Customer
 
@@ -443,11 +451,13 @@ Visibility is provided by three mechanisms:
 
 ### 9.5 Asynchronous Mutation Behavior
 
-Mutations (state transitions, date updates) go through the API (see [API](api.md)). The UI must handle:
+Mutations (state transitions, date updates, creates, edits) go through the API (see [API](api.md)). The UI must handle:
 
 - **Loading state**: brief indicator (disabled button, spinner) while mutation is in flight. No double-submit on the same project.
 - **Optimistic update**: the UI may update locally before the server responds, but must reconcile with the server response (revert on failure).
 - **Error feedback**: failed mutation shows German-language error message, reverts local state. `"Änderung fehlgeschlagen. Bitte erneut versuchen."` **[C]**
+- **In-flight mutation lock**: while a create, edit, or state-changing request is in flight for a form or dialog, the submit action is disabled, every input in the form is disabled, and the enclosing modal cannot be closed by the user (Escape, close button, backdrop). The lock also covers any user-confirmation dialog that precedes the request dispatch, so a submit initiated behind an open confirmation dialog cannot fire a second time. The lock releases when the request resolves (success or failure).
+- **Idempotency-conflict recovery**: a response with the idempotency-conflict error code (see [api.md §14.4](api.md#144-error-handling)) closes the create form, refreshes the affected list so the stored row becomes visible, and surfaces the German error message via the mutation error banner. The form does not auto-retry.
 
 ### 9.6 Theme Handling
 
@@ -467,6 +477,8 @@ The application renders in light or dark color scheme based on the user's theme 
 All modals close on Escape (equivalent to the cancel action). Form modals submit the primary action on Enter when focus is within the form. Modals without a primary action — read-only detail views, success-state confirmations — accept Escape but do not submit on Enter.
 
 Form modals and confirmation dialogs do not close on backdrop click — only via Escape or the explicit cancel action. Non-editing side panels close on backdrop click as the cancel equivalent.
+
+While a mutation is in flight, close paths (Escape, explicit cancel, close button, backdrop) are suspended per the in-flight mutation lock in [§9.5](#95-asynchronous-mutation-behavior).
 
 ---
 

@@ -5,7 +5,7 @@
  * Calls POST /api/auth/change-password (current + new + confirmation).
  */
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { changePassword } from '@/state/authStore';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
@@ -27,10 +27,15 @@ export function PasswordChangeModal({ onClose }: Props) {
   const canSubmit =
     currentPassword.trim() && newPassword.trim() && confirmPassword.trim() && passwordsMatch;
 
-  useEscapeKey(onClose);
+  const safeClose = useCallback(() => {
+    if (submitting) return;
+    onClose();
+  }, [submitting, onClose]);
+
+  useEscapeKey(safeClose);
 
   const handleSubmit = async () => {
-    if (!canSubmit) return;
+    if (submitting || !canSubmit) return;
     setSubmitting(true);
     setError(null);
 
@@ -79,6 +84,7 @@ export function PasswordChangeModal({ onClose }: Props) {
               type="password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
+              disabled={submitting}
               data-testid="pw-change-current"
               autoFocus
             />
@@ -91,6 +97,7 @@ export function PasswordChangeModal({ onClose }: Props) {
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
+              disabled={submitting}
               data-testid="pw-change-new"
             />
           </div>
@@ -102,6 +109,7 @@ export function PasswordChangeModal({ onClose }: Props) {
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
+              disabled={submitting}
               data-testid="pw-change-confirm"
             />
             {newPassword && confirmPassword && !passwordsMatch && (
@@ -112,7 +120,12 @@ export function PasswordChangeModal({ onClose }: Props) {
           {error && <div className={styles.error}>{error}</div>}
 
           <div className={styles.formActions}>
-            <button type="button" className={styles.cancelButton} onClick={onClose}>
+            <button
+              type="button"
+              className={styles.cancelButton}
+              onClick={safeClose}
+              disabled={submitting}
+            >
               {STRINGS.ui.cancel}
             </button>
             <button

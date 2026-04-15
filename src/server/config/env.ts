@@ -39,6 +39,11 @@ const envSchema = z.object({
   // when the key is absent.
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default('google/gemini-2.5-flash-lite'),
+  // How often the periodic session reaper sweeps expired sessions.
+  // Default 60 min is the same cadence the startup-only cleanup used to
+  // provide implicitly via server restarts; lower values are fine for
+  // environments that want tighter revocation latency.
+  SESSION_CLEANUP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(60),
 });
 
 export type Env = z.infer<typeof envSchema>;

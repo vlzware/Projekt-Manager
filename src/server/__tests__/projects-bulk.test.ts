@@ -375,8 +375,9 @@ describe('Bulk Project Import', () => {
 
       const msg = body.errors[0].message as string;
 
-      // Positive: the translated German message is returned.
-      expect(msg).toBe('Projektnummer ist bereits vergeben.');
+      // Positive: the translated German message is returned, including the
+      // conflicting number so the row is self-explanatory in UI surfaces.
+      expect(msg).toBe('Projektnummer "IMP-DUP-1" ist bereits vergeben.');
 
       // Negative leak guards. If any of these substrings start appearing,
       // the translation layer has been bypassed and the real pg error is

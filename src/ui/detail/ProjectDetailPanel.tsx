@@ -20,7 +20,8 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
   // Always get fresh project data from store
   const currentProject = projects.find((p) => p.id === project.id) ?? project;
   const config = STATE_CONFIG_MAP[currentProject.status];
-  const { canForward, canBackward, forward, backward } = useProjectTransition(currentProject);
+  const { canForward, canBackward, forward, backward, inFlight } =
+    useProjectTransition(currentProject);
   const canTransition = usePermission('project:transition');
   const canUpdateDates = usePermission('project:dates');
 
@@ -85,6 +86,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                 <button
                   className={styles.forwardBtn}
                   onClick={forward}
+                  disabled={inFlight}
                   data-testid="detail-forward-button"
                 >
                   {STRINGS.ui.nextStep}
@@ -94,6 +96,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                 <button
                   className={styles.backwardBtn}
                   onClick={backward}
+                  disabled={inFlight}
                   data-testid="detail-backward-button"
                 >
                   {STRINGS.ui.prevStep}

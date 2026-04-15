@@ -9,30 +9,44 @@ import type { Database } from '../db/connection.js';
 import {
   listProjects as listProjectsRepo,
   getProject as getProjectRepo,
+  getProjectRowById,
   insertProject as insertProjectRepo,
   updateProject as updateProjectRepo,
   softDeleteProject as softDeleteProjectRepo,
   transitionForward as transitionForwardRepo,
   transitionBackward as transitionBackwardRepo,
   updateDates as updateDatesRepo,
+  fetchWorkersForProject,
+  toProject,
   ProjectNotFoundError,
   TransitionError,
   ConcurrentModificationError,
   DateValidationError,
 } from '../repositories/project.js';
-import type { ListProjectsOpts } from '../repositories/project-read.js';
+import type { ListProjectsOpts, ProjectRow } from '../repositories/project-read.js';
+import { customers } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
-import { notFound, validationError, conflict, extractSqlState } from '../errors.js';
+import { DB_CONSTRAINTS } from '../db/constraints.js';
+import {
+  notFound,
+  validationError,
+  conflict,
+  idempotencyConflict,
+  extractSqlState,
+  extractPgConstraint,
+} from '../errors.js';
+import { projectMatches } from './idempotency.js';
 import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
 
-function translatePgError(err: unknown): string {
+function translatePgError(err: unknown, ctx: { number?: string } = {}): string {
   const code = extractSqlState(err);
   switch (code) {
     case '23505':
-      return STRINGS.projects.duplicateNumber;
+      return STRINGS.projects.duplicateNumber(ctx.number ?? '');
     case '23503':
       return STRINGS.projects.foreignKeyViolation;
     case '23514':
@@ -83,6 +97,7 @@ export class ProjectService {
 
   async createProject(
     data: {
+      id?: string;
       number: string;
       title: string;
       customerId: string;
@@ -99,6 +114,10 @@ export class ProjectService {
     const status = (data.status ?? STATE_KEYS[0]) as WorkflowState;
     if (!VALID_STATES.has(status)) {
       throw validationError(STRINGS.projects.invalidStatus(status));
+    }
+
+    if (data.id !== undefined) {
+      return this.createProjectWithClientId({ ...data, id: data.id, status }, userId, log);
     }
 
     try {
@@ -119,10 +138,142 @@ export class ProjectService {
       return project;
     } catch (err) {
       const sqlState = extractSqlState(err);
-      if (sqlState === '23505') throw conflict(STRINGS.projects.duplicateNumber);
+      if (sqlState === '23505') throw conflict(STRINGS.projects.duplicateNumber(data.number));
       if (sqlState === '23503') throw validationError(STRINGS.projects.foreignKeyViolation);
       throw err;
     }
+  }
+
+  private async createProjectWithClientId(
+    data: {
+      id: string;
+      number: string;
+      title: string;
+      customerId: string;
+      status: WorkflowState;
+      plannedStart?: string | null;
+      plannedEnd?: string | null;
+      assignedWorkerIds?: string[];
+      estimatedValue?: number | null;
+      notes?: string | null;
+    },
+    userId: string,
+    log: ServiceLogger,
+  ) {
+    const matchInput = {
+      number: data.number,
+      title: data.title,
+      customerId: data.customerId,
+      status: data.status,
+      plannedStart: data.plannedStart ?? null,
+      plannedEnd: data.plannedEnd ?? null,
+      assignedWorkerIds: data.assignedWorkerIds ?? [],
+      estimatedValue: data.estimatedValue ?? null,
+      notes: data.notes ?? null,
+    };
+
+    // Pre-SELECT is best-effort — under READ COMMITTED a concurrent insert
+    // can still slip between this lookup and the INSERT below. The 23505
+    // catch block is the actual race handler.
+    const existing = await getProjectRowById(this.db, data.id);
+    if (existing) {
+      const workers = await fetchWorkersForProject(this.db, data.id);
+      if (!this.storedMatchesIncoming(existing, workers, matchInput)) {
+        throw idempotencyConflict();
+      }
+      log.info({ projectId: data.id }, 'project_create_replayed');
+      return this.hydrateReplayedProject(existing, workers);
+    }
+
+    try {
+      const inserted = await insertProjectRepo(this.db, {
+        id: data.id,
+        number: data.number,
+        title: data.title,
+        status: data.status,
+        customerId: data.customerId,
+        plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
+        plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
+        assignedWorkerIds: data.assignedWorkerIds ?? null,
+        estimatedValue: data.estimatedValue != null ? String(data.estimatedValue) : null,
+        notes: data.notes ?? null,
+        createdBy: userId,
+        updatedBy: userId,
+      });
+      log.info({ projectId: data.id }, 'project_created');
+      return inserted;
+    } catch (err) {
+      const sqlState = extractSqlState(err);
+      if (sqlState !== '23505') {
+        if (sqlState === '23503') throw validationError(STRINGS.projects.foreignKeyViolation);
+        throw err;
+      }
+
+      // 23505 with client-supplied id has two plausible constraints:
+      //   projects_pkey         — racing idempotent replay on the same id
+      //   projects_number_unique — real number collision
+      // Use the pg-attached `constraint` to disambiguate; fall back to a
+      // post-hoc id lookup when the driver omits it (node-postgres sets it
+      // reliably for unique_violation, but defense-in-depth).
+      const constraint = extractPgConstraint(err);
+      if (constraint === DB_CONSTRAINTS.projects.numberUnique) {
+        throw conflict(STRINGS.projects.duplicateNumber(data.number));
+      }
+      if (constraint === DB_CONSTRAINTS.projects.pkey || constraint === null) {
+        const row = await getProjectRowById(this.db, data.id);
+        if (row) {
+          const workers = await fetchWorkersForProject(this.db, data.id);
+          if (!this.storedMatchesIncoming(row, workers, matchInput)) {
+            throw idempotencyConflict();
+          }
+          log.info({ projectId: data.id }, 'project_create_replayed');
+          return this.hydrateReplayedProject(row, workers);
+        }
+        // No matching id → it must have been the number constraint after all.
+        throw conflict(STRINGS.projects.duplicateNumber(data.number));
+      }
+      throw err;
+    }
+  }
+
+  private storedMatchesIncoming(
+    row: ProjectRow,
+    workers: { userId: string; displayName: string }[],
+    incoming: {
+      number: string;
+      title: string;
+      customerId: string;
+      status: WorkflowState;
+      plannedStart: string | null;
+      plannedEnd: string | null;
+      assignedWorkerIds: string[];
+      estimatedValue: number | null;
+      notes: string | null;
+    },
+  ): boolean {
+    return projectMatches(incoming, {
+      number: row.number,
+      title: row.title,
+      customerId: row.customerId,
+      status: row.status,
+      plannedStart: row.plannedStart,
+      plannedEnd: row.plannedEnd,
+      assignedWorkerIds: workers.map((w) => w.userId),
+      estimatedValue: row.estimatedValue,
+      notes: row.notes,
+    });
+  }
+
+  private async hydrateReplayedProject(
+    row: ProjectRow,
+    workers: { userId: string; displayName: string }[],
+  ) {
+    const customerRows = await this.db
+      .select()
+      .from(customers)
+      .where(eq(customers.id, row.customerId))
+      .limit(1);
+    return toProject(row, customerRows[0] ?? null, workers);
   }
 
   async updateProject(
@@ -281,7 +432,10 @@ export class ProjectService {
         imported++;
       } catch (err) {
         log.error({ err, index: i }, 'Bulk import row failed');
-        errors.push({ index: i, message: translatePgError(err) });
+        errors.push({
+          index: i,
+          message: translatePgError(err, { number: item.number as string }),
+        });
       }
     }
 

@@ -6,11 +6,12 @@
  * See e2e/management-flows.spec.ts steps 22–24.
  */
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUserStore } from '@/state/userStore';
 import { useConfirmStore } from '@/state/confirmStore';
 import { usePermission } from '@/hooks/usePermission';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
 import type { User } from '@/domain/types';
 import styles from './Management.module.css';
@@ -69,6 +70,7 @@ export function UserManagement() {
 
   const handleCreate = async () => {
     if (
+      submitting ||
       !username.trim() ||
       !displayName.trim() ||
       !password.trim() ||
@@ -103,7 +105,7 @@ export function UserManagement() {
   };
 
   const handleResetPassword = async (user: User) => {
-    if (!resetPw.trim() || !resetPwMatch) return;
+    if (submitting || !resetPw.trim() || !resetPwMatch) return;
     setSubmitting(true);
 
     const ok = await resetUserPassword(user.id, resetPw);
@@ -115,6 +117,21 @@ export function UserManagement() {
       setResetPwConfirm('');
     }
   };
+
+  const closeCreateForm = useCallback(() => {
+    if (submitting) return;
+    setFormOpen(false);
+  }, [submitting]);
+
+  const closeDetailPanel = useCallback(() => {
+    if (submitting) return;
+    setSelectedUser(null);
+    setResetOpen(false);
+    setResetSuccess(false);
+  }, [submitting]);
+
+  useEscapeKey(closeCreateForm, formOpen);
+  useEscapeKey(closeDetailPanel, !!selectedUser && !formOpen);
 
   const handleDeactivate = async (user: User) => {
     const confirmed = await requestConfirm(STRINGS.ui.deactivateConfirm(user.displayName));
@@ -208,6 +225,7 @@ export function UserManagement() {
                 className={styles.formInput}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                disabled={submitting}
                 data-testid="user-username-input"
                 autoFocus
               />
@@ -219,6 +237,7 @@ export function UserManagement() {
                 className={styles.formInput}
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
+                disabled={submitting}
                 data-testid="user-displayname-input"
               />
             </div>
@@ -230,6 +249,7 @@ export function UserManagement() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
                 data-testid="user-password-input"
               />
             </div>
@@ -241,6 +261,7 @@ export function UserManagement() {
                 type="password"
                 value={passwordConfirm}
                 onChange={(e) => setPasswordConfirm(e.target.value)}
+                disabled={submitting}
                 data-testid="user-password-confirm-input"
               />
               {password && passwordConfirm && !passwordsMatch && (
@@ -257,6 +278,7 @@ export function UserManagement() {
                       type="checkbox"
                       checked={selectedRoles.includes(role)}
                       onChange={() => toggleRole(role)}
+                      disabled={submitting}
                       data-testid={`user-role-${role}`}
                     />
                     {STRINGS.roles[role]}
@@ -268,7 +290,11 @@ export function UserManagement() {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setFormOpen(false)}>
+              <button
+                className={styles.cancelButton}
+                onClick={closeCreateForm}
+                disabled={submitting}
+              >
                 {STRINGS.ui.cancel}
               </button>
               <button
@@ -330,6 +356,7 @@ export function UserManagement() {
                         type="password"
                         value={resetPw}
                         onChange={(e) => setResetPw(e.target.value)}
+                        disabled={submitting}
                         data-testid="user-reset-pw-input"
                         autoFocus
                       />
@@ -341,6 +368,7 @@ export function UserManagement() {
                         type="password"
                         value={resetPwConfirm}
                         onChange={(e) => setResetPwConfirm(e.target.value)}
+                        disabled={submitting}
                         data-testid="user-reset-pw-confirm"
                       />
                       {resetPw && resetPwConfirm && !resetPwMatch && (
@@ -351,10 +379,12 @@ export function UserManagement() {
                       <button
                         className={styles.cancelButton}
                         onClick={() => {
+                          if (submitting) return;
                           setResetOpen(false);
                           setResetPw('');
                           setResetPwConfirm('');
                         }}
+                        disabled={submitting}
                       >
                         {STRINGS.ui.cancel}
                       </button>
@@ -377,11 +407,8 @@ export function UserManagement() {
             <div className={styles.formActions}>
               <button
                 className={styles.cancelButton}
-                onClick={() => {
-                  setSelectedUser(null);
-                  setResetOpen(false);
-                  setResetSuccess(false);
-                }}
+                onClick={closeDetailPanel}
+                disabled={submitting}
               >
                 {STRINGS.ui.close}
               </button>

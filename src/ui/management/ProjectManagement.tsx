@@ -16,6 +16,8 @@ import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
 import styles from './Management.module.css';
 
+type NumberPreflightStatus = 'idle' | 'checking' | 'available' | 'taken';
+
 export function ProjectManagement() {
   const canCreate = usePermission('project:create');
   const canUpdate = usePermission('project:update');
@@ -25,6 +27,7 @@ export function ProjectManagement() {
   const loading = useProjectManagementStore((s) => s.loading);
   const error = useProjectManagementStore((s) => s.error);
   const fetchProjects = useProjectManagementStore((s) => s.fetchProjects);
+  const searchProjects = useProjectManagementStore((s) => s.searchProjects);
   const fetchCustomers = useProjectManagementStore((s) => s.fetchCustomers);
   const createProject = useProjectManagementStore((s) => s.createProject);
   const updateProject = useProjectManagementStore((s) => s.updateProject);
@@ -48,6 +51,17 @@ export function ProjectManagement() {
   const [plannedEnd, setPlannedEnd] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Client-supplied UUID for idempotent create. Stable across re-renders
+  // and retries in the same form instance. See CustomerManagement for the
+  // matching pattern.
+  const [createId, setCreateId] = useState<string | null>(null);
+
+  // Number-preflight state — populated on blur of the number field.
+  const [numberStatus, setNumberStatus] = useState<NumberPreflightStatus>('idle');
+  // Monotonic request id so two overlapping blurs cannot commit out of
+  // order — the response that completes second may carry the older value.
+  const numberPreflightReqRef = useRef(0);
 
   useEffect(() => {
     fetchProjects();
@@ -86,27 +100,48 @@ export function ProjectManagement() {
     setEstimatedValue('');
     setPlannedStart('');
     setPlannedEnd('');
+    setNumberStatus('idle');
+  };
+
+  const handleNumberBlur = async () => {
+    const trimmed = number.trim();
+    if (!trimmed) {
+      numberPreflightReqRef.current++;
+      setNumberStatus('idle');
+      return;
+    }
+    const myReq = ++numberPreflightReqRef.current;
+    setNumberStatus('checking');
+    const results = await searchProjects(trimmed);
+    // Only commit if this is still the latest request — a later blur
+    // (or a change-driven reset) must win.
+    if (myReq !== numberPreflightReqRef.current) return;
+    const taken = results.some((p) => p.number === trimmed);
+    setNumberStatus(taken ? 'taken' : 'available');
   };
 
   const handleCreate = async () => {
-    if (!number.trim() || !title.trim() || !customerId) return;
+    if (submitting || !number.trim() || !title.trim() || !customerId || !createId) return;
     setSubmitting(true);
 
-    const ok = await createProject({
+    const outcome = await createProject({
+      id: createId,
       number: number.trim(),
       title: title.trim(),
       customerId,
     });
 
     setSubmitting(false);
-    if (ok) {
+
+    if (outcome.status === 'ok' || outcome.status === 'conflict') {
       setFormOpen(false);
+      setCreateId(null);
       resetForm();
     }
   };
 
   const handleSaveEdit = async () => {
-    if (!editProject || !title.trim()) return;
+    if (submitting || !editProject || !title.trim()) return;
     setSubmitting(true);
 
     const parsedValue = estimatedValue.trim() ? parseFloat(estimatedValue.replace(',', '.')) : null;
@@ -153,12 +188,26 @@ export function ProjectManagement() {
     clearError();
   };
 
-  const closeCreateForm = useCallback(() => {
-    setFormOpen(false);
-  }, []);
-  const closeEditForm = useCallback(() => {
+  const openCreateForm = () => {
+    clearError();
+    resetForm();
     setEditProject(null);
-  }, []);
+    setCreateId(crypto.randomUUID());
+    setFormOpen(true);
+  };
+
+  const closeCreateForm = useCallback(() => {
+    if (submitting) return;
+    setFormOpen(false);
+    setCreateId(null);
+    resetForm();
+  }, [submitting]);
+
+  const closeEditForm = useCallback(() => {
+    if (submitting) return;
+    setEditProject(null);
+    resetForm();
+  }, [submitting]);
 
   useEscapeKey(closeCreateForm, formOpen);
   useEscapeKey(closeEditForm, !!editProject && !formOpen);
@@ -179,12 +228,7 @@ export function ProjectManagement() {
         {canCreate && (
           <button
             className={styles.createButton}
-            onClick={() => {
-              clearError();
-              resetForm();
-              setEditProject(null);
-              setFormOpen(true);
-            }}
+            onClick={openCreateForm}
             data-testid="project-create-button"
           >
             {STRINGS.ui.create}
@@ -272,10 +316,37 @@ export function ProjectManagement() {
               <input
                 className={styles.formInput}
                 value={number}
-                onChange={(e) => setNumber(e.target.value)}
+                onChange={(e) => {
+                  setNumber(e.target.value);
+                  // Clear the preflight verdict on edit — re-runs on the
+                  // next blur. Bump the request id so a still-in-flight
+                  // fetch from the prior value cannot commit its result.
+                  numberPreflightReqRef.current++;
+                  if (numberStatus !== 'idle') setNumberStatus('idle');
+                }}
+                onBlur={() => void handleNumberBlur()}
+                disabled={submitting}
                 data-testid="project-number-input"
                 autoFocus
               />
+              {numberStatus === 'taken' && (
+                <div
+                  className={styles.fieldHintError}
+                  data-testid="project-number-taken"
+                  role="status"
+                >
+                  {STRINGS.projects.numberTaken(number.trim())}
+                </div>
+              )}
+              {numberStatus === 'available' && (
+                <div
+                  className={styles.fieldHintOk}
+                  data-testid="project-number-available"
+                  role="status"
+                >
+                  {STRINGS.projects.numberAvailable}
+                </div>
+              )}
             </div>
 
             <div className={styles.formGroup}>
@@ -284,6 +355,7 @@ export function ProjectManagement() {
                 className={styles.formInput}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                disabled={submitting}
                 data-testid="project-title-input"
               />
             </div>
@@ -299,7 +371,8 @@ export function ProjectManagement() {
                   className={styles.formInput}
                   value={customerId ? (customers.find((c) => c.id === customerId)?.name ?? '') : ''}
                   readOnly
-                  onClick={() => setCustomerDropdownOpen(!customerDropdownOpen)}
+                  onClick={() => !submitting && setCustomerDropdownOpen(!customerDropdownOpen)}
+                  disabled={submitting}
                   placeholder={STRINGS.ui.search}
                 />
                 {customerDropdownOpen && (
@@ -324,7 +397,12 @@ export function ProjectManagement() {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button type="button" className={styles.cancelButton} onClick={closeCreateForm}>
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={closeCreateForm}
+                disabled={submitting}
+              >
                 {STRINGS.ui.cancel}
               </button>
               <button
@@ -361,7 +439,7 @@ export function ProjectManagement() {
                 className={styles.formInput}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                disabled={!canUpdate}
+                disabled={!canUpdate || submitting}
                 data-testid="project-title-edit"
                 autoFocus
               />
@@ -388,7 +466,7 @@ export function ProjectManagement() {
                   // Clear end if start is cleared (same rule as detail panel)
                   if (!e.target.value) setPlannedEnd('');
                 }}
-                disabled={!canUpdate}
+                disabled={!canUpdate || submitting}
                 data-testid="project-start-edit"
               />
             </div>
@@ -401,7 +479,7 @@ export function ProjectManagement() {
                 value={plannedEnd}
                 onChange={(e) => setPlannedEnd(e.target.value)}
                 min={plannedStart || undefined}
-                disabled={!canUpdate || !plannedStart}
+                disabled={!canUpdate || !plannedStart || submitting}
                 data-testid="project-end-edit"
               />
             </div>
@@ -413,7 +491,7 @@ export function ProjectManagement() {
                 value={estimatedValue}
                 onChange={(e) => setEstimatedValue(e.target.value)}
                 placeholder="0,00"
-                disabled={!canUpdate}
+                disabled={!canUpdate || submitting}
                 data-testid="project-value-edit"
               />
             </div>
@@ -424,7 +502,7 @@ export function ProjectManagement() {
                 className={styles.formTextarea}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                disabled={!canUpdate}
+                disabled={!canUpdate || submitting}
                 data-testid="project-notes-input"
               />
             </div>
@@ -432,7 +510,12 @@ export function ProjectManagement() {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button type="button" className={styles.cancelButton} onClick={closeEditForm}>
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={closeEditForm}
+                disabled={submitting}
+              >
                 {STRINGS.ui.cancel}
               </button>
               {canUpdate && (

@@ -41,8 +41,9 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-19** `[vis]`: Display dates use German format (DD.MM.YYYY). Date input controls respect the user's browser locale. Calendar week starts Monday.
 - **AC-20** `[vis]`: Kanban, Calendar, and the Project Detail Panel render without errors when `customer`, `plannedStart`, `plannedEnd`, `notes`, `assignedWorkers`, or `estimatedValue` are absent.
 - **AC-53** `[crit]`: A failed mutation displays a German error message and reverts the optimistic UI update.
-- **AC-122** `[vis]`: Modals close on Escape. Form modals submit the primary action on Enter when focus is within the form. Read-only modals accept Escape but do not submit on Enter.
+- **AC-122** `[vis]`: Modals close on Escape (except while a mutation is in flight, see [AC-131](#153-behavioral)). Form modals submit the primary action on Enter when focus is within the form. Read-only modals accept Escape but do not submit on Enter.
 - **AC-123** `[vis]`: Form modals and confirmation dialogs do not close on backdrop click — only via Escape or the explicit cancel action. Non-editing side panels close on backdrop click.
+- **AC-131** `[crit]`: While a create, edit, or state-changing mutation is in flight, the form's submit action is disabled, every input in the form is disabled, and the enclosing modal cannot be closed (Escape, close button, backdrop). The lock covers any user-confirmation dialog that precedes request dispatch, so a submit initiated behind an open confirm does not fire a second time. The lock releases when the request resolves (success or failure). Rationale: silent double-dispatch or a close-during-flight produces state the user did not intend — a misleading-state class defect.
 
 ### 15.4 Authentication
 
@@ -89,6 +90,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 ### 15.9 Infrastructure
 
 - **AC-40** `[crit]`: Object storage module successfully uploads and retrieves a file in the deployed environment (see [architecture.md §11.4](architecture.md#114-object-storage-module)).
+- **AC-132** `[crit]`: The server runs a periodic job that deletes expired sessions (sessions past their `expiresAt`, see [data-model.md §5.4](data-model.md#54-session)). An in-flight sweep is drained on graceful shutdown before the database pool closes. Rationale: unbounded growth of expired session rows degrades auth-check performance and is an operational data-integrity concern.
 
 ### 15.10 Responsive
 
@@ -107,13 +109,15 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-91** `[crit]`: Deleting a customer with no active projects succeeds (hard delete). Any archived projects are purged atomically with the customer. The customer no longer appears in list or get responses.
 - **AC-92** `[crit]`: Deleting a customer that has active (non-archived) projects is rejected as a conflict (per the conflict error category in [api.md §14.4.1](api.md#1441-error-categories)). The customer and its projects remain unchanged.
 - **AC-93** `[crit]`: Deleting a customer requires `customer:delete` permission. Users without this permission receive an authorization error.
+- **AC-124** `[crit]`: Creating a customer with a client-supplied `id` persists the row under that id. Replaying the same request (same id, same user-supplied fields) returns the existing row with no duplicate persisted. A concurrent replay of the same id and body results in one insert and one replay, never two rows. See [api.md §14.2.5](api.md#1425-customer-management) for the field-comparison rule.
 
 ### 15.12 Project Management
 
 - **AC-59** `[crit]`: Creating a single project with `number`, `title`, and `customerId` returns a project in the first workflow state. Optional fields default appropriately.
 - **AC-60** `[crit]`: Updating a project changes the specified fields. Status and project number are not changeable via update (status uses transitions; number is immutable).
 - **AC-61** `[crit]`: Soft-deleting a project marks it as deleted. The project no longer appears in list results, views, or exports.
-- **AC-62** `[crit]`: Project number is unique. Creating a project with a duplicate number is rejected with a validation error.
+- **AC-62** `[crit]`: Project number is unique. Creating a project whose `number` collides with an existing project is rejected with status 409 and error code `CONFLICT`. The German error message names the conflicting number. Distinct from the `IDEMPOTENCY_CONFLICT` path in [AC-127](#1518-data-integrity).
+- **AC-125** `[crit]`: Creating a project with a client-supplied `id` persists the row under that id. Replaying the same request (same id, same body) returns the existing row with no duplicate persisted. A concurrent replay of the same id and body results in one insert and one replay, never two rows. See [api.md §14.2.2](api.md#1422-projects) for the field-comparison rule.
 
 ### 15.13 User Management
 
@@ -150,6 +154,9 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-84** `[vis]`: Deactivating a user from the management view prevents that user from logging in and invalidates their active sessions.
 - **AC-85** `[vis]`: The critical path "create customer → create project referencing that customer" works without page reload or manual refresh.
 - **AC-121** `[crit]`: Any UI control that triggers a mutation requiring a permission the current user lacks is hidden, not rendered and server-rejected. Covers action buttons (create, delete, save, transition, forward) and auto-save inputs (date fields) across the kanban board, management views (projects, customers, users), and the project detail panel. Rationale: rendering an affordance that always 403s is misleading state — the user cannot know in advance which of their actions will succeed.
+- **AC-128** `[vis]`: The customer create form shows a dropdown of existing customers whose names case-insensitively contain the current input (substring match). Clicking a match closes the create form and opens that customer's edit form. When no matches are found, no dropdown appears. When the search request fails, no dropdown appears and no error is surfaced — the form continues to function.
+- **AC-129** `[vis]`: On submit, if the entered customer name matches an existing customer's name (case-insensitive, whitespace-normalized), a confirmation dialog blocks the create until the user explicitly opts in via "Trotzdem erstellen". Cancelling returns to the form without dispatching a request.
+- **AC-130** `[vis]`: On blur of the project number field in the create form, the UI shows a green "available" indicator when no existing project uses the number and a red "taken" indicator when one does. Editing the field after a verdict clears the indicator until the next blur. When multiple checks overlap, the verdict shown reflects the most recent blur — superseded results are discarded. The indicator is UX feedback only — the server is authoritative (see [AC-62](#1512-project-management)).
 
 ### 15.17 Import/Export UI
 
@@ -167,6 +174,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-97** `[crit]`: The database rejects a project row where `plannedEnd < plannedStart` (defense-in-depth CHECK constraint).
 - **AC-98** `[crit]`: Deleting a user nullifies the audit references (`createdBy` / `updatedBy`) on any customer records that user created or last modified.
 - **AC-99** `[crit]`: Project creation (insert + worker assignment) is atomic. If worker assignment fails (e.g., invalid user ID), the project row is not persisted.
+- **AC-127** `[crit]`: A create request carrying a client-supplied `id` that already identifies a row, but whose body differs from the stored row in any participating field, is rejected with the `IDEMPOTENCY_CONFLICT` error code and the German message `"Diese Anfrage-ID wurde bereits mit abweichenden Daten verwendet."` The stored row is unchanged. Applies to both customer and project creation.
 
 ### 15.19 Email Data Intake
 
@@ -233,7 +241,7 @@ These tests run against a real (test) database, not mocks.
 - **AT-15**: Change own password with incorrect current password is rejected.
 - **AT-16**: Object storage module can upload a file, retrieve it, and verify the retrieved contents match the original. Tested against the real (deployed) object storage infrastructure.
 - **AT-17**: Create project with valid fields returns a project in the first workflow state.
-- **AT-18**: Create project with a duplicate number is rejected with a validation error.
+- **AT-18**: Create project with a duplicate number is rejected with status 409 and error code `CONFLICT`. The message names the conflicting number.
 - **AT-19**: Create project with a non-existent `customerId` is rejected with a validation error.
 - **AT-20**: Update project changes the specified fields and preserves others. `updatedAt` and `updatedBy` are set server-side.
 - **AT-21**: Update project does not accept `status` or `number` changes.
@@ -276,6 +284,14 @@ These tests run against a real (test) database, not mocks.
 - **AT-58**: Self-update with a valid `themePreference` updates the user row. A subsequent `GET /api/auth/me` returns the new value.
 - **AT-59**: Self-update without a valid session is rejected with an authentication error.
 - **AT-60**: Self-update with an invalid `themePreference` value is rejected with a validation error.
+- **AT-61**: Create customer with a client-supplied id replayed under the same id and body returns the same row and does not duplicate — a subsequent list search by name returns exactly one matching record.
+- **AT-62**: Create project with a client-supplied id replayed under the same id and body (including order-flipped `assignedWorkerIds` and high-precision `estimatedValue`) returns the same row and does not duplicate — a subsequent list by number returns exactly one matching record.
+- **AT-63**: Create customer with a client-supplied id whose body differs from a prior create under the same id is rejected with status 409 and error code `IDEMPOTENCY_CONFLICT`. The stored row is unchanged.
+- **AT-64**: Create project with a client-supplied id whose body differs from a prior create under the same id is rejected with status 409 and error code `IDEMPOTENCY_CONFLICT`. The stored row is unchanged.
+- **AT-65**: In a create form whose submit opens a confirmation dialog before dispatch, a second submit triggered while the confirm is open does not cause a second create request when the confirm is resolved — exactly one create call fires.
+- **AT-66**: Two concurrent creates for a customer with the same client-supplied id and identical body result in status codes `{201, 201}` and a single persisted row whose id matches the supplied value.
+- **AT-67**: Two concurrent creates for a project with the same client-supplied id and differing bodies result in status codes `{201, 409}`; the 409 response carries `IDEMPOTENCY_CONFLICT`, and the committed row's fields match the 201 winner.
+- **AT-68**: The periodic session reaper deletes expired session rows on its configured interval; a graceful `stop()` awaits any in-flight sweep before resolving.
 
 ### 16.3 E2E Tests
 

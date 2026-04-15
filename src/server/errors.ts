@@ -14,6 +14,7 @@ export type ErrorCode =
   | 'NOT_PERMITTED'
   | 'VALIDATION_ERROR'
   | 'CONFLICT'
+  | 'IDEMPOTENCY_CONFLICT'
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
   | 'SERVER_ERROR';
@@ -74,6 +75,29 @@ export function validationError(message: string, details?: unknown): AppError {
 
 export function conflict(message: string): AppError {
   return new AppError('CONFLICT', message, 409);
+}
+
+export function idempotencyConflict(): AppError {
+  return new AppError('IDEMPOTENCY_CONFLICT', STRINGS.errors.idempotencyConflict, 409);
+}
+
+/**
+ * Walk a (possibly wrapped) Error chain looking for the `constraint` property
+ * that node-postgres attaches to integrity-constraint violations (23xxx).
+ * Returns null when absent — some driver configurations (custom parsers,
+ * stripped errors) omit it, in which case callers must fall back.
+ */
+export function extractPgConstraint(err: unknown): string | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (!(current instanceof Error)) break;
+    const withConstraint = current as Error & { constraint?: string };
+    if (typeof withConstraint.constraint === 'string' && withConstraint.constraint.length > 0) {
+      return withConstraint.constraint;
+    }
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 /**

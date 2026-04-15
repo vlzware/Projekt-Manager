@@ -260,6 +260,7 @@ export const projectApi = {
   get: (id: string) => apiCall<Project>(`/api/projects/${id}`),
 
   create: (data: {
+    id?: string;
     number: string;
     title: string;
     customerId: string;
@@ -313,6 +314,7 @@ export const customerApi = {
   get: (id: string) => apiCall<Customer & { projectCount: number }>(`/api/customers/${id}`),
 
   create: (data: {
+    id?: string;
     name: string;
     phone?: string | null;
     email?: string | null;

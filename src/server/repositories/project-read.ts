@@ -257,6 +257,7 @@ export async function getProject(
 export async function insertProject(
   db: Database,
   data: {
+    id?: string;
     number: string;
     title: string;
     status: WorkflowState;
@@ -275,6 +276,7 @@ export async function insertProject(
     const rows = await tx
       .insert(projects)
       .values({
+        ...(data.id !== undefined ? { id: data.id } : {}),
         number: data.number,
         title: data.title,
         status: data.status,
@@ -379,6 +381,18 @@ export async function updateProject(
   ]);
 
   return toProject(row, customerRows[0] ?? null, workers);
+}
+
+/**
+ * Fetch the raw DB row by id (including soft-deleted). Used by the
+ * idempotency path in ProjectService.createProject — it compares the stored
+ * project against the request body. We intentionally ignore the `deleted`
+ * flag here: a client replaying a create must not get a soft-deleted row
+ * back, but the caller needs to disambiguate "id taken" from "id free".
+ */
+export async function getProjectRowById(db: Database, id: string): Promise<ProjectRow | null> {
+  const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+  return rows[0] ?? null;
 }
 
 /**

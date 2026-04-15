@@ -90,6 +90,7 @@ export async function getCustomer(
 export async function createCustomer(
   db: Database,
   data: {
+    id?: string;
     name: string;
     phone?: string | null;
     email?: string | null;
@@ -102,6 +103,7 @@ export async function createCustomer(
   const rows = await db
     .insert(customers)
     .values({
+      ...(data.id !== undefined ? { id: data.id } : {}),
       name: data.name,
       phone: data.phone ?? null,
       email: data.email ?? null,
@@ -113,6 +115,16 @@ export async function createCustomer(
     .returning();
 
   return toCustomerResponse(rows[0]!);
+}
+
+/**
+ * Fetch the raw DB row by id. Returns null when absent. Used by the
+ * idempotency path in CustomerService.createCustomer — it compares stored
+ * fields (notably the raw JSONB address) against the request body.
+ */
+export async function getCustomerRow(db: Database, id: string): Promise<CustomerRow | null> {
+  const rows = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
+  return rows[0] ?? null;
 }
 
 export async function updateCustomer(

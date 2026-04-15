@@ -37,6 +37,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     BOOTSTRAP_ADMIN_DISPLAY_NAME: undefined,
     OPENROUTER_API_KEY: undefined,
     OPENROUTER_MODEL: 'google/gemini-2.5-flash-lite',
+    SESSION_CLEANUP_INTERVAL_MINUTES: 60,
     ...overrides,
   };
 }
@@ -130,5 +131,16 @@ describe('start.ts call-site pin for assertProductionSafe', () => {
     // invoked, not merely imported or referenced.
     const callPattern = /\bassertProductionSafe\s*\(\s*\S[^)]*\)/;
     expect(stripped).toMatch(callPattern);
+  });
+
+  // Same technique as the guard above: the reaper module owns the sweep
+  // logic (unit-tested in session-reaper.test.ts), but the wiring in
+  // start.ts is what actually schedules it in the running binary. A
+  // regression that drops the call or feeds a literal 60 instead of the
+  // validated env value would leave the unit tests green. This pin catches
+  // the detachment.
+  it('passes env.SESSION_CLEANUP_INTERVAL_MINUTES to startSessionReaper', () => {
+    expect(stripped).toMatch(/\bstartSessionReaper\s*\(/);
+    expect(stripped).toMatch(/intervalMinutes\s*:\s*env\.SESSION_CLEANUP_INTERVAL_MINUTES\b/);
   });
 });

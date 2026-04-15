@@ -21,6 +21,7 @@ import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
+import { startSessionReaper } from './session-reaper.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
 
@@ -137,6 +138,18 @@ async function start(): Promise<void> {
     console.log(`Cleaned up ${deleted} expired sessions.`);
   }
 
+  // Schedule periodic cleanup so long-running deployments don't accumulate
+  // expired rows between restarts. Handle is captured for the graceful
+  // shutdown hook below.
+  const reaper = startSessionReaper({
+    db,
+    intervalMinutes: env.SESSION_CLEANUP_INTERVAL_MINUTES,
+    logger: {
+      info: (msg) => console.log(msg),
+      error: (err, msg) => console.error(msg, err),
+    },
+  });
+
   const app = buildApp({ logger: true, db });
 
   // Storage client for the health probe. Instantiated once at startup and
@@ -194,6 +207,8 @@ async function start(): Promise<void> {
   // where SIGTERM during startup causes an unclean exit.
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, async () => {
+      // Wait for any in-flight sweep so pool.end() isn't called under its feet.
+      await reaper.stop();
       await app.close();
       await pool.end();
       process.exit(0);

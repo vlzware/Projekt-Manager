@@ -11,6 +11,12 @@ import { projectApi, customerApi } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';
 
+/**
+ * Result of `createProject`. Mirrors `CreateCustomerOutcome` — see that
+ * type's comment for the meaning of `'conflict'`.
+ */
+export type CreateProjectOutcome = { status: 'ok' } | { status: 'error' } | { status: 'conflict' };
+
 interface ProjectManagementState {
   projects: Project[];
   customers: Customer[];
@@ -18,8 +24,14 @@ interface ProjectManagementState {
   error: string | null;
 
   fetchProjects: (search?: string) => Promise<void>;
+  searchProjects: (search: string) => Promise<Project[]>;
   fetchCustomers: () => Promise<void>;
-  createProject: (data: { number: string; title: string; customerId: string }) => Promise<boolean>;
+  createProject: (data: {
+    id?: string;
+    number: string;
+    title: string;
+    customerId: string;
+  }) => Promise<CreateProjectOutcome>;
   updateProject: (
     id: string,
     data: {
@@ -68,6 +80,17 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
     set({ customers: result.data.customers });
   },
 
+  searchProjects: async (search) => {
+    const trimmed = search.trim();
+    if (!trimmed) return [];
+    const result = await projectApi.list({ search: trimmed });
+    if (!result.ok) {
+      if (result.sessionExpired) handleSessionExpired();
+      return [];
+    }
+    return result.data.data;
+  },
+
   createProject: async (data) => {
     set({ error: null });
     const result = await projectApi.create(data);
@@ -75,16 +98,24 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
     if (!result.ok) {
       if (result.sessionExpired) {
         handleSessionExpired();
-        return false;
+        return { status: 'error' };
+      }
+      if (result.error.code === 'IDEMPOTENCY_CONFLICT') {
+        // Refresh the list *before* committing the error message —
+        // `fetchProjects` clears `error` while loading.
+        await get().fetchProjects();
+        useProjectStore.getState().fetchProjects();
+        set({ error: result.error.message });
+        return { status: 'conflict' };
       }
       set({ error: result.error.message });
-      return false;
+      return { status: 'error' };
     }
 
     // Refetch management list and also refresh the kanban store
     await get().fetchProjects();
     useProjectStore.getState().fetchProjects();
-    return true;
+    return { status: 'ok' };
   },
 
   updateProject: async (id, data) => {

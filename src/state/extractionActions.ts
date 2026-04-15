@@ -26,6 +26,7 @@ export async function searchCustomers(query: string): Promise<Customer[]> {
 }
 
 export async function createCustomerFromExtraction(data: {
+  id?: string;
   name: string;
   phone?: string | null;
   email?: string | null;
@@ -37,6 +38,7 @@ export async function createCustomerFromExtraction(data: {
 }
 
 export async function createProjectFromExtraction(data: {
+  id?: string;
   number: string;
   title: string;
   customerId: string;

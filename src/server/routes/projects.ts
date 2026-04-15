@@ -74,6 +74,7 @@ export function projectRoutes(db: Database) {
             required: ['number', 'title', 'customerId'],
             additionalProperties: false,
             properties: {
+              id: { type: 'string', format: 'uuid' },
               number: { type: 'string', minLength: 1 },
               title: { type: 'string', minLength: 1 },
               customerId: { type: 'string', format: 'uuid' },
@@ -90,6 +91,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const body = request.body as {
+          id?: string;
           number: string;
           title: string;
           customerId: string;

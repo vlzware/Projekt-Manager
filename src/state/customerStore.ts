@@ -10,6 +10,15 @@ import type { Customer } from '@/domain/types';
 import { customerApi } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 
+/**
+ * Result of `createCustomer`. `'ok'` — row committed (fresh or idempotent
+ * replay). `'error'` — generic failure; caller keeps the form open. `'conflict'`
+ * — server returned IDEMPOTENCY_CONFLICT; the same client id was already used
+ * with a different body, so the form instance is unrecoverable. The caller
+ * should close the form and refresh the list.
+ */
+export type CreateCustomerOutcome = { status: 'ok' } | { status: 'error' } | { status: 'conflict' };
+
 interface CustomerState {
   customers: Customer[];
   total: number;
@@ -17,13 +26,15 @@ interface CustomerState {
   error: string | null;
 
   fetchCustomers: (search?: string) => Promise<void>;
+  searchCustomers: (search: string) => Promise<Customer[]>;
   createCustomer: (data: {
+    id?: string;
     name: string;
     phone?: string | null;
     email?: string | null;
     address?: { street: string; zip: string; city: string } | null;
     notes?: string | null;
-  }) => Promise<boolean>;
+  }) => Promise<CreateCustomerOutcome>;
   updateCustomer: (
     id: string,
     data: {
@@ -64,6 +75,17 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
     });
   },
 
+  searchCustomers: async (search) => {
+    const trimmed = search.trim();
+    if (!trimmed) return [];
+    const result = await customerApi.list({ search: trimmed });
+    if (!result.ok) {
+      if (result.sessionExpired) handleSessionExpired();
+      return [];
+    }
+    return result.data.customers;
+  },
+
   createCustomer: async (data) => {
     set({ error: null });
     const result = await customerApi.create(data);
@@ -71,15 +93,28 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
     if (!result.ok) {
       if (result.sessionExpired) {
         handleSessionExpired();
-        return false;
+        return { status: 'error' };
+      }
+      if (result.error.code === 'IDEMPOTENCY_CONFLICT') {
+        // The underlying row already exists with a different body. Refresh
+        // the list so the user sees what's there, then signal the caller
+        // to close its form (the form instance cannot be safely retried).
+        //
+        // We refresh the list *before* setting the error — `fetchCustomers`
+        // resets `error` to null during a list fetch (loading indicator
+        // pattern), so the order matters: fetch first, then commit the
+        // conflict message to state.
+        await get().fetchCustomers();
+        set({ error: result.error.message });
+        return { status: 'conflict' };
       }
       set({ error: result.error.message });
-      return false;
+      return { status: 'error' };
     }
 
     // Refetch to get consistent list
     await get().fetchCustomers();
-    return true;
+    return { status: 'ok' };
   },
 
   updateCustomer: async (id, data) => {

@@ -5,20 +5,24 @@
  * See e2e/management-flows.spec.ts steps 18.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useCustomerStore } from '@/state/customerStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useConfirmStore } from '@/state/confirmStore';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
 import type { Customer } from '@/domain/types';
+import { normalizeName } from '@/domain/nameNormalize';
 import styles from './Management.module.css';
+
+const AUTOCOMPLETE_DEBOUNCE_MS = 300;
 
 export function CustomerManagement() {
   const customers = useCustomerStore((s) => s.customers);
   const loading = useCustomerStore((s) => s.loading);
   const error = useCustomerStore((s) => s.error);
   const fetchCustomers = useCustomerStore((s) => s.fetchCustomers);
+  const searchCustomers = useCustomerStore((s) => s.searchCustomers);
   const createCustomer = useCustomerStore((s) => s.createCustomer);
   const updateCustomer = useCustomerStore((s) => s.updateCustomer);
   const deleteCustomer = useCustomerStore((s) => s.deleteCustomer);
@@ -38,6 +42,19 @@ export function CustomerManagement() {
   const [city, setCity] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Client-supplied UUID for idempotent create. Generated on form open,
+  // stable across re-renders and retries within the same form instance.
+  // Null when no create form is open.
+  const [createId, setCreateId] = useState<string | null>(null);
+
+  // Autocomplete state (create form only).
+  const [matches, setMatches] = useState<Customer[]>([]);
+  const [matchDropdownOpen, setMatchDropdownOpen] = useState(false);
+  const matchRef = useRef<HTMLDivElement>(null);
+  // Monotonic request id — a slow fetch must not commit its results if
+  // the user has since typed and kicked off a newer fetch.
+  const searchRequestIdRef = useRef(0);
+
   useEffect(() => {
     fetchCustomers();
   }, [fetchCustomers]);
@@ -49,6 +66,8 @@ export function CustomerManagement() {
     setStreet('');
     setZip('');
     setCity('');
+    setMatches([]);
+    setMatchDropdownOpen(false);
   };
 
   const populateForm = (c: Customer) => {
@@ -60,16 +79,75 @@ export function CustomerManagement() {
     setCity(c.address?.city ?? '');
   };
 
+  // Debounced duplicate-name search while the create form is open.
+  useEffect(() => {
+    if (!formOpen) return;
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setMatches([]);
+      setMatchDropdownOpen(false);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      // Drop stale results from the previous query so the dropdown does
+      // not flicker old rows while the new fetch is in flight.
+      setMatches([]);
+      const myReq = ++searchRequestIdRef.current;
+      const results = await searchCustomers(trimmed);
+      if (myReq !== searchRequestIdRef.current) return;
+      setMatches(results);
+      if (results.length > 0) setMatchDropdownOpen(true);
+    }, AUTOCOMPLETE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [name, formOpen, searchCustomers]);
+
+  // Close match dropdown on outside click.
+  useEffect(() => {
+    if (!matchDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (matchRef.current && !matchRef.current.contains(e.target as Node)) {
+        setMatchDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [matchDropdownOpen]);
+
+  const exactMatch = useMemo(() => {
+    const key = normalizeName(name);
+    if (!key) return null;
+    return matches.find((c) => normalizeName(c.name) === key) ?? null;
+  }, [matches, name]);
+
   const handleCreate = async () => {
-    if (!name.trim()) return;
+    if (submitting || !name.trim() || !createId) return;
+
+    // Set submitting BEFORE any await so a second click cannot slip past
+    // the guard. `useConfirmStore.request` does not block pointer events
+    // on the underlying form and its preemption semantic silently
+    // cancels the first request if a second one opens — the combination
+    // would discard the user's first submit with no feedback.
     setSubmitting(true);
+
+    // Soft-confirm on an exact case-insensitive duplicate — legitimate
+    // duplicates are allowed but the user must opt in.
+    if (exactMatch) {
+      const proceed = await requestConfirm(STRINGS.customers.duplicateNameConfirm(name.trim()), {
+        confirmLabel: STRINGS.ui.createAnyway,
+      });
+      if (!proceed) {
+        setSubmitting(false);
+        return;
+      }
+    }
 
     const address =
       street.trim() || zip.trim() || city.trim()
         ? { street: street.trim(), zip: zip.trim(), city: city.trim() }
         : null;
 
-    const ok = await createCustomer({
+    const outcome = await createCustomer({
+      id: createId,
       name: name.trim(),
       phone: phone.trim() || null,
       email: email.trim() || null,
@@ -77,14 +155,19 @@ export function CustomerManagement() {
     });
 
     setSubmitting(false);
-    if (ok) {
+
+    if (outcome.status === 'ok' || outcome.status === 'conflict') {
+      // Conflict path: the backing row already exists with different data.
+      // The form instance is unrecoverable — close it. The store has
+      // already refreshed the list and set its error message.
       setFormOpen(false);
+      setCreateId(null);
       resetForm();
     }
   };
 
   const handleUpdate = async () => {
-    if (!editCustomer || !name.trim()) return;
+    if (submitting || !editCustomer || !name.trim()) return;
     setSubmitting(true);
 
     const address =
@@ -119,12 +202,32 @@ export function CustomerManagement() {
     clearError();
   };
 
-  const closeCreateForm = useCallback(() => {
-    setFormOpen(false);
-  }, []);
-  const closeEditForm = useCallback(() => {
+  const openCreateForm = () => {
+    clearError();
+    resetForm();
     setEditCustomer(null);
-  }, []);
+    setCreateId(crypto.randomUUID());
+    setFormOpen(true);
+  };
+
+  const openEditFromMatch = (customer: Customer) => {
+    setFormOpen(false);
+    setCreateId(null);
+    handleRowClick(customer);
+  };
+
+  const closeCreateForm = useCallback(() => {
+    if (submitting) return;
+    setFormOpen(false);
+    setCreateId(null);
+    resetForm();
+  }, [submitting]);
+
+  const closeEditForm = useCallback(() => {
+    if (submitting) return;
+    setEditCustomer(null);
+    resetForm();
+  }, [submitting]);
 
   useEscapeKey(closeCreateForm, formOpen);
   useEscapeKey(closeEditForm, !!editCustomer && !formOpen);
@@ -135,12 +238,7 @@ export function CustomerManagement() {
         {canWrite && (
           <button
             className={styles.createButton}
-            onClick={() => {
-              clearError();
-              resetForm();
-              setEditCustomer(null);
-              setFormOpen(true);
-            }}
+            onClick={openCreateForm}
             data-testid="customer-create-button"
           >
             {STRINGS.ui.create}
@@ -197,12 +295,17 @@ export function CustomerManagement() {
               {STRINGS.entities.customer} {STRINGS.ui.create}
             </h2>
 
-            {renderFormFields(false)}
+            {renderCreateFormFields()}
 
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button type="button" className={styles.cancelButton} onClick={closeCreateForm}>
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={closeCreateForm}
+                disabled={submitting}
+              >
                 {STRINGS.ui.cancel}
               </button>
               <button
@@ -233,12 +336,17 @@ export function CustomerManagement() {
               {STRINGS.entities.customer} {canWrite ? STRINGS.ui.edit : STRINGS.ui.viewDetails}
             </h2>
 
-            {renderFormFields(!canWrite)}
+            {renderEditFormFields(!canWrite)}
 
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button type="button" className={styles.cancelButton} onClick={closeEditForm}>
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={closeEditForm}
+                disabled={submitting}
+              >
                 {STRINGS.ui.cancel}
               </button>
               {canWrite && (
@@ -258,7 +366,62 @@ export function CustomerManagement() {
     </div>
   );
 
-  function renderFormFields(readOnly: boolean) {
+  function renderCreateFormFields() {
+    return (
+      <>
+        <div className={styles.formGroup} ref={matchRef}>
+          <label className={styles.formLabel}>{STRINGS.ui.name} *</label>
+          <div className={styles.selectWrapper}>
+            <input
+              className={styles.formInput}
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setMatchDropdownOpen(true);
+              }}
+              onFocus={() => {
+                if (matches.length > 0) setMatchDropdownOpen(true);
+              }}
+              onBlur={() => {
+                // Delay so an onClick on a dropdown row fires before the
+                // blur handler closes the dropdown.
+                window.setTimeout(() => setMatchDropdownOpen(false), 150);
+              }}
+              disabled={submitting}
+              data-testid="customer-name-input"
+              autoFocus
+              autoComplete="off"
+            />
+            {matchDropdownOpen && matches.length > 0 && (
+              <div className={styles.selectDropdown} data-testid="customer-match-dropdown">
+                {matches.map((c) => (
+                  <div
+                    key={c.id}
+                    className={styles.selectOption}
+                    onMouseDown={(e) => {
+                      // Prevent the input's blur from firing before click.
+                      e.preventDefault();
+                    }}
+                    onClick={() => openEditFromMatch(c)}
+                    data-testid={`customer-match-${c.id}`}
+                  >
+                    {c.name}
+                    {c.phone ? (
+                      <span className={styles.selectOptionSecondary}> — {c.phone}</span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {renderRestOfFields(false)}
+      </>
+    );
+  }
+
+  function renderEditFormFields(readOnly: boolean) {
     return (
       <>
         <div className={styles.formGroup}>
@@ -267,19 +430,28 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            disabled={readOnly}
+            disabled={readOnly || submitting}
             data-testid="customer-name-input"
             autoFocus
           />
         </div>
 
+        {renderRestOfFields(readOnly)}
+      </>
+    );
+  }
+
+  function renderRestOfFields(readOnly: boolean) {
+    const disabled = readOnly || submitting;
+    return (
+      <>
         <div className={styles.formGroup}>
           <label className={styles.formLabel}>{STRINGS.ui.street}</label>
           <input
             className={styles.formInput}
             value={street}
             onChange={(e) => setStreet(e.target.value)}
-            disabled={readOnly}
+            disabled={disabled}
             data-testid="customer-street-input"
           />
         </div>
@@ -290,7 +462,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={zip}
             onChange={(e) => setZip(e.target.value)}
-            disabled={readOnly}
+            disabled={disabled}
             data-testid="customer-zip-input"
           />
         </div>
@@ -301,7 +473,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={city}
             onChange={(e) => setCity(e.target.value)}
-            disabled={readOnly}
+            disabled={disabled}
             data-testid="customer-city-input"
           />
         </div>
@@ -312,7 +484,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={phone}
             onChange={(e) => setPhone(e.target.value)}
-            disabled={readOnly}
+            disabled={disabled}
           />
         </div>
 
@@ -322,7 +494,7 @@ export function CustomerManagement() {
             className={styles.formInput}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            disabled={readOnly}
+            disabled={disabled}
           />
         </div>
       </>

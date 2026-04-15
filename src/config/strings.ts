@@ -31,6 +31,7 @@ export const STRINGS = {
     serverError: 'Ein interner Fehler ist aufgetreten.',
     invalidInput: 'Ungültige Eingabe.',
     notFound: (entity: string) => `${entity} nicht gefunden.`,
+    idempotencyConflict: 'Diese Anfrage-ID wurde bereits mit abweichenden Daten verwendet.',
   },
 
   entities: {
@@ -54,6 +55,8 @@ export const STRINGS = {
 
   projects: {
     noDate: 'Kein Termin',
+    numberTaken: (n: string) => `Projektnummer "${n}" ist bereits vergeben.`,
+    numberAvailable: 'Verfügbar',
     transitionConfirm: (from: string, to: string) => `Status ändern: ${from} → ${to}?`,
     cannotAdvanceTerminal:
       'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',
@@ -70,7 +73,7 @@ export const STRINGS = {
     unknownImportError: 'Unbekannter Fehler beim Import.',
     // Import error translations — never leak pg constraint names, table
     // names, column names, SQLSTATE codes, or English text. See C-5.
-    duplicateNumber: 'Projektnummer ist bereits vergeben.',
+    duplicateNumber: (n: string) => `Projektnummer "${n}" ist bereits vergeben.`,
     foreignKeyViolation: 'Verknüpfter Datensatz existiert nicht (z. B. zugeordnete Mitarbeiter).',
     dateConstraintViolation: 'Datumsangaben verletzen eine Integritätsregel.',
     concurrentModification:
@@ -91,6 +94,8 @@ export const STRINGS = {
 
   customers: {
     duplicateName: 'Ein Kunde mit diesem Namen existiert bereits.',
+    duplicateNameConfirm: (name: string) =>
+      `Ein Kunde mit dem Namen "${name}" existiert bereits. Trotzdem erstellen?`,
     nameRequired: 'Kundenname ist erforderlich.',
     hasProjects: 'Kunde kann nicht gelöscht werden, da noch aktive Projekte zugeordnet sind.',
     deleteWithArchived: (n: number) =>
@@ -176,6 +181,7 @@ export const STRINGS = {
 
     // Management actions
     create: 'Erstellen',
+    createAnyway: 'Trotzdem erstellen',
     save: 'Speichern',
     edit: 'Bearbeiten',
     viewDetails: 'Details',

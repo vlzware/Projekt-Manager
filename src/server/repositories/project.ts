@@ -13,9 +13,11 @@ export {
   toProject,
   listProjects,
   getProject,
+  getProjectRowById,
   insertProject,
   updateProject,
   softDeleteProject,
+  fetchWorkersForProject,
   ProjectNotFoundError,
 } from './project-read.js';
 export {
