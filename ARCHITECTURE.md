@@ -220,7 +220,7 @@ Backend changes are usually not needed — the store exposes the full project li
 2. **Validation**: Fastify JSON Schema on the route (see `projects.ts`). Don't validate inside the handler.
 3. **Auth**: `createAuthMiddleware(db)` as plugin `preHandler`; `requirePermission('...')` per route. Add new keys to `src/config/permissions.ts` (shared with the client-side `usePermission` hook — see [§ Permission Gating](#permission-gating)).
 4. **Delegate to service**. Never call repos from a route ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
-5. **Errors**: use factories from `src/server/errors.ts` (`notFound()`, `validationError()`, etc.). Never throw raw `Error`. For endpoints accepting composite payloads, translate DB constraint violations to German user-facing messages via the service layer (see `ProjectService.translatePgError()`).
+5. **Errors**: use factories from `src/server/errors.ts` (`notFound()`, `validationError()`, etc.). Never throw raw `Error`. For endpoints accepting composite payloads, translate DB constraint violations via the service layer: classify with `extractSqlState()` / `extractPgConstraint()` and disambiguate against the named constraints in `src/server/db/constraints.ts` (see `ProjectService.createProjectWithClientId` for the 23505 pattern).
 6. **Register** in `src/server/app.ts`.
 7. **Tests**: integration in `src/server/__tests__/` using `api-helpers.ts` (`startApp()`, `login()`, `authPost()`/`authGet()`).
 8. **Spec**: add operation to `docs/spec/api.md §14.2`, AC in `docs/spec/verification.md`.

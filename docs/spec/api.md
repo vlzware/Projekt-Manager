@@ -129,10 +129,8 @@ All customer operations require an authenticated session.
 
 Design notes:
 
-- **Client-supplied `id` is optional.** When omitted, the server generates one. When supplied, it must be a syntactically valid id or the request is rejected as a validation error.
-- **Idempotent replay.** If a row with the supplied id already exists AND every user-supplied field in the request body matches the stored row, the existing row is returned with the same success status as a fresh create. Replays do not create duplicates.
+- **Idempotent replay** follows the same contract as for projects — see [§14.2.2](#1422-projects) design notes for the client-supplied `id`, replay semantics, and `IDEMPOTENCY_CONFLICT` behavior.
 - **Field comparison for replay.** Participating fields: `name`, `phone`, `email`, `address`, `notes`. Rules: `null`, `undefined`, and missing are equivalent; nested address fields (`street`, `zip`, `city`) compare component-wise under the same rule.
-- **Idempotency conflict.** If a row with the supplied id exists but any participating field differs, the request is rejected with a conflict error code `IDEMPOTENCY_CONFLICT` (see [§14.4](#144-error-handling)). The stored row is not modified.
 - **Duplicate-name handling is separate.** Name collisions are not blocked at the API — the client surfaces them (see [ui.md §8.9.2](ui.md#892-create-customer)). `IDEMPOTENCY_CONFLICT` addresses only retried writes keyed by a client-supplied id.
 
 #### 14.2.6 Data Extraction

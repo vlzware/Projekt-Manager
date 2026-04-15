@@ -9,6 +9,7 @@
 The entity is stored in the database. Two audit fields (`createdBy`, `updatedBy`) track the acting user.
 
 ```typescript
+// Derived from the workflow state configuration — see §3 in index.md.
 type WorkflowState =
   | 'anfrage'
   | 'angebot'

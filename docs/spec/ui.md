@@ -26,7 +26,7 @@ The application has two top-level layout states depending on authentication.
 └──────────────────────────────────────────────────────────┘
 ```
 
-The login screen is minimal: app name/logo, username field, password field, a submit button labeled "Anmelden", and an error area for failed attempts. The server returns a generic error message on failed login — no distinction between "user not found" and "wrong password" to avoid information leakage. The client displays the server-provided message. The generic behavior is enforced server-side, not client-side.
+The server returns a generic error message on failed login — no distinction between "user not found" and "wrong password" to avoid information leakage. The client displays the server-provided message. The generic behavior is enforced server-side, not client-side.
 
 The login screen is the **only** view available to unauthenticated users. No project data is accessible without authentication.
 
