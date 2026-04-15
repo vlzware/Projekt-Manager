@@ -212,12 +212,17 @@ test.describe('AC-121: permission-based UI visibility', () => {
         );
 
         // Open a user detail to check the management action buttons.
-        // Pick a user row that is NOT the currently logged-in user so the
-        // Löschen visibility is governed by user:delete, not the self-
-        // delete guard. For owner/office the first row is typically the
-        // owner themselves, so pick the second row.
-        const userRows = page.getByTestId('user-table').locator('tbody tr');
-        const targetRow = (await userRows.count()) > 1 ? userRows.nth(1) : userRows.first();
+        // Target `buchhalter` — always active and never the logged-in
+        // user (owner or office), so deactivate visibility reflects
+        // `user:manage` and delete visibility reflects `user:delete`,
+        // without interference from the self-delete guard or the
+        // inactive-user reactivate branch. Picked by content because
+        // the list API does not guarantee row order (repositories/user.ts
+        // has no ORDER BY — tracked separately).
+        const targetRow = page
+          .getByTestId('user-table')
+          .locator('tbody tr', { hasText: 'buchhalter' });
+        await expect(targetRow).toHaveCount(1);
         await targetRow.click();
 
         await expect(page.getByTestId('user-deactivate-button')).toHaveCount(

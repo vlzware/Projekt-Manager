@@ -42,6 +42,9 @@ const SAMPLE_EMAIL = [
 ].join('\n');
 
 test('LLM email extraction demo', async ({ page }) => {
+  // toggled locally when recording the demo in a specific theme.
+  await page.emulateMedia({ colorScheme: 'dark' });
+
   // ── Login screen ──────────────────────────────────────────────────
   await page.goto('/');
   await expect(page.getByTestId('login-form')).toBeVisible();
