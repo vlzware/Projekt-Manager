@@ -6,11 +6,8 @@ import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
 import { ExportService } from '../services/ExportService.js';
-import {
-  ImportService,
-  type ImportEnvelope,
-  type ImportOptions,
-} from '../services/ImportService.js';
+import { ImportService } from '../services/ImportService.js';
+import type { Envelope, ImportOptions } from '../../domain/dataExchange.js';
 
 const ENVELOPE_BODY_SCHEMA = {
   type: 'object',
@@ -71,7 +68,7 @@ export function dataExchangeRoutes(db: Database) {
           dryRun: query.dry_run === 'true',
           override: query.override === 'true',
         };
-        const envelope = request.body as ImportEnvelope;
+        const envelope = request.body as Envelope;
         const result = await importService.import(envelope, opts);
         return reply.code(200).send(result);
       },

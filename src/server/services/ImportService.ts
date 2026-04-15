@@ -17,48 +17,11 @@ import {
   type EnvelopeCustomer,
   type EnvelopeProject,
   type EnvelopeAssignment,
-} from './dataExchangeEnvelope.js';
-
-export type { Envelope as ImportEnvelope } from './dataExchangeEnvelope.js';
-
-export interface ImportOptions {
-  dryRun: boolean;
-  override: boolean;
-}
-
-export interface ImportResult {
-  schema_version: number;
-  summary: {
-    customers: number;
-    projects: number;
-    project_workers: number;
-  };
-}
-
-export interface ValidationIssue {
-  path: string;
-  message: string;
-}
-
-export interface DryRunPreview {
-  schema_version: number;
-  /**
-   * True when at least one of customers / projects / project_workers has
-   * rows in the target at dry-run time. Lets the UI decide whether to
-   * require the override-warning acknowledgement before allowing commit.
-   * Computed inside a read-only repeatable-read transaction to match the
-   * Export path's snapshot semantics; the non-dry commit path still
-   * enforces `TARGET_NOT_EMPTY` when override is not set (defense in
-   * depth).
-   */
-  target_non_empty: boolean;
-  would_write: {
-    customers: number;
-    projects: number;
-    project_workers: number;
-  };
-  validation_errors: ValidationIssue[];
-}
+  type ImportOptions,
+  type ImportResult,
+  type DryRunPreview,
+  type ValidationIssue,
+} from '../../domain/dataExchange.js';
 
 /**
  * Within-envelope referential integrity — every project's `customerId`

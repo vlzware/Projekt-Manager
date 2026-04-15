@@ -19,7 +19,7 @@
 import { create } from 'zustand';
 import { dataApi } from '@/api/client';
 import { STRINGS } from '@/config/strings';
-import type { Envelope, DryRunPreview, ImportResult } from '@/domain/types';
+import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 import { formatDateOnly } from '@/domain/dateFormat';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';

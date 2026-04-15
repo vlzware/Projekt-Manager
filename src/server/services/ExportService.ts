@@ -5,7 +5,7 @@
 import { asc } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { customers, projects, projectWorkers } from '../db/schema.js';
-import { SCHEMA_VERSION, type Envelope } from './dataExchangeEnvelope.js';
+import { SCHEMA_VERSION, type Envelope } from '../../domain/dataExchange.js';
 import { toCustomerResponse } from '../repositories/customer.js';
 import { formatDateOnly } from '../../domain/dateFormat.js';
 import type { WorkflowState } from '../../config/stateConfig.js';

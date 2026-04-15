@@ -187,14 +187,8 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 
 // --- Typed API functions -----------------------------------------------------
 
-import type {
-  Project,
-  Customer,
-  User,
-  Envelope,
-  DryRunPreview,
-  ImportResult,
-} from '@/domain/types';
+import type { Project, Customer, User } from '@/domain/types';
+import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 
 interface AuthUser {
   id: string;
