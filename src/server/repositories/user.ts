@@ -2,7 +2,7 @@
  * User repository — database operations for the users table.
  */
 
-import { eq, count } from 'drizzle-orm';
+import { eq, count, asc } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { users } from '../db/schema.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
@@ -40,7 +40,7 @@ export async function listUsers(
   db: Database,
   opts: { offset?: number; limit?: number } = {},
 ): Promise<{ users: ReturnType<typeof toUserResponse>[]; total: number }> {
-  const baseQuery = db.select().from(users);
+  const baseQuery = db.select().from(users).orderBy(asc(users.username));
   const paginatedQuery =
     opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
 

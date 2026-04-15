@@ -2,7 +2,7 @@
  * Customer repository — CRUD operations.
  */
 
-import { eq, and, count, ilike } from 'drizzle-orm';
+import { eq, and, count, ilike, asc } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { customers, projects } from '../db/schema.js';
 
@@ -37,8 +37,8 @@ export async function listCustomers(
     : undefined;
 
   const baseQuery = baseCondition
-    ? db.select().from(customers).where(baseCondition)
-    : db.select().from(customers);
+    ? db.select().from(customers).where(baseCondition).orderBy(asc(customers.name))
+    : db.select().from(customers).orderBy(asc(customers.name));
 
   const paginatedQuery =
     opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;

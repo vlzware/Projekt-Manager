@@ -2,7 +2,7 @@
  * Project repository — read & create operations.
  */
 
-import { eq, count, inArray, and, ilike, or, isNull } from 'drizzle-orm';
+import { eq, count, inArray, and, ilike, or, isNull, desc } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { projects, projectWorkers, users, customers } from '../db/schema.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
@@ -175,7 +175,8 @@ export async function listProjects(
       .select({ project: projects, customer: customers })
       .from(projects)
       .innerJoin(customers, eq(projects.customerId, customers.id))
-      .where(and(whereClause, searchCondition));
+      .where(and(whereClause, searchCondition))
+      .orderBy(desc(projects.createdAt));
 
     const paginatedQuery =
       opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
@@ -201,7 +202,7 @@ export async function listProjects(
   }
 
   // No search — simpler query path
-  const baseQuery = db.select().from(projects).where(whereClause);
+  const baseQuery = db.select().from(projects).where(whereClause).orderBy(desc(projects.createdAt));
   const paginatedQuery =
     opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
 

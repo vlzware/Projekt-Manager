@@ -13,6 +13,7 @@ The API is the boundary between the front end and all persistent state ([archite
 - **Consistent error representation.** Machine-readable code + human-readable message (see [§14.4](#144-error-handling)).
 - **Stateless requests.** Each request carries all context needed, including authentication.
 - **Pagination-ready.** List operations accept `offset`/`limit`. The contract must support pagination even if the current data volume does not require it.
+- **Stable list order.** List operations return rows in a deterministic order — a second fetch yields the same sequence, and pagination pages do not overlap or skip rows.
 - **Timestamps managed server-side.** `createdAt`, `updatedAt`, `statusChangedAt` are set by the server, never by clients.
 
 ---
