@@ -116,7 +116,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-59** `[crit]`: Creating a single project with `number`, `title`, and `customerId` returns a project in the first workflow state. Optional fields default appropriately.
 - **AC-60** `[crit]`: Updating a project changes the specified fields. Status and project number are not changeable via update (status uses transitions; number is immutable).
 - **AC-61** `[crit]`: Soft-deleting a project marks it as deleted. The project no longer appears in list results, views, or exports.
-- **AC-62** `[crit]`: Project number is unique. Creating a project whose `number` collides with an existing project is rejected with status 409 and error code `CONFLICT`. The German error message names the conflicting number. Distinct from the `IDEMPOTENCY_CONFLICT` path in [AC-127](#1518-data-integrity).
+- **AC-62** `[crit]`: Project number is unique. Creating a project whose `number` collides with an existing project is rejected with status 409 and error code `CONFLICT`. The German error message names the conflicting number. Distinct from the `IDEMPOTENCY_CONFLICT` path in [AC-127](#1517-data-integrity).
 - **AC-125** `[crit]`: Creating a project with a client-supplied `id` persists the row under that id. Replaying the same request (same id, same body) returns the existing row with no duplicate persisted. A concurrent replay of the same id and body results in one insert and one replay, never two rows. See [api.md §14.2.2](api.md#1422-projects) for the field-comparison rule.
 
 ### 15.13 User Management
@@ -129,16 +129,24 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-68** `[crit]`: A user cannot deactivate themselves. The API rejects self-deactivation with an error.
 - **AC-69** `[crit]`: Only users with `user:manage` permission (owner role) can create, update, deactivate, reactivate, or reset passwords. Other roles receive an authorization error.
 
-### 15.14 Import/Export
+### 15.14 Data Exchange
 
-- **AC-70** `[crit]`: Bulk customer import accepts an array of customer items. Valid items are persisted; invalid items are reported in `errors` with index and message. Partial success is the expected outcome.
-- **AC-71** `[crit]`: Exporting projects returns all non-deleted projects in JSON format. Filter parameters (status, customerId, date range) narrow the result set.
-- **AC-72** `[crit]`: Exporting customers returns all customers in JSON format. Filter parameters (has-projects, no-projects) narrow the result set.
-- **AC-73** `[crit]`: Export operations respect role-based permissions — `project:read` for project export, `customer:read` for customer export.
+- **AC-133** `[crit]`: The unified export rejects unauthenticated requests and requests from users without `data:export` with an authorization error.
+- **AC-134** `[crit]`: The unified import rejects unauthenticated requests and requests from users without `data:restore` with an authorization error.
+- **AC-135** `[crit]`: The export envelope contains `schema_version`, `exported_at`, and all customers, projects, and project-worker assignments, including archived (soft-deleted) rows with archive state preserved.
+- **AC-136** `[crit]`: An import whose envelope `schema_version` does not equal the current one is rejected with a specific error code and performs no writes.
+- **AC-137** `[crit]`: An import into an empty database succeeds, preserves IDs exactly, and runs as a single transaction (all-or-nothing).
+- **AC-138** `[crit]`: An import into a non-empty database is rejected unless the override flag is set in the request.
+- **AC-139** `[crit]`: An import with the override flag into a non-empty database wipes existing business data and restores atomically. If any row fails validation, no state change is persisted.
+- **AC-140** `[crit]`: A dry-run import performs full validation, returns a preview, and makes no writes. Subsequent reads show no state change.
+- **AC-141** `[crit]`: A full roundtrip — seed → export → wipe → import → export — produces byte-identical export output. Verified in CI on every build.
+- **AC-142** `[vis]`: The Daten navigation tab is hidden for users without `data:export`. Specialization of [AC-121](#1516-management-views) for this tab.
+- **AC-143** `[vis]`: The unified import UI runs a dry-run and presents the resulting preview before the commit action is enabled. When the target database is non-empty, an explicit warning must be acknowledged before commit is possible.
+- **AC-144** `[vis]`: The unified export UI offers a single "Herunterladen" action that produces the unified JSON file. The filename includes a timestamp.
 
 ### 15.15 Navigation
 
-- **AC-74** `[vis]`: Navigation between all views (Kanban, Calendar, Projects, Customers, Users, Import/Export) works without page reload. Shared state is preserved across navigation.
+- **AC-74** `[vis]`: Navigation between all views (Kanban, Calendar, Projects, Customers, Users, Daten) works without page reload. Shared state is preserved across navigation.
 - **AC-75** `[vis]`: Views that require specific permissions are hidden from navigation for unauthorized users.
 
 ### 15.16 Management Views
@@ -158,15 +166,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-129** `[vis]`: On submit, if the entered customer name matches an existing customer's name (case-insensitive, whitespace-normalized), a confirmation dialog blocks the create until the user explicitly opts in via "Trotzdem erstellen". Cancelling returns to the form without dispatching a request.
 - **AC-130** `[vis]`: On blur of the project number field in the create form, the UI shows a green "available" indicator when no existing project uses the number and a red "taken" indicator when one does. Editing the field after a verdict clears the indicator until the next blur. When multiple checks overlap, the verdict shown reflects the most recent blur — superseded results are discarded. The indicator is UX feedback only — the server is authoritative (see [AC-62](#1512-project-management)).
 
-### 15.17 Import/Export UI
-
-- **AC-86** `[vis]`: Uploading a JSON file to the import UI produces a preview table of parsed records before submission.
-- **AC-87** `[vis]`: Submitting an import displays a result summary: count of imported records and a list of failed rows with index and German error message.
-- **AC-88** `[vis]`: Exporting projects produces a downloadable JSON file containing all non-deleted projects matching the selected filters.
-- **AC-89** `[vis]`: Exporting customers produces a downloadable JSON file containing all customers matching the selected filters.
-- **AC-90** `[crit]`: Import operations are gated by permissions: project import requires `project:create`, customer import requires `customer:write`. Users without the required permission do not see the import controls — a specialization of [AC-121](#1516-management-views) for this view.
-
-### 15.18 Data Integrity
+### 15.17 Data Integrity
 
 - **AC-94** `[crit]`: A concurrent state transition on the same project is rejected as a conflict (per the conflict error category in [api.md §14.4.1](api.md#1441-error-categories)). The project remains in the state produced by the first transition.
 - **AC-95** `[crit]`: Mutations (transition, date update, PATCH update, soft-delete) on a soft-deleted project are rejected as not found.
@@ -176,7 +176,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-99** `[crit]`: Project creation (insert + worker assignment) is atomic. If worker assignment fails (e.g., invalid user ID), the project row is not persisted.
 - **AC-127** `[crit]`: A create request carrying a client-supplied `id` that already identifies a row, but whose body differs from the stored row in any participating field, is rejected with the `IDEMPOTENCY_CONFLICT` error code and the German message `"Diese Anfrage-ID wurde bereits mit abweichenden Daten verwendet."` The stored row is unchanged. Applies to both customer and project creation.
 
-### 15.19 Email Data Intake
+### 15.18 Email Data Intake
 
 - **AC-100** `[crit]`: An unauthenticated email extraction request is rejected with an authentication error.
 - **AC-101** `[crit]`: An email extraction request from a user without `customer:write` permission is rejected with an authorization error.
@@ -187,7 +187,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-106** `[vis]`: The extraction modal presents a paste textarea and an extract action. The action is disabled while the textarea is empty or an extraction is in flight.
 - **AC-107** `[vis]`: After extraction, the modal presents editable customer and project fields for review and supports selecting an existing customer by name to avoid duplicates.
 
-### 15.20 Theming
+### 15.19 Theming
 
 - **AC-108** `[infra]`: Palette and semantic color tokens are defined in a single source consumed by all components. No component or stylesheet references a palette color outside that source. State colors, applied from the state configuration array, are the single exception. A repository-wide check enforces this boundary.
 - **AC-109** `[vis]`: Applying a non-default theme override on the document root replaces the semantic token layer. Components render with the overridden palette without code changes.
@@ -197,7 +197,7 @@ Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Accepta
 - **AC-113** `[infra]`: The brand accent is supplied by the branding configuration with explicit light and dark values. No component or stylesheet hardcodes the accent. A repository-wide check enforces this boundary.
 - **AC-114** `[vis]`: Changing the configured accent value updates every accent-using surface — primary actions, links, focus rings, selection highlights, form input indicators — in both modes.
 
-### 15.21 User Theme Preference
+### 15.20 User Theme Preference
 
 - **AC-115** `[crit]`: `themePreference` is stored on each user with a value from `'light' | 'dark' | 'system'`. New users default to `'system'`. The database enforces the allowed set via a CHECK constraint (defense in depth).
 - **AC-116** `[crit]`: An authenticated user can update their own theme preference via the self-update API operation. Subsequent responses for the current user return the updated value.
@@ -258,9 +258,6 @@ These tests run against a real (test) database, not mocks.
 - **AT-32**: Reactivate user sets `active = true`. The user can log in again.
 - **AT-33**: Reset password changes the user's password and invalidates all sessions for the target user.
 - **AT-34**: Self-deactivation is rejected with an error.
-- **AT-35**: Bulk import customers — partial success: valid items persisted, invalid items reported.
-- **AT-36**: Export projects returns all non-deleted projects. Filter by status narrows results.
-- **AT-37**: Export customers returns all customers. Filter by has-projects narrows results.
 - **AT-38**: User management operations require `user:manage` permission — office/worker/bookkeeper roles are rejected.
 - **AT-39**: List projects with status filter returns only matching projects.
 - **AT-40**: List projects with search parameter filters across number, title, and customer name.
@@ -316,11 +313,11 @@ The end-to-end path is covered by focused, isolated test files rather than a sin
 23. The owner deactivates the new user. A separate browser context confirms the deactivated user cannot log in.
 24. The owner reactivates the user. The user can log in again.
 
-**Import/Export flows**:
+**Data exchange flows**:
 
-25. User uploads a JSON file with 3 customer records (1 invalid — missing name). The import result shows 2 imported, 1 error with message.
-26. User exports all projects as JSON. The downloaded file contains all non-deleted projects.
-27. User exports projects filtered by a specific status. The file contains only matching projects.
+25. User with `data:export` clicks the export action in the Daten view. The downloaded file is a unified JSON envelope covering every customer, project, and project-worker assignment, including archived rows.
+26. User with `data:restore` uploads an exported envelope into an empty database via the import form. The dry-run preview renders, the user commits, and the restored rows match the source by ID.
+27. User with `data:restore` attempts the same import into a non-empty database. The UI surfaces a warning, requires explicit acknowledgement, and the commit succeeds atomically when the override flag is sent.
 
 ---
 

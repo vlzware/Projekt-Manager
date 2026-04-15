@@ -50,7 +50,7 @@ The state layer is a client-side cache delegating to the API.
 - **Auth** — the authenticated user profile (including theme preference) and session state.
 - **View state** — active view, active filter (by workflow state, aged-buffer subset, or custom criteria), selected entity ID for detail views.
 - **Mutation tracking** — in-flight flags and error messages per mutation. Confirm-dialog state for transition confirmations.
-- **Import state** — parsed file contents, validation preview, submission progress, result summary.
+- **Import state** — parsed envelope, dry-run preview, submission progress, result summary (see [api.md §14.2.4](api.md#1424-unified-data-exchange)).
 
 **Mutations** (per [§11.1](#111-mandatory-constraints)):
 
@@ -61,7 +61,7 @@ The state layer is a client-side cache delegating to the API.
 - Create, update, deactivate, or reactivate a user (admin)
 - Reset a user's password (admin); change own password
 - Update own preferences (theme preference)
-- Bulk import projects or customers
+- Export business data / restore from an export envelope (see [api.md §14.2.4](api.md#1424-unified-data-exchange))
 - Login / logout
 - Fetch or refresh project list, customer list, user list
 - Set or clear a filter (local only — no API call)
@@ -120,8 +120,6 @@ Structural requirements for the system's documented extension paths. Each row st
 | Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                    | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers)                |
 | Multi-language                                   | All user-facing strings are centralized in configuration; no inline literals in components                        | Inline literals in components; string configuration bypassed                                                 |
 | Adding management views for new entities         | Management views follow a uniform pattern (searchable table + CRUD forms) and consume the shared state layer      | Entity-specific CRUD logic is wired directly into view components instead of through the state layer and API |
-| Adding export formats (e.g. CSV)                 | Export operations accept a `format` parameter; the API contract does not assume JSON-only responses               | Export logic is hardcoded to produce JSON with no format dispatch                                            |
-| Adding bulk operations for new entities          | Bulk import/export follow a uniform result shape (`{ imported, errors }` for import; entity array for export)     | Each bulk operation has a bespoke result format                                                              |
 
 ### 11.6 Deployment Topology
 
@@ -156,6 +154,18 @@ Integrations with external services (e.g., LLM APIs) follow a server-side proxy 
 - The Content Security Policy (see [§13.6](#136-security)) is kept tight (`connectSrc: 'self'`) — the proxy pattern is what enables this.
 
 The first integration of this shape is the LLM-based email data extractor (see [ADR-0016](../adr/0016-llm-email-extraction-via-server-proxied-openrouter.md), [api.md §14.2.6](api.md#1426-data-extraction), [ui.md §8.12](ui.md#812-email-data-intake)).
+
+### 11.9 Data persistence and recovery
+
+Persistence and recovery are handled in three independent layers, each scoped to a different class of data. See [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) for the rationale and tradeoffs; the table below is a summary only.
+
+| Layer                  | Captures                                                                  | Trigger                                | Restore                                                                                                   | Verification                                                                     |
+| ---------------------- | ------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| **Business data**      | Customers, projects, project-worker assignments (including archived rows) | Human via UI, `data:export` permission | Unified restore endpoint ([api.md §14.2.4](api.md#1424-unified-data-exchange)), `data:restore` permission | CI roundtrip: seed → export → wipe → import → export → byte-compare (see AC-141) |
+| **Full DB state**      | Everything in PostgreSQL                                                  | Scheduled `pg_dump` on the VPS         | `pg_restore`                                                                                              | Scheduled job restores into an ephemeral DB and asserts schema + row counts      |
+| **Binary attachments** | Uploaded files                                                            | Continuous, storage-provider-owned     | Provider restore mechanics                                                                                | Provider durability SLA + documented deployment requirements                     |
+
+The layers are complementary, not substitutes — app-level export is not disaster recovery, `pg_dump` is not portable, and binary durability is a storage-provider property. The binary layer's implementation surface is the object storage module ([§11.4](#114-object-storage-module)).
 
 ---
 
@@ -287,7 +297,7 @@ Every new API endpoint must satisfy:
 
 1. **Authentication**: valid, active session required (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md), [api.md section 14.3](api.md#143-authorization-rules)).
 2. **Authorization**: role-based permission check on every protected route.
-3. **Input validation**: request schema validation on request body and params (see [api.md section 14.2](api.md#142-operations)). For bulk operations, per-item semantic validation may live in the service layer per §11.2.
+3. **Input validation**: request schema validation on request body and params (see [api.md section 14.2](api.md#142-operations)). For endpoints accepting composite payloads (e.g., the unified import envelope), per-row semantic validation may live in the service layer per §11.2.
 4. **Error handling**: use application error types, no stack traces or DB field names leaked.
 5. **Rate limiting**: configured on authentication endpoints (login, password change). Mutation endpoints are not rate-limited — at current scale with VPN-only access ([ADR-0008](../adr/0008-vpn-first-network-access.md)), this is a known, accepted limitation.
 6. **CSRF protection**: mechanism defined in [ADR-0005](../adr/0005-session-management-httponly-cookies.md).

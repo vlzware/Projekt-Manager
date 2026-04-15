@@ -196,6 +196,27 @@ Design notes:
 - The value is updated by the authenticated user via the self-update API operation (see [api.md §14.2.1](api.md#1421-authentication)).
 - The server value is authoritative. Clients may cache the value locally to prevent a flash of the wrong theme on page load, but must replace any cached value with the server value on session hydration.
 
+### 5.8 Export Envelope
+
+The unified export and import surface ([api.md §14.2.4](api.md#1424-unified-data-exchange)) exchanges a single envelope carrying every row of the business-data layer.
+
+```typescript
+interface ExportEnvelope {
+  schema_version: number; // monotonic integer; imports reject any mismatch
+  exported_at: string; // ISO 8601 — informational only, not used for import semantics
+  customers: Customer[]; // every row, all fields from §5.6
+  projects: Project[]; // every row, all fields from §5.1, including archived (deleted = true)
+  project_workers: { projectId: string; userId: string }[]; // every row of the join
+}
+```
+
+Design notes:
+
+- **Row-level fidelity.** Each entity in the envelope carries all persisted fields including `id`, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`, and `deleted`. Imports preserve IDs exactly (see [ADR-0018 §Decision](../adr/0018-data-persistence-and-recovery-layered-strategy.md#decision)).
+- **Archived rows are included.** Projects with `deleted = true` round-trip with their archive state intact (see [§6.9](#69-soft-deletes)).
+- **Users and sessions are not included.** Admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) handles fresh installs; test seeding uses a direct-DB helper in the test layer.
+- **`schema_version` is monotonic.** Imports compare strictly and reject any mismatch — no format migration code.
+
 ---
 
 ## 6. Persistence Principles
@@ -220,7 +241,7 @@ The persistence design must support extraction of additional entities without re
 
 Low write concurrency is assumed; the design tolerates multiple concurrent users.
 
-- **State transitions** use optimistic concurrency control — a transition is rejected as a conflict if the project's status has moved since the client's last read (see [AC-94](verification.md#1518-data-integrity)). The client should refetch and present the new state.
+- **State transitions** use optimistic concurrency control — a transition is rejected as a conflict if the project's status has moved since the client's last read (see [AC-94](verification.md#1517-data-integrity)). The client should refetch and present the new state.
 - **Other mutations** (date updates, PATCH updates) use last-write-wins. Concurrent edits to the same record silently overwrite — acceptable at the assumed concurrency level.
 
 ### 6.5 Schema Evolution
@@ -253,7 +274,7 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 
 - Users can be deactivated (`active = false`) or hard-deleted. Deactivation is the default for preserving assignment history. Hard deletion is available to the owner role and cascades sessions and worker assignments; `createdBy`/`updatedBy` references are set to null. Self-deletion is rejected by the API.
 - Projects are soft-deleted (`deleted = true`) as an **archive-from-board** mechanism (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Archived projects are excluded from active views (Kanban, Calendar, list endpoints) but retained in the database as historical reference. This is not an audit trail — there is no immutability guarantee.
-  - Archived projects are **immutable via the API**: transitions, date updates, PATCH, and re-delete are rejected as not found (see [AC-95](verification.md#1518-data-integrity)).
+  - Archived projects are **immutable via the API**: transitions, date updates, PATCH, and re-delete are rejected as not found (see [AC-95](verification.md#1517-data-integrity)).
   - When a customer is deleted, their archived projects are **purged atomically** with the customer — the archive has no value without the customer relationship. Active (non-archived) projects still block customer deletion as a conflict (see [AC-92](verification.md#1511-customer-management)).
   - The API exposes an archived-project count on the customer GET response so the UI can warn before destructive customer deletion.
   - No restore path exists via the API. Recovery requires database access.

@@ -188,14 +188,14 @@ The authenticated layout provides navigation between all available views. The na
 
 #### 8.7.1 Views
 
-| View          | Label      | Access                                                     | Default                        |
-| ------------- | ---------- | ---------------------------------------------------------- | ------------------------------ |
-| Kanban        | "Kanban"   | All authenticated users                                    | Yes (landing view after login) |
-| Calendar      | "Kalender" | All authenticated users                                    | No                             |
-| Projects      | "Projekte" | All authenticated users                                    | No                             |
-| Customers     | "Kunden"   | All authenticated users                                    | No                             |
-| Users         | "Benutzer" | `user:read` permission required                            | No                             |
-| Import/Export | "Daten"    | Visible to all; operations gated by per-action permissions | No                             |
+| View      | Label      | Access                            | Default                        |
+| --------- | ---------- | --------------------------------- | ------------------------------ |
+| Kanban    | "Kanban"   | All authenticated users           | Yes (landing view after login) |
+| Calendar  | "Kalender" | All authenticated users           | No                             |
+| Projects  | "Projekte" | All authenticated users           | No                             |
+| Customers | "Kunden"   | All authenticated users           | No                             |
+| Users     | "Benutzer" | `user:read` permission required   | No                             |
+| Daten     | "Daten"    | `data:export` permission required | No                             |
 
 Navigation between views preserves shared state (cached project list, customer list, authenticated user). Switching views clears any active filter.
 
@@ -363,35 +363,34 @@ Requires `user:delete` permission (owner only).
 
 ---
 
-### 8.11 Import/Export View
+### 8.11 Daten View
 
-A dedicated view for bulk data operations.
+The view surfaces the unified data-exchange operations ([api.md §14.2.4](api.md#1424-unified-data-exchange)). Visible only to users with `data:export`; the import form is visible only to users who additionally hold `data:restore`.
 
 #### 8.11.1 Import
 
-Supports two entity types: projects and customers. The active entity type is selectable.
+A single form accepts one unified JSON envelope. Restore-only semantics — there is no per-entity import.
 
 **Workflow:**
 
-1. **Upload** — user selects a JSON file. The client parses and displays a preview table.
-2. **Validation preview** — the preview highlights rows with detectable client-side issues (missing required fields, type mismatches). For customer imports, rows matching existing customers by name are flagged as overwrites. Client-side validation is a convenience; server-side is authoritative.
-3. **Submit** — user confirms import. If the preview flagged customer overwrites, the UI requires explicit confirmation before committing. The client sends the parsed array to the bulk import API.
-4. **Result** — summary of imported count and failed rows with index and German error message. The user can correct and re-upload failed rows.
+1. **Upload** — user selects the envelope file.
+2. **Dry-run preview** — the client submits the envelope to the import endpoint with the dry-run flag. The server validates the envelope (schema version, referential integrity, row-level constraints) and returns a preview of what would be written. The preview renders per-entity counts and any validation errors. No writes occur.
+3. **Warn on non-empty target** — when the preview indicates the target database is non-empty, the UI presents an explicit warning that committing will wipe existing business data. The commit action remains disabled until the warning is acknowledged.
+4. **Commit** — user confirms. The client re-submits the envelope without the dry-run flag, adding the override flag when the target was flagged non-empty. The server applies the restore in a single transaction; partial outcomes cannot occur. On success, the UI shows a summary of the restored counts. On failure, the UI surfaces the German error message from the API error category and no state has changed.
 
-Permission requirements: project import requires `project:create`, customer import requires `customer:write`. Users without permission see a clear indication that they cannot import.
+Permission: `data:restore`. Users without this permission do not see the import form.
 
 #### 8.11.2 Export
 
-Supports two entity types: projects and customers.
+A single **"Herunterladen"** action produces the unified envelope.
 
 **Workflow:**
 
-1. **Configure** — user selects entity type and optional filters (project: status, customer, date range; customer: has-projects / no-projects).
-2. **Export** — triggers file download. JSON format. Filename includes entity type and date.
+1. **Download** — user clicks the action. The client fetches the export endpoint and saves the response as a JSON file. Filename format: `projekt-manager-export-<YYYY-MM-DD>T<HH-mm-ss>.json` — the timestamp is a user-convenience cue, not a format contract.
 
-Permission requirements: project export requires `project:read`, customer export requires `customer:read`.
+Permission: `data:export`. Users without this permission do not see the view.
 
-Exports never include soft-deleted projects or password hashes.
+The envelope includes archived (soft-deleted) business data with its archive state preserved. Users, sessions, and password hashes are never included.
 
 ---
 

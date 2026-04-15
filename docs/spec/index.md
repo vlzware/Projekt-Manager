@@ -17,7 +17,7 @@ The system provides:
 
 - **Workflow views** — Kanban board and Calendar — making inaction visible through board structure, aging indicators, and summary counts.
 - **Management views** — tabular interfaces for projects, customers, and users with full CRUD capabilities.
-- **Data exchange** — bulk import and export of projects and customers for integration with external systems.
+- **Data exchange** — unified export of business data and restore-only import from an exported envelope (see [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) and [api.md §14.2.4](api.md#1424-unified-data-exchange)).
 
 All views are role-gated. The system enforces that every pending action (unanswered inquiry, unscheduled job, unsent invoice) is impossible to overlook.
 
@@ -43,9 +43,9 @@ All views are role-gated. The system enforces that every pending action (unanswe
 
 ### Data Exchange
 
-- Bulk import of projects and customers with partial-success semantics
-- Email-based data intake via LLM extraction (paste email text, review extracted customer and project fields, save)
-- Export of projects and customers in JSON with filter support
+- Unified export of the business-data layer (customers, projects, project-worker assignments) for backup and portability, gated by `data:export`.
+- Unified restore-only import from an exported envelope, gated by `data:restore`.
+- Email-based data intake via LLM extraction (paste email text, review extracted customer and project fields, save).
 
 ### Cross-Cutting
 
@@ -100,10 +100,11 @@ Three action states, four buffer states, one active, one terminal. The Kanban bo
 
 The system is authenticated and implements a **four-role permission matrix**. The roles — `owner`, `office`, `worker`, `bookkeeper` — are enforced server-side on every protected route via a role-based permission check. See [api.md §14.3](api.md#143-authorization-rules) for the full role ↔ permission mapping.
 
-- **Owner** carries full read + write permissions on projects and customers, plus administrative user management (create, update, deactivate, reactivate, reset password).
-- **Office** carries full read + write permissions on projects and customers, plus read access to user accounts.
+- **Owner** carries full read + write permissions on projects and customers, plus administrative user management (create, update, deactivate, reactivate, reset password) and the unified data-exchange surface (`data:export`, `data:restore`).
+- **Office** carries full read + write permissions on projects and customers, plus read access to user accounts and `data:export` (read-only access to the business-data backup).
 - **Worker** and **bookkeeper** have read-only access to projects and customers, plus change-own-password.
 - Self-registration is not available — users are created by an administrator, by seed data, or by the first-run bootstrap (see [§4.5](#45-authentication)).
+- The Daten navigation tab ([ui.md §8.11](ui.md#811-daten-view)) is governed by `data:export`; the import form within it is additionally governed by `data:restore`.
 
 The role set and per-role permission list are configurable **[C]**.
 

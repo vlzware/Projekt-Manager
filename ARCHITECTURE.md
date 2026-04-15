@@ -149,13 +149,11 @@ All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives h
 | POST   | `/api/projects/:id/transition/forward`  | session | `project:transition`   | none       | Advance status by one step                                                                                                                                   |
 | POST   | `/api/projects/:id/transition/backward` | session | `project:transition`   | none       | Reverse status by one step                                                                                                                                   |
 | PATCH  | `/api/projects/:id/dates`               | session | `project:dates`        | none       | Update `plannedStart` / `plannedEnd`                                                                                                                         |
-| POST   | `/api/projects/bulk/import`             | session | `project:create`       | none       | Import an array of projects (schema cap: 1000 items)                                                                                                         |
 | GET    | `/api/customers`                        | session | `customer:read`        | none       | List customers (optional `search`, `offset`, `limit`)                                                                                                        |
 | GET    | `/api/customers/:id`                    | session | `customer:read`        | none       | Single customer with associated project count                                                                                                                |
 | POST   | `/api/customers`                        | session | `customer:write`       | none       | Create customer                                                                                                                                              |
 | PATCH  | `/api/customers/:id`                    | session | `customer:write`       | none       | Update customer (PATCH semantics)                                                                                                                            |
 | DELETE | `/api/customers/:id`                    | session | `customer:delete`      | none       | Hard-delete customer; rejected if any active project references it (application-level check). Soft-deleted projects are purged atomically in the same tx.    |
-| POST   | `/api/customers/bulk/import`            | session | `customer:write`       | none       | Import an array of customers (schema cap: 1000 items)                                                                                                        |
 | GET    | `/api/users`                            | session | `user:read`            | none       | List users                                                                                                                                                   |
 | GET    | `/api/users/:id`                        | session | `user:read`            | none       | Single user                                                                                                                                                  |
 | PATCH  | `/api/users/:id`                        | session | `user:manage`          | none       | Update user (roles, active, displayName, email)                                                                                                              |
@@ -164,8 +162,8 @@ All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives h
 | POST   | `/api/users/:id/deactivate`             | session | `user:manage`          | none       | Deactivate user                                                                                                                                              |
 | POST   | `/api/users/:id/reactivate`             | session | `user:manage`          | none       | Reactivate user                                                                                                                                              |
 | POST   | `/api/users/:id/reset-password`         | session | `user:manage`          | none       | Admin password reset                                                                                                                                         |
-| GET    | `/api/export/projects`                  | session | `project:read`         | none       | Export non-deleted projects as JSON (filters: status, customerId, date range)                                                                                |
-| GET    | `/api/export/customers`                 | session | `customer:read`        | none       | Export all customers as JSON                                                                                                                                 |
+| GET    | `/api/export`                           | session | `data:export`          | none       | Unified business-data export envelope (ADR-0018). Row-level fidelity including archived rows.                                                                |
+| POST   | `/api/import`                           | session | `data:restore`         | none       | Unified restore-only import (ADR-0018). Supports `?dry_run=true` and `?override=true`. Single transaction.                                                   |
 | POST   | `/api/extract`                          | session | `customer:write`       | none       | LLM email extraction via OpenRouter (ADR-0016). Requires `OPENROUTER_API_KEY` env var.                                                                       |
 
 Requests to session-protected endpoints without a valid session return `401 UNAUTHENTICATED` (`"Nicht angemeldet."`). Authenticated requests lacking the required permission return `403 NOT_PERMITTED` (`"Keine Berechtigung."`). Authentication is enforced by `createAuthMiddleware(db)` in `src/server/middleware/auth.ts` (applied as a plugin-level `preHandler` hook). **Permission** is enforced at the **route level** by `requirePermission('...')` preHandlers defined in `src/server/middleware/auth.ts` and checked against the role matrix in `src/config/permissions.ts` — see [spec §14.3](docs/spec/api.md#143-authorization-rules).
@@ -222,7 +220,7 @@ Backend changes are usually not needed — the store exposes the full project li
 2. **Validation**: Fastify JSON Schema on the route (see `projects.ts`). Don't validate inside the handler.
 3. **Auth**: `createAuthMiddleware(db)` as plugin `preHandler`; `requirePermission('...')` per route. Add new keys to `src/config/permissions.ts` (shared with the client-side `usePermission` hook — see [§ Permission Gating](#permission-gating)).
 4. **Delegate to service**. Never call repos from a route ([spec §11.2](docs/spec/architecture.md#112-responsibility-boundaries)).
-5. **Errors**: use factories from `src/server/errors.ts` (`notFound()`, `validationError()`, etc.). Never throw raw `Error`. For bulk operations, translate DB constraint violations to German user-facing messages via the service layer (see `ProjectService.translatePgError()`).
+5. **Errors**: use factories from `src/server/errors.ts` (`notFound()`, `validationError()`, etc.). Never throw raw `Error`. For endpoints accepting composite payloads, translate DB constraint violations to German user-facing messages via the service layer (see `ProjectService.translatePgError()`).
 6. **Register** in `src/server/app.ts`.
 7. **Tests**: integration in `src/server/__tests__/` using `api-helpers.ts` (`startApp()`, `login()`, `authPost()`/`authGet()`).
 8. **Spec**: add operation to `docs/spec/api.md §14.2`, AC in `docs/spec/verification.md`.
@@ -294,9 +292,9 @@ No automatic deploy. Rationale: [ADR-0012](docs/adr/0012-manual-pull-based-deplo
 
 ## Design Decisions (Not ADR-Worthy)
 
-- **Export format**: JSON only. `format` parameter reserved for future use.
+- **Export format**: JSON only. Unified envelope shape defined in [docs/spec/data-model.md §5.8](docs/spec/data-model.md#58-export-envelope).
 - **Project number format**: configurable `[C]`, enforced only for uniqueness.
-- **Customer duplicates on import**: single-create offers to edit existing; bulk import warns and requires confirmation before overwriting. No merge.
+- **Customer duplicates on create**: the single-create form offers to edit existing. Unified import preserves IDs and wipes-then-restores (see [ADR-0018](docs/adr/0018-data-persistence-and-recovery-layered-strategy.md)) — no merge semantics.
 - **Bulk transitions**: not supported. Users transition individually.
 
 ---
