@@ -53,7 +53,7 @@ The login screen is the **only** view available to unauthenticated users. No pro
 - **Header**: app name **[C]**, navigation ([§8.7](#87-navigation)), summary indicators.
 - **User indicator**: displays the authenticated user's `displayName`. Clicking reveals a dropdown — see [§8.7.2](#872-user-menu).
 - **Mutation error banner**: appears when the most recent mutation failed. German message from the API error category (see [§9.5](#95-asynchronous-mutation-behavior)), dismiss button. Cleared on next successful mutation or by dismissal.
-- **Default view**: Kanban.
+- **Default view**: Kanban for owner, office, worker; Projekte for bookkeeper (see [§8.7.1](#871-views)).
 - **Footer**: text driven by branding config **[C]**.
 
 ---
@@ -188,18 +188,22 @@ The authenticated layout provides navigation between all available views. The na
 
 #### 8.7.1 Views
 
-| View      | Label      | Access                            | Default                        |
-| --------- | ---------- | --------------------------------- | ------------------------------ |
-| Kanban    | "Kanban"   | All authenticated users           | Yes (landing view after login) |
-| Calendar  | "Kalender" | All authenticated users           | No                             |
-| Projects  | "Projekte" | All authenticated users           | No                             |
-| Customers | "Kunden"   | All authenticated users           | No                             |
-| Users     | "Benutzer" | `user:read` permission required   | No                             |
-| Daten     | "Daten"    | `data:export` permission required | No                             |
+| View      | Label      | Access                                                                                               | Default                                                  |
+| --------- | ---------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Kanban    | "Kanban"   | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                      | Yes for owner, office, worker (landing view after login) |
+| Calendar  | "Kalender" | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                      | No                                                       |
+| Projects  | "Projekte" | Owner, office, bookkeeper. Worker: hidden.                                                           | Yes for bookkeeper (landing view after login)            |
+| Customers | "Kunden"   | Owner, office, bookkeeper. Worker: hidden.                                                           | No                                                       |
+| Users     | "Benutzer" | `user:read` permission required (owner only under the default role set). Everyone else: hidden.      | No                                                       |
+| Daten     | "Daten"    | `data:export` permission required (owner, office under the default role set). Everyone else: hidden. | No                                                       |
+
+**Worker-scoped views.** For workers, the data presented in Kanban and Calendar is filtered to the projects the worker is assigned to — the same scoping rule that applies to the server-side list operation (see [index.md §4.2](index.md#42-users) and [api.md §14.3](api.md#143-authorization-rules)). The views render normally; only the row set is reduced. A project whose detail the worker is not authorized for is not reachable from a scoped Kanban or Calendar.
+
+**Landing view.** The default landing view is Kanban for owner, office, and worker (worker scoped to assigned projects; see [§8.1.2](#812-authenticated-state)). Bookkeeper lands on Projekte, because bookkeeper does not have Kanban access under the nav matrix. A bookkeeper arriving at `/kanban` via a manual URL entry is treated under the unpermitted-route rule below rather than silently redirected.
 
 Navigation between views preserves shared state (cached project list, customer list, authenticated user). Switching views clears any active filter.
 
-Views that the user lacks permission to access are hidden from navigation. Server-side authorization remains authoritative — hiding is a UX convenience.
+Views that the user lacks permission to access are hidden from navigation. Server-side authorization remains authoritative — hiding is a UX convenience. A manual URL entry to a view the caller is not permitted to access presents an explicit not-permitted error surface in the client (see [AC-149](verification.md#1521-role-scoping)) rather than a silent redirect — the client must not obscure an authorization failure behind a destination swap.
 
 #### 8.7.2 User Menu
 
@@ -388,7 +392,7 @@ A single **"Herunterladen"** action produces the unified envelope.
 
 1. **Download** — user clicks the action. The client fetches the export endpoint and saves the response as a JSON file. Filename format: `projekt-manager-export-<YYYY-MM-DD>T<HH-mm-ss>.json` — the timestamp is a user-convenience cue, not a format contract.
 
-Permission: `data:export`. Users without this permission do not see the view.
+Permission: `data:export`. Users without this permission do not see the Daten navigation tab ([§8.7.1](#871-views)); the export section inside the Daten view is additionally gated at the component level and is not rendered for a caller without `data:export`, even if the route becomes reachable (defense in depth — see [AC-150](verification.md#1521-role-scoping)). The server remains authoritative ([AC-133](verification.md#1514-data-exchange)).
 
 The envelope includes archived (soft-deleted) business data with its archive state preserved. Users, sessions, and password hashes are never included.
 

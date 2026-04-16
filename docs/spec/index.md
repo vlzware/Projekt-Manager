@@ -102,7 +102,8 @@ The system is authenticated and implements a **four-role permission matrix**. Th
 
 - **Owner** carries full read + write permissions on projects and customers, plus administrative user management (create, update, deactivate, reactivate, reset password) and the unified data-exchange surface (`data:export`, `data:restore`).
 - **Office** carries full read + write permissions on projects and customers, plus read access to user accounts and `data:export` (read-only access to the business-data backup).
-- **Worker** and **bookkeeper** have read-only access to projects and customers, plus change-own-password.
+- **Worker** has read-only access scoped to the projects the worker is assigned to (assignment recorded in `project_workers`). Customer reads are scoped to the customers referenced by those projects — a worker can reach a customer's detail from a project the worker is assigned to, but the customer list and direct customer lookups exclude customers the worker has no project link to. Workers also have change-own-password.
+- **Bookkeeper** currently has unscoped read access to projects and customers plus change-own-password. This is an MVP placeholder: the kickoff calls for an invoice-oriented view ([kickoff.md](../project/kickoff.md)) tailored to the bookkeeping role, which is not yet implemented. Until that view lands, the bookkeeper is given the broader read surface rather than no view at all. Tightening the scope is deferred until the invoice-oriented view in [kickoff.md](../project/kickoff.md) is specified — not in scope for iteration 7.
 - Self-registration is not available — users are created by an administrator, by seed data, or by the first-run bootstrap (see [§4.5](#45-authentication)).
 - The Daten navigation tab ([ui.md §8.11](ui.md#811-daten-view)) is governed by `data:export`; the import form within it is additionally governed by `data:restore`.
 

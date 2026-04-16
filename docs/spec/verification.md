@@ -147,7 +147,7 @@ Every criterion carries exactly one tier marker:
 ### 15.15 Navigation
 
 - **AC-74** `[vis]`: Navigation between all views (Kanban, Calendar, Projects, Customers, Users, Daten) works without page reload. Shared state is preserved across navigation.
-- **AC-75** `[vis]`: Views that require specific permissions are hidden from navigation for unauthorized users.
+- **AC-75** `[vis]`: Views that require specific permissions are hidden from navigation for unauthorized users. Per-role nav matrix (default role set — see [ui.md §8.7.1](ui.md#871-views) and [api.md §14.3](api.md#143-authorization-rules)): owner sees Kanban, Kalender, Projekte, Kunden, Benutzer, Daten; office sees everything except Benutzer; worker sees Kanban + Kalender only (both scoped — see [AC-145](#1521-role-scoping), [AC-146](#1521-role-scoping)); bookkeeper sees Projekte + Kunden only. A role-scoping visual-regression run must walk each role and confirm the nav set matches the matrix exactly.
 
 ### 15.16 Management Views
 
@@ -205,6 +205,17 @@ Every criterion carries exactly one tier marker:
 - **AC-118** `[crit]`: A self-update request with an invalid theme value is rejected with a validation error.
 - **AC-119** `[vis]`: The user menu exposes a 3-way theme selector ("Hell", "Dunkel", "Systemstandard"). Selecting an option updates the UI immediately and persists server-side; the selection survives a page reload.
 - **AC-120** `[vis]`: On session hydration, the server-stored preference replaces any locally cached value. A client on a different device reflects the updated preference after the next session start.
+
+### 15.21 Role Scoping
+
+These criteria pin the per-role read surface described in [index.md §4.2](index.md#42-users) and [api.md §14.3](api.md#143-authorization-rules). They describe behavior, not mechanism — the implementation may realize scoping via a query filter, a repository-layer predicate, or any equivalent approach, as long as the observable contract holds.
+
+- **AC-145** `[crit]`: A worker's `GET /api/projects` returns only projects where the caller is recorded in `project_workers`. A worker assigned to no project receives an empty list. Owner and office receive every non-deleted project (unchanged). Verified by API integration tests using seed users with deterministic assignments.
+- **AC-146** `[crit]`: A worker's `GET /api/customers` returns only customers referenced by at least one project where the caller is recorded in `project_workers`. A customer reachable to the worker exclusively through a soft-deleted project is excluded. Owner and office receive every customer (unchanged) — the soft-delete status of a customer's linked projects does not restrict the owner/office customer list, which is the parity clause to AC-145's "every non-deleted project (unchanged)".
+- **AC-147** `[crit]`: A worker's `GET /api/projects/:id` succeeds only when the caller is recorded in `project_workers` for that project; otherwise the request is rejected with an authorization error (`NOT_PERMITTED`). The server must not respond with `NOT_FOUND` for a project that exists but the worker is not assigned to — the two outcomes are distinguishable to the caller. This is acceptable under the project's threat model: callers are internal, authenticated users and project IDs are UUIDs that are not enumerable from outside, so resource existence is not a secret at the role boundary (compare with [api.md §14.4.1](api.md#1441-error-categories)'s `NOT_PERMITTED` vs `NOT_FOUND` distinction). Owner and office are unaffected.
+- **AC-148** `[crit]`: A worker's `GET /api/customers/:id` succeeds only when the customer is referenced by at least one project where the caller is recorded in `project_workers`; otherwise the request is rejected with an authorization error (`NOT_PERMITTED`). Owner and office are unaffected.
+- **AC-149** `[vis]`: A manual URL entry to a path the caller's role is not permitted to access (for example, a worker navigating to `/kunden`) presents an explicit not-permitted error surface in the client: a visible error message indicating the access is denied, no redirect to another view, and the URL in the address bar remains unchanged. This error surface is distinct in presentation from an API 403 returned mid-interaction (see [ui.md §9.5](ui.md#95-asynchronous-mutation-behavior)); this criterion covers the route-entry case. Coverage spans every role × every path not permitted for that role under the matrix in [AC-75](#1515-navigation).
+- **AC-150** `[vis]`: The export section inside the Daten view ([ui.md §8.11.2](ui.md#8112-export)) is rendered only when the caller holds `data:export`. This is defense-in-depth against the nav-level gate in [AC-142](#1514-data-exchange): even if the Daten route becomes reachable without the permission (e.g. a bug in the nav gate, a manual URL probe, a client build drift), the component itself must not present the download control to a caller who cannot use it. The server remains authoritative ([AC-133](#1514-data-exchange)).
 
 ---
 
