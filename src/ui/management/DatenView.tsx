@@ -16,6 +16,7 @@ import { useDataExchangeStore } from '@/state/dataExchangeStore';
 import styles from './Management.module.css';
 
 export function DatenView() {
+  const canExport = usePermission('data:export');
   const canImport = usePermission('data:restore');
 
   const file = useDataExchangeStore((s) => s.file);
@@ -48,27 +49,29 @@ export function DatenView() {
   return (
     <div className={styles.container} data-testid="daten-view">
       {/* ---- EXPORT SECTION ---- */}
-      <div className={styles.section}>
-        <h3 className={styles.sectionTitle}>{STRINGS.dataExchange.exportHeading}</h3>
-        <p className={styles.sectionDescription}>{STRINGS.dataExchange.exportDescription}</p>
+      {canExport && (
+        <div className={styles.section}>
+          <h3 className={styles.sectionTitle}>{STRINGS.dataExchange.exportHeading}</h3>
+          <p className={styles.sectionDescription}>{STRINGS.dataExchange.exportDescription}</p>
 
-        <div className={styles.inlineGroup}>
-          <button
-            className={styles.submitButton}
-            onClick={() => void runExport()}
-            disabled={exporting}
-            data-testid="data-export-button"
-          >
-            {STRINGS.dataExchange.exportAction}
-          </button>
-        </div>
-
-        {exportError && (
-          <div className={styles.error} style={{ marginTop: 12 }}>
-            {exportError}
+          <div className={styles.inlineGroup}>
+            <button
+              className={styles.submitButton}
+              onClick={() => void runExport()}
+              disabled={exporting}
+              data-testid="data-export-button"
+            >
+              {STRINGS.dataExchange.exportAction}
+            </button>
           </div>
-        )}
-      </div>
+
+          {exportError && (
+            <div className={styles.error} style={{ marginTop: 12 }}>
+              {exportError}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ---- IMPORT SECTION ---- */}
       {canImport && (
