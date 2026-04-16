@@ -1,7 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
+import { STRINGS } from '../src/config/strings';
 
 /**
- * Permission-based UI visibility (AC-121 [crit]).
+ * Permission-based UI visibility (AC-121 [crit]) + per-role nav matrix
+ * (AC-75 [vis]) + forbidden-URL probe (AC-149 [vis]).
  *
  * Verifies that every action-triggering UI control is hidden for users
  * whose roles do not grant the backing permission. This is the client
@@ -14,8 +16,10 @@ import { test, expect, type Page } from '@playwright/test';
  * not against a mock. Login round-trips stay well within the dev server
  * rate-limit (LOGIN_RATE_LIMIT_MAX=30 — see playwright.config.ts).
  *
- * Asserts with toHaveCount / toBeHidden — NOT screenshots — because this
- * is a critical AC, not a design AC.
+ * Asserts with toHaveCount / toBeVisible / toHaveURL — NOT screenshots —
+ * because AC-121 / AC-149 are critical-ish behavior, and the nav-matrix
+ * (AC-75) is verified structurally (tab presence/absence) rather than
+ * by eye.
  */
 
 type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
@@ -153,9 +157,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
       await expect(page.getByTestId('view-toggle-projekte')).toHaveCount(
         c.canSeeManagement ? 1 : 0,
       );
-      await expect(page.getByTestId('view-toggle-kunden')).toHaveCount(
-        c.canSeeManagement ? 1 : 0,
-      );
+      await expect(page.getByTestId('view-toggle-kunden')).toHaveCount(c.canSeeManagement ? 1 : 0);
       await expect(page.getByTestId('view-toggle-benutzer')).toHaveCount(c.canReadUsers ? 1 : 0);
       await expect(page.getByTestId('extract-button')).toHaveCount(c.canExtract ? 1 : 0);
 
@@ -172,9 +174,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
         await page.locator('[data-testid^="project-card-"]').first().waitFor();
 
         // Forward arrow on any card in a transitionable state.
-        const cardForwardCount = await page
-          .locator('[data-testid^="forward-button-"]')
-          .count();
+        const cardForwardCount = await page.locator('[data-testid^="forward-button-"]').count();
         if (c.canTransition) {
           expect(cardForwardCount).toBeGreaterThan(0);
         } else {
@@ -197,12 +197,8 @@ test.describe('AC-121: permission-based UI visibility', () => {
           expect(detailBackward).toBe(0);
         }
 
-        await expect(page.getByTestId('detail-date-start')).toHaveCount(
-          c.canUpdateDates ? 1 : 0,
-        );
-        await expect(page.getByTestId('detail-date-end')).toHaveCount(
-          c.canUpdateDates ? 1 : 0,
-        );
+        await expect(page.getByTestId('detail-date-start')).toHaveCount(c.canUpdateDates ? 1 : 0);
+        await expect(page.getByTestId('detail-date-end')).toHaveCount(c.canUpdateDates ? 1 : 0);
 
         await page.getByTestId('detail-close').click();
       }
@@ -258,9 +254,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
       // AC-142: the Daten tab itself is gated on `data:export`. Roles
       // without it must not see the nav toggle at all. Inside the view,
       // the import sub-form is gated on `data:restore` (owner only).
-      await expect(page.getByTestId('view-toggle-daten')).toHaveCount(
-        c.canExportData ? 1 : 0,
-      );
+      await expect(page.getByTestId('view-toggle-daten')).toHaveCount(c.canExportData ? 1 : 0);
       if (c.canExportData) {
         await page.getByTestId('view-toggle-daten').click();
         await page.getByTestId('daten-view').waitFor();
@@ -276,9 +270,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
         await page.getByTestId('view-toggle-benutzer').click();
         await page.getByTestId('user-table').locator('tbody tr').first().waitFor();
 
-        await expect(page.getByTestId('user-create-button')).toHaveCount(
-          c.canManageUsers ? 1 : 0,
-        );
+        await expect(page.getByTestId('user-create-button')).toHaveCount(c.canManageUsers ? 1 : 0);
 
         // Open a user detail to check the management action buttons.
         // Target `buchhalter` — always active and never the logged-in
@@ -300,9 +292,153 @@ test.describe('AC-121: permission-based UI visibility', () => {
         await expect(page.getByTestId('user-reset-pw-button')).toHaveCount(
           c.canManageUsers ? 1 : 0,
         );
-        await expect(page.getByTestId('user-delete-button')).toHaveCount(
-          c.canDeleteUsers ? 1 : 0,
-        );
+        await expect(page.getByTestId('user-delete-button')).toHaveCount(c.canDeleteUsers ? 1 : 0);
+      }
+    });
+  }
+});
+
+/**
+ * AC-75 — per-role nav visibility matrix (docs/spec/ui.md §8.7.1).
+ *
+ * Distinct from AC-121 above: AC-75 pins the nav _set_ per role (which
+ * tabs render in the header), AC-121 pins action-control visibility
+ * inside each view. The existing `permission-visibility` walk asserts
+ * individual tabs per permission, but does not cover `view-toggle-kalender`
+ * and does not check "exactly these tabs, no others" as a single contract.
+ *
+ * This block pins both clauses: every matrix tab is visible for its
+ * role, and every non-matrix tab is hidden. Source of truth is the same
+ * MATRIX constant used by `src/config/__tests__/routes.test.ts` and
+ * `src/ui/layout/__tests__/Header.test.tsx` — the three levels (config,
+ * component, E2E) assert the same matrix against progressively more
+ * integrated stacks.
+ */
+// View keys mirror `RouteView` in `src/config/routes.ts`. Duplicated
+// here (rather than imported) because the e2e harness runs under
+// Playwright's TS config, not Vite's — the path alias `@/config/*`
+// isn't resolvable here without extra tooling. The unit test
+// `src/config/__tests__/routes.test.ts` pins the matrix against the
+// live route table, so drift between the table and this constant
+// surfaces there long before a browser run.
+type NavView = 'kanban' | 'kalender' | 'projekte' | 'kunden' | 'benutzer' | 'daten';
+
+const NAV_MATRIX: Record<Role, readonly NavView[]> = {
+  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten'],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten'],
+  worker: ['kanban', 'kalender'],
+  bookkeeper: ['projekte', 'kunden'],
+};
+
+const ALL_VIEWS: readonly NavView[] = [
+  'kanban',
+  'kalender',
+  'projekte',
+  'kunden',
+  'benutzer',
+  'daten',
+];
+
+test.describe('AC-75: per-role nav visibility matrix', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  for (const [role, expected] of Object.entries(NAV_MATRIX) as [Role, readonly NavView[]][]) {
+    test(`${role} — header nav set matches the ui.md §8.7.1 matrix exactly`, async ({ page }) => {
+      await loginAs(page, roleCases[role].username);
+
+      // Every matrix tab must be visible for this role.
+      for (const view of expected) {
+        await expect(page.getByTestId(`view-toggle-${view}`)).toBeVisible();
+      }
+
+      // Every non-matrix tab must be absent. toHaveCount(0) rather than
+      // toBeHidden() because the latter passes for elements that exist
+      // but are CSS-hidden; the nav renderer should not emit the tab at
+      // all for unauthorized views (AC-75 "hidden from navigation").
+      const forbidden = ALL_VIEWS.filter((v) => !expected.includes(v));
+      for (const view of forbidden) {
+        await expect(page.getByTestId(`view-toggle-${view}`)).toHaveCount(0);
+      }
+    });
+  }
+});
+
+/**
+ * AC-149 — manual URL entry to a forbidden path presents the explicit
+ * not-permitted error surface (`NotPermittedView`), the URL stays put,
+ * and no other view-level content renders.
+ *
+ * Owner has no forbidden path under the default role set, so there is
+ * no negative case to walk — the positive-path check inside the AC-121
+ * block above already exercises owner landing on a permitted URL.
+ *
+ * Parametrized by role × forbidden-path. Representative combinations
+ * cover every role that has at least one forbidden route; the component
+ * test `src/ui/common/__tests__/NotPermittedView.test.tsx` already pins
+ * the full role × path matrix at the component level (MemoryRouter),
+ * so this E2E focuses on the browser-level integration: URL stays,
+ * not-permitted view renders, no landing view mounts.
+ */
+interface ForbiddenCase {
+  role: Role;
+  path: string;
+}
+
+const FORBIDDEN_PATHS: readonly ForbiddenCase[] = [
+  { role: 'worker', path: '/customers' }, // AC-149 example
+  { role: 'worker', path: '/projects' },
+  { role: 'worker', path: '/users' },
+  { role: 'worker', path: '/data' },
+  { role: 'bookkeeper', path: '/kanban' },
+  { role: 'bookkeeper', path: '/calendar' },
+  { role: 'bookkeeper', path: '/users' },
+  { role: 'bookkeeper', path: '/data' },
+  { role: 'office', path: '/users' },
+];
+
+// Landing-view testids that should NOT render when the guard is active.
+// Any of these rendering alongside `not-permitted-view` would indicate
+// the guard leaked content for the forbidden path.
+const VIEW_TESTIDS: readonly string[] = [
+  'kanban-board',
+  'calendar-view',
+  'project-table',
+  'customer-table',
+  'user-table',
+  'daten-view',
+];
+
+test.describe('AC-149: forbidden URL probe → NotPermittedView, URL unchanged', () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  for (const { role, path } of FORBIDDEN_PATHS) {
+    test(`${role} navigating directly to ${path} sees not-permitted surface and URL stays`, async ({
+      page,
+    }) => {
+      // Log in first — the auth guard renders the login form for
+      // unauthenticated callers, which would mask the route-guard path.
+      await loginAs(page, roleCases[role].username);
+
+      // Direct URL entry — simulates a user typing the path or
+      // following a bookmark to an off-matrix view.
+      await page.goto(path);
+
+      // The not-permitted surface renders with the German copy sourced
+      // from STRINGS (no hardcoded strings in the spec).
+      const surface = page.getByTestId('not-permitted-view');
+      await expect(surface).toBeVisible();
+      await expect(surface).toContainText(STRINGS.ui.notPermittedHeading);
+      await expect(surface).toContainText(STRINGS.ui.notPermittedBody);
+
+      // AC-149 clause: "URL in the address bar remains unchanged".
+      // Playwright's auto-waiting toHaveURL handles the navigation
+      // settling; no raw waitForTimeout required.
+      await expect(page).toHaveURL(new RegExp(`${path}$`));
+
+      // No landing view mounts alongside the guard. Any of these
+      // testids appearing would indicate the guard leaked content.
+      for (const testid of VIEW_TESTIDS) {
+        await expect(page.getByTestId(testid)).toHaveCount(0);
       }
     });
   }
