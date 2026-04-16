@@ -1,0 +1,82 @@
+# ADR-0019: Worker data scoping — repository-layer predicate over split permission
+
+- **Status:** Accepted
+- **Date:** 2026-04-16
+- **Confidence:** High
+
+## Context
+
+Kickoff line 60 requires a worker's view to show only the projects they are assigned to. Iteration 7's spec (commit `fccb905`) pins the observable behavior: worker `GET /api/projects` returns only rows where the caller appears in `project_workers`; worker `GET /api/customers` returns only customers referenced by those projects; get-by-id on an out-of-scope row returns `403 NOT_PERMITTED`, not `404`. Bookkeeper remains unscoped as an MVP placeholder; owner and office are unscoped by design. The spec explicitly defers the _mechanism_ to this ADR.
+
+Forces and constraints:
+
+- `src/server/repositories/project-read.ts` — `listProjects(db, opts)` takes no caller context today. It is the natural seam.
+- `project_workers` join table (`src/server/db/schema.ts:148-162`) is already populated by the assignment flow.
+- Handlers already gate endpoints via `requirePermission(...)` preHandlers. There is no precedent in the codebase for scoped reads.
+- `docs/spec/api.md §14.3` declares a flat permission matrix — one `project:read`, one `customer:read`.
+- CLAUDE.md: data-integrity defaults are the baseline. A scope-miss must be an architectural impossibility, not a per-handler discipline.
+- ADR-0018 preserves a test-seed path that bypasses the API layer — any mechanism that forbids this is incompatible.
+
+## Decision
+
+We will apply read scope in the **repository layer**, via a pure predicate function of the caller's identity that contributes a `WHERE`-clause fragment to the query. Permissions remain coarse (`project:read`, `customer:read`); scope is orthogonal to capability.
+
+Shape:
+
+| Concern                      | Realization                                                                                                                                                                                                             |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Endpoint gating              | `requirePermission('project:read' \| 'customer:read')` preHandler, unchanged                                                                                                                                            |
+| Scope derivation             | `projectScopeForCaller(user): SQL \| null` / `customerScopeForCaller(user): SQL \| null` — pure, total, unit-testable                                                                                                   |
+| Caller threading             | Explicit argument: handler → service → repository. No async-local context, no request-object mutation                                                                                                                   |
+| Worker predicate (projects)  | `WHERE EXISTS (SELECT 1 FROM project_workers pw WHERE pw.project_id = projects.id AND pw.user_id = :callerId)`                                                                                                          |
+| Worker predicate (customers) | AND-ed existence over the same join: customer is visible iff at least one of its projects is visible to the caller                                                                                                      |
+| Owner / office               | Predicate returns `null` — no additional filter                                                                                                                                                                         |
+| Bookkeeper                   | Predicate returns `null` — unscoped per `index.md §4.2` MVP stand-in. To be revisited when the invoice-oriented view is introduced (see kickoff)                                                                        |
+| Get-by-id                    | Repository fetches by id without the scope fragment, then applies the predicate to distinguish three outcomes: not-found (`null`), in-scope (`row`), out-of-scope (`{ outOfScope: true }`). Handler maps to 200/403/404 |
+
+The predicate is composed into the query with Drizzle's `and(...)`. For list endpoints it is inlined in the `WHERE`; for get-by-id the two-step exists/scope check avoids collapsing 403 and 404 into the same SQL result.
+
+## Alternatives Considered
+
+### Split permission (`project:read` vs `project:read-all`)
+
+Encode scope in the permission catalog — workers get the scoped variant, owner/office get the unscoped one. Main advantage: the permission check enforces scope; the repository stays scope-blind. Ruled out: it conflates _capability_ (what you may do) with _extent_ (over what subset), which the api.md §14.3 matrix deliberately keeps flat. Every scoped-readable entity would double its permission count, and scope evolution (bookkeeper placeholder → real rule) would churn the permission catalog instead of one predicate.
+
+### Handler-level branching
+
+`if (user.role === 'worker') { filter } else { return all }` at each list handler. Main advantage: zero repository surface change. Ruled out: duplicates scope logic across every list and get-by-id handler (projects, customers, and every scoped entity added later), turns a missed branch into a privilege-escalation bug, and hardcodes role names in handler code — fighting the `index.md §4.2` note that roles stay configurable.
+
+### Middleware-level query mutation
+
+A preHandler derives a `scopePredicate` and attaches it to `request`; handlers pass it to repositories. Main advantage: centralized derivation. Ruled out: the repository still has to accept and apply the predicate (so the repo-layer seam is already required), request-object mutation obscures data flow, and hanging the predicate off an untyped request property weakens type safety versus an explicit argument. Adds ceremony without removing the seam it claims to replace.
+
+### Row-level security (RLS) in PostgreSQL
+
+Declare `CREATE POLICY` on `projects` and `customers`; set a per-connection session variable carrying the caller id before every query. Main advantage: bypass becomes physically impossible, even in buggy app code. Ruled out: the `node-postgres` pool (ADR-0004) hands out shared connections — per-caller session state requires `SET LOCAL` inside a transaction on every request, which is significant plumbing; debugging becomes harder because queries look unscoped but the DB silently redacts rows; the mechanism is incompatible with ADR-0018's test-seed path, which must write and read unscoped. Worth reconsidering if the scope model grows beyond single-table predicates.
+
+## Consequences
+
+### Positive
+
+- `api.md §14.3` stays flat — one permission per entity, scope evolves independently.
+- Scope lives in two predicate functions; auditing "what can a worker see?" is reading both.
+- The predicate is a pure function of caller identity — unit-testable with no request context or DB round-trip.
+- Handler code stays role-agnostic past the `requirePermission` preHandler; role names do not leak into endpoint logic.
+- Adding a scoped entity later is one predicate plus one seam in its repository — a bounded, mechanical change.
+- Compatible with ADR-0018's test-seed helper: seeding goes around the API, so the predicate is never invoked on that path.
+
+### Negative
+
+- Repository signatures gain a caller argument; every existing caller of a now-scoped repository must be updated. This is a mechanical but wide change.
+- The get-by-id three-way result (not-found / in-scope / out-of-scope) is a subtle bug vector — the spec's 403-over-404 choice forces us to keep the distinction honest, and a future refactor could collapse it back to a single null.
+- Legitimate unscoped consumers (exports per ADR-0018, future admin views) must either be routed through a distinct entry point or pass a sentinel "system" caller that returns `null` from the predicate. Done carelessly this grows a second-class API.
+- Test writers must set up `project_workers` rows in fixtures to exercise scoped behavior — minor overhead, but easy to forget, which would silently produce empty result sets instead of meaningful assertions.
+
+## References
+
+- Spec commit `fccb905` — `docs/spec/api.md §14.3` (permission matrix), `docs/spec/verification.md §15.21` (AC-145..AC-150)
+- [Kickoff](../project/kickoff.md) — line 60 (worker-visible projects)
+- [ADR-0014](0014-ac-tier-system-critical-vs-design.md) — AC tiers; AC-145..AC-148 are `[crit]` and therefore require unit/integration coverage of the predicate
+- [ADR-0018](0018-data-persistence-and-recovery-layered-strategy.md) — test-seed path that bypasses the API (reason RLS is ruled out)
+- [ADR-0004](0004-backend-stack-fastify-drizzle-node-postgres.md) — `node-postgres` pool shape (reason per-connection RLS is expensive)
+- `docs/spec/api.md §14.4.1` — NOT_PERMITTED vs NOT_FOUND error taxonomy underlying the 403-over-404 choice

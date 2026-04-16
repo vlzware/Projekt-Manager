@@ -20,3 +20,4 @@
 | [0016](0016-llm-email-extraction-via-server-proxied-openrouter.md)          | LLM email extraction via server-proxied OpenRouter              | Accepted | 2026-04-13 |
 | [0017](0017-soft-delete-as-board-archive.md)                                | Project soft-delete as board archive, not audit trail           | Accepted | 2026-04-13 |
 | [0018](0018-data-persistence-and-recovery-layered-strategy.md)              | Data persistence and recovery — layered strategy                | Accepted | 2026-04-15 |
+| [0019](0019-worker-data-scoping-repository-layer-predicate.md)              | Worker data scoping — repository-layer predicate                | Accepted | 2026-04-16 |
