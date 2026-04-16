@@ -222,4 +222,103 @@ test.describe('Archive flows', () => {
     // projects, so this suite leaves the DB clean.
     await expect(page.getByRole('row', { name: new RegExp(archiveCustomerName) })).toHaveCount(0);
   });
+
+  // ---------------------------------------------------------------
+  // AC-159: Per-project `Endgültig löschen` action on archived rows.
+  //
+  // Uses a dedicated customer + project so this test stands on its own
+  // and does not depend on the AC-154 test's teardown state. The AC-154
+  // test atomically purges its customer, which would leave nothing for
+  // a reuse-the-fixture approach to work against.
+  //
+  // Flow:
+  //   1. Create customer + project.
+  //   2. Archive the project from the management view.
+  //   3. Toggle `Archivierte einblenden` on so the archived row is visible.
+  //   4. Click the row-level `project-purge-button`.
+  //   5. Confirm the dialog (German warning mentioning "endgültig").
+  //   6. Wait for DELETE /api/projects/*/purge to resolve.
+  //   7. Row is gone from the table (even with archive toggle still on).
+  //   8. Clean up: delete the now-empty customer.
+  // ---------------------------------------------------------------
+  test('AC-159: Endgültig löschen hard-deletes an archived project from the management view', async ({
+    page,
+  }) => {
+    const purgeCustomerName = 'E2E Purge Testkunde';
+    const purgeProjectNumber = 'E2E-PURGE-001';
+    const purgeProjectTitle = 'Purge Fixture';
+
+    // 1. Customer
+    await page.getByTestId('view-toggle-kunden').click();
+    await expect(page.getByTestId('customer-table')).toBeVisible();
+    await page.getByTestId('customer-create-button').click();
+    await page.getByTestId('customer-name-input').fill(purgeCustomerName);
+    await page.getByTestId('customer-submit').click();
+    await expect(page.getByText(purgeCustomerName)).toBeVisible();
+
+    // 2. Project
+    await page.getByTestId('view-toggle-projekte').click();
+    await expect(page.getByTestId('project-table')).toBeVisible();
+    await page.getByTestId('project-create-button').click();
+    await page.getByTestId('project-number-input').fill(purgeProjectNumber);
+    await page.getByTestId('project-title-input').fill(purgeProjectTitle);
+    await page.getByTestId('project-customer-select').click();
+    await page.getByTestId('project-customer-select').getByText(purgeCustomerName).click();
+    await page.getByTestId('project-submit').click();
+    await expect(page.getByText(purgeProjectNumber)).toBeVisible();
+
+    // 3. Archive the project.
+    const activeRow = page.getByRole('row', { name: new RegExp(purgeProjectNumber) });
+    await expect(activeRow).toBeVisible();
+    await activeRow.getByTestId('project-archive-button').click();
+    await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes('/api/projects/') && resp.request().method() === 'DELETE',
+      ),
+      page.getByTestId('confirm-ok').click(),
+    ]);
+    await expect(page.getByRole('row', { name: new RegExp(purgeProjectNumber) })).toHaveCount(0);
+
+    // 4. Reveal archived rows.
+    await page.getByTestId('project-show-archived-toggle').check();
+    const archivedRow = page.getByRole('row', { name: new RegExp(purgeProjectNumber) });
+    await expect(archivedRow).toBeVisible();
+
+    // 5. The per-row purge button must be present on an archived row.
+    const purgeButton = archivedRow.getByTestId('project-purge-button');
+    await expect(purgeButton).toBeVisible();
+    await purgeButton.click();
+
+    // 6. Confirmation dialog with the German "endgültig" warning.
+    const dialog = page.getByTestId('confirm-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText(/endgültig/i);
+
+    // 7. Confirm → wait for the purge request → row disappears even with
+    //    the archive toggle still on (purge removes the record entirely).
+    await Promise.all([
+      page.waitForResponse(
+        (resp) =>
+          resp.url().includes('/api/projects/') &&
+          resp.url().endsWith('/purge') &&
+          resp.request().method() === 'DELETE',
+      ),
+      page.getByTestId('confirm-ok').click(),
+    ]);
+    await expect(page.getByRole('row', { name: new RegExp(purgeProjectNumber) })).toHaveCount(0);
+
+    // 8. Clean up the now-empty customer so this test is net-zero.
+    await page.getByTestId('view-toggle-kunden').click();
+    await expect(page.getByTestId('customer-table')).toBeVisible();
+    const customerRow = page.getByRole('row', { name: new RegExp(purgeCustomerName) });
+    await expect(customerRow).toBeVisible();
+    await customerRow.getByRole('button', { name: /löschen/i }).click();
+    await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes('/api/customers/') && resp.request().method() === 'DELETE',
+      ),
+      page.getByTestId('confirm-ok').click(),
+    ]);
+    await expect(page.getByRole('row', { name: new RegExp(purgeCustomerName) })).toHaveCount(0);
+  });
 });

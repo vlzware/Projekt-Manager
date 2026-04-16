@@ -268,6 +268,18 @@ Available per project row or in the edit view. The action is labelled "Archivier
 
 Requires `project:delete` permission.
 
+#### 8.8.5 Permanently delete project
+
+A secondary action labelled `Endgültig löschen` on archived project rows. Hard-deletes the project via `DELETE /api/projects/:id/purge` (see [api.md §14.2.2](api.md#1422-projects)).
+
+Visibility: the action appears only when the row has `deleted = true` AND the `Archivierte einblenden` toggle is on AND the caller holds `project:purge`. Hidden in every other case (consistent with [AC-121](verification.md#1516-management-views)).
+
+Confirmation dialog: simple Yes / No with a German warning that states the project will be permanently deleted and recovery is not possible. The archive-first gate on the API (a non-archived project is rejected with 409) is the primary friction; the confirmation is the secondary check.
+
+Permission: requires `project:purge` (owner-only per the permission matrix in [api.md §14.3](api.md#143-authorization-rules)). The button is not rendered for users without it. Server-side authorization is authoritative.
+
+See [ADR-0017](../adr/0017-soft-delete-as-board-archive.md) for the trash-bin rationale (archive-first, purge as the second step).
+
 ---
 
 ### 8.9 Customer Management View

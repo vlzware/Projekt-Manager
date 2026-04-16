@@ -17,8 +17,10 @@ export {
   insertProject,
   updateProject,
   softDeleteProject,
+  hardDeleteProject,
   fetchWorkersForProject,
   ProjectNotFoundError,
+  ProjectNotArchivedError,
 } from './project-read.js';
 export {
   transitionForward,

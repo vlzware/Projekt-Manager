@@ -289,6 +289,14 @@ export const projectApi = {
   delete: (id: string) =>
     apiCall<{ success: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
 
+  /**
+   * Hard-delete an already-archived project. 204 on success. A
+   * non-archived target returns 409 CONFLICT with German copy
+   * directing the user to archive first; a non-existent target
+   * returns 404 NOT_FOUND. Requires `project:purge` (owner-only).
+   */
+  purge: (id: string) => apiCall<null>(`/api/projects/${id}/purge`, { method: 'DELETE' }),
+
   transitionForward: (id: string, expectedStatus: WorkflowState) =>
     apiCall<Project>(`/api/projects/${id}/transition/forward`, {
       method: 'POST',

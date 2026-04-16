@@ -315,5 +315,33 @@ export function projectRoutes(db: Database) {
         return reply.code(200).send({ success: true, deleted: true });
       },
     );
+
+    // ---------------------------------------------------------------
+    // DELETE /api/projects/:id/purge — hard-delete (AC-155..158)
+    //
+    // Requires the narrower `project:purge` permission (owner-only).
+    // `project:delete` (which office holds) does not grant purge.
+    // Precondition: the project must already be archived; a non-archived
+    // target returns 409 CONFLICT with German copy directing the user
+    // to archive first.
+    // ---------------------------------------------------------------
+    app.delete(
+      '/api/projects/:id/purge',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', format: 'uuid' } },
+          },
+        },
+        preHandler: requirePermission('project:purge'),
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        await projectService.purgeProject(id, request.user!.id, request.log);
+        return reply.code(204).send();
+      },
+    );
   };
 }

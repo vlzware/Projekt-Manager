@@ -3,6 +3,7 @@ export type Permission =
   | 'project:create'
   | 'project:update'
   | 'project:delete'
+  | 'project:purge'
   | 'project:transition'
   | 'project:dates'
   | 'customer:read'
@@ -26,6 +27,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'project:create',
     'project:update',
     'project:delete',
+    'project:purge',
     'project:transition',
     'project:dates',
     'customer:read',

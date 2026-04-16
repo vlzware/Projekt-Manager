@@ -32,6 +32,18 @@ export class ProjectNotFoundError extends Error {
   }
 }
 
+/**
+ * Thrown when a purge (hard-delete) targets a project that is not yet
+ * archived. The service maps this to 409 CONFLICT with a German message
+ * directing the caller to archive first (AC-156).
+ */
+export class ProjectNotArchivedError extends Error {
+  constructor() {
+    super(STRINGS.projects.purgeRequiresArchive);
+    this.name = 'ProjectNotArchivedError';
+  }
+}
+
 /** Shape of the nested customer in the API response. */
 function toCustomer(row: CustomerRow) {
   return {
@@ -446,4 +458,31 @@ export async function softDeleteProject(db: Database, id: string, userId: string
     .returning({ id: projects.id });
 
   if (rows.length === 0) throw new ProjectNotFoundError();
+}
+
+/**
+ * Hard-delete a project (AC-155). Distinguishes three outcomes:
+ *   - Row does not exist                → ProjectNotFoundError
+ *   - Row exists but `deleted = false`  → ProjectNotArchivedError
+ *   - Row exists and `deleted = true`   → deletes the row; resolves
+ *
+ * `project_workers` rows cascade via the FK (`onDelete: 'cascade'` in
+ * the schema), so no explicit cleanup is needed here.
+ *
+ * The two-step fetch-then-delete is deliberate: a single DELETE
+ * gated by `deleted = true` would collapse the not-found and
+ * not-archived cases into the same zero-rows-affected signal, and
+ * the service layer must return different HTTP codes for each.
+ */
+export async function hardDeleteProject(db: Database, id: string): Promise<void> {
+  const existing = await db
+    .select({ id: projects.id, deleted: projects.deleted })
+    .from(projects)
+    .where(eq(projects.id, id))
+    .limit(1);
+
+  if (existing.length === 0) throw new ProjectNotFoundError();
+  if (!existing[0]!.deleted) throw new ProjectNotArchivedError();
+
+  await db.delete(projects).where(eq(projects.id, id));
 }

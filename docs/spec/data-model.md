@@ -277,6 +277,7 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 - Projects are soft-deleted (`deleted = true`) as an **archive-from-board** mechanism (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Archived projects are excluded from active views (Kanban, Calendar, list endpoints) but retained in the database as historical reference. This is not an audit trail — there is no immutability guarantee.
   - Archived projects are **immutable via the API**: transitions, date updates, PATCH, and re-delete are rejected as not found (see [AC-95](verification.md#1517-data-integrity)).
   - When a customer is deleted, their archived projects are **purged atomically** with the customer — the archive has no value without the customer relationship. Active (non-archived) projects still block customer deletion as a conflict (see [AC-92](verification.md#1511-customer-management)).
+  - `project:purge` (owner-only) allows per-project hard-delete via `DELETE /api/projects/:id/purge`. Purge requires the project already be archived (`deleted = true`); the endpoint rejects with 409 Conflict otherwise. `project_workers` rows cascade via FK. See [AC-155](verification.md#1512-project-management) to [AC-158](verification.md#1512-project-management).
   - The API exposes an archived-project count on the customer GET response so the UI can warn before destructive customer deletion.
   - No restore path exists via the API. Recovery requires database access.
 

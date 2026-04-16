@@ -13,12 +13,14 @@ import {
   insertProject as insertProjectRepo,
   updateProject as updateProjectRepo,
   softDeleteProject as softDeleteProjectRepo,
+  hardDeleteProject as hardDeleteProjectRepo,
   transitionForward as transitionForwardRepo,
   transitionBackward as transitionBackwardRepo,
   updateDates as updateDatesRepo,
   fetchWorkersForProject,
   toProject,
   ProjectNotFoundError,
+  ProjectNotArchivedError,
   TransitionError,
   ConcurrentModificationError,
   DateValidationError,
@@ -248,6 +250,27 @@ export class ProjectService {
       log.info({ projectId: id }, 'project_deleted');
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
+      throw err;
+    }
+  }
+
+  /**
+   * Hard-delete an archived project (AC-155/156/158). Archive is a
+   * precondition — the repository enforces it and surfaces
+   * `ProjectNotArchivedError` for non-archived rows, which we map to
+   * 409 CONFLICT with the German `purgeRequiresArchive` copy.
+   *
+   * `project_workers` cascade via the FK; no explicit cleanup here.
+   */
+  async purgeProject(id: string, userId: string, log: ServiceLogger) {
+    try {
+      await hardDeleteProjectRepo(this.db, id);
+      log.info({ projectId: id, actorUserId: userId }, 'project_purged');
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
+      if (err instanceof ProjectNotArchivedError) {
+        throw conflict(STRINGS.projects.purgeRequiresArchive);
+      }
       throw err;
     }
   }

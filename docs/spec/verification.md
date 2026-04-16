@@ -120,6 +120,10 @@ Every criterion carries exactly one tier marker:
 - **AC-62** `[crit]`: Project number is unique. Creating a project whose `number` collides with an existing project is rejected with status 409 and error code `CONFLICT`. The German error message names the conflicting number. Distinct from the `IDEMPOTENCY_CONFLICT` path in [AC-127](#1517-data-integrity).
 - **AC-125** `[crit]`: Creating a project with a client-supplied `id` persists the row under that id. Replaying the same request (same id, same body) returns the existing row with no duplicate persisted. A concurrent replay of the same id and body results in one insert and one replay, never two rows. See [api.md §14.2.2](api.md#1422-projects) for the field-comparison rule.
 - **AC-151** `[crit]`: `GET /api/projects` accepts an `includeArchived` query parameter (boolean, default false). When false or omitted, the result excludes soft-deleted (`deleted = true`) rows. When true, the result includes them with their archive state preserved. The parameter AND-composes with the other filters (see [api.md §14.2.2](api.md#1422-projects)). Rationale: the default-safe boundary prevents leaking archived rows into contexts that expect active-only (misleading state).
+- **AC-155** `[crit]`: `DELETE /api/projects/:id/purge` hard-deletes a project that is already archived (`deleted = true`). Assigned-worker rows (`project_workers`) are removed via cascade. The row is absent from subsequent list and get responses (including `includeArchived=true`). See [ADR-0017](../adr/0017-soft-delete-as-board-archive.md).
+- **AC-156** `[crit]`: `DELETE /api/projects/:id/purge` on a non-archived project is rejected with 409 Conflict (per the conflict error category in [api.md §14.4.1](api.md#1441-error-categories)). The project is unchanged. The German error message directs the user to archive the project first.
+- **AC-157** `[crit]`: `DELETE /api/projects/:id/purge` requires the `project:purge` permission. Callers without it receive 403 `NOT_PERMITTED`. The existing `project:delete` permission is not sufficient — purge is a narrower, strictly more destructive operation.
+- **AC-158** `[crit]`: `DELETE /api/projects/:id/purge` on a non-existent project ID returns 404 (standard not-found contract).
 
 ### 15.13 User Management
 
@@ -169,6 +173,7 @@ Every criterion carries exactly one tier marker:
 - **AC-128** `[vis]`: The customer create form shows a dropdown of existing customers whose names case-insensitively contain the current input (substring match). Clicking a match closes the create form and opens that customer's edit form. When no matches are found, no dropdown appears. When the search request fails, no dropdown appears and no error is surfaced — the form continues to function.
 - **AC-129** `[vis]`: On submit, if the entered customer name matches an existing customer's name (case-insensitive, whitespace-normalized), a confirmation dialog blocks the create until the user explicitly opts in via "Trotzdem erstellen". Cancelling returns to the form without dispatching a request.
 - **AC-130** `[vis]`: On blur of the project number field in the create form, the UI shows a green "available" indicator when no existing project uses the number and a red "taken" indicator when one does. Editing the field after a verdict clears the indicator until the next blur. When multiple checks overlap, the verdict shown reflects the most recent blur — superseded results are discarded. The indicator is UX feedback only — the server is authoritative (see [AC-62](#1512-project-management)).
+- **AC-159** `[vis]`: The project management view exposes an `Endgültig löschen` action on archived rows (visible only when the `Archivierte einblenden` toggle is on and the row is `deleted = true`). The action is hidden for users without `project:purge`, per [AC-121](#1516-management-views). A confirmation dialog precedes the request. See [ADR-0017](../adr/0017-soft-delete-as-board-archive.md).
 
 ### 15.17 Data Integrity
 
@@ -314,6 +319,9 @@ These tests run against a real (test) database, not mocks.
 - **AT-76**: A dry-run import (`dry_run=true`) validates the envelope, returns a preview shape containing would-write counts and validation errors, and writes nothing — both for valid and invalid envelopes.
 - **AT-77**: A full roundtrip — seed → export → wipe → import (override) → export — produces content-equivalent envelopes (`schema_version`, `customers`, `projects`, `project_workers` deep-equal; `exported_at` excluded).
 - **AT-78**: `GET /api/projects` accepts an `includeArchived` query parameter (boolean, default false). When false or omitted, archived rows are excluded; when true, archived rows are returned with `deleted = true`. The parameter AND-composes with the other list filters. Pins [AC-151](#1512-project-management).
+- **AT-79**: `DELETE /api/projects/:id/purge` as owner hard-deletes an archived project. Subsequent GET returns 404; list with `includeArchived=true` omits the row; any `project_workers` rows are gone. Pins [AC-155](#1512-project-management).
+- **AT-80**: `DELETE /api/projects/:id/purge` against a non-archived project returns 409 with the German message and the project row is unchanged. Pins [AC-156](#1512-project-management).
+- **AT-81**: `DELETE /api/projects/:id/purge` by a caller without `project:purge` (owner → yes; office/worker/bookkeeper → 403). Against a non-existent id returns 404. Pins [AC-157](#1512-project-management) and [AC-158](#1512-project-management).
 
 ### 16.3 E2E Tests
 

@@ -65,6 +65,11 @@ export const STRINGS = {
     archiveConfirm: (identifier: string) => `Projekt ${identifier} wirklich archivieren?`,
     showArchived: 'Archivierte einblenden',
     archivedBadge: 'Archiviert',
+    purge: 'Endgültig löschen',
+    purgeConfirm: (identifier: string) =>
+      `Projekt ${identifier} wird endgültig gelöscht. Alle zugeordneten Daten gehen dabei verloren. Fortfahren?`,
+    purgeRequiresArchive:
+      'Das Projekt muss zunächst archiviert werden, bevor es endgültig gelöscht werden kann.',
     transitionConfirm: (from: string, to: string) => `Status ändern: ${from} → ${to}?`,
     cannotAdvanceTerminal:
       'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',

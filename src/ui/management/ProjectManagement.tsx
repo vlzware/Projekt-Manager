@@ -21,6 +21,7 @@ export function ProjectManagement() {
   const canCreate = usePermission('project:create');
   const canUpdate = usePermission('project:update');
   const canDelete = usePermission('project:delete');
+  const canPurge = usePermission('project:purge');
   const projects = useProjectManagementStore((s) => s.projects);
   const loading = useProjectManagementStore((s) => s.loading);
   const error = useProjectManagementStore((s) => s.error);
@@ -29,6 +30,7 @@ export function ProjectManagement() {
   const fetchCustomers = useProjectManagementStore((s) => s.fetchCustomers);
   const setShowArchived = useProjectManagementStore((s) => s.setShowArchived);
   const deleteProject = useProjectManagementStore((s) => s.deleteProject);
+  const purgeProject = useProjectManagementStore((s) => s.purgeProject);
   const clearError = useProjectManagementStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
 
@@ -69,6 +71,15 @@ export function ProjectManagement() {
     );
     if (!confirmed) return;
     await deleteProject(project.id);
+  };
+
+  const handlePurge = async (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    const confirmed = await requestConfirm(
+      STRINGS.projects.purgeConfirm(`${project.number} — ${project.title}`),
+    );
+    if (!confirmed) return;
+    await purgeProject(project.id);
   };
 
   const handleRowClick = (project: Project) => {
@@ -133,7 +144,7 @@ export function ProjectManagement() {
             <th>{STRINGS.ui.status}</th>
             <th>{STRINGS.ui.dates}</th>
             <th>{STRINGS.ui.value}</th>
-            {canDelete && <th>{STRINGS.ui.actions}</th>}
+            {(canDelete || canPurge) && <th>{STRINGS.ui.actions}</th>}
           </tr>
         </thead>
         <tbody>
@@ -141,6 +152,15 @@ export function ProjectManagement() {
             const rowClassName = p.deleted
               ? `${styles.clickableRow} ${styles.rowInactive}`
               : styles.clickableRow;
+            // AC-159: the purge action is gated on archive state + toggle
+            // + permission. The archive action is gated on permission +
+            // non-archived row. A caller with only `project:delete` still
+            // gets the actions cell for non-archived rows; a caller with
+            // only `project:purge` gets the cell for archived rows when
+            // the show-archived toggle is on.
+            const showArchiveBtn = canDelete && !p.deleted;
+            const showPurgeBtn = canPurge && p.deleted && showArchived;
+            const renderActionsCell = showArchiveBtn || showPurgeBtn;
             return (
               <tr key={p.id} className={rowClassName} onClick={() => handleRowClick(p)}>
                 <td>{p.number}</td>
@@ -175,15 +195,24 @@ export function ProjectManagement() {
                       })
                     : '—'}
                 </td>
-                {canDelete && (
+                {(canDelete || canPurge) && (
                   <td>
-                    {!p.deleted && (
+                    {renderActionsCell && showArchiveBtn && (
                       <button
                         className={styles.dangerButton}
                         onClick={(e) => handleArchive(e, p)}
                         data-testid="project-archive-button"
                       >
                         {STRINGS.projects.archive}
+                      </button>
+                    )}
+                    {renderActionsCell && showPurgeBtn && (
+                      <button
+                        className={styles.dangerButton}
+                        onClick={(e) => handlePurge(e, p)}
+                        data-testid="project-purge-button"
+                      >
+                        {STRINGS.projects.purge}
                       </button>
                     )}
                   </td>
