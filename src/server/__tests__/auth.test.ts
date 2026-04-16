@@ -493,12 +493,14 @@ describe('Authentication & Session Management', () => {
       const observerToken = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
       const mutatorToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
 
-      // Find a project the observer can see. Pick angebot — non-terminal,
-      // the forward transition is always safe.
+      // Find a project the observer can see. Worker1 is scoped
+      // (AC-145/ADR-0019) to their assigned projects — pick one in
+      // a non-terminal state so the forward transition is always safe.
+      // `geplant` is one of worker1's seeded assignments (2024-007, 008).
       const initialObserver = await authGet(observerToken, '/api/projects');
       expect(initialObserver.statusCode).toBe(200);
       const projectsObserver = initialObserver.json().data as Record<string, unknown>[];
-      const target = projectsObserver.find((p) => p.status === 'angebot');
+      const target = projectsObserver.find((p) => p.status === 'geplant');
       expect(target).toBeDefined();
       const targetId = target!.id as string;
       const initialStatus = target!.status as string;

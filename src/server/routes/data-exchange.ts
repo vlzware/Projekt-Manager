@@ -35,8 +35,11 @@ export function dataExchangeRoutes(db: Database) {
     app.get(
       '/api/export',
       { preHandler: requirePermission('data:export') },
-      async (_request, reply) => {
-        const envelope = await exportService.export();
+      async (request, reply) => {
+        // Caller is guaranteed non-null after `authenticate` — thread it
+        // through so ExportService can fail-fast if a scoped role ever
+        // acquires `data:export` (tripwire for ADR-0019 bypass).
+        const envelope = await exportService.export(request.user!);
         return reply.code(200).send(envelope);
       },
     );

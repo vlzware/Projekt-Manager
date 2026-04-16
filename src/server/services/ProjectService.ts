@@ -30,24 +30,30 @@ import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
-import { notFound, validationError, conflict, extractSqlState } from '../errors.js';
+import { notFound, notPermitted, validationError, conflict, extractSqlState } from '../errors.js';
 import { projectMatches, createIdempotent } from './idempotency.js';
 import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
+import type { AuthUser } from '../middleware/auth.js';
+import { isOutOfScope } from '../repositories/scope.js';
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
 
 export class ProjectService {
   constructor(private db: Database) {}
 
-  async listProjects(opts: ListProjectsOpts) {
-    return listProjectsRepo(this.db, opts);
+  async listProjects(caller: AuthUser, opts: ListProjectsOpts) {
+    return listProjectsRepo(this.db, caller, opts);
   }
 
-  async getProject(id: string) {
-    const project = await getProjectRepo(this.db, id);
-    if (!project) throw notFound(STRINGS.entities.project);
-    return project;
+  async getProject(caller: AuthUser, id: string) {
+    const result = await getProjectRepo(this.db, caller, id);
+    if (result === null) throw notFound(STRINGS.entities.project);
+    // AC-147: an existing project the caller is not assigned to surfaces
+    // as 403 NOT_PERMITTED, not 404. The spec accepts the existence leak
+    // because project IDs are UUIDs and callers are internal users.
+    if (isOutOfScope(result)) throw notPermitted();
+    return result;
   }
 
   async createProject(

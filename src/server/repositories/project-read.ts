@@ -8,6 +8,13 @@ import { projects, projectWorkers, users, customers } from '../db/schema.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
 import { formatDateOnly } from '../../domain/dateFormat.js';
+import type { AuthUser } from '../middleware/auth.js';
+import {
+  projectScopeForCaller,
+  isProjectInScope,
+  OUT_OF_SCOPE,
+  type ScopedReadResult,
+} from './scope.js';
 
 /** Escape LIKE-pattern metacharacters so user input is treated literally. */
 function escapeLike(value: string): string {
@@ -136,6 +143,7 @@ export interface ListProjectsOpts {
 
 export async function listProjects(
   db: Database,
+  caller: AuthUser,
   opts: ListProjectsOpts = {},
 ): Promise<{ data: ReturnType<typeof toProject>[]; total: number }> {
   // Build WHERE conditions
@@ -158,6 +166,11 @@ export async function listProjects(
   if (opts.customerId) {
     conditions.push(eq(projects.customerId, opts.customerId));
   }
+
+  // AC-145: apply per-caller read scope. Owner/office/bookkeeper → null
+  // (no additional filter); worker → EXISTS-predicate over project_workers.
+  const scope = projectScopeForCaller(caller);
+  if (scope) conditions.push(scope);
 
   const whereClause = and(...conditions);
 
@@ -228,10 +241,24 @@ export async function listProjects(
   return { data, total };
 }
 
+/**
+ * Get a project by id, respecting the caller's read scope.
+ *
+ * Three-valued result (ADR-0019):
+ *   - `null`              — row does not exist (→ 404 NOT_FOUND)
+ *   - `OUT_OF_SCOPE`      — row exists but caller is not assigned
+ *                           (→ 403 NOT_PERMITTED; AC-147)
+ *   - `ReturnType<toProject>` — in-scope row
+ *
+ * The two-step fetch (no-scope row lookup, then scope check) is deliberate:
+ * a single scoped query cannot distinguish "not found" from "out of scope".
+ * The separation honors the spec's explicit 403-over-404 contract.
+ */
 export async function getProject(
   db: Database,
+  caller: AuthUser,
   id: string,
-): Promise<ReturnType<typeof toProject> | null> {
+): Promise<ScopedReadResult<ReturnType<typeof toProject>>> {
   const rows = await db
     .select()
     .from(projects)
@@ -239,6 +266,11 @@ export async function getProject(
     .limit(1);
 
   if (rows.length === 0) return null;
+
+  if (!(await isProjectInScope(db, caller, id))) {
+    return OUT_OF_SCOPE;
+  }
+
   const row = rows[0]!;
   const [workers, customerRows] = await Promise.all([
     fetchWorkersForProject(db, id),

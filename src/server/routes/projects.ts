@@ -50,7 +50,7 @@ export function projectRoutes(db: Database) {
           hasNoDates?: string;
           customerId?: string;
         };
-        const result = await projectService.listProjects({
+        const result = await projectService.listProjects(request.user!, {
           offset: query.offset,
           limit: query.limit,
           status: query.status,
@@ -127,7 +127,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.getProject(id);
+        const project = await projectService.getProject(request.user!, id);
         return reply.code(200).send(project);
       },
     );

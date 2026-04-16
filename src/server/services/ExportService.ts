@@ -7,6 +7,8 @@ import type { Database } from '../db/connection.js';
 import { customers, projects, projectWorkers } from '../db/schema.js';
 import { SCHEMA_VERSION, type Envelope } from '../../domain/dataExchange.js';
 import { toCustomerResponse } from '../repositories/customer.js';
+import { isUnscoped } from '../repositories/scope.js';
+import type { AuthUser } from '../middleware/auth.js';
 import { formatDateOnly } from '../../domain/dateFormat.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 
@@ -17,8 +19,22 @@ export class ExportService {
    * Export every row of the business-data layer as a single envelope.
    * Deterministic ordering across all three tables so AT-77 can byte-compare
    * successive exports after a roundtrip.
+   *
+   * The caller is threaded through as a fail-fast tripwire: this service
+   * deliberately bypasses the per-caller scope seam (ADR-0019) because an
+   * export is, by definition, the whole dataset. Today only owner/office
+   * hold `data:export`, but if a scoped role ever gains it via permission
+   * churn, this assertion fires before any row leaks. See ADR-0019
+   * "Alternatives considered" for why scope is enforced at the seam rather
+   * than in the permission check.
    */
-  async export(): Promise<Envelope> {
+  async export(caller: AuthUser): Promise<Envelope> {
+    if (!isUnscoped(caller)) {
+      throw new Error(
+        `ExportService.export must be invoked with an unscoped caller; got roles=[${caller.roles.join(', ')}]`,
+      );
+    }
+
     const { customerRows, projectRows, assignmentRows } = await this.db.transaction(
       async (tx) => {
         // Sequential — drizzle runs each tx query on the same pg client, so

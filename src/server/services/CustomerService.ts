@@ -16,21 +16,28 @@ import {
 import { projects } from '../db/schema.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
 import { STRINGS } from '../../config/strings.js';
-import { notFound, conflict } from '../errors.js';
+import { notFound, notPermitted, conflict } from '../errors.js';
 import { customerMatches, createIdempotent } from './idempotency.js';
 import type { ServiceLogger } from './Logger.js';
+import type { AuthUser } from '../middleware/auth.js';
+import { isOutOfScope } from '../repositories/scope.js';
 
 export class CustomerService {
   constructor(private db: Database) {}
 
-  async listCustomers(opts: { offset?: number; limit?: number; search?: string }) {
-    return listCustomersRepo(this.db, opts);
+  async listCustomers(
+    caller: AuthUser,
+    opts: { offset?: number; limit?: number; search?: string },
+  ) {
+    return listCustomersRepo(this.db, caller, opts);
   }
 
-  async getCustomer(id: string) {
-    const customer = await getCustomerRepo(this.db, id);
-    if (!customer) throw notFound(STRINGS.entities.customer);
-    return customer;
+  async getCustomer(caller: AuthUser, id: string) {
+    const result = await getCustomerRepo(this.db, caller, id);
+    if (result === null) throw notFound(STRINGS.entities.customer);
+    // AC-148: out-of-scope → 403 NOT_PERMITTED, not 404.
+    if (isOutOfScope(result)) throw notPermitted();
+    return result;
   }
 
   async createCustomer(
