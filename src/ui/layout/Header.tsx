@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { usePermission } from '@/hooks/usePermission';
-import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
-import type { ViewMode } from '@/domain/types';
+import { useRouterNav } from '@/hooks/useRouterNav';
+import { visibleRoutesForUser } from '@/config/routes';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
 import type { ThemePreference } from '@/config/themeStorage';
@@ -40,22 +40,13 @@ export function Header() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [dropdownOpen]);
 
-  const canReadUsers = usePermission('user:read');
+  // Navigation is driven from the central route table so the per-role
+  // matrix (`docs/spec/ui.md §8.7.1`, AC-75) has one source of truth —
+  // the guard in `App.tsx` consults the same table. Extractor visibility
+  // is an action affordance (not a nav concern), so it stays permission-
+  // driven via `usePermission`.
+  const visibleRoutes = authUser ? visibleRoutesForUser(authUser) : [];
   const canExtract = usePermission('customer:write');
-  // AC-142: the Daten tab is only shown to users who can export business
-  // data. The server still authorises /api/export independently — this
-  // is the client-side half of the "don't render actions you cannot
-  // perform" rule (AC-121).
-  const canExportData = usePermission('data:export');
-
-  const views: { key: ViewMode; label: string }[] = [
-    { key: 'kanban', label: STRINGS.ui.viewKanban },
-    { key: 'kalender', label: STRINGS.ui.viewCalendar },
-    { key: 'projekte', label: STRINGS.ui.viewProjects },
-    { key: 'kunden', label: STRINGS.ui.viewCustomers },
-    ...(canReadUsers ? [{ key: 'benutzer' as ViewMode, label: STRINGS.ui.viewUsers }] : []),
-    ...(canExportData ? [{ key: 'daten' as ViewMode, label: STRINGS.ui.viewData }] : []),
-  ];
 
   const handleLogout = async () => {
     setDropdownOpen(false);
@@ -77,14 +68,14 @@ export function Header() {
       <div className={styles.navGroup}>
         <div className={styles.appName}>{BRANDING.appName}</div>
         <div className={styles.viewToggle}>
-          {views.map((v) => (
+          {visibleRoutes.map((r) => (
             <button
-              key={v.key}
-              className={`${styles.viewButton} ${activeView === v.key ? styles.viewButtonActive : ''}`}
-              onClick={() => navigateTo(pathFromView(v.key))}
-              data-testid={`view-toggle-${v.key}`}
+              key={r.view}
+              className={`${styles.viewButton} ${activeView === r.view ? styles.viewButtonActive : ''}`}
+              onClick={() => navigateTo(r.path)}
+              data-testid={`view-toggle-${r.view}`}
             >
-              {v.label}
+              {r.label}
             </button>
           ))}
         </div>

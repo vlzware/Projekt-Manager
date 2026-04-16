@@ -69,7 +69,10 @@ async function loginAs(page: Page, username: string): Promise<void> {
   await page.getByTestId('login-username').fill(username);
   await page.getByTestId('login-password').fill('changeme');
   await page.getByTestId('login-submit').click();
-  await page.getByTestId('kanban-board').waitFor();
+  // Wait for the authenticated layout — `header` mounts on every role's
+  // landing view. The previous wait on `kanban-board` hung for bookkeeper,
+  // whose landing is `/projects` per the central route table.
+  await page.getByTestId('header').waitFor();
 }
 
 // ---------------------------------------------------------------

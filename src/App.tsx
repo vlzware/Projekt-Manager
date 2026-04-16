@@ -1,10 +1,11 @@
 import { useEffect, useRef } from 'react';
-import type { ReactNode } from 'react';
+import type { ReactElement } from 'react';
 import { Routes, Route, Navigate, useInRouterContext, useLocation } from 'react-router-dom';
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { viewFromPath } from '@/hooks/useRouterNav';
+import { ROUTES, routeByPath, landingPathForUser } from '@/config/routes';
 import { isInsecureConnection } from '@/config/insecureConnection';
 import { Header } from '@/ui/layout/Header';
 import { Footer } from '@/ui/layout/Footer';
@@ -17,6 +18,8 @@ import { DatenView } from '@/ui/management/DatenView';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
+import { NotPermittedView } from '@/ui/common/NotPermittedView';
+import type { ViewMode } from '@/domain/types';
 import { STRINGS } from '@/config/strings';
 import styles from './App.module.css';
 
@@ -44,15 +47,61 @@ function UrlStoreSync() {
 }
 
 /**
- * Route guard — renders children only if the authenticated user
- * has at least one of the required roles. Redirects to /kanban otherwise.
+ * Route guard driven by the central route table (`src/config/routes.ts`).
+ *
+ * AC-149: a caller who cannot access the path sees a not-permitted
+ * error surface. The URL is NOT changed — no redirect, no swap — so
+ * the spec-mandated "URL in the address bar remains unchanged" holds.
+ * Unauthenticated callers still hit the login screen via the outer
+ * `authUser` branch in `App`, so this guard only runs for authenticated
+ * users.
+ *
+ * The current path is read from `useLocation()` rather than passed in as
+ * a prop so the guard has a single source of truth for its identity and
+ * is future-proof against parametrized routes (the prop-based form was
+ * forced to duplicate the path at each mount site).
  */
-function RequireRoles({ roles, children }: { roles: string[]; children: ReactNode }) {
+function ProtectedRoute({ element }: { element: ReactElement }) {
   const authUser = useAuthStore((s) => s.authUser);
-  const hasAccess = authUser?.roles.some((r) => roles.includes(r)) ?? false;
-  if (!hasAccess) return <Navigate to="/kanban" replace />;
-  return <>{children}</>;
+  const location = useLocation();
+  const route = routeByPath(location.pathname);
+  // Unknown paths should never reach here (we only mount known paths),
+  // but if they did, treat as not-permitted rather than rendering
+  // nothing — a reviewable signal beats a silent blank.
+  if (!route || !authUser || !route.canAccess(authUser)) {
+    return <NotPermittedView />;
+  }
+  return element;
 }
+
+/**
+ * Fallback used by the catch-all route ("*") and the root ("/") — sends
+ * the authenticated user to their landing view. Unauthenticated callers
+ * never reach here because the outer branch in `App` renders the login
+ * screen before the `<Routes>` tree is instantiated.
+ *
+ * Defensive: if the auth store clears mid-render, return `null` instead
+ * of navigating. The outer `if (authUser)` branch in `App` re-renders
+ * on the cleared store and swaps to the login screen — navigating to
+ * `/` or `*` here would re-enter `LandingRedirect` via the catch-all
+ * and could loop before the outer branch catches up (no frontend
+ * `/login` route exists today; the login form is rendered as a fallback
+ * when `authUser` is null, not as a route).
+ */
+function LandingRedirect() {
+  const authUser = useAuthStore((s) => s.authUser);
+  if (!authUser) return null;
+  return <Navigate to={landingPathForUser(authUser)} replace />;
+}
+
+const VIEW_ELEMENTS: Record<ViewMode, ReactElement> = {
+  kanban: <KanbanBoard />,
+  kalender: <CalendarView />,
+  kunden: <CustomerManagement />,
+  projekte: <ProjectManagement />,
+  benutzer: <UserManagement />,
+  daten: <DatenView />,
+};
 
 export function App() {
   const hasRouter = useInRouterContext();
@@ -103,44 +152,30 @@ export function App() {
   }, [authUser]);
 
   if (authUser) {
-    // View content — either router-managed or store-managed
+    // View content — either router-managed or store-managed.
+    // Router path: every known route goes through `ProtectedRoute`, which
+    // renders `NotPermittedView` when the caller cannot access the path
+    // (AC-149). The `/` and `*` fallbacks route to the user's landing
+    // view (§8.1.2) via the central route table — never hardcoded.
+    // Store-only fallback is used by tests rendering <App /> without a
+    // router; it mirrors the same gate by consulting the table directly.
+    const storeRoute = ROUTES.find((r) => r.view === activeView);
     const viewContent = hasRouter ? (
       <Routes>
-        <Route path="/kanban" element={<KanbanBoard />} />
-        <Route path="/calendar" element={<CalendarView />} />
-        <Route path="/customers" element={<CustomerManagement />} />
-        <Route path="/projects" element={<ProjectManagement />} />
-        <Route
-          path="/users"
-          element={
-            <RequireRoles roles={['owner', 'office']}>
-              <UserManagement />
-            </RequireRoles>
-          }
-        />
-        <Route path="/data" element={<DatenView />} />
-        <Route path="/" element={<Navigate to="/kanban" replace />} />
-        <Route path="*" element={<Navigate to="/kanban" replace />} />
+        {ROUTES.map((r) => (
+          <Route
+            key={r.view}
+            path={r.path}
+            element={<ProtectedRoute element={VIEW_ELEMENTS[r.view]} />}
+          />
+        ))}
+        <Route path="/" element={<LandingRedirect />} />
+        <Route path="*" element={<LandingRedirect />} />
       </Routes>
-    ) : // Fallback for tests that render <App /> without a router
-    activeView === 'kanban' ? (
-      <KanbanBoard />
-    ) : activeView === 'kalender' ? (
-      <CalendarView />
-    ) : activeView === 'kunden' ? (
-      <CustomerManagement />
-    ) : activeView === 'projekte' ? (
-      <ProjectManagement />
-    ) : activeView === 'benutzer' ? (
-      authUser?.roles.some((r) => r === 'owner' || r === 'office') ? (
-        <UserManagement />
-      ) : (
-        <KanbanBoard />
-      )
-    ) : activeView === 'daten' ? (
-      <DatenView />
+    ) : storeRoute && storeRoute.canAccess(authUser) ? (
+      VIEW_ELEMENTS[storeRoute.view]
     ) : (
-      <KanbanBoard />
+      <NotPermittedView />
     );
 
     return (

@@ -22,6 +22,10 @@ type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
 
 interface RoleCase {
   username: string;
+  /** Access to the Kanban view (ui.md §8.7.1 — owner/office/worker). */
+  canSeeKanban: boolean;
+  /** Access to the Projekte/Kunden management views (owner/office/bookkeeper). */
+  canSeeManagement: boolean;
   canReadUsers: boolean;
   canManageUsers: boolean;
   canDeleteUsers: boolean;
@@ -41,11 +45,14 @@ interface RoleCase {
 
 /**
  * Expected visibility derived from ROLE_PERMISSIONS in
- * `src/config/permissions.ts`. Keep in sync when the matrix changes.
+ * `src/config/permissions.ts` AND the nav matrix in
+ * `docs/spec/ui.md §8.7.1` (AC-75). Keep in sync when either changes.
  */
 const roleCases: Record<Role, RoleCase> = {
   owner: {
     username: 'inhaber',
+    canSeeKanban: true,
+    canSeeManagement: true,
     canReadUsers: true,
     canManageUsers: true,
     canDeleteUsers: true,
@@ -62,7 +69,14 @@ const roleCases: Record<Role, RoleCase> = {
   },
   office: {
     username: 'buero',
-    canReadUsers: true,
+    canSeeKanban: true,
+    canSeeManagement: true,
+    // Per the nav matrix in `docs/spec/ui.md §8.7.1` (AC-75), the
+    // Benutzer tab is owner-only even though office holds `user:read`
+    // in `permissions.ts`. The client-side route predicate gates
+    // Benutzer on `user:manage` (owner-only) to make the nav match
+    // the spec. See `src/config/routes.ts` for the rationale.
+    canReadUsers: false,
     canManageUsers: false,
     canDeleteUsers: false,
     canExtract: true,
@@ -78,6 +92,8 @@ const roleCases: Record<Role, RoleCase> = {
   },
   worker: {
     username: 'arbeiter1',
+    canSeeKanban: true,
+    canSeeManagement: false,
     canReadUsers: false,
     canManageUsers: false,
     canDeleteUsers: false,
@@ -94,6 +110,8 @@ const roleCases: Record<Role, RoleCase> = {
   },
   bookkeeper: {
     username: 'buchhalter',
+    canSeeKanban: false,
+    canSeeManagement: true,
     canReadUsers: false,
     canManageUsers: false,
     canDeleteUsers: false,
@@ -115,7 +133,10 @@ async function loginAs(page: Page, username: string): Promise<void> {
   await page.getByTestId('login-username').fill(username);
   await page.getByTestId('login-password').fill('changeme');
   await page.getByTestId('login-submit').click();
-  await page.getByTestId('kanban-board').waitFor();
+  // Wait for the authenticated layout — `header` mounts on every role's
+  // landing view. The previous wait on `kanban-board` hung for bookkeeper,
+  // whose landing is `/projects` per the central route table.
+  await page.getByTestId('header').waitFor();
 }
 
 test.describe('AC-121: permission-based UI visibility', () => {
@@ -127,76 +148,110 @@ test.describe('AC-121: permission-based UI visibility', () => {
       await loginAs(page, c.username);
 
       // -- Header navigation and extract button --------------------------
+      // Nav visibility is driven by the central route table (§8.7.1).
+      await expect(page.getByTestId('view-toggle-kanban')).toHaveCount(c.canSeeKanban ? 1 : 0);
+      await expect(page.getByTestId('view-toggle-projekte')).toHaveCount(
+        c.canSeeManagement ? 1 : 0,
+      );
+      await expect(page.getByTestId('view-toggle-kunden')).toHaveCount(
+        c.canSeeManagement ? 1 : 0,
+      );
       await expect(page.getByTestId('view-toggle-benutzer')).toHaveCount(c.canReadUsers ? 1 : 0);
       await expect(page.getByTestId('extract-button')).toHaveCount(c.canExtract ? 1 : 0);
 
-      // -- Kanban card forward arrow (any card in a transitionable state) --
-      const cardForwardCount = await page.locator('[data-testid^="forward-button-"]').count();
-      if (c.canTransition) {
-        expect(cardForwardCount).toBeGreaterThan(0);
-      } else {
-        expect(cardForwardCount).toBe(0);
+      // -- Kanban view: transition controls on cards and detail panel ----
+      // Only reachable when Kanban is in the role's nav matrix. Roles
+      // without Kanban access (bookkeeper) cannot navigate there at all;
+      // the server-side scoping for transitions is covered by unit tests.
+      if (c.canSeeKanban) {
+        await page.getByTestId('view-toggle-kanban').click();
+        await page.getByTestId('kanban-board').waitFor();
+        // Wait until at least one card has rendered — the subsequent
+        // `forward-button-*` count assertion races the initial fetch
+        // otherwise and reports 0 before any card mounts.
+        await page.locator('[data-testid^="project-card-"]').first().waitFor();
+
+        // Forward arrow on any card in a transitionable state.
+        const cardForwardCount = await page
+          .locator('[data-testid^="forward-button-"]')
+          .count();
+        if (c.canTransition) {
+          expect(cardForwardCount).toBeGreaterThan(0);
+        } else {
+          expect(cardForwardCount).toBe(0);
+        }
+
+        // Project detail panel (open first card).
+        await page.locator('[data-testid^="project-card-"]').first().click();
+        await page.getByTestId('detail-panel').waitFor();
+
+        const detailForward = await page.getByTestId('detail-forward-button').count();
+        const detailBackward = await page.getByTestId('detail-backward-button').count();
+        if (c.canTransition) {
+          // Anfrage hides backward, Erledigt hides forward — but every
+          // state allows at least one direction, so the sum is ≥ 1 when
+          // permitted.
+          expect(detailForward + detailBackward).toBeGreaterThan(0);
+        } else {
+          expect(detailForward).toBe(0);
+          expect(detailBackward).toBe(0);
+        }
+
+        await expect(page.getByTestId('detail-date-start')).toHaveCount(
+          c.canUpdateDates ? 1 : 0,
+        );
+        await expect(page.getByTestId('detail-date-end')).toHaveCount(
+          c.canUpdateDates ? 1 : 0,
+        );
+
+        await page.getByTestId('detail-close').click();
       }
-
-      // -- Project detail panel (open first card) ------------------------
-      await page.locator('[data-testid^="project-card-"]').first().click();
-      await page.getByTestId('detail-panel').waitFor();
-
-      const detailForward = await page.getByTestId('detail-forward-button').count();
-      const detailBackward = await page.getByTestId('detail-backward-button').count();
-      if (c.canTransition) {
-        // Anfrage hides backward, Erledigt hides forward — but every state
-        // allows at least one direction, so the sum is ≥ 1 when permitted.
-        expect(detailForward + detailBackward).toBeGreaterThan(0);
-      } else {
-        expect(detailForward).toBe(0);
-        expect(detailBackward).toBe(0);
-      }
-
-      await expect(page.getByTestId('detail-date-start')).toHaveCount(c.canUpdateDates ? 1 : 0);
-      await expect(page.getByTestId('detail-date-end')).toHaveCount(c.canUpdateDates ? 1 : 0);
-
-      await page.getByTestId('detail-close').click();
 
       // -- Projekte management view --------------------------------------
-      await page.getByTestId('view-toggle-projekte').click();
-      await page.getByTestId('project-table').locator('tbody tr').first().waitFor();
+      // Only owner / office / bookkeeper see the Projekte tab (ui.md
+      // §8.7.1 — worker is excluded). Skip the management assertions
+      // entirely for worker since the view is not navigable.
+      if (c.canSeeManagement) {
+        await page.getByTestId('view-toggle-projekte').click();
+        await page.getByTestId('project-table').locator('tbody tr').first().waitFor();
 
-      await expect(page.getByTestId('project-create-button')).toHaveCount(
-        c.canCreateProject ? 1 : 0,
-      );
+        await expect(page.getByTestId('project-create-button')).toHaveCount(
+          c.canCreateProject ? 1 : 0,
+        );
 
-      const projectDeleteBtns = page
-        .getByTestId('project-table')
-        .locator('tbody button', { hasText: /löschen/i });
-      if (c.canDeleteProject) {
-        expect(await projectDeleteBtns.count()).toBeGreaterThan(0);
-      } else {
-        expect(await projectDeleteBtns.count()).toBe(0);
-      }
+        const projectDeleteBtns = page
+          .getByTestId('project-table')
+          .locator('tbody button', { hasText: /löschen/i });
+        if (c.canDeleteProject) {
+          expect(await projectDeleteBtns.count()).toBeGreaterThan(0);
+        } else {
+          expect(await projectDeleteBtns.count()).toBe(0);
+        }
 
-      // Edit-form Save button: click into first row to open the form.
-      // For worker/bookkeeper the form opens but Save is hidden — no
-      // mutation trigger, so the "details view" is the intentional fallback.
-      await page.getByTestId('project-table').locator('tbody tr').first().click();
-      await expect(page.getByTestId('project-save')).toHaveCount(c.canUpdateProject ? 1 : 0);
-      await page.getByRole('button', { name: 'Abbrechen' }).click();
+        // Edit-form Save button: click into first row to open the form.
+        // For bookkeeper the form opens but Save is hidden — no
+        // mutation trigger, so the "details view" is the intentional
+        // fallback.
+        await page.getByTestId('project-table').locator('tbody tr').first().click();
+        await expect(page.getByTestId('project-save')).toHaveCount(c.canUpdateProject ? 1 : 0);
+        await page.getByRole('button', { name: 'Abbrechen' }).click();
 
-      // -- Kunden management view ----------------------------------------
-      await page.getByTestId('view-toggle-kunden').click();
-      await page.getByTestId('customer-table').locator('tbody tr').first().waitFor();
+        // -- Kunden management view --------------------------------------
+        await page.getByTestId('view-toggle-kunden').click();
+        await page.getByTestId('customer-table').locator('tbody tr').first().waitFor();
 
-      await expect(page.getByTestId('customer-create-button')).toHaveCount(
-        c.canCreateCustomer ? 1 : 0,
-      );
+        await expect(page.getByTestId('customer-create-button')).toHaveCount(
+          c.canCreateCustomer ? 1 : 0,
+        );
 
-      const customerDeleteBtns = page
-        .getByTestId('customer-table')
-        .locator('tbody button', { hasText: /löschen/i });
-      if (c.canDeleteCustomer) {
-        expect(await customerDeleteBtns.count()).toBeGreaterThan(0);
-      } else {
-        expect(await customerDeleteBtns.count()).toBe(0);
+        const customerDeleteBtns = page
+          .getByTestId('customer-table')
+          .locator('tbody button', { hasText: /löschen/i });
+        if (c.canDeleteCustomer) {
+          expect(await customerDeleteBtns.count()).toBeGreaterThan(0);
+        } else {
+          expect(await customerDeleteBtns.count()).toBe(0);
+        }
       }
 
       // -- Daten (unified data-exchange) view ----------------------------

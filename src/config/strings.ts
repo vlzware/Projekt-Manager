@@ -234,6 +234,15 @@ export const STRINGS = {
     uploadFile: 'JSON-Datei auswählen',
     fileTooLarge: (maxMb: number) => `Datei zu groß. Maximal ${maxMb} MB erlaubt.`,
     noPermission: 'Keine Berechtigung.',
+
+    // Not-permitted route surface (AC-149). Rendered when an
+    // authenticated user opens a URL their role cannot access. Stays
+    // on the forbidden path — the client does not redirect, only
+    // displays this message.
+    notPermittedHeading: 'Kein Zugriff',
+    notPermittedBody:
+      'Sie sind für diesen Bereich nicht berechtigt. Bitte wählen Sie eine verfügbare Ansicht.',
+    notPermittedHome: 'Zur Startansicht',
   },
 
   /**

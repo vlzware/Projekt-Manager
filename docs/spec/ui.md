@@ -194,7 +194,7 @@ The authenticated layout provides navigation between all available views. The na
 | Calendar  | "Kalender" | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                      | No                                                       |
 | Projects  | "Projekte" | Owner, office, bookkeeper. Worker: hidden.                                                           | Yes for bookkeeper (landing view after login)            |
 | Customers | "Kunden"   | Owner, office, bookkeeper. Worker: hidden.                                                           | No                                                       |
-| Users     | "Benutzer" | `user:read` permission required (owner only under the default role set). Everyone else: hidden.      | No                                                       |
+| Users     | "Benutzer" | `user:manage` permission required (owner only under the default role set). Everyone else: hidden.    | No                                                       |
 | Daten     | "Daten"    | `data:export` permission required (owner, office under the default role set). Everyone else: hidden. | No                                                       |
 
 **Worker-scoped views.** For workers, the data presented in Kanban and Calendar is filtered to the projects the worker is assigned to — the same scoping rule that applies to the server-side list operation (see [index.md §4.2](index.md#42-users) and [api.md §14.3](api.md#143-authorization-rules)). The views render normally; only the row set is reduced. A project whose detail the worker is not authorized for is not reachable from a scoped Kanban or Calendar.
@@ -317,7 +317,7 @@ When creating or editing a project ([§8.8.2](#882-create-project), [§8.8.3](#8
 
 ### 8.10 User Management View
 
-An administrative view for managing user accounts. Only accessible to users with `user:read` permission. Hidden from navigation for users without this permission.
+An administrative view for managing user accounts. Only accessible to users with `user:manage` permission (owner only under the default role set — matches the nav matrix in [§8.7.1](#871-views)). Hidden from navigation for users without this permission. Office and other roles that hold only `user:read` (for dropdown lookups, not administration) are not admitted — server-side listing via `GET /api/users` remains gated on `user:read` independently.
 
 #### 8.10.1 List
 

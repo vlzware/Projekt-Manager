@@ -157,7 +157,7 @@ Every criterion carries exactly one tier marker:
 - **AC-79** `[vis]`: Deleting a project from the management view soft-deletes it. The project disappears from all views and exports.
 - **AC-80** `[vis]`: The customer management view displays a searchable, paginated table of all customers with project counts.
 - **AC-81** `[vis]`: Creating a customer makes it immediately available in project creation/editing dropdowns without page reload.
-- **AC-82** `[vis]`: The user management view is only accessible to users with `user:read` permission. It displays all users including deactivated ones.
+- **AC-82** `[vis]`: The user management view is only accessible to users with `user:manage` permission (owner only under the default role set). It displays all users including deactivated ones. `user:read` alone is not sufficient — office holds `user:read` for worker-assignment dropdowns (see [architecture.md §49](architecture.md) and [api.md §14.3](api.md#143-authorization-rules)) but is not admitted to the admin view.
 - **AC-83** `[vis]`: Creating a user from the management view produces an account that can log in immediately with the provided credentials.
 - **AC-84** `[vis]`: Deactivating a user from the management view prevents that user from logging in and invalidates their active sessions.
 - **AC-85** `[vis]`: The critical path "create customer → create project referencing that customer" works without page reload or manual refresh.
