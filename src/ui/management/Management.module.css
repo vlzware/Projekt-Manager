@@ -116,6 +116,10 @@
   background: var(--color-text-subtle);
 }
 
+.badgeArchived {
+  background: var(--color-text-subtle);
+}
+
 /* Form overlay */
 .formOverlay {
   position: fixed;

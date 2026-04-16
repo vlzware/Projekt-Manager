@@ -254,6 +254,7 @@ export const projectApi = {
     search?: string;
     customerId?: string;
     hasNoDates?: boolean;
+    includeArchived?: boolean;
   }) =>
     apiCall<ProjectListResponse>(
       '/api/projects' + toQuery(params as Record<string, string | number | boolean | undefined>),
@@ -313,7 +314,10 @@ export const customerApi = {
       '/api/customers' + toQuery(params as Record<string, string | number | boolean | undefined>),
     ),
 
-  get: (id: string) => apiCall<Customer & { projectCount: number }>(`/api/customers/${id}`),
+  get: (id: string) =>
+    apiCall<Customer & { projectCount: number; archivedProjectCount: number }>(
+      `/api/customers/${id}`,
+    ),
 
   create: (data: {
     id?: string;

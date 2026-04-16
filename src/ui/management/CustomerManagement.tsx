@@ -20,6 +20,7 @@ export function CustomerManagement() {
   const loading = useCustomerStore((s) => s.loading);
   const error = useCustomerStore((s) => s.error);
   const fetchCustomers = useCustomerStore((s) => s.fetchCustomers);
+  const fetchCustomerDetail = useCustomerStore((s) => s.fetchCustomerDetail);
   const deleteCustomer = useCustomerStore((s) => s.deleteCustomer);
   const clearError = useCustomerStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
@@ -36,7 +37,19 @@ export function CustomerManagement() {
 
   const handleDelete = async (e: React.MouseEvent, customer: Customer) => {
     e.stopPropagation();
-    const confirmed = await requestConfirm(STRINGS.ui.deleteConfirm(customer.name));
+    // AC-154: before confirming, fetch the customer to learn how many
+    // archived projects will be purged alongside it. If the fetch fails
+    // the store already wrote the error — abort silently here (S-ERRP).
+    // Falling back to the generic confirm would hide a potential warning
+    // about data loss.
+    const detail = await fetchCustomerDetail(customer.id);
+    if (!detail) return;
+    const archivedCount = detail.archivedProjectCount;
+    const message =
+      archivedCount > 0
+        ? STRINGS.customers.deleteWithArchived(archivedCount)
+        : STRINGS.ui.deleteConfirm(customer.name);
+    const confirmed = await requestConfirm(message);
     if (!confirmed) return;
     await deleteCustomer(customer.id);
   };

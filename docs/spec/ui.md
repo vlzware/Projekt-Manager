@@ -225,9 +225,9 @@ A tabular list of all projects with search, filtering, and CRUD operations.
 - Columns: project number, title, customer name, status (colored badge), planned dates, estimated value, assigned workers.
 - Sortable by any column. Default sort: project number descending.
 - Search: free-text filter across project number, title, and customer name.
-- Filters: by status (multi-select), by customer, by date range (planned start), by "has no dates" flag. Filters use AND logic. A "Filter aufheben" control clears all filters.
+- Filters: by status (multi-select), by customer, by date range (planned start), by "has no dates" flag, by archive inclusion (`Archivierte einblenden` toggle, off by default). Filters use AND logic. A "Filter aufheben" control clears all filters.
 - Pagination when the list exceeds a configurable page size **[C]**.
-- Soft-deleted projects are excluded.
+- Soft-deleted (archived) projects are excluded by default; the `Archivierte einblenden` toggle includes them. Archived rows are visually distinguished (muted text, `Archiviert` badge).
 
 #### 8.8.2 Create Project
 
@@ -262,9 +262,9 @@ All editable fields use PATCH semantics via the Update project API operation. St
 
 Requires `project:update` permission for mutations. Users without this permission see all fields as read-only.
 
-#### 8.8.4 Delete Project
+#### 8.8.4 Archive Project
 
-Available per project row or in the edit view. Confirmation dialog: `"Projekt {number} wirklich löschen?"` with OK / Abbrechen. Soft-deletes via the API.
+Available per project row or in the edit view. The action is labelled "Archivieren". Confirmation dialog: `"Projekt {number} wirklich archivieren?"` with OK / Abbrechen. The API call soft-deletes the project (see [api.md §14.2.2](api.md#1422-projects) and [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)).
 
 Requires `project:delete` permission.
 
@@ -312,6 +312,17 @@ Requires `customer:write` permission for mutations. Users without this permissio
 #### 8.9.4 Inline Customer Creation
 
 When creating or editing a project ([§8.8.2](#882-create-project), [§8.8.3](#883-edit-project)), the customer selector includes an option to create a new customer inline. On successful creation, the new customer is automatically selected for the project.
+
+#### 8.9.5 Delete Customer
+
+Available per customer row or in the edit view. Requires `customer:delete` permission (button hidden otherwise).
+
+The confirmation dialog text depends on `archivedProjectCount` returned by `GET /api/customers/:id` (see [api.md §14.2.5](api.md#1425-customer-management)):
+
+- When `archivedProjectCount` is 0, the standard confirmation phrasing applies.
+- When `archivedProjectCount > 0`, the confirmation surfaces a German warning that names the count and informs the user that those archived projects will be permanently deleted together with the customer.
+
+Deletion of a customer that still has active (non-archived) projects is rejected as a conflict by the API — the UI surfaces the German error message via the mutation error banner. See [ADR-0017](../adr/0017-soft-delete-as-board-archive.md) for the archive-vs-purge boundary.
 
 ---
 

@@ -36,6 +36,7 @@ export function projectRoutes(db: Database) {
               search: { type: 'string' },
               hasNoDates: { type: 'string' },
               customerId: { type: 'string', format: 'uuid' },
+              includeArchived: { type: 'string' },
             },
           },
         },
@@ -49,6 +50,7 @@ export function projectRoutes(db: Database) {
           search?: string;
           hasNoDates?: string;
           customerId?: string;
+          includeArchived?: string;
         };
         const result = await projectService.listProjects(request.user!, {
           offset: query.offset,
@@ -57,6 +59,7 @@ export function projectRoutes(db: Database) {
           search: query.search,
           hasNoDates: query.hasNoDates === 'true',
           customerId: query.customerId,
+          includeArchived: query.includeArchived === 'true',
         });
 
         return reply.code(200).send({ data: result.data, total: result.total });

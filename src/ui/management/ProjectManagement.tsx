@@ -24,8 +24,10 @@ export function ProjectManagement() {
   const projects = useProjectManagementStore((s) => s.projects);
   const loading = useProjectManagementStore((s) => s.loading);
   const error = useProjectManagementStore((s) => s.error);
+  const showArchived = useProjectManagementStore((s) => s.showArchived);
   const fetchProjects = useProjectManagementStore((s) => s.fetchProjects);
   const fetchCustomers = useProjectManagementStore((s) => s.fetchCustomers);
+  const setShowArchived = useProjectManagementStore((s) => s.setShowArchived);
   const deleteProject = useProjectManagementStore((s) => s.deleteProject);
   const clearError = useProjectManagementStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
@@ -50,10 +52,20 @@ export function ProjectManagement() {
     return () => clearTimeout(timer);
   }, [search, fetchProjects]);
 
-  const handleDelete = async (e: React.MouseEvent, project: Project) => {
+  // Refetch when showArchived toggles. The store reads `showArchived` from
+  // its own state at request time, so we only need to trigger a refetch
+  // here — no need to forward the flag as an argument.
+  const prevShowArchived = useRef(showArchived);
+  useEffect(() => {
+    if (showArchived === prevShowArchived.current) return;
+    prevShowArchived.current = showArchived;
+    fetchProjects(search || undefined);
+  }, [showArchived, fetchProjects, search]);
+
+  const handleArchive = async (e: React.MouseEvent, project: Project) => {
     e.stopPropagation();
     const confirmed = await requestConfirm(
-      STRINGS.ui.deleteConfirm(`${project.number} — ${project.title}`),
+      STRINGS.projects.archiveConfirm(`${project.number} — ${project.title}`),
     );
     if (!confirmed) return;
     await deleteProject(project.id);
@@ -92,6 +104,15 @@ export function ProjectManagement() {
             {STRINGS.ui.create}
           </button>
         )}
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+            data-testid="project-show-archived-toggle"
+          />
+          {STRINGS.projects.showArchived}
+        </label>
         <input
           className={styles.searchInput}
           placeholder={STRINGS.ui.search}
@@ -116,38 +137,60 @@ export function ProjectManagement() {
           </tr>
         </thead>
         <tbody>
-          {projects.map((p) => (
-            <tr key={p.id} className={styles.clickableRow} onClick={() => handleRowClick(p)}>
-              <td>{p.number}</td>
-              <td>{p.title}</td>
-              <td>{p.customer?.name ?? '—'}</td>
-              <td>
-                <span className={styles.badge} style={{ backgroundColor: stateColor(p.status) }}>
-                  {stateLabel(p.status)}
-                </span>
-              </td>
-              <td>
-                {p.plannedStart
-                  ? `${new Date(p.plannedStart).toLocaleDateString('de-DE')}${p.plannedEnd ? ' – ' + new Date(p.plannedEnd).toLocaleDateString('de-DE') : ''}`
-                  : STRINGS.projects.noDate}
-              </td>
-              <td>
-                {p.estimatedValue != null
-                  ? p.estimatedValue.toLocaleString('de-DE', {
-                      style: 'currency',
-                      currency: 'EUR',
-                    })
-                  : '—'}
-              </td>
-              {canDelete && (
+          {projects.map((p) => {
+            const rowClassName = p.deleted
+              ? `${styles.clickableRow} ${styles.rowInactive}`
+              : styles.clickableRow;
+            return (
+              <tr key={p.id} className={rowClassName} onClick={() => handleRowClick(p)}>
+                <td>{p.number}</td>
+                <td>{p.title}</td>
+                <td>{p.customer?.name ?? '—'}</td>
                 <td>
-                  <button className={styles.dangerButton} onClick={(e) => handleDelete(e, p)}>
-                    {STRINGS.ui.delete}
-                  </button>
+                  <span className={styles.badge} style={{ backgroundColor: stateColor(p.status) }}>
+                    {stateLabel(p.status)}
+                  </span>
+                  {p.deleted && (
+                    <>
+                      {' '}
+                      <span
+                        className={`${styles.badge} ${styles.badgeArchived}`}
+                        data-testid="project-archived-badge"
+                      >
+                        {STRINGS.projects.archivedBadge}
+                      </span>
+                    </>
+                  )}
                 </td>
-              )}
-            </tr>
-          ))}
+                <td>
+                  {p.plannedStart
+                    ? `${new Date(p.plannedStart).toLocaleDateString('de-DE')}${p.plannedEnd ? ' – ' + new Date(p.plannedEnd).toLocaleDateString('de-DE') : ''}`
+                    : STRINGS.projects.noDate}
+                </td>
+                <td>
+                  {p.estimatedValue != null
+                    ? p.estimatedValue.toLocaleString('de-DE', {
+                        style: 'currency',
+                        currency: 'EUR',
+                      })
+                    : '—'}
+                </td>
+                {canDelete && (
+                  <td>
+                    {!p.deleted && (
+                      <button
+                        className={styles.dangerButton}
+                        onClick={(e) => handleArchive(e, p)}
+                        data-testid="project-archive-button"
+                      >
+                        {STRINGS.projects.archive}
+                      </button>
+                    )}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 

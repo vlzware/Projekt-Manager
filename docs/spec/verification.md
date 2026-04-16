@@ -109,6 +109,7 @@ Every criterion carries exactly one tier marker:
 - **AC-91** `[crit]`: Deleting a customer with no active projects succeeds (hard delete). Any archived projects are purged atomically with the customer. The customer no longer appears in list or get responses.
 - **AC-92** `[crit]`: Deleting a customer that has active (non-archived) projects is rejected as a conflict (per the conflict error category in [api.md §14.4.1](api.md#1441-error-categories)). The customer and its projects remain unchanged.
 - **AC-93** `[crit]`: Deleting a customer requires `customer:delete` permission. Users without this permission receive an authorization error.
+- **AC-154** `[crit]`: The customer-delete confirmation dialog displays a German warning that names the archived-project count when `archivedProjectCount > 0` (sourced from `GET /api/customers/:id`). When the count is 0, the standard confirmation text is used. Rationale: the warning prevents silent destructive data loss — deleting a customer atomically purges all their archived projects (see [AC-91](#1511-customer-management) and [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)).
 - **AC-124** `[crit]`: Creating a customer with a client-supplied `id` persists the row under that id. Replaying the same request (same id, same user-supplied fields) returns the existing row with no duplicate persisted. A concurrent replay of the same id and body results in one insert and one replay, never two rows. See [api.md §14.2.5](api.md#1425-customer-management) for the field-comparison rule.
 
 ### 15.12 Project Management
@@ -118,6 +119,7 @@ Every criterion carries exactly one tier marker:
 - **AC-61** `[crit]`: Soft-deleting a project marks it as deleted. The project no longer appears in list results, views, or exports.
 - **AC-62** `[crit]`: Project number is unique. Creating a project whose `number` collides with an existing project is rejected with status 409 and error code `CONFLICT`. The German error message names the conflicting number. Distinct from the `IDEMPOTENCY_CONFLICT` path in [AC-127](#1517-data-integrity).
 - **AC-125** `[crit]`: Creating a project with a client-supplied `id` persists the row under that id. Replaying the same request (same id, same body) returns the existing row with no duplicate persisted. A concurrent replay of the same id and body results in one insert and one replay, never two rows. See [api.md §14.2.2](api.md#1422-projects) for the field-comparison rule.
+- **AC-151** `[crit]`: `GET /api/projects` accepts an `includeArchived` query parameter (boolean, default false). When false or omitted, the result excludes soft-deleted (`deleted = true`) rows. When true, the result includes them with their archive state preserved. The parameter AND-composes with the other filters (see [api.md §14.2.2](api.md#1422-projects)). Rationale: the default-safe boundary prevents leaking archived rows into contexts that expect active-only (misleading state).
 
 ### 15.13 User Management
 
@@ -151,10 +153,12 @@ Every criterion carries exactly one tier marker:
 
 ### 15.16 Management Views
 
-- **AC-76** `[vis]`: The project management view displays a sortable, searchable, filterable table of all non-deleted projects.
+- **AC-76** `[vis]`: The project management view displays a sortable, searchable, filterable table. Active projects are shown by default; archived projects are included when the `Archivierte einblenden` toggle is on (see [AC-152](#1516-management-views)).
 - **AC-77** `[vis]`: Creating a project from the management view with number, title, and customer produces a project in the first workflow state. The project appears in the table, the Kanban board, and the Calendar (if dates are set).
 - **AC-78** `[vis]`: Editing a project from the management view allows changing title, customer, assigned workers, estimated value, and notes. Status and project number are not editable through this form.
-- **AC-79** `[vis]`: Deleting a project from the management view soft-deletes it. The project disappears from all views and exports.
+- **AC-79** `[vis]`: Archiving a project from the management view (button label "Archivieren") soft-deletes it. The project disappears from Kanban, Calendar, and the default management list. It still appears in exports with archive state preserved, and in the management list when the "Archivierte einblenden" filter is active. See [ADR-0017](../adr/0017-soft-delete-as-board-archive.md).
+- **AC-152** `[vis]`: The project management view has an `Archivierte einblenden` toggle, off by default. When off, only active projects are shown. When on, the request is issued with `includeArchived=true` and archived projects appear in the table alongside active ones.
+- **AC-153** `[vis]`: Archived projects shown under the toggle are visually distinguished from active ones — muted row text and an `Archiviert` badge. The distinction is consistent across rows; non-archived rows carry neither.
 - **AC-80** `[vis]`: The customer management view displays a searchable, paginated table of all customers with project counts.
 - **AC-81** `[vis]`: Creating a customer makes it immediately available in project creation/editing dropdowns without page reload.
 - **AC-82** `[vis]`: The user management view is only accessible to users with `user:manage` permission (owner only under the default role set). It displays all users including deactivated ones. `user:read` alone is not sufficient — office holds `user:read` for worker-assignment dropdowns (see [architecture.md §49](architecture.md) and [api.md §14.3](api.md#143-authorization-rules)) but is not admitted to the admin view.
@@ -260,7 +264,7 @@ These tests run against a real (test) database, not mocks.
 - **AT-23**: Create customer with a name returns a customer with a generated ID.
 - **AT-24**: Update customer with PATCH semantics — omitted fields unchanged, `null` clears optional fields.
 - **AT-25**: List customers with `search` parameter filters by name substring.
-- **AT-26**: Get customer includes associated project count.
+- **AT-26**: `GET /api/customers/:id` returns `projectCount` (active projects) and `archivedProjectCount` (soft-deleted projects) alongside the customer row. Pins [AC-57](#1511-customer-management) and the data prerequisite for [AC-154](#1511-customer-management).
 - **AT-27**: List users returns all users (including deactivated) without `passwordHash`.
 - **AT-28**: Create user with valid fields returns a user that can log in.
 - **AT-29**: Create user with a duplicate username is rejected with a validation error.
@@ -309,6 +313,7 @@ These tests run against a real (test) database, not mocks.
 - **AT-75**: An import into a non-empty database with `override=true` wipes existing business data and restores atomically. An invalid row inside an override import rolls back to the original seeded state.
 - **AT-76**: A dry-run import (`dry_run=true`) validates the envelope, returns a preview shape containing would-write counts and validation errors, and writes nothing — both for valid and invalid envelopes.
 - **AT-77**: A full roundtrip — seed → export → wipe → import (override) → export — produces content-equivalent envelopes (`schema_version`, `customers`, `projects`, `project_workers` deep-equal; `exported_at` excluded).
+- **AT-78**: `GET /api/projects` accepts an `includeArchived` query parameter (boolean, default false). When false or omitted, archived rows are excluded; when true, archived rows are returned with `deleted = true`. The parameter AND-composes with the other list filters. Pins [AC-151](#1512-project-management).
 
 ### 16.3 E2E Tests
 

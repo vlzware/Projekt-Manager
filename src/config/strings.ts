@@ -61,6 +61,10 @@ export const STRINGS = {
     noDate: 'Kein Termin',
     numberTaken: (n: string) => `Projektnummer "${n}" ist bereits vergeben.`,
     numberAvailable: 'Verfügbar',
+    archive: 'Archivieren',
+    archiveConfirm: (identifier: string) => `Projekt ${identifier} wirklich archivieren?`,
+    showArchived: 'Archivierte einblenden',
+    archivedBadge: 'Archiviert',
     transitionConfirm: (from: string, to: string) => `Status ändern: ${from} → ${to}?`,
     cannotAdvanceTerminal:
       'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',

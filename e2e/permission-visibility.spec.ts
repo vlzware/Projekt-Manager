@@ -215,13 +215,13 @@ test.describe('AC-121: permission-based UI visibility', () => {
           c.canCreateProject ? 1 : 0,
         );
 
-        const projectDeleteBtns = page
+        const projectArchiveBtns = page
           .getByTestId('project-table')
-          .locator('tbody button', { hasText: /löschen/i });
+          .getByTestId('project-archive-button');
         if (c.canDeleteProject) {
-          expect(await projectDeleteBtns.count()).toBeGreaterThan(0);
+          expect(await projectArchiveBtns.count()).toBeGreaterThan(0);
         } else {
-          expect(await projectDeleteBtns.count()).toBe(0);
+          expect(await projectArchiveBtns.count()).toBe(0);
         }
 
         // Edit-form Save button: click into first row to open the form.

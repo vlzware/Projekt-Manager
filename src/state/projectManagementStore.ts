@@ -22,10 +22,17 @@ interface ProjectManagementState {
   customers: Customer[];
   loading: boolean;
   error: string | null;
+  /**
+   * Whether the list should include archived (soft-deleted) projects.
+   * Default `false` — archived rows are hidden. Toggled by the
+   * "Archivierte einblenden" checkbox in the management toolbar (AC-152).
+   */
+  showArchived: boolean;
 
   fetchProjects: (search?: string) => Promise<void>;
   searchProjects: (search: string) => Promise<Project[]>;
   fetchCustomers: () => Promise<void>;
+  setShowArchived: (v: boolean) => void;
   createProject: (data: {
     id?: string;
     number: string;
@@ -54,10 +61,17 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
   customers: [],
   loading: false,
   error: null,
+  showArchived: false,
 
   fetchProjects: async (search?: string) => {
     set({ loading: true, error: null });
-    const result = await projectApi.list(search ? { search } : undefined);
+    const { showArchived } = get();
+    // Build the param bag from current state — omit undefined fields so
+    // the server sees only what we actually meant to send.
+    const params: { search?: string; includeArchived?: boolean } = {};
+    if (search) params.search = search;
+    if (showArchived) params.includeArchived = true;
+    const result = await projectApi.list(Object.keys(params).length ? params : undefined);
 
     if (!result.ok) {
       if (result.sessionExpired) {
@@ -69,6 +83,10 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
     }
 
     set({ projects: result.data.data, loading: false });
+  },
+
+  setShowArchived: (v: boolean) => {
+    set({ showArchived: v });
   },
 
   fetchCustomers: async () => {

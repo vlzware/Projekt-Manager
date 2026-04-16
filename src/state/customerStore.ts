@@ -19,6 +19,17 @@ import { handleSessionExpired } from './sessionExpired';
  */
 export type CreateCustomerOutcome = { status: 'ok' } | { status: 'error' } | { status: 'conflict' };
 
+/**
+ * Result of `fetchCustomerDetail` — the counts-bearing customer payload
+ * from `GET /api/customers/:id`. `null` signals the store already wrote
+ * a user-facing error message (or a session-expired redirect has been
+ * triggered). The caller should abort its flow when null comes back.
+ */
+export type CustomerDetail = Customer & {
+  projectCount: number;
+  archivedProjectCount: number;
+};
+
 interface CustomerState {
   customers: Customer[];
   total: number;
@@ -26,6 +37,7 @@ interface CustomerState {
   error: string | null;
 
   fetchCustomers: (search?: string) => Promise<void>;
+  fetchCustomerDetail: (id: string) => Promise<CustomerDetail | null>;
   searchCustomers: (search: string) => Promise<Customer[]>;
   createCustomer: (data: {
     id?: string;
@@ -155,6 +167,23 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
       total: s.total - 1,
     }));
     return true;
+  },
+
+  fetchCustomerDetail: async (id) => {
+    set({ error: null });
+    const result = await customerApi.get(id);
+    if (!result.ok) {
+      if (result.sessionExpired) {
+        handleSessionExpired();
+        return null;
+      }
+      // Surface the error to the caller; the UI shows it via the store's
+      // existing `error` channel. Do not fall back silently — callers
+      // depend on this payload for destructive-flow warnings.
+      set({ error: result.error.message });
+      return null;
+    }
+    return result.data;
   },
 
   clearError: () => set({ error: null }),

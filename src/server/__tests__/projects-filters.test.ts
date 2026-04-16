@@ -1,7 +1,7 @@
 /**
  * API integration tests: Project list filters.
  *
- * Tests AT-39 to AT-41 from the test specification (verification.md §16.3).
+ * Tests AT-39 to AT-41 and AT-78 from the test specification (verification.md §16.2).
  * Extends the list endpoint (AT-8 in projects-list.test.ts) with filter coverage.
  * Runs against a real test database via Fastify inject (no network).
  *
@@ -14,11 +14,12 @@
  *   - hasNoDates: boolean — projects without planned dates
  *   - customerId: FK reference
  *   - plannedStartFrom / plannedStartTo: date range
+ *   - includeArchived: boolean — include soft-deleted rows (default false)
  *   - All filters use AND logic
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startApp, stopApp, login, authGet } from '../../test/api-helpers.js';
+import { startApp, stopApp, login, authGet, authPost, authDelete } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 
 describe('Project List Filters', () => {
@@ -213,6 +214,96 @@ describe('Project List Filters', () => {
       expect(body.data.length).toBeLessThanOrEqual(1);
       // total still reflects the full filtered count, not the page
       expect(body.total).toBeGreaterThanOrEqual(body.data.length);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AT-78: includeArchived filter (AC-151)
+  // ---------------------------------------------------------------
+  // Setup creates an archived project in `beforeAll` by creating a fresh
+  // project, then soft-deleting it via DELETE /api/projects/:id (same
+  // pattern as AT-22). The leaked row is tolerated — tests only assert
+  // on rows they created or seed rows that cannot be archived.
+  describe('AT-78: Filter by includeArchived', () => {
+    /** ID of the archived project used across the cases below. */
+    let archivedId: string;
+    /** The status the archived project carried at the time of archive. */
+    const archivedStatus = 'anfrage';
+    /** Project number — used to locate the row in list responses without
+     *  depending on id-equality when a case needs to identify the row. */
+    const archivedNumber = 'FILT-ARC-001';
+
+    beforeAll(async () => {
+      // Reuse a customer from seed for the archive fixture. The list
+      // endpoint already works for active projects (covered by AT-8) so
+      // this lookup is a precondition, not a test step.
+      const customerRes = await authGet(token, '/api/customers');
+      const customers = customerRes.json().customers ?? customerRes.json().data;
+      const customerId = customers[0].id as string;
+
+      const createRes = await authPost(token, '/api/projects', {
+        number: archivedNumber,
+        title: 'Archive-filter fixture',
+        customerId,
+      });
+      archivedId = createRes.json().id as string;
+
+      // Soft-delete — the row now has deleted=true.
+      await authDelete(token, `/api/projects/${archivedId}`);
+    });
+
+    it('excludes archived rows by default (includeArchived omitted)', async () => {
+      // Default-exclude behaviour is already covered by AT-22 for the
+      // generic soft-delete plumbing. This case re-asserts specifically
+      // for the includeArchived contract's neutral default — the archived
+      // fixture must not appear without the explicit opt-in.
+      const res = await authGet(token, '/api/projects?limit=200');
+      expect(res.statusCode).toBe(200);
+
+      const ids = (res.json().data as { id: string }[]).map((p) => p.id);
+      expect(ids).not.toContain(archivedId);
+    });
+
+    it('excludes archived rows when includeArchived=false', async () => {
+      const res = await authGet(token, '/api/projects?includeArchived=false&limit=200');
+      expect(res.statusCode).toBe(200);
+
+      const ids = (res.json().data as { id: string }[]).map((p) => p.id);
+      expect(ids).not.toContain(archivedId);
+    });
+
+    it('includes archived rows with deleted=true when includeArchived=true', async () => {
+      const res = await authGet(token, '/api/projects?includeArchived=true&limit=200');
+      expect(res.statusCode).toBe(200);
+
+      const row = (res.json().data as { id: string; deleted: boolean }[]).find(
+        (p) => p.id === archivedId,
+      );
+      expect(row).toBeDefined();
+      expect(row!.deleted).toBe(true);
+    });
+
+    it('AND-composes with other filters (includeArchived=true & status match)', async () => {
+      // The archived fixture was created with default status `anfrage`.
+      // Combining includeArchived=true with status=anfrage must return it;
+      // combining with a non-matching status must not.
+      const matching = await authGet(
+        token,
+        `/api/projects?includeArchived=true&status=${archivedStatus}&limit=200`,
+      );
+      expect(matching.statusCode).toBe(200);
+      const matchIds = (matching.json().data as { id: string }[]).map((p) => p.id);
+      expect(matchIds).toContain(archivedId);
+
+      // Any workflow status different from the archived fixture's (`anfrage`).
+      const nonMatchingStatus = 'erledigt';
+      const nonMatching = await authGet(
+        token,
+        `/api/projects?includeArchived=true&status=${nonMatchingStatus}&limit=200`,
+      );
+      expect(nonMatching.statusCode).toBe(200);
+      const nonMatchIds = (nonMatching.json().data as { id: string }[]).map((p) => p.id);
+      expect(nonMatchIds).not.toContain(archivedId);
     });
   });
 });

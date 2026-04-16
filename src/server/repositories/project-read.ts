@@ -139,6 +139,12 @@ export interface ListProjectsOpts {
   search?: string;
   hasNoDates?: boolean;
   customerId?: string;
+  /**
+   * When true, include soft-deleted (archived) rows in the result.
+   * Default `false` — archived rows excluded (AC-151). The flag composes
+   * with all other filters via AND.
+   */
+  includeArchived?: boolean;
 }
 
 export async function listProjects(
@@ -146,8 +152,13 @@ export async function listProjects(
   caller: AuthUser,
   opts: ListProjectsOpts = {},
 ): Promise<{ data: ReturnType<typeof toProject>[]; total: number }> {
-  // Build WHERE conditions
-  const conditions = [eq(projects.deleted, false)];
+  // Build WHERE conditions. AC-151: only exclude archived rows when
+  // includeArchived is not truthy — when true, the deleted predicate is
+  // omitted so archived rows appear. All other filters still AND-compose.
+  const conditions = [];
+  if (!opts.includeArchived) {
+    conditions.push(eq(projects.deleted, false));
+  }
 
   if (opts.status) {
     const statuses = Array.isArray(opts.status) ? opts.status : [opts.status];
