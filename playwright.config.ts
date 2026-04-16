@@ -116,11 +116,5 @@ export default defineConfig({
     command: 'npm run dev',
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
-    env: {
-      // E2E tests use fresh browser contexts with separate logins (steps
-      // 23/24 deactivate/reactivate, permission-visibility per-role logins).
-      // The production limit of 5/min is too tight for the full suite.
-      LOGIN_RATE_LIMIT_MAX: '30',
-    },
   },
 });

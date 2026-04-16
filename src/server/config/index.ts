@@ -63,13 +63,21 @@ export function getCookieSecure(): boolean {
  * happens at call time — consistent with getCookieSecure() and the
  * file-level rule that process.env is never read at import time.
  *
- * The login limit can be raised via LOGIN_RATE_LIMIT_MAX for
- * environments where multiple browser contexts log in rapidly
- * (e.g. Playwright E2E tests with fresh-context assertions).
- * Production default: 5 per minute.
+ * Login limit default is environment-aware:
+ *   - production (NODE_ENV=production): 5/min — tight anti-spraying guard.
+ *   - dev/test: 30/min — Playwright E2E and manual dev flows log in
+ *     with many fresh browser contexts; 5/min throttles the suite.
+ * `LOGIN_RATE_LIMIT_MAX` overrides both, for operators that want a
+ * different floor or ceiling without rebuilding.
  */
 export function getRateLimit() {
-  const loginRateMax = Number(process.env.LOGIN_RATE_LIMIT_MAX) || 5;
+  const override = Number(process.env.LOGIN_RATE_LIMIT_MAX);
+  // Default-to-production when NODE_ENV is missing — mirrors the zod
+  // default in env.ts (fail-closed: an unconfigured environment gets the
+  // tighter anti-spraying ceiling, not the looser dev ceiling).
+  const nodeEnv = process.env.NODE_ENV ?? 'production';
+  const defaultMax = nodeEnv === 'production' ? 5 : 30;
+  const loginRateMax = Number.isFinite(override) && override > 0 ? override : defaultMax;
   return {
     /** Login endpoint. */
     login: { max: loginRateMax, timeWindow: '1 minute' as const },
