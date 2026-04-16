@@ -57,7 +57,7 @@ Reasonable assumptions will be made in regards of all company-specific details. 
 - All customer's and project's data is saved and managed in the central system. UIs are available for easily working with and previewing the data;
 - A calendar overview is available, where the projects can be seen and planned;
 - A Kanban view is available, where all tasks are shown in the three simple groups - waiting, in progress, done. Proper colors, formatting, etc. are to be used to discern among different types of tasks and their belonging to the projects;
-- A "worker" view is available, where only the relevant projects are shown to the particular worker, on a calendar view. Detailed view, with information the worker needs - such as object data, GPS coordinates, etc., if available, are also presented;
+- A "worker" view is available, where only the relevant projects are shown to the particular worker, on a calendar/Kanban view. Detailed view, with information the worker needs - such as object data, GPS coordinates, etc., if available, are also presented;
 - The worker has the option to add notes and information, as well as upload pictures, Aufmass, etc.
 - The system takes care to optimize the binary files for size and organize them into a neat structure. Alerts are sent when approaching predefined limits on space;
 - The system maintains a configurable list of events and list of persons who are to be notified when these events trigger. The main notification should be per email with an additional, optional WhatsApp notification;
