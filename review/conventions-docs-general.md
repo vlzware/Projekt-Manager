@@ -1,3 +1,5 @@
+<!-- READ-ONLY for AI -->
+
 # Documentation Conventions (general)
 
 These conventions apply to the following documentation files:

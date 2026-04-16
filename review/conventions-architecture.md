@@ -1,3 +1,5 @@
+<!-- READ-ONLY for AI -->
+
 # ARCHITECTURE.md Conventions
 
 `ARCHITECTURE.md` lives at the project root. It serves as the navigation guide to the implementation — all main implementation concepts should be listed clearly and concisely, as a reference. The reader should be able to quickly gather an overview of the whole system and have a clear understanding of where to look to dive deeper into the code.

@@ -1,3 +1,5 @@
+<!-- READ-ONLY for AI -->
+
 # Spec Conventions
 
 Rules the [product specification](../docs/spec/index.md) must satisfy. Used as a review rubric — every spec change is verified against this checklist before merge. IDs let findings cite a rule directly.
@@ -7,7 +9,7 @@ Rules the [product specification](../docs/spec/index.md) must satisfy. Used as a
 - **S-SSOT** — Each rule is stated at one authoritative location. Other places cross-reference, not restate.
 - **S-COMP** — The spec is logically complete. Every observable behavior has a defined trigger, outcome, and boundary condition.
 - **S-ERRP** — Error paths are defined. For every mutation, the spec states what happens when it fails, conflicts, or is unauthorized.
-- **S-TECH** — The spec strives to be tech-agnostic. Test: if swapping TypeScript / React / Fastify would change the statement, it belongs in an [ADR](../docs/adr/index.md). **TypeScript snippets are explicitly permitted to avoid pseudo-code** and are not violations on their own — only flag a snippet if the statement it makes would not survive a stack swap.
+- **S-TECH** — The spec strives to be tech-agnostic. Test: if swapping TypeScript / React / Fastify would change the statement, it belongs in an [ADR](../docs/adr/index.md) or in [`ARCHITECTURE.md`](../ARCHITECTURE.md). Code snippets as examples are permitted for clarity and are not violations on their own, as long as the swappping test passes.
 - **S-NDET** — The spec leaves minute implementation details to the implementers.
 - **S-NBLO** — Each statement is as short as possible without losing logic.
 - **S-NLOG** — The spec is a contract for the code. It contains no historical references, iteration mentions, roadmap notes, or plans.

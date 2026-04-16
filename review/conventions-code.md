@@ -1,8 +1,10 @@
+<!-- READ-ONLY for AI -->
+
 # Code Conventions
 
 Rules for the code:
 
-- **C-DATA** — Data integrity, data loss, stale data — **CRITICAL**.
+- **C-DATA** — Ensuring data integrity, preventing data loss or stale data — **CRITICAL**.
 - **C-ARCH** — Adherence to the specification and `ARCHITECTURE.md` at the project's root.
 - **C-EXTE** — No "silent extensions" — behavior the spec does not describe.
 - **C-SRES** — Single responsibility.
@@ -13,5 +15,6 @@ Rules for the code:
 - **C-HARD** — No magic strings/numbers — named constants or enums.
 - **C-DEAD** — No dead code — commented-out blocks, unreachable branches.
 - **C-SECU** — Authorization checked before sensitive data is accessed.
+- **C-BWCO** — Backward-compatibility is not a concern now. This statement will be adjusted when real data is started being used.
 
 Note: All code in the project is written by AI agents and may contain errors, inaccuracies and/or omissions.

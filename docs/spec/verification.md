@@ -6,10 +6,10 @@
 
 The system is accepted when all of the following are true.
 
-Every criterion carries exactly one tier marker (see [CONTRIBUTING.md § Acceptance Criteria](../../CONTRIBUTING.md#acceptance-criteria) and [conventions-spec.md S-ACS1](../../review/conventions-spec.md)):
+Every criterion carries exactly one tier marker:
 
-- **`[crit]`** — **Critical**: a defect means data corruption, financial impact, authentication/authorization failure, data integrity violation, or misleading state that causes wrong user decisions. Verified by unit and/or integration test.
-- **`[vis]`** — **Visual / Design**: specifies expected behavior that does not guard a critical path. Verified by visual regression (E2E screenshot diff).
+- **`[crit]`** — **Critical**: a defect means data corruption, financial impact, authentication/authorization failure, data integrity violation, or misleading state that causes wrong user decisions. Verified by automated test. The method matches the contract's surface — unit, integration, E2E or a mix thereof.
+- **`[vis]`** — **Visual / Design**: specifies expected behavior that does not guard a critical path. Verified by structural E2E as well as regular human review.
 - **`[infra]`** — **Infrastructure / Structural**: a constraint on the deployed environment, the build pipeline, or the source-tree organization. Verified by deployment procedures, CI gates, lint, or code review — not by tests against the running system.
 
 ### 15.1 Core
