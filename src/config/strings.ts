@@ -36,6 +36,8 @@ export const STRINGS = {
       'Die Datenformat-Version der Datei passt nicht zur aktuellen Version des Systems.',
     targetNotEmpty:
       'Die Datenbank ist nicht leer. Bestätigen Sie das Überschreiben, um fortzufahren.',
+    restoreConfirmationMismatch:
+      'Bestätigung fehlt oder stimmt nicht. Bitte den angezeigten Text exakt eingeben.',
   },
 
   entities: {
@@ -265,15 +267,15 @@ export const STRINGS = {
     exportDescription: 'Lädt alle Kunden, Projekte und Zuordnungen als eine JSON-Datei herunter.',
     exportAction: 'Herunterladen',
 
-    importHeading: 'Import',
+    importHeading: 'Wiederherstellen',
     importDescription:
       'Stellt den Datenbestand aus einer zuvor exportierten JSON-Datei wieder her.',
-    importAction: 'Importieren',
+    importAction: 'Wiederherstellen',
     projectWorkers: 'Zuordnungen',
     wouldWriteHeader: 'Anzahl',
     validationErrorsHeading: 'Validierungsfehler',
-    overrideWarning:
-      'Die bestehenden Daten werden ersetzt. Hiermit bestätige ich, dass ich dies möchte.',
+    restoreDestructiveNotice: 'Die bestehenden Daten werden unwiderruflich gelöscht.',
+    restorePhrasePrompt: (phrase: string) => `Zur Bestätigung bitte „${phrase}" eingeben:`,
     importSuccessHeading: 'Wiederherstellung erfolgreich.',
   },
 

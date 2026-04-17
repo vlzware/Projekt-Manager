@@ -36,7 +36,11 @@ import {
   getApp,
   authDelete,
 } from '../../test/api-helpers.js';
-import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
+import {
+  SEED_DEFAULT_PASSWORD,
+  SEED_USERS,
+  EXPECTED_RESTORE_PHRASE,
+} from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import { seed } from '../seed.js';
 import type { Database } from '../db/connection.js';
@@ -495,7 +499,8 @@ describe('Unified Data Exchange', () => {
 
       const bad = buildOverrideEnvelope();
       bad.schema_version = CURRENT_SCHEMA_VERSION + 1;
-      const res = await authPost(ownerToken, '/api/import?override=true', bad);
+      const body = { ...bad, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+      const res = await authPost(ownerToken, '/api/import?override=true', body);
 
       expect(res.statusCode).toBeGreaterThanOrEqual(400);
       expect(res.statusCode).toBeLessThan(500);
@@ -511,7 +516,8 @@ describe('Unified Data Exchange', () => {
     it('rejects an envelope with an older schema_version', async () => {
       const bad = buildOverrideEnvelope();
       bad.schema_version = CURRENT_SCHEMA_VERSION - 1;
-      const res = await authPost(ownerToken, '/api/import?override=true', bad);
+      const body = { ...bad, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+      const res = await authPost(ownerToken, '/api/import?override=true', body);
 
       expect(res.statusCode).toBeGreaterThanOrEqual(400);
       expect(res.statusCode).toBeLessThan(500);
@@ -856,7 +862,8 @@ describe('Unified Data Exchange', () => {
       for (const c of env.customers) expect(seedIds.has(c.id)).toBe(false);
 
       try {
-        const res = await authPost(ownerToken, '/api/import?override=true', env);
+        const body = { ...env, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
         expect(res.statusCode).toBe(200);
 
         const after = await authGet(ownerToken, '/api/export');
@@ -884,7 +891,8 @@ describe('Unified Data Exchange', () => {
       broken.projects[0]!.customerId = UUID_ZERO;
 
       try {
-        const res = await authPost(ownerToken, '/api/import?override=true', broken);
+        const body = { ...broken, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
         expect(res.statusCode).toBeGreaterThanOrEqual(400);
 
         // Seed must be unchanged — rollback covers the wipe, not just the insert.
@@ -1009,6 +1017,113 @@ describe('Unified Data Exchange', () => {
         expect(e2.customers).toEqual(e1.customers);
         expect(e2.projects).toEqual(e1.projects);
         expect(e2.project_workers).toEqual(e1.project_workers);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-160: restore confirmation phrase gate
+  // Server-authoritative check on override into a non-empty DB.
+  // AT-82 pins enforcement (missing, case-wrong, trim, happy path).
+  // AT-83 pins the two exempt paths (dry-run, empty target).
+  // ---------------------------------------------------------------
+  describe('AC-160: restore confirmation phrase gate', () => {
+    // AT-82 — missing phrase: override into non-empty DB without a
+    // `confirmation_phrase` rejects with 422 RESTORE_CONFIRMATION_MISMATCH
+    // and leaves the seed untouched.
+    it('rejects override into non-empty DB when confirmation_phrase is missing', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const baseline = before.json() as ExportEnvelope;
+
+      const env = buildOverrideEnvelope();
+      const res = await authPost(ownerToken, '/api/import?override=true', env);
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('RESTORE_CONFIRMATION_MISMATCH');
+
+      const after = await authGet(ownerToken, '/api/export');
+      const post = after.json() as ExportEnvelope;
+      expect(post.customers.length).toBe(baseline.customers.length);
+      expect(post.projects.length).toBe(baseline.projects.length);
+    });
+
+    // AT-82 — case sensitivity: a phrase that differs only in case is
+    // rejected. The body wraps the lowercased value in whitespace so a
+    // permissive implementation that trimmed but ignored case would still
+    // fail this test — the assertion isolates "case" from "trim".
+    it('rejects override when confirmation_phrase has wrong casing', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const baseline = before.json() as ExportEnvelope;
+
+      const env = buildOverrideEnvelope();
+      const body = {
+        ...env,
+        confirmation_phrase: `  ${EXPECTED_RESTORE_PHRASE.toLowerCase()}  `,
+      };
+      const res = await authPost(ownerToken, '/api/import?override=true', body);
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('RESTORE_CONFIRMATION_MISMATCH');
+
+      const after = await authGet(ownerToken, '/api/export');
+      const post = after.json() as ExportEnvelope;
+      expect(post.customers.length).toBe(baseline.customers.length);
+    });
+
+    // AT-82 — happy path: matching phrase commits the atomic wipe+restore.
+    it('accepts override with a matching confirmation_phrase', async () => {
+      const env = buildOverrideEnvelope();
+      const body = { ...env, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+      try {
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBe(200);
+
+        const after = await authGet(ownerToken, '/api/export');
+        const post = after.json() as ExportEnvelope;
+        expect(post.customers.length).toBe(env.customers.length);
+        const newIds = new Set(post.customers.map((c) => c.id));
+        for (const c of env.customers) expect(newIds.has(c.id)).toBe(true);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-82 — trim: leading/trailing whitespace around the phrase is tolerated.
+    it('accepts override when confirmation_phrase has surrounding whitespace', async () => {
+      const env = buildOverrideEnvelope();
+      const body = { ...env, confirmation_phrase: `  ${EXPECTED_RESTORE_PHRASE}\n` };
+      try {
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-83 — dry-run exempt: dry-run against a non-empty DB without a
+    // phrase returns the preview (no writes, no enforcement).
+    it('accepts dry_run without confirmation_phrase on non-empty DB', async () => {
+      const env = buildOverrideEnvelope();
+      const res = await authPost(ownerToken, '/api/import?override=true&dry_run=true', env);
+      expect(res.statusCode).toBe(200);
+      const preview = res.json() as { target_non_empty: boolean };
+      expect(preview.target_non_empty).toBe(true);
+    });
+
+    // AT-83 — empty-target exempt: override into an empty DB succeeds
+    // without a phrase (there is nothing to wipe).
+    it('accepts override into empty DB without confirmation_phrase', async () => {
+      const env = buildFreshEnvelope();
+      try {
+        await wipeBusinessData();
+        const res = await authPost(ownerToken, '/api/import?override=true', env);
+        expect(res.statusCode).toBe(200);
+
+        const after = await authGet(ownerToken, '/api/export');
+        const post = after.json() as ExportEnvelope;
+        expect(post.customers.length).toBe(env.customers.length);
       } finally {
         await reseedAndRelogin();
       }

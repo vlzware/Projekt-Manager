@@ -19,6 +19,7 @@ export type ErrorCode =
   | 'RATE_LIMITED'
   | 'SCHEMA_VERSION_MISMATCH'
   | 'TARGET_NOT_EMPTY'
+  | 'RESTORE_CONFIRMATION_MISMATCH'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
@@ -92,6 +93,14 @@ export function schemaVersionMismatch(expected: number, got: number): AppError {
 
 export function targetNotEmpty(): AppError {
   return new AppError('TARGET_NOT_EMPTY', STRINGS.errors.targetNotEmpty, 409);
+}
+
+export function restoreConfirmationMismatch(): AppError {
+  return new AppError(
+    'RESTORE_CONFIRMATION_MISMATCH',
+    STRINGS.errors.restoreConfirmationMismatch,
+    422,
+  );
 }
 
 /**

@@ -105,7 +105,7 @@ The system is authenticated and implements a **four-role permission matrix**. Th
 - **Worker** has read-only access scoped to the projects the worker is assigned to (assignment recorded in `project_workers`). Customer reads are scoped to the customers referenced by those projects — a worker can reach a customer's detail from a project the worker is assigned to, but the customer list and direct customer lookups exclude customers the worker has no project link to. Workers also have change-own-password.
 - **Bookkeeper** currently has unscoped read access to projects and customers plus change-own-password. This is an MVP placeholder: the kickoff calls for an invoice-oriented view ([kickoff.md](../project/kickoff.md)) tailored to the bookkeeping role, which is not yet implemented. Until that view lands, the bookkeeper is given the broader read surface rather than no view at all. Tightening the scope is deferred until the invoice-oriented view in [kickoff.md](../project/kickoff.md) is specified — not in scope for iteration 7.
 - Self-registration is not available — users are created by an administrator, by seed data, or by the first-run bootstrap (see [§4.5](#45-authentication)).
-- The Daten navigation tab ([ui.md §8.11](ui.md#811-daten-view)) is governed by `data:export`; the import form within it is additionally governed by `data:restore`.
+- The Daten navigation tab ([ui.md §8.11](ui.md#811-daten-view)) is governed by `data:export`; the restore form within it is additionally governed by `data:restore`.
 
 The role set and per-role permission list are configurable **[C]**.
 
@@ -143,7 +143,7 @@ This specification is split across multiple files:
 | -------------------------------------- | -------- | -------------------------------------------------------------------------------------------- |
 | **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                                    |
 | **[data-model.md](data-model.md)**     | 5–7      | Project, Customer, User, Session entities; state metadata; persistence principles; seed data |
-| **[ui.md](ui.md)**                     | 8–10     | Layout, navigation, workflow views, management views, import/export, interactions            |
+| **[ui.md](ui.md)**                     | 8–10     | Layout, navigation, workflow views, management views, restore/export, interactions           |
 | **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security            |
 | **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                             |
 | **[verification.md](verification.md)** | 15–17    | Acceptance criteria, test specifications, risks                                              |

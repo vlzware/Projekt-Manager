@@ -18,6 +18,11 @@ const ENVELOPE_BODY_SCHEMA = {
     customers: { type: 'array' },
     projects: { type: 'array' },
     project_workers: { type: 'array' },
+    // AC-160: optional on the dry-run and empty-target paths; required by
+    // ImportService when `override=true` commits into a non-empty DB. The
+    // maxLength keeps a pathological payload from reaching the service —
+    // the configured phrase is short and any sane input fits well under 64.
+    confirmation_phrase: { type: 'string', maxLength: 64 },
   },
 } as const;
 
@@ -67,11 +72,14 @@ export function dataExchangeRoutes(db: Database) {
       },
       async (request, reply) => {
         const query = request.query as { dry_run?: string; override?: string };
+        const { confirmation_phrase: rawPhrase, ...envelope } = request.body as Envelope & {
+          confirmation_phrase?: unknown;
+        };
         const opts: ImportOptions = {
           dryRun: query.dry_run === 'true',
           override: query.override === 'true',
+          confirmationPhrase: typeof rawPhrase === 'string' ? rawPhrase : null,
         };
-        const envelope = request.body as Envelope;
         const result = await importService.import(envelope, opts);
         return reply.code(200).send(result);
       },

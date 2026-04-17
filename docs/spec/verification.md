@@ -147,8 +147,10 @@ Every criterion carries exactly one tier marker:
 - **AC-140** `[crit]`: A dry-run import performs full validation, returns a preview, and makes no writes. Subsequent reads show no state change.
 - **AC-141** `[crit]`: A full roundtrip — seed → export → wipe → import → export — produces byte-identical export output. Verified in CI on every build.
 - **AC-142** `[vis]`: The Daten navigation tab is hidden for users without `data:export`. Specialization of [AC-121](#1516-management-views) for this tab.
-- **AC-143** `[vis]`: The unified import UI runs a dry-run and presents the resulting preview before the commit action is enabled. When the target database is non-empty, an explicit warning must be acknowledged before commit is possible.
+- **AC-143** `[vis]`: The unified restore UI runs a dry-run and presents the resulting preview before the commit action is enabled.
 - **AC-144** `[vis]`: The unified export UI offers a single "Herunterladen" action that produces the unified JSON file. The filename includes a timestamp.
+- **AC-160** `[crit]`: `POST /api/import?override=true` into a non-empty database requires a `confirmation_phrase` field in the request body matching the configured phrase **[C]**. A missing or non-matching phrase is rejected with error code `RESTORE_CONFIRMATION_MISMATCH` and performs no writes. Dry-run requests and override-into-empty-target requests are exempt. Comparison is case-sensitive after trimming leading/trailing whitespace.
+- **AC-161** `[vis]`: The restore UI renders a destructive-action confirmation input only when the dry-run preview indicates the target database is non-empty. The commit action stays disabled until the typed value matches the configured phrase **[C]**. Client-side disabling is a UX affordance; the server remains authoritative (see [AC-160](#1514-data-exchange)).
 
 ### 15.15 Navigation
 
@@ -322,6 +324,8 @@ These tests run against a real (test) database, not mocks.
 - **AT-79**: `DELETE /api/projects/:id/purge` as owner hard-deletes an archived project. Subsequent GET returns 404; list with `includeArchived=true` omits the row; any `project_workers` rows are gone. Pins [AC-155](#1512-project-management).
 - **AT-80**: `DELETE /api/projects/:id/purge` against a non-archived project returns 409 with the German message and the project row is unchanged. Pins [AC-156](#1512-project-management).
 - **AT-81**: `DELETE /api/projects/:id/purge` by a caller without `project:purge` (owner → yes; office/worker/bookkeeper → 403). Against a non-existent id returns 404. Pins [AC-157](#1512-project-management) and [AC-158](#1512-project-management).
+- **AT-82**: `POST /api/import?override=true` into a non-empty database with a missing or non-matching `confirmation_phrase` returns 422 `RESTORE_CONFIRMATION_MISMATCH`; the original data is unchanged. With a phrase matching the configured value (including one whose body has leading/trailing whitespace) the request returns 200 and the atomic wipe+restore completes. Comparison is case-sensitive — a case-different phrase is rejected. Pins [AC-160](#1514-data-exchange).
+- **AT-83**: `POST /api/import?override=true` without `confirmation_phrase` is accepted on the exempt paths — `dry_run=true` returns 200 with the preview; an override into an empty database returns 200 and restores successfully. Pins [AC-160](#1514-data-exchange).
 
 ### 16.3 E2E Tests
 
@@ -349,8 +353,8 @@ The end-to-end path is covered by focused, isolated test files rather than a sin
 **Data exchange flows**:
 
 25. User with `data:export` clicks the export action in the Daten view. The downloaded file is a unified JSON envelope covering every customer, project, and project-worker assignment, including archived rows.
-26. User with `data:restore` uploads an exported envelope into an empty database via the import form. The dry-run preview renders, the user commits, and the restored rows match the source by ID.
-27. User with `data:restore` attempts the same import into a non-empty database. The UI surfaces a warning, requires explicit acknowledgement, and the commit succeeds atomically when the override flag is sent.
+26. User with `data:restore` uploads an exported envelope into an empty database via the restore form. The dry-run preview renders, the user commits, and the restored rows match the source by ID.
+27. User with `data:restore` attempts the same restore into a non-empty database. The UI surfaces a destructive-action warning with a confirmation-phrase input and keeps the commit disabled. After the user types the configured phrase **[C]**, the commit enables; on confirm, the server re-validates the phrase and the request succeeds as an atomic wipe+restore.
 
 ---
 

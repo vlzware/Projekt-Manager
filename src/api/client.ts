@@ -400,14 +400,21 @@ export const userApi = {
 export const dataApi = {
   export: () => apiCall<Envelope>('/api/export'),
 
-  import: (envelope: Envelope, opts: { dryRun: boolean; override: boolean }) => {
+  import: (
+    envelope: Envelope,
+    opts: { dryRun: boolean; override: boolean; confirmationPhrase?: string | null },
+  ) => {
     const params = new URLSearchParams();
     if (opts.dryRun) params.set('dry_run', 'true');
     if (opts.override) params.set('override', 'true');
     const qs = params.toString();
+    const body =
+      opts.confirmationPhrase != null
+        ? { ...envelope, confirmation_phrase: opts.confirmationPhrase }
+        : envelope;
     return apiCall<ImportResult | DryRunPreview>('/api/import' + (qs ? '?' + qs : ''), {
       method: 'POST',
-      body: envelope,
+      body,
     });
   },
 };

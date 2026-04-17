@@ -1,16 +1,17 @@
 /**
- * Daten view — unified business-data export + import (ADR-0018, ui.md §8.11).
+ * Daten view — unified business-data export + restore (ADR-0018, ui.md §8.11).
  *
- * Gated by `data:export` at the navigation level; the import sub-form is
+ * Gated by `data:export` at the navigation level; the restore sub-form is
  * further gated by `data:restore`. The commit button obeys a three-part
  * guard: preview present, no validation errors, and (if the target is
- * non-empty) the warning acknowledged. The server is always the final
- * authority — TARGET_NOT_EMPTY is still enforced server-side if something
- * slips past the UI.
+ * non-empty) the typed phrase matches the configured phrase. The server
+ * is always the final authority — AC-160 re-validates the phrase and
+ * AC-138 still enforces TARGET_NOT_EMPTY when override is absent.
  */
 
 import type { ChangeEvent } from 'react';
 import { STRINGS } from '@/config/strings';
+import { RESTORE_CONFIRMATION_PHRASE, restorePhraseMatches } from '@/config/dataExchangeConfig';
 import { usePermission } from '@/hooks/usePermission';
 import { useDataExchangeStore } from '@/state/dataExchangeStore';
 import styles from './Management.module.css';
@@ -22,14 +23,14 @@ export function DatenView() {
   const file = useDataExchangeStore((s) => s.file);
   const preview = useDataExchangeStore((s) => s.preview);
   const previewError = useDataExchangeStore((s) => s.previewError);
-  const warnAcknowledged = useDataExchangeStore((s) => s.warnAcknowledged);
+  const phraseInput = useDataExchangeStore((s) => s.phraseInput);
   const importing = useDataExchangeStore((s) => s.importing);
   const importResult = useDataExchangeStore((s) => s.importResult);
   const importError = useDataExchangeStore((s) => s.importError);
   const exporting = useDataExchangeStore((s) => s.exporting);
   const exportError = useDataExchangeStore((s) => s.exportError);
   const setFile = useDataExchangeStore((s) => s.setFile);
-  const setWarnAcknowledged = useDataExchangeStore((s) => s.setWarnAcknowledged);
+  const setPhraseInput = useDataExchangeStore((s) => s.setPhraseInput);
   const commit = useDataExchangeStore((s) => s.commit);
   const runExport = useDataExchangeStore((s) => s.runExport);
 
@@ -42,9 +43,12 @@ export function DatenView() {
   };
 
   const hasValidationErrors = (preview?.validation_errors.length ?? 0) > 0;
-  const requiresWarning = preview?.target_non_empty === true;
+  const requiresPhrase = preview?.target_non_empty === true;
   const commitDisabled =
-    !preview || hasValidationErrors || importing || (requiresWarning && !warnAcknowledged);
+    !preview ||
+    hasValidationErrors ||
+    importing ||
+    (requiresPhrase && !restorePhraseMatches(phraseInput));
 
   return (
     <div className={styles.container} data-testid="daten-view">
@@ -147,17 +151,23 @@ export function DatenView() {
                 </div>
               )}
 
-              {requiresWarning && (
+              {requiresPhrase && (
                 <div className={styles.sectionDivider}>
-                  <label className={styles.checkboxLabel}>
-                    <input
-                      type="checkbox"
-                      checked={warnAcknowledged}
-                      onChange={(e) => setWarnAcknowledged(e.target.checked)}
-                      data-testid="data-import-warn-checkbox"
-                    />
-                    {STRINGS.dataExchange.overrideWarning}
+                  <div className={styles.resultBoxError}>
+                    {STRINGS.dataExchange.restoreDestructiveNotice}
+                  </div>
+                  <label className={styles.formLabel} style={{ marginTop: 12 }}>
+                    {STRINGS.dataExchange.restorePhrasePrompt(RESTORE_CONFIRMATION_PHRASE)}
                   </label>
+                  <input
+                    type="text"
+                    value={phraseInput}
+                    onChange={(e) => setPhraseInput(e.target.value)}
+                    disabled={importing}
+                    autoComplete="off"
+                    spellCheck={false}
+                    data-testid="data-import-phrase-input"
+                  />
                 </div>
               )}
 

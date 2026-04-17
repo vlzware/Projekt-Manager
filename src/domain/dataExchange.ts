@@ -62,6 +62,13 @@ export interface Envelope {
 export interface ImportOptions {
   dryRun: boolean;
   override: boolean;
+  /**
+   * Typed confirmation phrase from the caller. Required by the server when
+   * `override` is true AND the target database is non-empty (AC-160);
+   * ignored on the dry-run and empty-target paths. `null` indicates the
+   * request body omitted the field entirely.
+   */
+  confirmationPhrase: string | null;
 }
 
 export interface ValidationIssue {

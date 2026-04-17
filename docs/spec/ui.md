@@ -392,20 +392,20 @@ Requires `user:delete` permission (owner only).
 
 ### 8.11 Daten View
 
-The view surfaces the unified data-exchange operations ([api.md §14.2.4](api.md#1424-unified-data-exchange)). Visible only to users with `data:export`; the import form is visible only to users who additionally hold `data:restore`.
+The view surfaces the unified data-exchange operations ([api.md §14.2.4](api.md#1424-unified-data-exchange)). Visible only to users with `data:export`; the restore form is visible only to users who additionally hold `data:restore`.
 
-#### 8.11.1 Import
+#### 8.11.1 Restore
 
-A single form accepts one unified JSON envelope. Restore-only semantics — there is no per-entity import.
+A single form accepts one unified JSON envelope. Restore-only semantics — there is no per-entity import. The operation replaces the business-data layer; it is intended as manual disaster recovery from a previously exported envelope.
 
 **Workflow:**
 
 1. **Upload** — user selects the envelope file.
-2. **Dry-run preview** — the client submits the envelope to the import endpoint with the dry-run flag. The server validates the envelope (schema version, referential integrity, row-level constraints) and returns a preview of what would be written. The preview renders per-entity counts and any validation errors. No writes occur.
-3. **Warn on non-empty target** — when the preview indicates the target database is non-empty, the UI presents an explicit warning that committing will wipe existing business data. The commit action remains disabled until the warning is acknowledged.
-4. **Commit** — user confirms. The client re-submits the envelope without the dry-run flag, adding the override flag when the target was flagged non-empty. The server applies the restore in a single transaction; partial outcomes cannot occur. On success, the UI shows a summary of the restored counts. On failure, the UI surfaces the German error message from the API error category and no state has changed.
+2. **Dry-run preview** — the client submits the envelope to the import endpoint with the dry-run flag. The server validates the envelope (schema version, referential integrity, row-level constraints) and returns a preview of what would be written, including whether the target database is non-empty. The preview renders per-entity counts and any validation errors. No writes occur.
+3. **Destructive-action confirmation** — when the preview indicates the target database is non-empty, the form renders a visually distinct confirmation input labelled with a German destructive-action message, naming the configured confirmation phrase **[C]**. The commit action remains disabled until the typed value matches the configured phrase. Client-side matching is a UX affordance; the server re-validates the phrase and rejects mismatches (see [api.md §14.2.4](api.md#1424-unified-data-exchange)).
+4. **Commit** — user confirms. The client re-submits the envelope without the dry-run flag, adding the override flag when the target was flagged non-empty, and attaching the typed confirmation phrase on that path. The server applies the restore in a single transaction; partial outcomes cannot occur. On success, the UI shows a summary of the restored counts. On failure, the UI surfaces the German error message from the API error category and no state has changed.
 
-Permission: `data:restore`. Users without this permission do not see the import form.
+Permission: `data:restore`. Users without this permission do not see the restore form.
 
 #### 8.11.2 Export
 

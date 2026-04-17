@@ -8,10 +8,10 @@
  * Flow invariants:
  *  - `preview` is only set after a successful dry-run; when null, the
  *    commit action must remain disabled.
- *  - `warnAcknowledged` is a UI gate, not a server protocol switch. The
- *    commit always sends `override=true` when the preview declared the
- *    target non-empty; the checkbox exists to force an intentional click,
- *    not to change the wire format.
+ *  - `phraseInput` is a UI affordance, not a server protocol switch. On a
+ *    non-empty target the commit disables until the typed value matches
+ *    the configured phrase; the server re-validates (AC-160) and rejects
+ *    any mismatch that slips past the client.
  *  - Session-expiry on any call delegates to the shared handler so the
  *    user bounces back to login uniformly with every other store.
  */
@@ -19,6 +19,7 @@
 import { create } from 'zustand';
 import { dataApi } from '@/api/client';
 import { STRINGS } from '@/config/strings';
+import { restorePhraseMatches } from '@/config/dataExchangeConfig';
 import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 import { formatDateOnly } from '@/domain/dateFormat';
 import { handleSessionExpired } from './sessionExpired';
@@ -39,7 +40,7 @@ interface DataExchangeState {
   envelope: Envelope | null;
   preview: DryRunPreview | null;
   previewError: string | null;
-  warnAcknowledged: boolean;
+  phraseInput: string;
   importing: boolean;
   importResult: ImportResult | null;
   importError: string | null;
@@ -49,7 +50,7 @@ interface DataExchangeState {
   exportError: string | null;
 
   setFile: (file: File | null) => Promise<void>;
-  setWarnAcknowledged: (v: boolean) => void;
+  setPhraseInput: (v: string) => void;
   commit: () => Promise<void>;
   clear: () => void;
 
@@ -87,7 +88,7 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
   envelope: null,
   preview: null,
   previewError: null,
-  warnAcknowledged: false,
+  phraseInput: '',
   importing: false,
   importResult: null,
   importError: null,
@@ -109,7 +110,7 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
         envelope: null,
         preview: null,
         previewError: null,
-        warnAcknowledged: false,
+        phraseInput: '',
         importResult: null,
         importError: null,
       });
@@ -122,7 +123,7 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
         envelope: null,
         preview: null,
         previewError: STRINGS.ui.fileTooLarge(MAX_IMPORT_FILE_MB),
-        warnAcknowledged: false,
+        phraseInput: '',
         importResult: null,
         importError: null,
       });
@@ -134,7 +135,7 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
       envelope: null,
       preview: null,
       previewError: null,
-      warnAcknowledged: false,
+      phraseInput: '',
       importResult: null,
       importError: null,
     });
@@ -173,8 +174,8 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
     const envelope = parsed as Envelope;
 
     // Dry-run with override=true so the server reports what the
-    // destructive path would do. The commit path re-sends with
-    // override derived from target_non_empty + warnAcknowledged.
+    // destructive path would do. The commit path re-sends with override
+    // derived from target_non_empty and attaches the confirmation phrase.
     const res = await dataApi.import(envelope, { dryRun: true, override: true });
     if (!res.ok) {
       if (res.sessionExpired) {
@@ -195,22 +196,26 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
     set({ envelope, preview: res.data, previewError: null });
   },
 
-  setWarnAcknowledged: (v) => set({ warnAcknowledged: v }),
+  setPhraseInput: (v) => set({ phraseInput: v }),
 
   commit: async () => {
-    const { envelope, preview, warnAcknowledged, importing } = get();
+    const { envelope, preview, phraseInput, importing } = get();
     // Guard against re-entry — a rapid double-click on the commit button
     // would otherwise fire two parallel imports whose responses race to
     // overwrite `importResult`.
     if (importing) return;
     if (!envelope || !preview) return;
     if (preview.validation_errors.length > 0) return;
-    if (preview.target_non_empty && !warnAcknowledged) return;
+    if (preview.target_non_empty && !restorePhraseMatches(phraseInput)) return;
 
     set({ importing: true, importError: null, importResult: null });
 
     const override = preview.target_non_empty;
-    const res = await dataApi.import(envelope, { dryRun: false, override });
+    const res = await dataApi.import(envelope, {
+      dryRun: false,
+      override,
+      confirmationPhrase: override ? phraseInput : null,
+    });
 
     if (!res.ok) {
       if (res.sessionExpired) {
@@ -242,7 +247,7 @@ export const useDataExchangeStore = create<DataExchangeState>((set, get) => ({
       envelope: null,
       preview: null,
       previewError: null,
-      warnAcknowledged: false,
+      phraseInput: '',
       importing: false,
       importResult: null,
       importError: null,

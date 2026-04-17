@@ -195,6 +195,7 @@ The following values are centralized as single-source constants and may vary per
 - Session duration
 - Role set and per-role permission matrix
 - Seed default password
+- Restore confirmation phrase — typed by the caller to confirm an override-restore into a non-empty database (see [api.md §14.2.4](api.md#1424-unified-data-exchange))
 
 ### 12.3 Configuration Requirements
 

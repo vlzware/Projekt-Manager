@@ -9,8 +9,14 @@
 import { sql } from 'drizzle-orm';
 import { customers, projects, projectWorkers } from '../db/schema.js';
 import type { Database } from '../db/connection.js';
-import { schemaVersionMismatch, targetNotEmpty, validationError } from '../errors.js';
+import {
+  restoreConfirmationMismatch,
+  schemaVersionMismatch,
+  targetNotEmpty,
+  validationError,
+} from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
+import { restorePhraseMatches } from '../../config/dataExchangeConfig.js';
 import {
   SCHEMA_VERSION,
   type Envelope,
@@ -210,6 +216,17 @@ export class ImportService {
 
       if (hasExisting && !opts.override) {
         throw targetNotEmpty();
+      }
+
+      // AC-160: destructive path (override into a non-empty target) demands
+      // a typed confirmation phrase in the request body. The shared
+      // `restorePhraseMatches` predicate keeps this check identical to the
+      // client-side UX gate. Dry-run and empty-target paths never reach here.
+      if (opts.override && hasExisting) {
+        const typed = opts.confirmationPhrase;
+        if (typeof typed !== 'string' || !restorePhraseMatches(typed)) {
+          throw restoreConfirmationMismatch();
+        }
       }
 
       if (opts.override) {

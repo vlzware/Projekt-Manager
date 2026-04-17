@@ -2,9 +2,10 @@ import { test, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
+import { EXPECTED_RESTORE_PHRASE } from '../src/test/seedAssumptions.js';
 
 /**
- * E2E: unified Daten view (AC-142, AC-143, AC-144).
+ * E2E: unified Daten view (AC-142, AC-143, AC-144, AC-161).
  *
  * Written ahead of implementation. Until the new Daten view exists these
  * tests fail with missing-test-id errors. They define the implementation
@@ -20,7 +21,7 @@ import fs from 'node:fs';
  *   data-import-preview-customers  count cell for customers
  *   data-import-preview-projects   count cell for projects
  *   data-import-preview-workers    count cell for project_workers
- *   data-import-warn-checkbox      non-empty-target acknowledgement
+ *   data-import-phrase-input       confirmation-phrase input (non-empty target only, AC-161)
  *   data-import-commit             commit (real restore) button
  *   data-import-result             success summary panel
  *
@@ -60,7 +61,12 @@ test.beforeAll(async ({ browser }) => {
 test.afterAll(async ({ browser }) => {
   if (!preSpecSnapshot) return;
   const context = await browser.newContext({ storageState: STORAGE_STATE });
-  await context.request.post('/api/import?override=true', { data: preSpecSnapshot });
+  // AC-160: override into a non-empty DB requires the confirmation phrase
+  // in the request body. The teardown passes it so the seed-restore runs.
+  const snapshot = preSpecSnapshot as Record<string, unknown>;
+  await context.request.post('/api/import?override=true', {
+    data: { ...snapshot, confirmation_phrase: EXPECTED_RESTORE_PHRASE },
+  });
   await context.close();
 });
 
@@ -107,95 +113,123 @@ test.describe('AC-142: Daten tab permission visibility', () => {
   });
 });
 
+// Shared minimal self-consistent envelope for the restore-flow specs.
+// Content is intentionally trivial — the two tests below pin UI behavior,
+// not envelope shape (that's covered in the API-integration suite).
+function buildRestoreEnvelope() {
+  return {
+    schema_version: 1,
+    exported_at: new Date().toISOString(),
+    customers: [
+      {
+        id: 'aaaaaaaa-0000-4000-8000-000000000001',
+        name: 'E2E Import Kunde',
+        phone: null,
+        email: null,
+        address: null,
+        notes: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        createdBy: null,
+        updatedBy: null,
+      },
+    ],
+    projects: [
+      {
+        id: 'bbbbbbbb-0000-4000-8000-000000000001',
+        number: '2026-E2E',
+        title: 'E2E Import Projekt',
+        status: 'anfrage',
+        statusChangedAt: '2026-01-02T00:00:00.000Z',
+        customerId: 'aaaaaaaa-0000-4000-8000-000000000001',
+        plannedStart: null,
+        plannedEnd: null,
+        estimatedValue: null,
+        notes: null,
+        deleted: false,
+        createdAt: '2026-01-02T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        createdBy: null,
+        updatedBy: null,
+      },
+    ],
+    project_workers: [],
+  };
+}
+
 // ---------------------------------------------------------------
-// AC-143: dry-run preview + non-empty warning gate commit
+// AC-143: dry-run preview renders before commit
 // ---------------------------------------------------------------
-test.describe('AC-143: import preview and non-empty warning', () => {
+test.describe('AC-143: restore preview renders before commit', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
     await expect(page.getByTestId('kanban-board')).toBeVisible();
   });
 
-  // AC-143: dry-run renders per-entity counts, then warning must be
-  // acknowledged before commit becomes enabled. Commit succeeds after ack.
-  test('dry-run preview → warn → ack → commit', async ({ page }) => {
+  // AC-143: selecting an envelope file triggers the dry-run and the
+  // preview appears with per-entity counts. The test stops at the preview
+  // — commit-gate behavior on non-empty target is pinned by AC-161 below.
+  test('dry-run preview renders per-entity counts on upload', async ({ page }) => {
     await page.getByTestId('view-toggle-daten').click();
     await expect(page.getByTestId('daten-view')).toBeVisible();
 
-    // Build an envelope matching the roundtrip contract — the test's job
-    // is the UI, not envelope content. Use a minimal, self-consistent
-    // envelope so referential-integrity validation passes.
-    const envelope = {
-      schema_version: 1,
-      exported_at: new Date().toISOString(),
-      customers: [
-        {
-          id: 'aaaaaaaa-0000-4000-8000-000000000001',
-          name: 'E2E Import Kunde',
-          phone: null,
-          email: null,
-          address: null,
-          notes: null,
-          createdAt: '2026-01-01T00:00:00.000Z',
-          updatedAt: '2026-01-01T00:00:00.000Z',
-          createdBy: null,
-          updatedBy: null,
-        },
-      ],
-      projects: [
-        {
-          id: 'bbbbbbbb-0000-4000-8000-000000000001',
-          number: '2026-E2E',
-          title: 'E2E Import Projekt',
-          status: 'anfrage',
-          statusChangedAt: '2026-01-02T00:00:00.000Z',
-          customerId: 'aaaaaaaa-0000-4000-8000-000000000001',
-          plannedStart: null,
-          plannedEnd: null,
-          estimatedValue: null,
-          notes: null,
-          deleted: false,
-          createdAt: '2026-01-02T00:00:00.000Z',
-          updatedAt: '2026-01-02T00:00:00.000Z',
-          createdBy: null,
-          updatedBy: null,
-        },
-      ],
-      project_workers: [],
-    };
-
-    const fixturePath = path.join(__dirname, '.tmp-data-exchange-import.json');
+    const envelope = buildRestoreEnvelope();
+    const fixturePath = path.join(__dirname, '.tmp-data-exchange-preview.json');
     fs.writeFileSync(fixturePath, JSON.stringify(envelope, null, 2));
 
     try {
-      // Commit must be disabled (or absent) before a preview exists.
-      const commitBefore = page.getByTestId('data-import-commit');
-      const commitBeforeCount = await commitBefore.count();
-      if (commitBeforeCount > 0) {
-        await expect(commitBefore).toBeDisabled();
-      }
-
-      // Upload envelope — this fires the dry-run request.
       await page.getByTestId('data-import-file-input').setInputFiles(fixturePath);
-
-      // AC-143: preview renders with per-entity counts.
-      const preview = page.getByTestId('data-import-preview');
-      await expect(preview).toBeVisible();
+      await expect(page.getByTestId('data-import-preview')).toBeVisible();
       await expect(page.getByTestId('data-import-preview-customers')).toContainText('1');
       await expect(page.getByTestId('data-import-preview-projects')).toContainText('1');
       await expect(page.getByTestId('data-import-preview-workers')).toContainText('0');
+    } finally {
+      if (fs.existsSync(fixturePath)) fs.unlinkSync(fixturePath);
+    }
+  });
+});
 
-      // AC-143: target is non-empty (seed present) → warning visible, commit
-      // remains disabled until the acknowledgement checkbox is ticked.
-      const warnCheckbox = page.getByTestId('data-import-warn-checkbox');
-      await expect(warnCheckbox).toBeVisible();
+// ---------------------------------------------------------------
+// AC-161: restore phrase gate on non-empty target
+// ---------------------------------------------------------------
+test.describe('AC-161: restore phrase gate on non-empty target', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByTestId('kanban-board')).toBeVisible();
+  });
+
+  // AC-161: seeded DB → preview reports target_non_empty → the phrase
+  // input appears and the commit stays disabled until the typed value
+  // matches the configured phrase. The click dispatches the request and
+  // a success panel appears, pinning the end-to-end flow.
+  test('phrase input gates commit on non-empty target', async ({ page }) => {
+    await page.getByTestId('view-toggle-daten').click();
+    await expect(page.getByTestId('daten-view')).toBeVisible();
+
+    const envelope = buildRestoreEnvelope();
+    const fixturePath = path.join(__dirname, '.tmp-data-exchange-phrase.json');
+    fs.writeFileSync(fixturePath, JSON.stringify(envelope, null, 2));
+
+    try {
+      await page.getByTestId('data-import-file-input').setInputFiles(fixturePath);
+      await expect(page.getByTestId('data-import-preview')).toBeVisible();
+
+      // Phrase input renders only on non-empty target (true here).
+      const phraseInput = page.getByTestId('data-import-phrase-input');
+      await expect(phraseInput).toBeVisible();
+
+      // Commit is disabled until the phrase matches.
       const commit = page.getByTestId('data-import-commit');
       await expect(commit).toBeDisabled();
 
-      await warnCheckbox.check();
-      await expect(commit).toBeEnabled();
+      // A non-matching phrase must not enable commit.
+      await phraseInput.fill('FALSCH');
+      await expect(commit).toBeDisabled();
 
-      // AC-143: commit succeeds after acknowledgement.
+      // The configured phrase enables commit; clicking dispatches a
+      // successful atomic wipe+restore (server re-validates the phrase).
+      await phraseInput.fill(EXPECTED_RESTORE_PHRASE);
+      await expect(commit).toBeEnabled();
       await commit.click();
       await expect(page.getByTestId('data-import-result')).toBeVisible();
     } finally {

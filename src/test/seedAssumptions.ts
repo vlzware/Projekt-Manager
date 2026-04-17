@@ -1,24 +1,24 @@
 /**
- * Seed data assumptions — single source of truth for what tests expect
- * `src/server/seed.ts` to produce.
+ * Seed and deployment-configuration assumptions — single source of truth
+ * for values tests expect the running system to be configured with.
  *
- * This file is an "assumption contract" between the seed and the tests.
- * Every assertion that depends on a seeded value (username, displayName,
- * role, default password, ...) should reference one of these constants
- * rather than hardcoding the literal. A change to `seed.ts` then produces
- * a typed compiler error here — and through here in every consuming test —
+ * This file is an "assumption contract": seed-produced values (usernames,
+ * default password) and deployment-level configuration values (e.g. the
+ * destructive-restore confirmation phrase) the test layer pins against.
+ * Every assertion that depends on such a value should reference one of
+ * these constants rather than hardcoding the literal. A change to the
+ * producing source (`seed.ts`, config module, ...) then produces a typed
+ * compiler error here — and through here in every consuming test —
  * instead of silently breaking runtime assertions across many files.
  *
- * When `seed.ts` changes:
+ * When the producing source changes:
  *   1. Update this file to match.
  *   2. Run the full test suite.
  *   3. Fix any test that legitimately depended on the old value.
  *
  * Do NOT loosen an assertion to avoid updating a constant. The constant is
- * a typed reference to the same value the seed produces — loosening hides
- * the coupling instead of surfacing it.
- *
- * Current source of truth: `src/server/seed.ts` (userRecords, line ~52).
+ * a typed reference to the same value the producing source uses —
+ * loosening hides the coupling instead of surfacing it.
  */
 
 /**
@@ -44,6 +44,16 @@ export const SEED_DEFAULT_PASSWORD = 'changeme';
  * `as const` is load-bearing: it makes every string a literal type, so
  * a typo on a consuming site surfaces as a TypeScript error at edit time.
  */
+/**
+ * Expected confirmation phrase for a destructive restore (`POST /api/import`
+ * with `override=true` into a non-empty target — see `api.md §14.2.4` and
+ * `verification.md AC-160`). The phrase is a `[C]` configurable value
+ * (architecture.md §12.2); tests pin the default so a deployment that
+ * retunes the value surfaces the divergence here instead of across many
+ * scattered assertions.
+ */
+export const EXPECTED_RESTORE_PHRASE = 'LOESCHEN';
+
 export const SEED_USERS = {
   owner: {
     username: 'inhaber',

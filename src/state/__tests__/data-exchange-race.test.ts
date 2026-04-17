@@ -99,7 +99,7 @@ function resetDataExchangeStore() {
     envelope: null,
     preview: null,
     previewError: null,
-    warnAcknowledged: false,
+    phraseInput: '',
     importing: false,
     importResult: null,
     importError: null,
