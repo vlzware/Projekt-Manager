@@ -189,7 +189,11 @@ async function restoreDumpIntoInstance(
       cmd: 'pg_restore',
       args: [
         '--dbname',
-        `postgresql:///postgres?host=${instance.socketDir}&port=${instance.port}`,
+        // `postgres@` pins the role — same reason as the Pool probes:
+        // without it libpq falls back to the process uid's user name,
+        // which is `root` here and a role that doesn't exist in the
+        // ephemeral cluster.
+        `postgresql://postgres@/postgres?host=${instance.socketDir}&port=${instance.port}`,
         '--no-owner',
         '--no-privileges',
         '--single-transaction',
@@ -207,9 +211,12 @@ async function computeManifestInInstance(instance: EphemeralInstance): Promise<M
   const pool = new Pool({
     host: instance.socketDir,
     port: instance.port,
+    // Same reason as probeSocket(): pg defaults to the current OS
+    // username (`root` in the backup container), which is not a role
+    // that exists in the ephemeral cluster. initdb created `postgres`
+    // (via --username=postgres).
+    user: 'postgres',
     database: 'postgres',
-    // No user/password needed — unix-socket peer auth on the ephemeral
-    // instance matches the demoted OS user that initdb set up.
   });
   try {
     const db = drizzle(pool, { schema });
@@ -374,6 +381,14 @@ async function probeSocket(socketDir: string, port: number): Promise<boolean> {
   const pool = new Pool({
     host: socketDir,
     port,
+    // initdb ran with `--username=postgres`, so `postgres` is the only
+    // role that exists in the ephemeral cluster. Without this line the
+    // pg library falls back to os.userInfo().username — which inside
+    // the backup container is `root`, a role that was never created,
+    // so every probe fails with "role 'root' does not exist" and
+    // readiness times out even though the socket is accepting
+    // connections.
+    user: 'postgres',
     database: 'postgres',
     // Short connection timeout so a single failed probe does not
     // consume the whole poll budget.
