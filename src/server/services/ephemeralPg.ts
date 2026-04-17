@@ -282,9 +282,17 @@ function buildPostgresArgv(
   // combination of `initdb --auth=trust` and a TCP listener was an open
   // security hole — anything that could reach 127.0.0.1:<port> inside
   // the container had a free superuser shell on the verify DB. With
-  // `listen_addresses=''` postgres binds only the unix socket in
-  // `socketDir`, and the peer-auth OS-user boundary is the only gate.
-  // `-k <dir>` sets the socket directory.
+  // listen_addresses set to the empty string postgres binds only the
+  // unix socket in `socketDir`, and the peer-auth OS-user boundary is
+  // the only gate. `-k <dir>` sets the socket directory.
+  //
+  // The value below has NO single quotes. In shell, you'd write
+  // `-c listen_addresses=''` and the shell strips the quotes before
+  // exec. Here we go through Node's `spawn()` which invokes execve()
+  // directly — no shell, so the quotes would be passed through as
+  // literal characters and postgres would try to resolve the hostname
+  // `''`, fail with "could not translate host name", and abort on
+  // "could not create any TCP/IP sockets" before the socket is ready.
   const postgresArgs = [
     '-D',
     dataDir,
@@ -293,7 +301,7 @@ function buildPostgresArgv(
     '-p',
     String(port),
     '-c',
-    "listen_addresses=''",
+    'listen_addresses=',
     '-c',
     'fsync=off',
     '-c',
