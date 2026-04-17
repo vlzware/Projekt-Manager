@@ -5,20 +5,23 @@
  * §7; api.md §14.2.4), so the seed's user pass is a direct-DB path rather
  * than a call through `ImportService`. Parsing (`parseUsersFixture`) is
  * pure and filesystem-free so the unit path that asserts malformed input
- * rejects can feed literals in; `loadUsers` composes file read + parse +
- * hash + insert.
+ * rejects can feed literals in; `loadUsers` composes parse + hash +
+ * insert on the bundled-at-build-time fixture.
  */
-import { readFileSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { z } from 'zod';
 
 import type { Database } from '../db/connection.js';
 import { users } from '../db/schema.js';
 import { hashPassword } from '../password.js';
 import { SEED_DEFAULT_PASSWORD } from '../../test/seedAssumptions.js';
+// JSON import attribute — esbuild (build:server) and vitest both
+// inline the fixture at build time, so there is no runtime fs access
+// and no path-resolution dependency on the source-tree layout. The
+// bundled `dist/server/start.js` used to crash with ENOENT on
+// `/fixtures/seed-users.json` because `path.resolve(here, '../../../
+// fixtures/…')` landed at the filesystem root under the flattened
+// bundle layout; inlining sidesteps that class of bug entirely.
+import rawFixture from '../../../fixtures/seed-users.json' with { type: 'json' };
 
 // Cross-package import rationale: `SEED_DEFAULT_PASSWORD` is the single
 // source of truth for the seeded password (see seedAssumptions.ts header).
@@ -71,58 +74,35 @@ export function parseUsersFixture(raw: unknown): SeedUserFixture[] {
 }
 
 /**
- * Resolve the fixture path relative to this module so both dev runs
- * (tsx) and bundled runs (esbuild → dist/server) can locate it without
- * a process.cwd() dependency. The fixture lives outside src/ on purpose
- * so it is not caught by the tsconfig/tsc compile pass.
- */
-function fixturePath(): string {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  // src/server/seed/users.ts → ../../../fixtures/seed-users.json
-  return path.resolve(here, '../../../fixtures/seed-users.json');
-}
-
-/**
  * Seeded user IDs keyed by username — single source of truth for ID
  * references across seed modules. `business.ts` calls this to emit
  * `project_workers[].userId` values that resolve against the users
  * `loadUsers` will insert.
  *
- * Lazy (cached on first call) rather than module-load: the app bundle
- * imports this module transitively from `start.ts` even in production,
- * where the fixture file is not shipped with the image (fixtures are
- * dev/test artifacts, not production data). A module-load read would
- * crash every production startup with a misleading ENOENT before the
- * SEED-gate in start.ts even gets to decide. The fail-loud property
- * on malformed fixtures is preserved — the first call from a seed run
- * still throws synchronously.
+ * The fixture is inlined at build time (JSON import attribute above),
+ * so this is a cheap object lookup with no filesystem access. Lazy
+ * caching avoids re-parsing on repeated calls.
  */
 let _cachedSeededUserIds: Readonly<Record<string, string>> | undefined;
 export function getSeededUserIds(): Readonly<Record<string, string>> {
   if (!_cachedSeededUserIds) {
     _cachedSeededUserIds = Object.freeze(
-      Object.fromEntries(
-        parseUsersFixture(JSON.parse(readFileSync(fixturePath(), 'utf8')) as unknown).map((u) => [
-          u.username,
-          u.id,
-        ]),
-      ),
+      Object.fromEntries(parseUsersFixture(rawFixture).map((u) => [u.username, u.id])),
     );
   }
   return _cachedSeededUserIds;
 }
 
 /**
- * Read `fixtures/seed-users.json`, validate, hash the shared default
- * password once, and insert every row with its fixture-pinned UUID.
+ * Validate the bundled fixture, hash the shared default password once,
+ * and insert every row with its fixture-pinned UUID.
  *
  * Direct-DB (not via `ImportService`) because users are outside the
  * envelope contract (data-model.md §5.8). The orchestrator guarantees
  * the table is empty when this runs.
  */
 export async function loadUsers(db: Database): Promise<void> {
-  const raw: unknown = JSON.parse(await readFile(fixturePath(), 'utf8'));
-  const records = parseUsersFixture(raw);
+  const records = parseUsersFixture(rawFixture);
 
   // Hash once — bcrypt is expensive, and every seeded user shares the
   // same plaintext per the spec (data-model.md §7.2).
