@@ -18,15 +18,16 @@ See [ARCHITECTURE.md § Tech Stack](ARCHITECTURE.md#tech-stack).
 Steps happen in this order. Skipping or reordering must be flagged.
 
 1. **Specification** — see review/conventions-spec.md
-2. **Tests (failing)** — see review/conventions-tests.md
-3. **Tests review** — independent reviewer verifies for adherence to review/conventions-tests.md. Violations are blocking, back to step 2.
-4. **Implementation** — see review/conventions-code.md
-5. **Tests passing**
-6. **Code quality review** — independent reviewer verifies for adherence to review/conventions-code.md. Violations are blocking, back to step 4.
-7. **Security audit** (conditional) — needs to be confirmed by user. Propose it when trust boundaries change
-8. **Documentation update** — see review/conventions-docs-general.md
-9. **Commit** — group changes, including multiple files, in logical groups
-10. **Open Issues** — list all open issues, including findings discovered during the workflow, even if unrelated
+2. **Specification review** — independent reviewer verifies for adherence to review/conventions-spec.md. Violations are blocking, back to step 1.
+3. **Tests (failing)** — see review/conventions-tests.md
+4. **Tests review** — independent reviewer verifies for adherence to review/conventions-tests.md. Violations are blocking, back to step 3.
+5. **Implementation** — see review/conventions-code.md
+6. **Tests passing**
+7. **Code quality review** — independent reviewer verifies for adherence to review/conventions-code.md. Violations are blocking, back to step 5.
+8. **Security audit** (conditional) — needs to be confirmed by user. Propose it when trust boundaries change
+9. **Documentation update** — see review/conventions-docs-general.md
+10. **Commit** — group changes, including multiple files, in logical groups
+11. **Open Issues** — list all open issues, including findings discovered during the workflow, even if unrelated
 
 ### Security audit
 
