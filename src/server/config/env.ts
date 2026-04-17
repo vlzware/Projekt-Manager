@@ -18,10 +18,15 @@ const envSchema = z.object({
   // iteration 5 consolidation review C-2.
   NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  STORAGE_ENDPOINT: z.string().min(1, 'STORAGE_ENDPOINT is required'),
+  // STORAGE_* is the app server's MinIO surface (attachments). The backup
+  // service (ADR-0020) doesn't touch it — it uses R2_* instead. Optional
+  // here so the shared validateEnv() call in backup-runner.ts doesn't
+  // reject for vars the backup path never reads; `assertAppServerEnv()`
+  // below (called only from start.ts) enforces presence for the app path.
+  STORAGE_ENDPOINT: z.string().optional(),
   STORAGE_BUCKET: z.string().min(1).default('projekt-manager'),
-  STORAGE_ACCESS_KEY: z.string().min(1, 'STORAGE_ACCESS_KEY is required'),
-  STORAGE_SECRET_KEY: z.string().min(1, 'STORAGE_SECRET_KEY is required'),
+  STORAGE_ACCESS_KEY: z.string().optional(),
+  STORAGE_SECRET_KEY: z.string().optional(),
   DOMAIN: z.string().default('localhost'),
   SEED: z.enum(['true', 'false', 'force']).default('false'),
   // First-run admin bootstrap — see ADR-0010 and issue #57. All three are
@@ -101,6 +106,37 @@ export function assertProductionSafe(env: Env): void {
     throw new Error(
       'Refusing to start: ALLOW_INSECURE_HTTP=true in production. ' +
         'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.',
+    );
+  }
+}
+
+/**
+ * `Env` with the STORAGE_* fields narrowed to non-nullable strings —
+ * the shape the app server sees after `assertAppServerEnv()` succeeds.
+ */
+export type AppServerEnv = Env & {
+  STORAGE_ENDPOINT: string;
+  STORAGE_ACCESS_KEY: string;
+  STORAGE_SECRET_KEY: string;
+};
+
+/**
+ * App-server-only presence check for the MinIO-backed attachment storage
+ * config. The shared schema keeps these optional so the backup-runner CLI
+ * (which doesn't use MinIO) can pass validateEnv(); this guard restores
+ * the fail-fast semantic for the app server and narrows the type so the
+ * downstream calls in start.ts don't need `!` non-null assertions.
+ */
+export function assertAppServerEnv(env: Env): asserts env is AppServerEnv {
+  const missing: string[] = [];
+  if (!env.STORAGE_ENDPOINT) missing.push('STORAGE_ENDPOINT');
+  if (!env.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
+  if (!env.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
+  if (missing.length > 0) {
+    throw new Error(
+      `App server requires these env vars: ${missing.join(', ')}. ` +
+        'They are optional in the shared schema so the backup-runner CLI ' +
+        'can share validateEnv(), but the app server cannot start without them.',
     );
   }
 }

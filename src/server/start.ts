@@ -16,7 +16,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { STRINGS } from '../config/strings.js';
 import { buildApp } from './app.js';
 import { bootstrapAdminIfEmpty } from './bootstrap.js';
-import { assertProductionSafe, validateEnv } from './config/env.js';
+import { assertAppServerEnv, assertProductionSafe, validateEnv } from './config/env.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
@@ -84,6 +84,10 @@ async function start(): Promise<void> {
   // assertProductionSafe() lives in env.ts so it can be unit-tested directly
   // (see env.test.ts) — see ADR-0013 and consolidation review C-2/C-4.
   assertProductionSafe(env);
+  // STORAGE_* are optional at schema level (the backup-runner CLI shares
+  // the same validator but doesn't use MinIO); the app server cannot run
+  // without them, so enforce here.
+  assertAppServerEnv(env);
   if (isProduction) {
     rejectDevCredentials();
   }
