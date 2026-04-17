@@ -13,7 +13,10 @@ services:
     # from GHCR (see ADR-0011). Compose merges this with the base
     # file, so the `image:` tag from docker-compose.yml becomes the
     # local build's output name — harmless, since the tag stays on
-    # the developer's machine.
+    # the developer's machine. The base `image:` references
+    # `${APP_IMAGE_TAG}` with a `:?` gate; compose substitutes
+    # per-file BEFORE merge, so .env.example pins a dev placeholder
+    # to unblock local `up` without weakening the prod gate.
     build: .
     ports:
       - "${PORT:-3000}:3000"

@@ -175,12 +175,20 @@ services:
       # provisioning). AGE_RECIPIENT is the PUBLIC recipient only;
       # the private identity is operator-held and loaded into tmpfs
       # via load-drill-key.sh per recovery.md §7 (AC-175).
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
-      R2_ENDPOINT: ${R2_ENDPOINT}
+      # `:-` empty defaults silence compose's "variable is not set"
+      # warnings when the operator hasn't sourced secrets.env.age (dev
+      # workflows, where the `backup` profile stays gated off). In
+      # prod, deploy.sh sources secrets into the shell env before
+      # compose, and shell env always beats a compose default — so
+      # the defaults here never mask a genuinely missing secret at
+      # runtime. The backup service itself validates these at startup
+      # (scripts/backup/entrypoint.sh) and refuses to run on empties.
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
       R2_BUCKET: ${R2_BUCKET:-projekt-manager-backups}
       R2_REGION: ${R2_REGION:-auto}
-      AGE_RECIPIENT: ${AGE_RECIPIENT}
+      AGE_RECIPIENT: ${AGE_RECIPIENT:-}
       # Tmpfs path where the operator loads the age private identity
       # for Tier 2 drills (AC-168, AC-175). Default matches the tmpfs
       # mount above and scripts/backup/run-drill.sh — kept explicit in
