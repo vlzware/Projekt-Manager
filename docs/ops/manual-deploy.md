@@ -71,26 +71,37 @@ curl -sS https://${DOMAIN}/api/health
 
 ### Contents of `secrets.env.age`
 
-Three secrets, shell `KEY='value'` format:
+Shell `KEY='value'` format. Three Layer 1 secrets (app + TLS) and six Layer 2 secrets (offsite backup — ADR-0020, `recovery.md` §3.4/§4):
+
+Layer 1:
 
 - `POSTGRES_PASSWORD`
 - `MINIO_ROOT_PASSWORD`
 - `CLOUDFLARE_API_TOKEN`
 
+Layer 2:
+
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_ENDPOINT` -- `https://<accountid>.r2.cloudflarestorage.com`
+- `R2_BUCKET` -- optional; defaults to `projekt-manager-backups` in `docker-compose.yml`
+- `R2_REGION` -- optional; defaults to `auto` in `docker-compose.yml`
+- `AGE_RECIPIENT` -- PUBLIC recipient only, for backup encryption at rest. The matching age identity lives on the operator workstation, never on the VPS.
+
 `STORAGE_SECRET_KEY` is NOT in this file -- `docker-compose.yml` derives it from `MINIO_ROOT_PASSWORD` at runtime.
 
 ### Rotate a secret
 
-```bash
-# On workstation (age must be installed locally)
-cat > /tmp/secrets.env <<'EOF'
-POSTGRES_PASSWORD='new-value'
-MINIO_ROOT_PASSWORD='...'
-CLOUDFLARE_API_TOKEN='...'
-EOF
+`age` re-encrypts the whole file, so rotating one value means writing all of them back. The full setup procedure (including per-secret sources) lives in [recovery.md § 5](recovery.md). Short form for rotating one existing value:
 
-age -p -o secrets.env.age /tmp/secrets.env   # enter passphrase
+```bash
+# On workstation (age must be installed locally). Decrypt current file
+# to recover the non-rotated values, edit in place, re-encrypt.
+age -d secrets.env.age > /tmp/secrets.env   # enter passphrase
+$EDITOR /tmp/secrets.env                     # change the one value
+age -p -o secrets.env.age.new /tmp/secrets.env   # enter passphrase
 shred -u /tmp/secrets.env
+mv secrets.env.age.new secrets.env.age
 
 scp secrets.env.age <sudo-user>@vps:/tmp/secrets.env.age
 ssh <sudo-user>@vps "sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age && sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age && sudo chmod 0600 /opt/projekt-manager/secrets.env.age"
@@ -101,12 +112,17 @@ ssh <sudo-user>@vps "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
 
 ### Passphrase loss recovery
 
-1. Regenerate each secret from its source:
+1. Regenerate or re-read each secret from its source:
    - `POSTGRES_PASSWORD` -- `ALTER USER` from superuser, or re-provision
    - `MINIO_ROOT_PASSWORD` -- MinIO admin console or `mc admin user`
    - `CLOUDFLARE_API_TOKEN` -- Cloudflare dashboard, scope `Zone:DNS:Edit` + `Zone:Zone:Read`
-2. Rebuild `secrets.env`, encrypt with `age -p`, upload
-3. Record new passphrase in password manager
+   - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` -- issue a new R2 API token in the Cloudflare dashboard; the endpoint URL is listed alongside. Revoke the old token after the rotation deploy.
+   - `R2_BUCKET`, `R2_REGION` -- read off the R2 dashboard (or fall back to the compose defaults).
+   - `AGE_RECIPIENT` -- not affected by `secrets.env.age` passphrase loss. Derive from the existing identity on the operator workstation: `age-keygen -y ~/secrets/age-backup.key`.
+2. Rebuild `secrets.env`, encrypt with `age -p`, upload (see [recovery.md § 5](recovery.md)).
+3. Record new passphrase in password manager.
+
+Backup blobs in R2 remain decryptable — they are encrypted against `AGE_RECIPIENT`'s keypair, not the `secrets.env.age` passphrase. Losing only the deploy passphrase does not cost backup recoverability.
 
 ### GHCR pull token
 
