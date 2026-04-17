@@ -46,7 +46,16 @@ drizzle-team/drizzle-orm#5304 tracks this. The fix exists in the drizzle-kit bet
 
 ## Review Trigger
 
-Remove this suppression when either:
+Remove this suppression when any of the following becomes true:
 
-- drizzle-kit stable drops the `@esbuild-kit/esm-loader` dependency (check on each drizzle-kit upgrade)
+- `npm view drizzle-kit dist-tags.latest` returns a version that no longer declares `@esbuild-kit/esm-loader` as a dependency (expected once drizzle-kit 1.0.0 stable ships — see status below)
+- drizzle-team/drizzle-orm#5304 closes
 - The advisory is withdrawn
+
+## Upstream Status
+
+**Last checked: 2026-04-17**
+
+- Stable `drizzle-kit@0.31.10` still declares `@esbuild-kit/esm-loader`. No stable release has addressed the chain since this ADR was written (2026-04-05).
+- Beta `drizzle-kit@1.0.0-beta.22` drops `@esbuild-kit/*` and `tsx` entirely, switches to `jiti` as the runtime loader, and pins `esbuild ^0.25.10` (above the vulnerable range). Moving our devDependency to the beta channel was rejected: migration tooling is in a code path where bugs cause schema/data corruption, and the exploitability analysis above already shows zero runtime risk from keeping stable.
+- drizzle-team/drizzle-orm#5304 still OPEN; last activity 2026-03-24.
