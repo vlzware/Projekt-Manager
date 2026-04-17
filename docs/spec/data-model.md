@@ -218,6 +218,29 @@ Design notes:
 - **Users and sessions are not included.** Admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) handles fresh installs; seed-time loading of users uses a direct-DB helper, while seed-time business-data loading goes through the import code path (see [§7](#7-seed-data-specification)).
 - **`schema_version` is monotonic.** Imports compare strictly and reject any mismatch — no format migration code.
 
+### 5.9 Backup Status Entity
+
+The Layer 2 backup-and-drill cycle ([ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) publishes its last-run result into a single-row table so the application — and, via the status mirror object, an out-of-app reader — can render backup freshness without polling the scheduler.
+
+```typescript
+interface BackupStatus {
+  lastBackupAt?: string; // ISO 8601 — timestamp of the last completed run (success or failure)
+  lastBackupOk: boolean; // true when the last run produced an uploaded, Tier-1-verified artifact
+  lastDrillAt?: string; // ISO 8601 — timestamp of the last Tier-2 drill attempt
+  lastDrillOk: boolean | null; // true when the last Tier-2 drill succeeded; false when it failed; null before any Tier-2 drill has been attempted
+  lastError?: string; // short machine-readable failure cue; null on success
+  updatedAt: string; // ISO 8601 — set by the backup service on every write
+}
+```
+
+Design notes:
+
+- **Single row, denormalized by design.** Only the most recent result is observable; history lives in the off-site object store's object timestamps and in container logs. The row is created by migration and is never deleted.
+- **Mutation semantics: upsert only.** The backup service writes via upsert on a fixed primary key; the application never mutates this row.
+- **Dual-write mirror.** Every backup run writes this row AND an unencrypted status mirror object in the off-site object store with the same fields. The mirror exists so backup health is readable when the database is unreachable ([ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)).
+- **`lastDrillOk` semantics.** `lastDrillOk` is `null` before any Tier 2 drill has succeeded OR failed. A null value is not equivalent to "skipped" — skipped runs leave both `lastDrillAt` and `lastDrillOk` unchanged from the previous run, so freshness is derived from `lastDrillAt` rather than coerced to a boolean.
+- **Cross-references.** Freshness thresholds for the owner-only badge are defined under [architecture.md §12.2](architecture.md#122-company-configurable-settings); acceptance criteria in [verification.md §15.22](verification.md#1522-backup-and-recovery).
+
 ---
 
 ## 6. Persistence Principles

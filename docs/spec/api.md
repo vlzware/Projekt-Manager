@@ -153,6 +153,20 @@ Design notes:
 - **Upstream failures are mapped to error categories.** Missing upstream configuration, a non-OK response from the external service, an empty response, or an unparseable response all resolve to a server error (see [§14.4.1](#1441-error-categories)). Internal details (service name, upstream status codes, stack traces) are not exposed.
 - **Every field may be null.** The LLM returns `null` for information it could not find in the input. Clients must handle nulls across all fields.
 
+#### 14.2.7 Backup Status
+
+The Layer 2 backup-freshness badge ([verification.md §15.22](verification.md#1522-backup-and-recovery), [ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) needs a read surface on the unauthenticated login screen. This endpoint publishes the [`BackupStatus`](data-model.md#59-backup-status-entity) fields and nothing else; the network reach of the app is VPN-gated ([ADR-0008](../adr/0008-vpn-first-network-access.md)), which is the threat-model anchor for exposing it publicly.
+
+| Operation             | Input | Output                                                                                                                                      | Notes                                                                                                                                                                                             |
+| --------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Get backup status** | —     | `{ available: true, status: BackupStatus }` on success; `{ available: false }` when the row is unreachable (DB down and mirror unavailable) | No authentication required. Returns only the fields defined in [data-model.md §5.9](data-model.md#59-backup-status-entity). Rate-limited to protect the DB path on a flood of login-screen loads. |
+
+Design notes:
+
+- **Response contract is an explicit allowlist.** The server returns only the badge-visible fields from [data-model.md §5.9](data-model.md#59-backup-status-entity) (`lastBackupAt`, `lastBackupOk`, `lastDrillAt`, `lastDrillOk`, `lastError`, `updatedAt`). Any future sensitive column on the `meta_backup_status` row does not leak through this surface unless it is explicitly added.
+- **Unreachable source → `{ available: false }`, not silence.** Misleading state is a critical defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)). An unreachable DB yields an explicit response the client renders as "Status unbekannt" ([AC-171](verification.md#1522-backup-and-recovery)) rather than a 404 or a silent empty payload.
+- **No errors on absence of prior runs.** The pre-seed row (migration 0001) is always present. The service reports `lastBackupOk=false` with `lastBackupAt=null` for a DB that has never run a backup; the client derives the `backup-never-run` badge reason from that shape.
+
 ---
 
 ### 14.3 Authorization Rules

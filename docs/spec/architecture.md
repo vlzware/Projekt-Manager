@@ -159,13 +159,41 @@ The first integration of this shape is the LLM-based email data extractor (see [
 
 Persistence and recovery are handled in three independent layers, each scoped to a different class of data. See [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) for the rationale and tradeoffs; the table below is a summary only.
 
-| Layer                  | Captures                                                                  | Trigger                                | Restore                                                                                                   | Verification                                                                     |
-| ---------------------- | ------------------------------------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **Business data**      | Customers, projects, project-worker assignments (including archived rows) | Human via UI, `data:export` permission | Unified restore endpoint ([api.md §14.2.4](api.md#1424-unified-data-exchange)), `data:restore` permission | CI roundtrip: seed → export → wipe → import → export → byte-compare (see AC-141) |
-| **Full DB state**      | Everything in PostgreSQL                                                  | Scheduled `pg_dump` on the VPS         | `pg_restore`                                                                                              | Scheduled job restores into an ephemeral DB and asserts schema + row counts      |
-| **Binary attachments** | Uploaded files                                                            | Continuous, storage-provider-owned     | Provider restore mechanics                                                                                | Provider durability SLA + documented deployment requirements                     |
+| Layer                  | Captures                                                                  | Trigger                                       | Restore                                                                                                   | Verification                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Business data**      | Customers, projects, project-worker assignments (including archived rows) | Human via UI, `data:export` permission        | Unified restore endpoint ([api.md §14.2.4](api.md#1424-unified-data-exchange)), `data:restore` permission | CI roundtrip: seed → export → wipe → import → export → byte-compare (see AC-141)                                                      |
+| **Full DB state**      | Everything in PostgreSQL                                                  | Scheduled job in the `backup` compose service | `pg_restore` from the decrypted backup artifact                                                           | Tier 1 verify-on-create every run; Tier 2 verify-on-cycle when the operator key is loaded ([§11.10](#1110-full-state-backup-layer-2)) |
+| **Binary attachments** | Uploaded files                                                            | Continuous, storage-provider-owned            | Provider restore mechanics                                                                                | Provider durability SLA + documented deployment requirements                                                                          |
 
 The layers are complementary, not substitutes — app-level export is not disaster recovery, `pg_dump` is not portable, and binary durability is a storage-provider property. The binary layer's implementation surface is the object storage module ([§11.4](#114-object-storage-module)).
+
+### 11.10 Full-state backup (Layer 2)
+
+The Layer 2 implementation of [§11.9](#119-data-persistence-and-recovery) is a dedicated `backup` compose service that runs on a configurable interval and writes, per run, three artifacts to an off-site object store — the encrypted dump, the encrypted manifest sidecar, and the unencrypted status mirror object — plus upserts a single row in the application database. Rationale, alternatives, consequences, provider choice, tool choice, and key-layout convention live in [ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md).
+
+**Topology.**
+
+- The `backup` compose service is scheduled by in-container cron; the compose file is the source of truth ([ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)). The backup interval is configurable **[C]**.
+- Each run produces the backup artifact (a full-state database dump, encrypted) and its manifest sidecar (per-table row count and deterministic content checksum, encrypted). The manifest checksum is computed as specified in [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
+- Retention follows a GFS rotation — 7 daily, 4 weekly, 12 monthly **[C]**. Promotion and unpinned-daily cleanup are executed by the backup script; the object store's lifecycle issues the actual deletes.
+- Bucket locks (14-day retention) plus a 30-day lifecycle rule make the destination immutable for the first 14 days and deletable for the next 16. Object versioning is not used.
+
+**Encryption surface.**
+
+- Dumps and manifests are encrypted with an asymmetric recipient. The public recipient key ships in container env; the private identity must never be present on the VPS outside a tmpfs mount ([§13.6](#136-security)).
+- For Tier 2 drills, the operator loads the private identity into tmpfs via a helper script; the identity is lost on reboot and never persists to disk.
+
+**Verification (dual tier).**
+
+- **Tier 1 — verify-on-create** runs every backup, unattended. The freshly produced plaintext dump is restored into an ephemeral database instance, container-internal (not a sibling service), the manifest is recomputed, and it is compared to the source manifest. A mismatch fails the run: no upload, and the status surface reports failure.
+- **Tier 2 — verify-on-cycle** runs every backup when the operator's identity is present in tmpfs. The just-uploaded encrypted dump is downloaded, decrypted, restored into the ephemeral database instance, and its manifest is compared. When the key is absent, the drill is skipped with a distinct log line; freshness surfaces via the status row rather than as a failure.
+
+**Status surface (dual-write).**
+
+- Primary: the `meta_backup_status` row ([data-model.md §5.9](data-model.md#59-backup-status-entity)), read by the backend on the authenticated admin landing view and on the login screen.
+- Mirror: an unencrypted status mirror object in the off-site object store carrying the same fields, readable without the application. This exists so backup health is inspectable during a database outage.
+- On the authenticated admin landing view, the badge is visible only to callers with role `owner`. On the login screen, the badge is visible to anyone who reaches the screen — network reach is VPN-gated per [ADR-0008](../adr/0008-vpn-first-network-access.md), which is the threat-model anchor. Amber and red thresholds are configurable **[C]** (see [§12.2](#122-company-configurable-settings)).
+- When the status source is unreachable, the rendering surface MUST display a neutral "status unknown" state — silent absence is a misleading-state defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)).
 
 ---
 
@@ -196,6 +224,9 @@ The following values are centralized as single-source constants and may vary per
 - Role set and per-role permission matrix
 - Seed default password
 - Restore confirmation phrase — typed by the caller to confirm an override-restore into a non-empty database (see [api.md §14.2.4](api.md#1424-unified-data-exchange))
+- Layer 2 backup interval — cadence of the `backup` compose service ([§11.10](#1110-full-state-backup-layer-2))
+- Layer 2 retention counts — number of daily, weekly, and monthly artifacts kept by GFS rotation ([§11.10](#1110-full-state-backup-layer-2))
+- Layer 2 freshness thresholds — age of `lastBackupAt` and `lastDrillAt` at which the owner-facing badge switches to amber and to red ([§11.10](#1110-full-state-backup-layer-2))
 
 ### 12.3 Configuration Requirements
 
