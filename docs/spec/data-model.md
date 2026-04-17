@@ -215,7 +215,7 @@ Design notes:
 
 - **Row-level fidelity.** Each entity in the envelope carries all persisted fields including `id`, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`, and `deleted`. Imports preserve IDs exactly (see [ADR-0018 §Decision](../adr/0018-data-persistence-and-recovery-layered-strategy.md#decision)).
 - **Archived rows are included.** Projects with `deleted = true` round-trip with their archive state intact (see [§6.9](#69-soft-deletes)).
-- **Users and sessions are not included.** Admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) handles fresh installs; test seeding uses a direct-DB helper in the test layer.
+- **Users and sessions are not included.** Admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) handles fresh installs; seed-time loading of users uses a direct-DB helper, while seed-time business-data loading goes through the import code path (see [§7](#7-seed-data-specification)).
 - **`schema_version` is monotonic.** Imports compare strictly and reject any mismatch — no format migration code.
 
 ---
@@ -289,9 +289,11 @@ The seed dataset is loaded into the database on initial setup and provides a rea
 
 The seed operation must be safe to run on an empty database. Re-seeding an existing database drops and recreates all seed records. This is a development/demo operation, not a production upgrade path.
 
+The loader is split by shape: users are read from a JSON fixture and inserted via a direct-DB path (users are outside the import envelope contract — see [§5.8](#58-export-envelope) and [api.md §14.2.4](api.md#1424-unified-data-exchange)); business data (customers, projects, project_workers) is assembled into an in-memory envelope and applied through the same import code path that serves [api.md §14.2.4](api.md#1424-unified-data-exchange), so every seed run exercises the import contract.
+
 ### 7.1 Project Dataset
 
-**15-20 projects**, distributed to create a realistic snapshot with visible action-state accumulation:
+**19 projects**, distributed to create a realistic snapshot with visible action-state accumulation:
 
 | State           | Count | Notes                                                                      |
 | --------------- | ----- | -------------------------------------------------------------------------- |
@@ -324,7 +326,7 @@ Names are assumed and fictional (per [ADR-0001](../adr/0001-generalized-system-w
 
 ### 7.3 Customer Dataset
 
-**8–10 customers**, covering a range of data completeness and project associations:
+**21 customers**, covering a range of data completeness and project associations:
 
 | Name                      | Phone           | Email                    | Address                                 | Notes                                 |
 | ------------------------- | --------------- | ------------------------ | --------------------------------------- | ------------------------------------- |
