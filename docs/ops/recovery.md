@@ -16,7 +16,7 @@ Rationale for the design — encryption tool, bucket policy, operator-held key, 
 
 **Operator laptop:**
 
-- Shell with `age`, `age-keygen`, `ssh`, `wg-quick` (or `wg` + a platform-native WireGuard client), `docker` and the `docker compose` plugin, `aws` CLI (or `rclone` — this runbook uses `aws` examples), `curl`, `jq`, `openssl`, `shred`.
+- Shell with `age`, `age-keygen`, `ssh`, `wg-quick` (or `wg` + a platform-native WireGuard client), `docker` and the `docker compose` plugin, `aws` CLI (or `rclone` — this runbook uses `aws` examples), `curl`, `jq`, `openssl`, `shred`. Install anything missing up front (e.g., Debian/Ubuntu: `sudo apt install age awscli jq curl openssl` — `docker` and WireGuard follow their project-specific installers).
 - Repo checked out locally: `git clone git@github.com:vlzware/Projekt-Manager.git`.
 - WireGuard peer config imported and active ([ops/wireguard-setup.md](../ops/wireguard-setup.md)).
 - Password manager entry for: the R2 API token, the age private identity (backed up outside the system — see §4), the `secrets.env.age` passphrase.
@@ -145,7 +145,7 @@ You are about to replace the live backup credentials; this is reversible **only*
 
    The first three come from the current `secrets.env.age` — decrypt it locally first with `age -d secrets.env.age` if you don't have the plaintext handy. The five new keys come from §3.4 (R2 token) and §4 (age recipient).
 
-3. Re-encrypt with the existing passphrase:
+3. Re-encrypt. `age -p` prompts twice for the passphrase (enter + confirm) — reuse the passphrase already stored in the password manager so the VPS decrypt in step 5 and in `scripts/deploy.sh` both keep working:
 
    ```bash
    age -p -o secrets.env.age /tmp/secrets.env
@@ -162,7 +162,7 @@ You are about to replace the live backup credentials; this is reversible **only*
      sudo chmod 0600 /opt/projekt-manager/secrets.env.age"
    ```
 
-5. Verify the new values round-trip:
+5. Verify the new values round-trip (`age -d` prompts once for the same passphrase):
 
    ```bash
    ssh <admin-username>@<vps-hostname> "sudo -u deploy age -d /opt/projekt-manager/secrets.env.age | grep -E '^(R2_|AGE_RECIPIENT)'"
@@ -186,10 +186,10 @@ ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts
 
 > Any manual `docker compose up` / `pull` / `logs` invocation outside `scripts/deploy.sh` must be run with `APP_IMAGE_TAG=<sha-or-tag>` in the environment. Both the `app` and `backup` services are gated by `${APP_IMAGE_TAG:?...}` in `docker-compose.yml` (H2 audit finding) and will refuse to start without one. `scripts/deploy.sh` already exports it from the resolved SHA; only ad-hoc operator invocations need to set it by hand.
 
-After the deploy settles, verify the backup service is healthy:
+After the deploy settles, verify the backup service is healthy. Every `docker compose` call that targets the `backup` service must carry `--profile backup`, because the service is profile-gated (`docker-compose.yml` services.backup.profiles). Without the flag, `run --rm backup` hard-fails and `ps`/`logs`/`stop`/`start` behave inconsistently across compose versions:
 
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml logs --tail=50 backup"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml logs --tail=50 backup"
 ```
 
 First-run expectations, in order:
@@ -226,18 +226,18 @@ Expected shape (from [data-model.md §5.9](../spec/data-model.md#59-backup-statu
 
 Failure modes:
 
-| Symptom                                     | Likely cause                                           | Fix                                                                          |
-| ------------------------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `AccessDenied` writing to R2                | Token scoped to the wrong bucket                       | Recreate token per §3.4, rerun §5, redeploy.                                 |
-| `Key not recognised` / `no valid recipient` | `AGE_RECIPIENT` is the private identity, not `age1...` | Rerun §4 extraction with `age-keygen -y`, rerun §5.                          |
-| `meta_backup_status.lastBackupOk = false`   | Tier 1 mismatch or upload failure                      | `docker compose logs backup` — `lastError` names the failing table. See §10. |
-| No row in `meta_backup_status` at all       | Cron never fired; service crash-looping                | `docker compose ps backup`, `docker compose logs backup --tail=200`.         |
+| Symptom                                     | Likely cause                                           | Fix                                                                                           |
+| ------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `AccessDenied` writing to R2                | Token scoped to the wrong bucket                       | Recreate token per §3.4, rerun §5, redeploy.                                                  |
+| `Key not recognised` / `no valid recipient` | `AGE_RECIPIENT` is the private identity, not `age1...` | Rerun §4 extraction with `age-keygen -y`, rerun §5.                                           |
+| `meta_backup_status.lastBackupOk = false`   | Tier 1 mismatch or upload failure                      | `docker compose --profile backup logs backup` — `lastError` names the failing table. See §10. |
+| No row in `meta_backup_status` at all       | Cron never fired; service crash-looping                | `docker compose --profile backup ps backup`, `… logs backup --tail=200`.                      |
 
 ## 7. Load the drill key (`load-drill-key.sh`)
 
 Tier 2 drills need the private identity on the VPS. The script writes it to a tmpfs mount inside the `backup` container and never anywhere else.
 
-**Location:** `/opt/projekt-manager/scripts/load-drill-key.sh` in the repo; the backup container mounts it read-only and exposes it as `docker compose exec backup /usr/local/bin/load-drill-key`. The tmpfs target inside the container is `/run/drill-key/identity` (tmpfs, mode 0600, owned by the backup user).
+**Location:** `scripts/backup/load-drill-key.sh` in the repo. `Dockerfile.backup` copies it into the image at `/usr/local/bin/load-drill-key` (no `.sh`) — that is the only path the operator ever invokes, via `docker compose --profile backup exec backup load-drill-key`. The tmpfs target inside the container is `/run/drill-key/identity` (tmpfs, mode 0600, owned by the backup user).
 
 You are about to write private key material into RAM on the VPS; this is cleared on reboot or on container recreation, and can be overwritten by rerunning the script.
 
@@ -247,8 +247,8 @@ You are about to write private key material into RAM on the VPS; this is cleared
 
    ```bash
    ssh <admin-username>@<vps-hostname>
-   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
-     exec backup /usr/local/bin/load-drill-key
+   sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml \
+     exec backup load-drill-key
    ```
 
 3. The script prompts with `read -s` ("Paste age identity, end with Ctrl-D:"). Paste the clipboard contents, press Enter, then Ctrl-D. The script:
@@ -259,7 +259,7 @@ You are about to write private key material into RAM on the VPS; this is cleared
 4. Verify the key is loaded without exposing it:
 
    ```bash
-   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+   sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml \
      exec backup test -s /run/drill-key/identity && echo "drill key loaded"
    ```
 
@@ -268,8 +268,6 @@ You are about to write private key material into RAM on the VPS; this is cleared
 5. **After every VPS reboot or container recreate, the key is gone.** Reload by repeating steps 2–3. Until you do, Tier 2 is skipped (not failed — AC-168), but the badge turns amber ("Drill-Schlüssel neu laden") after the staleness threshold **[C]**.
 
 **Never** write the identity to any path other than `/run/drill-key/identity`. Specifically: not to a bind mount, not to `/opt/projekt-manager`, not to an env var in `secrets.env.age`, not to `docker compose exec backup sh -c 'echo ... >'`. A persisted copy on the VPS disk defeats the entire threat model ([AC-175](../spec/verification.md#1522-backup-and-recovery)).
-
-> **Phase 3 note:** `scripts/load-drill-key.sh` and the `backup` compose service do not yet exist. This runbook describes the expected shape; Phase 3 implements both. When implemented, the actual paths and prompt wording supersede this text.
 
 ## 8. Disaster-recovery restore (laptop)
 
@@ -394,19 +392,19 @@ Two paths exist; this runbook supports **(a) only**. Path (b) — targeted table
 **(a) Rebuild the VPS DB volume (maintenance window, downtime).** You are about to destroy the current `pgdata` volume and replace it with the restored state. This is irreversible on the live volume.
 
 1. Announce the maintenance window.
-2. On the VPS, stop the stack:
+2. On the VPS, stop every DB client — `app`, `caddy`, and `backup`. Leaving `backup` up would keep a live connection to `projekt_manager`, which makes the DROP DATABASE in step 4 fail with "database is being accessed by other users":
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml stop app caddy"
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml stop app caddy backup"
    ```
 3. Copy the decrypted dump to the VPS:
    ```bash
    scp "${TS}.dump" <admin-username>@<vps-hostname>:/tmp/
    ssh <admin-username>@<vps-hostname> "sudo chown deploy:deploy /tmp/${TS}.dump"
    ```
-4. Drop and recreate the DB, then restore:
+4. Drop and recreate the DB, then restore. `DROP DATABASE … WITH (FORCE)` (Postgres 13+) terminates any stray connection Postgres itself holds — defensive even after step 2, since an internal autovacuum or orphaned session can still hold a connection for a beat:
    ```bash
    ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
-     exec -T db psql -U pm -d postgres -c 'DROP DATABASE projekt_manager; CREATE DATABASE projekt_manager;'"
+     exec -T db psql -U pm -d postgres -c 'DROP DATABASE projekt_manager WITH (FORCE); CREATE DATABASE projekt_manager;'"
    ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
      exec -T db pg_restore --clean --if-exists --no-owner --no-privileges -U pm -d projekt_manager < /tmp/${TS}.dump"
    ```
@@ -414,7 +412,7 @@ Two paths exist; this runbook supports **(a) only**. Path (b) — targeted table
    ```bash
    ssh <admin-username>@<vps-hostname> "sudo shred -u /tmp/${TS}.dump"
    ```
-6. Restart the stack and verify:
+6. Restart the stack and verify. `scripts/deploy.sh` already includes `--profile backup` so this also brings the backup service back up:
    ```bash
    ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
    ```
@@ -432,7 +430,7 @@ Two paths exist; this runbook supports **(a) only**. Path (b) — targeted table
 
 ## 9. Monthly operator drill
 
-Tier 2 drills run on every backup when the key is loaded, but only on the VPS and only against the just-uploaded artifact. Tier 2 exercises encrypt → upload → download → decrypt against the VPS-side `age` binary and R2 endpoint — so it catches pipeline and provider drift as seen from that host. The monthly laptop-side drill closes the loop against the laptop-vs-VPS gap Tier 2 cannot see:
+Tier 2 drills run on their own cron (see `scripts/backup/crontab`) — they pick the newest encrypted object in R2, download + decrypt + verify against the manifest. The tick is independent of the backup tick (separate lockfile) and skips gracefully when the drill key is not loaded (AC-168). Tier 2 exercises encrypt → upload → download → decrypt against the VPS-side `age` binary and R2 endpoint — so it catches pipeline and provider drift as seen from that host. The monthly laptop-side drill closes the loop against the laptop-vs-VPS gap Tier 2 cannot see:
 
 - Tooling drift between operator laptop and VPS — e.g., a laptop running a newer `age` version that reads the VPS-produced header fine today but changes output next month, or a `pg_restore` major-version gap that only surfaces on the laptop path during a real DR.
 - OS/libc gap between the two environments, invisible to Tier 2 because Tier 2 never exercises the laptop toolchain.
@@ -450,8 +448,8 @@ When `meta_backup_status.lastBackupOk` stays `false`, the service crash-loops, o
 **First-line diagnostics (5 minutes):**
 
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps backup"
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml logs backup --tail=200"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml ps backup"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml logs backup --tail=200"
 ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
   exec -T db psql -U pm -d projekt_manager -c 'SELECT * FROM meta_backup_status;'"
 ```
@@ -462,12 +460,12 @@ ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/proje
 
 1. Stop the scheduled runs so you can iterate:
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml stop backup"
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml stop backup"
    ```
-2. Run a one-shot manually and read the full output:
+2. Run a one-shot manually and read the full output. `run --rm` spins up a fresh container, so `--profile backup` is mandatory — without it compose filters the service out and the command fails with "no such service":
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
-     run --rm backup /usr/local/bin/run-backup-once"
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml \
+     run --rm backup /usr/local/bin/run-backup.sh"
    ```
 3. Common buckets: R2 credential (re-run §5), age recipient mismatch (re-run §5 with `age-keygen -y`), PostgreSQL connectivity (check `db` container health), manifest algorithm drift (check AC-174 determinism — run the checksum query twice on the same snapshot and compare).
 
@@ -482,7 +480,7 @@ You are about to burn the current credentials; older encrypted backups in R2 rem
 **Before step 1 — quiesce the scheduler.** Stop the backup service so it does not accumulate `AccessDenied` errors against the dead token while steps 1–5 are in flight. The badge will fall stale until step 6 completes; that is expected.
 
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml stop backup"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml stop backup"
 ```
 
 1. **Burn the R2 token.** Cloudflare dashboard → R2 API Tokens → select the current token → **Delete**. Confirm. Every client using this token fails on its next call — the scheduler is already stopped, so the VPS side stays quiet.
@@ -504,7 +502,7 @@ ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/proje
 6. **Restart the scheduler.** Bring the backup service back up so the next interval tick fires. No-op if the redeploy in step 5 already recreated and started the `backup` container; otherwise this flips it from the pre-step-1 stopped state:
 
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml start backup"
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml start backup"
    ```
 
 7. **Sanity-check.** Immediately run the monthly drill per §9 against the next completed backup. A rotation that passes the drill is successfully done; a rotation whose drill fails is a rollback candidate — restore the previous `secrets.env.age` from the password manager and investigate before retrying.
