@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { usePermission } from '@/hooks/usePermission';
@@ -32,6 +32,8 @@ export function Header() {
   const [extractOpen, setExtractOpen] = useState(false);
   const [pwChangeOpen, setPwChangeOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -42,6 +44,29 @@ export function Header() {
     }
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [dropdownOpen]);
+
+  // The dropdown is right-anchored by default (opens leftward). When the
+  // header wraps and the button lands near the left edge of the viewport,
+  // that leftward open clips off-screen. Flip to left-anchor in that
+  // case. A fixed breakpoint can't decide this reliably — wrap depends
+  // on summary content width, not viewport alone — so we measure the
+  // button's position on open. Mutating the class directly (rather than
+  // via setState) avoids a cascading render before paint.
+  useLayoutEffect(() => {
+    if (!dropdownOpen || !buttonRef.current || !dropdownRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const viewportWidth = document.documentElement.clientWidth;
+    // Dropdown's min-width from Header.module.css. Kept inline because
+    // it's stable and reading the live style would layout-thrash.
+    const dropdownMinWidth = 140;
+    const leftwardFits = rect.right >= dropdownMinWidth;
+    const rightwardFits = viewportWidth - rect.left >= dropdownMinWidth;
+    // Only flip when the default (leftward open) would clip AND the
+    // flipped direction actually has room. If neither fits, keep the
+    // default so the clipping is at least symmetric with the wide-
+    // layout case.
+    dropdownRef.current.classList.toggle(styles.dropdownAlignLeft, !leftwardFits && rightwardFits);
   }, [dropdownOpen]);
 
   // Navigation is driven from the central route table so the per-role
@@ -135,6 +160,7 @@ export function Header() {
       {authUser && (
         <div className={styles.userMenu} ref={menuRef}>
           <button
+            ref={buttonRef}
             className={styles.userButton}
             data-testid="user-indicator"
             onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -142,7 +168,7 @@ export function Header() {
             {authUser.displayName}
           </button>
           {dropdownOpen && (
-            <div className={styles.dropdown}>
+            <div ref={dropdownRef} className={styles.dropdown}>
               <div className={styles.dropdownSection}>
                 <div className={styles.dropdownSectionLabel}>{STRINGS.theme.section}</div>
                 {THEME_OPTIONS.map((opt) => {
