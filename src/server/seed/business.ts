@@ -25,7 +25,7 @@ import {
 } from '../../domain/dataExchange.js';
 
 import { daysFromNow } from './daysFromNow.js';
-import { SEEDED_USER_IDS } from './users.js';
+import { getSeededUserIds } from './users.js';
 
 interface CustomerSpec {
   name: string;
@@ -466,6 +466,7 @@ export function buildBusinessEnvelope(now: Date): Envelope {
     projectIdBySuffix.set(spec.numberSuffix, id);
   }
 
+  const userIdByUsername = getSeededUserIds();
   const assignments: EnvelopeAssignment[] = ASSIGNMENT_SPECS.map((a) => {
     const projectId = projectIdBySuffix.get(a.projectNumberSuffix);
     if (projectId === undefined) {
@@ -473,7 +474,7 @@ export function buildBusinessEnvelope(now: Date): Envelope {
         `Seed business-envelope bug: assignment references unknown project suffix '${a.projectNumberSuffix}'`,
       );
     }
-    const userId = SEEDED_USER_IDS[a.username]!;
+    const userId = userIdByUsername[a.username]!;
     return { projectId, userId };
   });
 

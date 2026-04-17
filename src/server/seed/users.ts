@@ -83,22 +83,34 @@ function fixturePath(): string {
 }
 
 /**
- * Seeded user IDs keyed by username, derived from the fixture at module
- * load. Single source of truth for ID references across seed modules —
- * `business.ts` reads this to emit `project_workers[].userId` values
- * that resolve against the users `loadUsers` will insert.
+ * Seeded user IDs keyed by username — single source of truth for ID
+ * references across seed modules. `business.ts` calls this to emit
+ * `project_workers[].userId` values that resolve against the users
+ * `loadUsers` will insert.
  *
- * Module-load read is intentional: if the fixture is malformed, seed
- * imports fail loudly rather than silently producing drift.
+ * Lazy (cached on first call) rather than module-load: the app bundle
+ * imports this module transitively from `start.ts` even in production,
+ * where the fixture file is not shipped with the image (fixtures are
+ * dev/test artifacts, not production data). A module-load read would
+ * crash every production startup with a misleading ENOENT before the
+ * SEED-gate in start.ts even gets to decide. The fail-loud property
+ * on malformed fixtures is preserved — the first call from a seed run
+ * still throws synchronously.
  */
-export const SEEDED_USER_IDS: Readonly<Record<string, string>> = Object.freeze(
-  Object.fromEntries(
-    parseUsersFixture(JSON.parse(readFileSync(fixturePath(), 'utf8')) as unknown).map((u) => [
-      u.username,
-      u.id,
-    ]),
-  ),
-);
+let _cachedSeededUserIds: Readonly<Record<string, string>> | undefined;
+export function getSeededUserIds(): Readonly<Record<string, string>> {
+  if (!_cachedSeededUserIds) {
+    _cachedSeededUserIds = Object.freeze(
+      Object.fromEntries(
+        parseUsersFixture(JSON.parse(readFileSync(fixturePath(), 'utf8')) as unknown).map((u) => [
+          u.username,
+          u.id,
+        ]),
+      ),
+    );
+  }
+  return _cachedSeededUserIds;
+}
 
 /**
  * Read `fixtures/seed-users.json`, validate, hash the shared default
