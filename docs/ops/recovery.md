@@ -349,18 +349,23 @@ docker exec -i pm-restore-scratch pg_restore \
 
 The manifest is the per-table row count + deterministic checksum computed at backup time ([ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision), [AC-174](../spec/verification.md#1522-backup-and-recovery)). Recomputing against the scratch DB and comparing proves the encrypted round-trip end-to-end (AC-165 equality property).
 
-PK ordering is load-bearing — the checksum is order-sensitive ([ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision)). Current schema PKs ([src/server/db/schema.ts](../../src/server/db/schema.ts)): `users`/`customers`/`projects` use `id`; `project_workers` uses the composite `(project_id, user_id)`. `sessions` is excluded from the backup by manifest construction.
+PK ordering is load-bearing — the checksum is order-sensitive ([ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision)). Current schema PKs ([src/server/db/schema.ts](../../src/server/db/schema.ts)): `users`, `sessions`, `customers`, `projects` use `id`; `project_workers` uses the composite `(project_id, user_id)`; `meta_backup_status` uses `singleton`. Every table in the backup envelope needs an entry in `pk_for` below — an unmapped table is a fatal `UNKNOWN TABLE` finding.
+
+The outer `md5(…)` wraps a `COALESCE(string_agg(…), '')` so an empty table hashes to `md5('')` — the fixed constant `d41d8cd98f00b204e9800998ecf8427e`. The query below mirrors [services/backup.ts::computeManifest](../../src/server/services/backup.ts) exactly; a divergence here would produce false mismatches.
 
 ```bash
-jq -r '.tables | to_entries[] | "\(.key)\t\(.value.count)\t\(.value.checksum)"' "${TS}.manifest.json" \
+# Manifest fields are `rowCount` and `checksum`, at the top level
+# (no `.tables` wrapper).
+jq -r 'to_entries[] | "\(.key)\t\(.value.rowCount)\t\(.value.checksum)"' "${TS}.manifest.json" \
   > expected.tsv
 
 # ORDER BY must match the per-table PK above; a new table with a different PK
 # needs its row added here and in the manifest generator in lockstep.
 pk_for() {
   case "$1" in
-    users|customers|projects) echo "id" ;;
-    project_workers)          echo "project_id, user_id" ;;
+    users|sessions|customers|projects) echo "id" ;;
+    project_workers)                   echo "project_id, user_id" ;;
+    meta_backup_status)                echo "singleton" ;;
     *) return 1 ;;
   esac
 }
@@ -370,7 +375,7 @@ while IFS=$'\t' read -r table count checksum; do
   actual_count=$(docker exec pm-restore-scratch psql -U pm -d projekt_manager -tAc \
     "SELECT count(*) FROM ${table};")
   actual_checksum=$(docker exec pm-restore-scratch psql -U pm -d projekt_manager -tAc \
-    "SELECT md5(string_agg(md5(row(t.*)::text), '' ORDER BY ${order_by})) FROM ${table} t;")
+    "SELECT md5(coalesce(string_agg(md5(row(t.*)::text), '' ORDER BY ${order_by}), '')) FROM ${table} t;")
   if [ "$actual_count" != "$count" ] || [ "$actual_checksum" != "$checksum" ]; then
     echo "MISMATCH on ${table}: expected ${count}/${checksum}, got ${actual_count}/${actual_checksum}"
   fi
