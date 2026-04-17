@@ -160,3 +160,28 @@ export const projectWorkers = pgTable(
     index('idx_project_workers_user_id').on(table.userId),
   ],
 );
+
+// ---------------------------------------------------------------
+// Backup status (data-model.md §5.9, ADR-0020)
+//
+// Single-row table. The `singleton` primary key is a fixed sentinel
+// enforced by a CHECK so the app never has to distinguish "first
+// write" from "nth write" — it always upserts the same row. A row
+// is pre-seeded by the migration so repositories can rely on its
+// existence (upsert on the sentinel PK).
+// ---------------------------------------------------------------
+export const metaBackupStatus = pgTable(
+  'meta_backup_status',
+  {
+    singleton: boolean('singleton').primaryKey().default(true),
+    lastBackupAt: timestamp('last_backup_at', { withTimezone: true }),
+    lastBackupOk: boolean('last_backup_ok').notNull().default(false),
+    lastDrillAt: timestamp('last_drill_at', { withTimezone: true }),
+    // `lastDrillOk: boolean | null` per data-model.md §5.9 —
+    // null is the authoritative "never-run" signal, distinct from "skipped".
+    lastDrillOk: boolean('last_drill_ok'),
+    lastError: text('last_error'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check('meta_backup_status_singleton', sql`${table.singleton} = true`)],
+);

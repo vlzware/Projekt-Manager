@@ -51,33 +51,42 @@ if [ -z "$schema_vars" ]; then
   exit 2
 fi
 
-# --- Extract env var names from services.app.environment ------------------
-# State-machine awk: track whether we are inside the `app:` service's
-# `environment:` block, emit only UPPER_SNAKE var names at 6-space indent.
-compose_app_vars=$(awk '
+# --- Extract env var names from services.{app,backup}.environment ---------
+# State-machine awk: track whether we are inside one of the backend
+# services' `environment:` block, emit only UPPER_SNAKE var names at
+# 6-space indent.
+#
+# Both `app` and `backup` share the env.ts Zod schema because the
+# backup compose service runs code bundled from the same TypeScript
+# tree (Dockerfile.backup layers the dist/ produced by the app image —
+# see ADR-0020). A variable forwarded to either service is considered
+# "wired" for drift purposes. Forwarding a schema var to `backup` but
+# not `app` is legitimate when only the backup path reads it (e.g.
+# R2_* + AGE_RECIPIENT), and vice versa.
+compose_backend_vars=$(awk '
   # A top-level service name: 2-space indent, identifier, colon, EOL.
   /^  [a-z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
     svc = $0
     sub(/^  /, "", svc)
     sub(/:[[:space:]]*$/, "", svc)
-    in_app = (svc == "app")
+    in_backend = (svc == "app" || svc == "backup")
     in_env = 0
     next
   }
   # `environment:` key inside the current service (4-space indent).
-  in_app && /^    environment:[[:space:]]*$/ { in_env = 1; next }
+  in_backend && /^    environment:[[:space:]]*$/ { in_env = 1; next }
   # Any other 4-space property ends the environment block.
-  in_app && in_env && /^    [a-zA-Z]/ { in_env = 0 }
+  in_backend && in_env && /^    [a-zA-Z]/ { in_env = 0 }
   # Env var entry at 6-space indent inside the environment block.
-  in_app && in_env && /^      [A-Z_][A-Z0-9_]+:/ {
+  in_backend && in_env && /^      [A-Z_][A-Z0-9_]+:/ {
     name = $1
     sub(/:.*$/, "", name)
     print name
   }
 ' "$COMPOSE" | sort -u)
 
-if [ -z "$compose_app_vars" ]; then
-  echo "ERROR: no env vars found in $COMPOSE services.app.environment — did the compose format change?" >&2
+if [ -z "$compose_backend_vars" ]; then
+  echo "ERROR: no env vars found in $COMPOSE services.{app,backup}.environment — did the compose format change?" >&2
   exit 2
 fi
 
@@ -85,22 +94,24 @@ fi
 # Vars in the schema minus exclusions.
 schema_to_check=$(echo "$schema_vars" | grep -vE "$EXCLUDE_PATTERN" || true)
 
-missing=$(comm -23 <(echo "$schema_to_check") <(echo "$compose_app_vars") || true)
+missing=$(comm -23 <(echo "$schema_to_check") <(echo "$compose_backend_vars") || true)
 
 if [ -n "$missing" ]; then
-  echo "ERROR: env.ts declares vars that are NOT in docker-compose.yml services.app.environment:" >&2
+  echo "ERROR: env.ts declares vars that are NOT in docker-compose.yml services.{app,backup}.environment:" >&2
   echo "$missing" | sed 's/^/  - /' >&2
   echo "" >&2
-  echo "Add the missing vars to services.app.environment in docker-compose.yml." >&2
+  echo "Add the missing vars to the appropriate service's environment block" >&2
+  echo "in docker-compose.yml — services.app.environment for web-request code" >&2
+  echo "paths, services.backup.environment for the Layer 2 backup runner." >&2
   echo "Without that, the container cannot see them at runtime and the Zod" >&2
   echo "schema silently falls back to defaults (or the code sees undefined)." >&2
   echo "" >&2
-  echo "If a variable is intentionally not consumed by the app container" >&2
+  echo "If a variable is intentionally not consumed by either backend service" >&2
   echo "(e.g. consumed by Caddy or another service), add it to the" >&2
   echo "EXCLUDE_PATTERN in $(basename "$0") with an inline reason." >&2
   exit 1
 fi
 
-echo "OK: $ENV_TS ↔ $COMPOSE services.app.environment in sync"
+echo "OK: $ENV_TS ↔ $COMPOSE services.{app,backup}.environment in sync"
 echo "  schema vars checked: $(echo "$schema_to_check" | wc -l)"
 echo "  excluded: $(echo "$schema_vars" | grep -cE "$EXCLUDE_PATTERN" || echo 0)"

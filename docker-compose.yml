@@ -11,12 +11,15 @@ services:
     # Pulled from GHCR — see ADR-0011. The tag is the commit SHA of
     # the currently-deployed revision, set by scripts/deploy.sh via
     # APP_IMAGE_TAG (see ADR-0012 for the manual pull-based deploy
-    # flow that replaces the former deploy.yml). Default falls back
-    # to the `main` branch tag so a manual `docker compose up` on
-    # the VPS picks up a sensible image without requiring the env
-    # var. The dev overlay (docker-compose.dev.yml) reintroduces
-    # `build: .` so local development still builds from source.
-    image: ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG:-main}
+    # flow that replaces the former deploy.yml). No default: the `:?`
+    # substitution refuses to start compose without an explicit tag,
+    # so an unsynchronised `docker compose up` cannot silently pull
+    # `:main` (which was the pre-C2-audit default and drifted from
+    # whatever branch the operator was actually on). scripts/deploy.sh
+    # exports APP_IMAGE_TAG before every compose invocation; the dev
+    # overlay (docker-compose.dev.yml) reintroduces `build: .` so
+    # local development still builds from source.
+    image: ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
     read_only: true
     tmpfs:
       - /tmp
@@ -116,6 +119,79 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       STORAGE_BUCKET: projekt-manager
     restart: 'no'
+
+  backup:
+    # Layer 2 encrypted backup service — see ADR-0020 and
+    # docs/spec/architecture.md §11.10. Runs a dcron loop that fires
+    # run-backup.sh every 15 min, run-drill.sh every 15 min +2 min
+    # offset, and run-rotation.sh daily at 03:00 UTC.
+    #
+    # Pulled from GHCR — mirrors the `app` service's shape (ADR-0011's
+    # "build in CI, distribute via GHCR" invariant extends to this
+    # image; see .github/workflows/ci.yml build-and-push job). The tag
+    # is the commit SHA of the currently-deployed revision, set by
+    # scripts/deploy.sh via APP_IMAGE_TAG. No default: mirrors the
+    # `app` service's `:?` gate so compose refuses to start without an
+    # explicit tag. Mutable branch-tag defaults (`:main`, an iteration
+    # slug) previously risked silently pulling stale code on a manual
+    # `docker compose up`; the only safe way to run is with an
+    # operator-supplied SHA.
+    image: ghcr.io/vlzware/projekt-manager-backup:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
+    read_only: true
+    tmpfs:
+      # Operator-loaded drill identity (AC-175). The script
+      # load-drill-key.sh asserts this mount is tmpfs before writing;
+      # removing this directive will make the script refuse rather
+      # than persist the identity to disk.
+      - /run/drill-key:mode=0700,uid=0,gid=0
+      # Ephemeral Postgres workdir for Tier 1 verify-on-create
+      # (initdb output, WAL, socket). Kept out of any volume because
+      # it must never survive a run — the integrity proof is that
+      # the process starts from initdb every time.
+      - /tmp
+      # Lockfiles consumed by flock in run-{backup,drill,rotation}.sh.
+      # /var/run on Alpine is a tmpfs symlink target by default; making
+      # it explicit here means read_only:true does not block lock
+      # creation.
+      - /var/run
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      # Same DATABASE_URL as the app — the backup service reads the
+      # canonical DB for pg_dump + manifest (AC-174 checksum query).
+      DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD}@db:5432/projekt_manager
+      # Cloudflare R2 credentials + bucket + recipient — sourced from
+      # secrets.env.age via scripts/deploy.sh (see recovery.md §5 for
+      # provisioning). AGE_RECIPIENT is the PUBLIC recipient only;
+      # the private identity is operator-held and loaded into tmpfs
+      # via load-drill-key.sh per recovery.md §7 (AC-175).
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+      R2_ENDPOINT: ${R2_ENDPOINT}
+      R2_BUCKET: ${R2_BUCKET:-projekt-manager-backups}
+      R2_REGION: ${R2_REGION:-auto}
+      AGE_RECIPIENT: ${AGE_RECIPIENT}
+      # Tmpfs path where the operator loads the age private identity
+      # for Tier 2 drills (AC-168, AC-175). Default matches the tmpfs
+      # mount above and scripts/backup/run-drill.sh — kept explicit in
+      # compose so check-env-drift.sh sees it and so the runner's Zod
+      # schema cannot silently fall back to its default at runtime.
+      AGE_IDENTITY_PATH: ${AGE_IDENTITY_PATH:-/run/drill-key/identity}
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    # No `ports:` — the backup service speaks only to `db` over the
+    # internal compose network and to R2 outbound. No inbound surface
+    # from anywhere.
+    restart: unless-stopped
+    logging: *default-logging
+    profiles:
+      # Omitted from a bare `docker compose up` so local dev doesn't
+      # spin up a cron loop with empty R2 creds. Production deploy
+      # opts in via `--profile backup` (scripts/deploy.sh sets this);
+      # the runbook references the same profile.
+      - backup
 
   caddy:
     build: ./docker/caddy

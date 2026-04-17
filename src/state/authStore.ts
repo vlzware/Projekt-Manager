@@ -10,6 +10,7 @@ import { authApi, type AuthUser } from '@/api/client';
 import { STRINGS } from '@/config/strings';
 import { THEME_PREFERENCE_KEY, type ThemePreference } from '@/config/themeStorage';
 import { applyThemePreference } from '@/styles/themeRuntime';
+import type { BackupStatus } from '@/domain/backupBadge';
 import { useProjectStore } from './projectStore';
 import { useUIStore } from './uiStore';
 import { useCustomerStore } from './customerStore';
@@ -21,6 +22,15 @@ interface AuthState {
   authUser: AuthUser | null;
   authError: string | null;
   sessionChecked: boolean;
+  /**
+   * Backup-freshness status attached to the authenticated session. The
+   * server only includes this for callers with role `owner`
+   * (verification.md AC-170). `undefined` means either "not an owner"
+   * or "status source unreachable"; the badge component treats the
+   * latter as the "Status unbekannt" branch and non-owner UI never
+   * reads this field.
+   */
+  backupStatus: BackupStatus | undefined;
 
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
@@ -124,6 +134,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   authUser: null,
   authError: null,
   sessionChecked: false,
+  backupStatus: undefined,
 
   login: async (username: string, password: string) => {
     set({ authError: null });
@@ -145,6 +156,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({
       authUser: result.data.user,
       authError: null,
+      // `backupStatus` is only included by the server for owner callers
+      // (verification.md AC-170). The envelope is typed as optional, so
+      // a missing field lands here as `undefined` and the badge
+      // component stays hidden for non-owners without a second branch.
+      backupStatus: result.data.backupStatus,
     });
   },
 
@@ -153,6 +169,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({
       authUser: null,
       authError: null,
+      backupStatus: undefined,
     });
     clearDownstreamState();
   },
@@ -161,7 +178,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const result = await authApi.me();
 
     if (!result.ok) {
-      set({ authUser: null, sessionChecked: true });
+      set({ authUser: null, sessionChecked: true, backupStatus: undefined });
       return;
     }
 
@@ -184,7 +201,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         writeCachedPreference(user.themePreference);
         applyThemePreference(user.themePreference);
       }
-      set({ authUser: user, sessionChecked: true });
+      set({ authUser: user, sessionChecked: true, backupStatus: result.data.backupStatus });
     } else {
       set({ sessionChecked: true });
     }
@@ -195,6 +212,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       authUser: null,
       authError: STRINGS.auth.sessionExpiredLogin,
       sessionChecked: true,
+      backupStatus: undefined,
     });
     clearDownstreamState();
   },

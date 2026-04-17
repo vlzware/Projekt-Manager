@@ -8,6 +8,13 @@
       "when": 1776289593585,
       "tag": "0000_early_greymalkin",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1776446447671,
+      "tag": "0001_backup_status",
+      "breakpoints": true
     }
   ]
 }

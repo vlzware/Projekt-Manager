@@ -190,6 +190,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 import type { Project, Customer, User } from '@/domain/types';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
+import type { BackupStatus } from '@/domain/backupBadge';
 
 interface AuthUser {
   id: string;
@@ -200,9 +201,21 @@ interface AuthUser {
   themePreference: ThemePreference;
 }
 
+/**
+ * Response envelope for /api/auth/login and /api/auth/me.
+ *
+ * The server includes `backupStatus` only when the caller holds the
+ * `owner` role (api.md §14.2.1, verification.md AC-170). Other roles
+ * get an envelope without the key — absence drives the UI's "no badge
+ * on this surface" branch without requiring a separate role check.
+ */
 interface LoginResponse {
   user: AuthUser;
+  backupStatus?: BackupStatus;
 }
+
+/** Response shape for the public GET /api/backup/status surface. */
+export type BackupStatusResponse = { available: true; status: BackupStatus } | { available: false };
 
 interface ProjectListResponse {
   data: Project[];
@@ -437,6 +450,19 @@ export interface ExtractionResult {
 export const extractApi = {
   extract: (text: string) =>
     apiCall<ExtractionResult>('/api/extract', { method: 'POST', body: { text } }),
+};
+
+/**
+ * Public backup-status endpoint — no authentication required.
+ *
+ * Rendered on the login screen for operator visibility when the app
+ * DB is also down (ADR-0008 VPN-gate is the threat-model anchor, see
+ * api.md §14.2.7). The authenticated `/api/auth/me` flow carries the
+ * same status as an embedded `backupStatus` field for owner callers,
+ * so this endpoint is only consumed from the unauth login screen.
+ */
+export const backupApi = {
+  status: () => apiCall<BackupStatusResponse>('/api/backup/status'),
 };
 
 export type { AuthUser };

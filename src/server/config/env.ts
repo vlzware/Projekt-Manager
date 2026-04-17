@@ -44,6 +44,25 @@ const envSchema = z.object({
   // provide implicitly via server restarts; lower values are fine for
   // environments that want tighter revocation latency.
   SESSION_CLEANUP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(60),
+  // ---------------------------------------------------------------
+  // Layer 2 backup (ADR-0020). Consumed by the `backup-runner` CLI,
+  // not by the main app server — but declared here so the schema
+  // remains the single source of truth. Optional at the app-server
+  // level; the CLI enforces presence at dispatch time, and the shell
+  // entrypoints in scripts/backup/run-*.sh pre-check the same set.
+  // ---------------------------------------------------------------
+  R2_ACCESS_KEY_ID: z.string().optional(),
+  R2_SECRET_ACCESS_KEY: z.string().optional(),
+  R2_ENDPOINT: z.string().optional(),
+  R2_BUCKET: z.string().optional(),
+  R2_REGION: z.string().default('auto'),
+  /** Public age recipient (asymmetric). Encryption fails fast if empty
+   * to preserve the "no plaintext at rest" invariant (AC-167). */
+  AGE_RECIPIENT: z.string().optional(),
+  /** Tmpfs-resident identity path used by the drill decrypt step.
+   * Default matches `scripts/backup/run-drill.sh` and the tmpfs mount
+   * in Dockerfile.backup so operators don't need to set it. */
+  AGE_IDENTITY_PATH: z.string().default('/run/drill-key/identity'),
 });
 
 export type Env = z.infer<typeof envSchema>;

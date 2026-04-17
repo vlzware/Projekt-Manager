@@ -1,0 +1,36 @@
+# Backup container crontab (dcron format, root user).
+#
+# Installed in the image at /etc/crontabs/root (Dockerfile.backup).
+# dcron in the entrypoint runs as `crond -f -l 2` so wakeups appear
+# in `docker compose logs backup`.
+#
+# Schedule:
+#   */15 * * * *   run-backup   — every 15 minutes on the quarter hour
+#   2,17,32,47 * * * *  run-drill  — every 15 minutes, offset +2 min so a
+#                                 drill never starts in the same second
+#                                 as the backup it will verify. The
+#                                 drill itself is cheap when the key is
+#                                 absent (AC-168 skip path).
+#   0 3 * * *      run-rotation — daily at 03:00 UTC
+#
+# Interval is hardcoded rather than env-substituted: dcron's `crontab`
+# file syntax does not support env-var expansion, and the alternative
+# (generating this file at container start from $BACKUP_INTERVAL_MINUTES)
+# adds a template step with no payoff for this iteration's cadence
+# being fixed at 15 minutes. When the cadence needs to be configurable,
+# flip the entrypoint to write this file from a template — the
+# drift-cost-vs-complexity tradeoff will then favor it. Until then,
+# changes here are a one-line compose-source-of-truth edit.
+#
+# The interval itself is [C] per docs/spec/architecture.md §11.10
+# (AC-172 refers to "the configured interval"); 15 minutes is the
+# current choice.
+#
+# No MAILTO directive: dcron does not implement the vixie-cron mail
+# envelope, so there is nothing to silence. Each script's output goes
+# straight to the container's stdout/stderr via docker's json-file
+# driver, which is the only observer we want.
+
+*/15 * * * * /usr/local/bin/run-backup.sh
+2,17,32,47 * * * * /usr/local/bin/run-drill.sh
+0 3 * * * /usr/local/bin/run-rotation.sh

@@ -286,4 +286,21 @@ export const STRINGS = {
     agedBuffer: (count: number, label: string, days: number) =>
       `${count} ${label} seit >${days} Tagen`,
   },
+
+  /**
+   * Backup-freshness badge copy (AC-170, AC-171). Centralized so the
+   * derivation layer's reason strings and the visible German label
+   * share a single source. `unknown` pins the exact wording named in
+   * AC-171; the others map to the reason union in
+   * `src/domain/backupBadge.ts` — labels must cover every member.
+   */
+  backup: {
+    green: 'Backup: aktuell',
+    drillStale: 'Backup: aktuell, Drill-Schlüssel neu laden',
+    backupStale: 'Backup: veraltet',
+    lastRunFailed: 'Backup: fehlgeschlagen',
+    backupNeverRun: 'Backup: noch nie ausgeführt',
+    drillNeverRun: 'Drill: noch nie ausgeführt',
+    unknown: 'Status unbekannt',
+  },
 } as const;

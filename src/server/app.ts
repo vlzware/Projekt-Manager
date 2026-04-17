@@ -18,6 +18,7 @@ import { customerRoutes } from './routes/customers.js';
 import { userRoutes } from './routes/users.js';
 import { dataExchangeRoutes } from './routes/data-exchange.js';
 import { extractRoutes } from './routes/extract.js';
+import { backupRoutes } from './routes/backup.js';
 import { getEnv } from './config/env.js';
 import { AppError, rateLimited, serverError, validationError } from './errors.js';
 import { STRINGS } from '../config/strings.js';
@@ -151,6 +152,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     app.register(userRoutes(opts.db));
     app.register(dataExchangeRoutes(opts.db));
     app.register(extractRoutes(opts.db));
+    app.register(backupRoutes(opts.db));
   }
 
   return app;

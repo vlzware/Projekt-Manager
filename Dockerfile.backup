@@ -1,0 +1,147 @@
+# Layer 2 encrypted backup service — see ADR-0020.
+#
+# Two-stage build:
+#   1. `appsrc` stage — pulls the compiled app bundle so we can COPY
+#      `dist/server/backup-runner.js` (and its friends) into the final
+#      image. APP_IMAGE_TAG must match the tag deployed on the same
+#      commit (scripts/deploy.sh exports it before `docker compose up`);
+#      defaults to the current iteration branch tag for dev.
+#   2. final stage — node:22.20.0-alpine with postgresql17 (server +
+#      client) and the rest of the operational toolchain layered on top,
+#      plus the backend bundle from stage 1.
+#
+# BASE IMAGE CHOICE (F1): node:22.20.0-alpine instead of
+# postgres:17-alpine. Reason: ADR-0009 pins the app runtime at node
+# v22.20.0. postgres:17-alpine is tracking Alpine 3.23, whose `apk add
+# nodejs` resolves to v24.x — that would silently diverge from the app
+# image's v22 line and break the parity rule ADR-0009 exists to
+# enforce. node:22.20.0-alpine is on Alpine 3.22, which ships
+# postgresql17 server + client packages directly, so initdb /
+# postgres / pg_restore / pg_isready / pg_dump / psql are all
+# available for the Tier 1 verify-on-create path (ADR-0020 §Decision,
+# docs/spec/architecture.md §11.10) without multi-stage binary
+# shuffling.
+# No default: callers (scripts/deploy.sh via the CI build-and-push job,
+# or an operator-run `docker build --build-arg`) MUST supply the tag.
+# Dropping the `=iteration-7-data` default closes the H2 audit finding —
+# a stale mutable branch tag could silently ship the wrong code.
+ARG APP_IMAGE_TAG
+# hadolint ignore=DL3006  # tag is set by scripts/deploy.sh per commit
+FROM ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG} AS appsrc
+
+FROM node:22.20.0-alpine
+
+# Package roles:
+#   postgresql17         — server binaries (initdb, postgres) used by
+#                          the Tier 1 verify path which spawns an
+#                          ephemeral Postgres over a unix socket inside
+#                          this container (ADR-0020 §Decision). Version
+#                          is pinned at the major in the package name —
+#                          Alpine 3.22 ships 17.x, which tracks the
+#                          `db` service's postgres:17-alpine image.
+#   postgresql17-client  — pg_restore, pg_dump, pg_isready, psql.
+#                          Used by the backend backup-runner for the
+#                          manifest + round-trip verify.
+#   age                  — envelope encryption (asymmetric recipient
+#                          in env; private identity operator-held).
+#   aws-cli              — S3-compatible client for Cloudflare R2
+#                          (PUT/GET/LIST/COPY from run-rotation.sh).
+#   dcron                — foreground cron for the scheduled run loop.
+#   bash                 — scripts use bash idioms (pipefail, [[,
+#                          arrays). Alpine's default /bin/sh is ash.
+#   jq                   — manifest JSON + status mirror
+#                          parsing/emitting.
+#   coreutils            — `flock` and GNU `date`/`stat` semantics the
+#                          scripts rely on (busybox variants diverge
+#                          on --iso-8601 etc.).
+#   findmnt              — used by load-drill-key.sh's tmpfs-invariant
+#                          check (AC-175 safety gate). Without it the
+#                          script falls back to /proc/mounts parsing
+#                          which is strictly less reliable.
+#   su-exec              — the backend backup-runner uses it to demote
+#                          the ephemeral `postgres` subprocess to the
+#                          `postgres` UID. The postgres binary refuses
+#                          to run as uid 0; the backend must invoke
+#                          `su-exec postgres:postgres postgres …` when
+#                          spawning the verify instance.
+#
+# No explicit version pins here (the db-image parity via
+# postgresql17's major version pin is what governs cross-environment
+# compatibility — ADR-0009); everything else tracks Alpine 3.22.
+RUN apk add --no-cache \
+      postgresql17 \
+      postgresql17-client \
+      age \
+      aws-cli \
+      dcron \
+      bash \
+      jq \
+      coreutils \
+      findmnt \
+      su-exec
+
+# Pull the compiled backend bundle + node_modules from the app image.
+# This gives us `dist/server/backup-runner.js` (produced by the other
+# stream's Phase-3 work) without rebuilding the TypeScript here. It
+# also guarantees the backup service runs the EXACT same backend code
+# as the deployed app — no skew between a "runBackup" definition used
+# by the web handlers and one used by cron.
+#
+# TODO(phase-3-sync, backend stream): confirm the bundle exposes a CLI
+# entry at /app/dist/server/backup-runner.js with `run` and `drill`
+# subcommands. If the backend stream bundles it differently (e.g.,
+# under dist/server/cli/backup.js), update run-backup.sh and
+# run-drill.sh's BACKUP_RUNNER_SCRIPT default in lockstep.
+COPY --from=appsrc /app/node_modules /app/node_modules
+COPY --from=appsrc /app/dist         /app/dist
+COPY --from=appsrc /app/package.json /app/package.json
+
+# Backup cron scripts. Copied into /usr/local/bin/ so the shorter names
+# in the crontab (run-backup.sh, load-drill-key, ...) resolve on PATH.
+# The crontab itself is installed under /etc/crontabs/root so dcron
+# picks it up without --path gymnastics.
+COPY scripts/backup/run-backup.sh       /usr/local/bin/run-backup.sh
+COPY scripts/backup/run-drill.sh        /usr/local/bin/run-drill.sh
+COPY scripts/backup/run-rotation.sh     /usr/local/bin/run-rotation.sh
+COPY scripts/backup/load-drill-key.sh   /usr/local/bin/load-drill-key
+COPY scripts/backup/entrypoint.sh       /usr/local/bin/backup-entrypoint
+COPY scripts/backup/crontab             /etc/crontabs/root
+
+RUN chmod +x \
+      /usr/local/bin/run-backup.sh \
+      /usr/local/bin/run-drill.sh \
+      /usr/local/bin/run-rotation.sh \
+      /usr/local/bin/load-drill-key \
+      /usr/local/bin/backup-entrypoint
+
+# Tmpfs-destination directory for the operator-loaded drill identity.
+# The actual mount is injected by compose (tmpfs: /run/drill-key). We
+# pre-create the mountpoint with 0700 so if compose's tmpfs directive
+# is ever accidentally removed, the script path still exists (and
+# load-drill-key.sh's tmpfs-invariant check refuses to write — defense
+# in depth for AC-175).
+RUN mkdir -p /run/drill-key && chmod 0700 /run/drill-key
+
+# No USER directive. The container runs as root because:
+#   1. `dcron` needs CAP_SETUID to exec entries on behalf of non-root
+#      users — running cron itself as root is standard on Alpine.
+#   2. The Tier 1 verify path spawns an ephemeral `postgres` subprocess,
+#      and the postgres binary refuses to run as uid 0. The backend
+#      backup-runner is expected to demote that subprocess itself using
+#      `su-exec postgres:postgres postgres …` before exec — `su-exec`
+#      is installed above for exactly this purpose. No script in this
+#      image performs that demotion; it is a backend-runner
+#      responsibility, called out here so the coupling is visible.
+#   3. The tmpfs at /run/drill-key is mounted uid=0,gid=0,mode=0700;
+#      only root inside the container can read/write the loaded
+#      identity.
+# The container is compose-level `read_only: true` with writes confined
+# to the tmpfs and /tmp — the root UID here is not a blast-radius
+# amplifier, only a Postgres/cron scheduling requirement.
+
+# Single-process entrypoint: run crond in the foreground. `-f` keeps it
+# attached to PID 1 (no forking init that would then detach), `-l 2`
+# emits info-level logs so the default Docker json-file driver captures
+# each run's wakeup. The entrypoint script is the thin wrapper that
+# verifies env presence once at container start before exec'ing crond.
+ENTRYPOINT ["/usr/local/bin/backup-entrypoint"]

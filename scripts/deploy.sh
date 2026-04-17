@@ -55,11 +55,21 @@ set +a
 # Pin the exact SHA-tagged image so this deploy is reproducible and a
 # rollback is just re-running with an older SHA. `docker compose pull`
 # only pulls services that declare an `image:` — `db`, `storage`, and
-# `caddy` use their own pinned registry images (unchanged). The `app`
-# service is the only one whose image is produced by this repo.
+# `caddy` use their own pinned registry images (unchanged). Both `app`
+# and `backup` images are produced by this repo and share APP_IMAGE_TAG
+# — CI pushes them as a pair per commit SHA (see
+# .github/workflows/ci.yml build-and-push job and ADR-0020 §Decision
+# for the backup image).
 export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
-docker compose pull app
-docker compose up -d
+# --profile backup is needed on BOTH `pull` and `up` — without it on
+# pull, the backup service is filtered out of the active set and its
+# image is never fetched ahead of `up -d` (which would then block on a
+# registry round-trip while starting).
+docker compose --profile backup pull app backup
+# The backup service is behind a profile so local dev (no R2 creds)
+# doesn't spin up a cron loop that will log AccessDenied every 15 min.
+# See docs/ops/recovery.md §6 and ADR-0020.
+docker compose --profile backup up -d
 
 # Smoke test: probe the app container's /api/health endpoint directly,
 # bypassing Caddy and the TLS chain. Verifies app + db + storage are
@@ -75,7 +85,10 @@ until docker compose exec -T app node -e "fetch('http://localhost:3000/api/healt
   elapsed=$((elapsed + 2))
   if [ "$elapsed" -ge "$timeout" ]; then
     echo "Health check failed after ${timeout}s" >&2
-    docker compose logs --tail=50
+    # Include the backup container in the failure dump — its profile
+    # must match `up -d` above, otherwise compose filters it out of
+    # the active service set and the logs command silently skips it.
+    docker compose --profile backup logs --tail=50
     exit 1
   fi
 done

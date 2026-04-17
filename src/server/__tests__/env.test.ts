@@ -38,6 +38,15 @@ function makeEnv(overrides: Partial<Env>): Env {
     OPENROUTER_API_KEY: undefined,
     OPENROUTER_MODEL: 'google/gemini-2.5-flash-lite',
     SESSION_CLEANUP_INTERVAL_MINUTES: 60,
+    // Layer 2 backup env — optional at the app-server level; declared
+    // here so the fixture stays in sync with the schema shape.
+    R2_ACCESS_KEY_ID: undefined,
+    R2_SECRET_ACCESS_KEY: undefined,
+    R2_ENDPOINT: undefined,
+    R2_BUCKET: undefined,
+    R2_REGION: 'auto',
+    AGE_RECIPIENT: undefined,
+    AGE_IDENTITY_PATH: '/run/drill-key/identity',
     ...overrides,
   };
 }

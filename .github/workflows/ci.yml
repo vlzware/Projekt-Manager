@@ -53,6 +53,17 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # H5 audit finding: every .sh under scripts/ goes through shellcheck
+      # at `--severity=warning`. Covers scripts/*.sh (rotation/deploy
+      # toolchain) and scripts/backup/*.sh (cron entrypoints + drill
+      # loader). Action pinned by SHA to match the rest of this workflow.
+      - name: Shellcheck
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
+        env:
+          SHELLCHECK_OPTS: --severity=warning
+        with:
+          scandir: ./scripts
+
       - name: Format check
         run: npm run format:check
 
@@ -178,13 +189,28 @@ jobs:
       # closed PR #67.
       - name: Validate Compose file references
         env:
-          # Placeholders for the four variables that have no default
-          # in docker-compose.yml. These cover the current drift
-          # surface; any NEW required variable will trip the grep.
+          # Placeholders for the variables that have no default in
+          # docker-compose.yml. These cover the current drift surface;
+          # any NEW required variable will trip the grep.
           POSTGRES_PASSWORD: placeholder
           MINIO_ROOT_USER: placeholder
           MINIO_ROOT_PASSWORD: placeholder
           CLOUDFLARE_API_TOKEN: placeholder
+          # Layer 2 backup service (ADR-0020) — referenced by the
+          # `backup` profile. Docker compose emits "variable is not
+          # set" even for services filtered by a disabled profile,
+          # because substitution runs before profile filtering. Must
+          # be set here too or the check fails on the non-backup
+          # runs.
+          R2_ACCESS_KEY_ID: placeholder
+          R2_SECRET_ACCESS_KEY: placeholder
+          R2_ENDPOINT: https://example.invalid
+          AGE_RECIPIENT: age1placeholder
+          # APP_IMAGE_TAG is a `:?`-gated variable in docker-compose.yml
+          # (H2 audit finding — mutable branch tag defaults removed).
+          # A placeholder lets `docker compose config` parse; real
+          # deploys pass a SHA tag via scripts/deploy.sh.
+          APP_IMAGE_TAG: placeholder
         run: |
           set -euo pipefail
           check() {
@@ -204,6 +230,9 @@ jobs:
           }
           check "prod compose" -f docker-compose.yml
           check "prod + dev overlay" -f docker-compose.yml -f docker-compose.dev.yml
+          # Exercise the backup profile once so variable substitution
+          # inside the backup service's environment block is covered.
+          check "prod compose, backup profile" -f docker-compose.yml --profile backup
           echo "Compose files validated."
 
       - name: Set up Docker Buildx
@@ -267,11 +296,23 @@ jobs:
           # lowercase, replace '/' with '-', strip anything not in
           # [a-z0-9._-].
           branch_slug=$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]/' '[:lower:]-' | sed 's/[^a-z0-9._-]/-/g')
+          owner="${GITHUB_REPOSITORY_OWNER}"
           {
-            echo "tags<<TAGS_EOF"
-            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/projekt-manager:${sha_tag}"
-            echo "ghcr.io/${GITHUB_REPOSITORY_OWNER}/projekt-manager:${branch_slug}"
-            echo "TAGS_EOF"
+            # App image tags.
+            echo "app_tags<<APP_TAGS_EOF"
+            echo "ghcr.io/${owner}/projekt-manager:${sha_tag}"
+            echo "ghcr.io/${owner}/projekt-manager:${branch_slug}"
+            echo "APP_TAGS_EOF"
+            # Backup image tags — parallel scheme, same SHA + slug.
+            echo "backup_tags<<BACKUP_TAGS_EOF"
+            echo "ghcr.io/${owner}/projekt-manager-backup:${sha_tag}"
+            echo "ghcr.io/${owner}/projekt-manager-backup:${branch_slug}"
+            echo "BACKUP_TAGS_EOF"
+            # Expose the slug-tag so the backup build step can pass it
+            # to Dockerfile.backup's APP_IMAGE_TAG build-arg: the
+            # backup image's FROM line pulls from the app tag we just
+            # pushed in this same workflow run, so they must agree.
+            echo "app_image_tag=${sha_tag}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
@@ -284,12 +325,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-      - name: Build and push
+      - name: Build and push app image
         uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
         with:
           context: .
           file: Dockerfile
           push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ steps.tags.outputs.app_tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Backup image — see ADR-0020 §Decision (Layer 2 encrypted
+      # backups) and Dockerfile.backup. Built and pushed to GHCR under
+      # the same tagging scheme as the app image so scripts/deploy.sh
+      # can resolve both images by the same commit SHA. Sequential on
+      # purpose: Dockerfile.backup's `FROM ghcr.io/...:${APP_IMAGE_TAG}`
+      # references the just-pushed app image, so the app push must
+      # complete first. Separate gha cache scope keeps the backup
+      # image's layer cache from invalidating the app image's cache.
+      - name: Build and push backup image
+        uses: docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294 # v7.0.0
+        with:
+          context: .
+          file: Dockerfile.backup
+          push: true
+          tags: ${{ steps.tags.outputs.backup_tags }}
+          build-args: |
+            APP_IMAGE_TAG=${{ steps.tags.outputs.app_image_tag }}
+          cache-from: type=gha,scope=backup
+          cache-to: type=gha,mode=max,scope=backup

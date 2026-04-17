@@ -3,11 +3,14 @@ import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useRouterNav } from '@/hooks/useRouterNav';
-import { visibleRoutesForUser } from '@/config/routes';
+import { visibleRoutesForUser, isLandingViewForUser } from '@/config/routes';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
+import { BACKUP_THRESHOLDS } from '@/config/backupThresholds';
+import { deriveBadgeState } from '@/domain/backupBadge';
 import type { ThemePreference } from '@/config/themeStorage';
 import { SummaryArea } from './SummaryArea';
+import { BackupBadge } from './BackupBadge';
 import { EmailExtractModal } from '../extraction/EmailExtractModal';
 import { PasswordChangeModal } from './PasswordChangeModal';
 import styles from './Header.module.css';
@@ -21,6 +24,7 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
 export function Header() {
   const activeView = useUIStore((s) => s.activeView);
   const authUser = useAuthStore((s) => s.authUser);
+  const backupStatus = useAuthStore((s) => s.backupStatus);
   const logout = useAuthStore((s) => s.logout);
   const updateThemePreference = useAuthStore((s) => s.updateThemePreference);
   const { navigateTo } = useRouterNav();
@@ -47,6 +51,28 @@ export function Header() {
   // driven via `usePermission`.
   const visibleRoutes = authUser ? visibleRoutesForUser(authUser) : [];
   const canExtract = usePermission('customer:write');
+
+  // AC-170 + AC-171: the backup-freshness badge renders ONLY on the
+  // owner's landing view. Two gates:
+  //   1. Role: only owners get the badge surface at all. Non-owners
+  //      never see it (the server also omits `backupStatus` for them,
+  //      so the state would be `unknown` — but hiding the surface
+  //      entirely matches AC-170's "not rendered" wording).
+  //   2. Route: the caller is on their own landing view. Navigating
+  //      to `/customers` (etc.) drops the badge per AC-170.
+  //
+  // `backupStatus === undefined` for an owner means the server could
+  // not read the row (DB down). AC-171 forbids silently hiding the
+  // badge in that case — `deriveBadgeState(undefined, …)` returns the
+  // `unknown` branch, which the component renders as "Status unbekannt".
+  // Do NOT gate on `backupStatus !== undefined` here; that would
+  // reintroduce the misleading-state defect.
+  const isOwner = authUser ? authUser.roles.includes('owner') : false;
+  const onOwnerLanding = authUser ? isLandingViewForUser(authUser, activeView) : false;
+  const showBackupBadge = isOwner && onOwnerLanding;
+  const backupBadgeState = showBackupBadge
+    ? deriveBadgeState(backupStatus, new Date(), BACKUP_THRESHOLDS)
+    : null;
 
   const handleLogout = async () => {
     setDropdownOpen(false);
@@ -101,6 +127,7 @@ export function Header() {
             </svg>
           </button>
         )}
+        {backupBadgeState && <BackupBadge state={backupBadgeState} variant="inverse" />}
       </div>
       <div className={styles.summaryWrapper}>
         <SummaryArea />

@@ -194,6 +194,16 @@ export function visibleRoutesForUser(caller: RouteCaller): readonly RouteEntry[]
   return ROUTES.filter((r) => r.canAccess(caller));
 }
 
+/**
+ * True iff the given view key is this caller's landing. Callers use
+ * this to gate "landing-only" affordances (e.g., the backup-freshness
+ * badge, AC-170 — visible on the owner's landing, not on `/customers`).
+ */
+export function isLandingViewForUser(caller: RouteCaller, view: RouteView): boolean {
+  const match = ROUTES.find((r) => r.isDefaultFor(caller));
+  return match?.view === view;
+}
+
 /** The caller's default landing path — used on login and on `/` redirects. */
 export function landingPathForUser(caller: RouteCaller): string {
   // Dev-time invariant check — throws if two `isDefaultFor` predicates
