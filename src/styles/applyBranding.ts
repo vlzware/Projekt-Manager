@@ -13,10 +13,10 @@
  *
  * Call this BEFORE `startThemeRuntime()` in `src/main.tsx`: the theme
  * cascade then resolves against an already-populated brand accent on
- * the same frame. The FOUC inline script in `index.html` deliberately
- * does NOT touch the brand accent — it runs before modules load and
- * would have no access to BRANDING. The tokens.css fallback covers the
- * sub-frame gap.
+ * the same frame. The pre-paint theme script (public/theme-init.js)
+ * deliberately does NOT touch the brand accent — it runs before
+ * modules load and would have no access to BRANDING. The tokens.css
+ * fallback covers the sub-frame gap.
  *
  * Limitation: a deployment with a NON-default accent sees a single-
  * frame flash of the default accent before `applyBranding()` fires. A

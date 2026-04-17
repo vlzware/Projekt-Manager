@@ -225,8 +225,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
    * (AC-119). The optimistic leg updates:
    *   1. The in-memory `authUser.themePreference`,
    *   2. The localStorage cache (so a reload without a new session
-   *      hydration still paints the chosen scheme via the inline FOUC
-   *      script),
+   *      hydration still paints the chosen scheme via the pre-paint
+   *      script in public/theme-init.js),
    *   3. The document root via `applyThemePreference`.
    *
    * On success the server-returned user replaces the optimistic one. On

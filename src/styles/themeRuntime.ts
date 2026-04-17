@@ -1,13 +1,19 @@
 /*
  * Runtime theme subscription.
  *
- * The inline FOUC script in index.html handles the first paint. Once the
- * module graph boots, this runtime keeps the applied scheme in sync with:
+ * The pre-paint script at public/theme-init.js handles the first paint.
+ * Once the module graph boots, this runtime keeps the applied scheme in
+ * sync with:
  *   - OS color-scheme changes, when preference is 'system' (spec §9.6).
  *   - Cross-tab updates to the preference via the storage event.
  *
- * The inline script is intentionally import-free; this module duplicates a
- * minimal resolver rather than sharing code.
+ * On startup the runtime also re-applies the cached preference so the
+ * module path is self-sufficient if the pre-paint script is ever blocked
+ * (e.g., by a stricter CSP) or fails — then the theme still recovers on
+ * the first module tick instead of waiting for a session hydration.
+ *
+ * public/theme-init.js is intentionally import-free; this module
+ * duplicates a minimal resolver rather than sharing code.
  */
 
 import {
@@ -46,9 +52,9 @@ function applyScheme(scheme: ResolvedTheme): void {
  * Resolve a theme preference to a concrete scheme and apply it to the
  * document root. Shared by the startup runtime below, the authStore's
  * `updateThemePreference` action, and the session-hydration path so all
- * three touch the same resolve/apply pair — the inline FOUC script in
- * index.html is the one deliberate duplicate (it has to stay import-free
- * for the pre-JS frame to work).
+ * three touch the same resolve/apply pair — public/theme-init.js is the
+ * one deliberate duplicate (it has to stay import-free for the pre-JS
+ * frame to work).
  *
  * Safe to call in non-browser contexts (SSR, tests without a DOM); it
  * no-ops when `window`/`document` are undefined.
@@ -67,6 +73,13 @@ export function startThemeRuntime(): void {
   const reapply = (): void => {
     applyScheme(resolveScheme(readPreference(), mql));
   };
+
+  // Defense in depth: if the pre-paint script did not run (CSP block,
+  // 404, parse error, ...), the cached preference is still unapplied
+  // when the module graph boots. Re-applying here keeps an
+  // unauthenticated reload on the correct scheme instead of waiting for
+  // a session hydration that never comes.
+  reapply();
 
   if (mql) {
     // Only 'system' preference should react to OS changes; the resolver

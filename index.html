@@ -5,24 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Projekt-Manager</title>
-    <script>
-      (function () {
-        try {
-          var raw = window.localStorage.getItem('theme-preference');
-          var pref = raw === 'light' || raw === 'dark' || raw === 'system' ? raw : 'system';
-          var scheme =
-            pref === 'light'
-              ? 'light'
-              : pref === 'dark'
-                ? 'dark'
-                : window.matchMedia &&
-                    window.matchMedia('(prefers-color-scheme: dark)').matches
-                  ? 'dark'
-                  : 'light';
-          if (scheme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-        } catch (e) {}
-      })();
-    </script>
+    <!--
+      Pre-paint theme restoration. Blocks HTML parsing synchronously so
+      data-theme is set before any themed content paints. Kept as a
+      'self'-origin file (public/theme-init.js) so the app's CSP
+      (script-src 'self') permits it without 'unsafe-inline' or a hash.
+    -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

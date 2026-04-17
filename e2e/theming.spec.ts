@@ -36,9 +36,10 @@ const THEME_PREFERENCE_KEY = 'theme-preference';
 // AC-111
 test('AC-111 [vis]: theme override applied before first paint (no flash)', async ({ page }) => {
   // Seed preference = 'dark' via addInitScript, which runs BEFORE the page's
-  // own scripts — this is the earliest hook available. The production FOUC
-  // script must already have run by DOMContentLoaded; if it hasn't,
-  // data-theme is still unset when we read it and this test fails.
+  // own scripts — this is the earliest hook available. The pre-paint theme
+  // script (public/theme-init.js, referenced from index.html) must already
+  // have run by DOMContentLoaded; if it hasn't, data-theme is still unset
+  // when we read it and this test fails.
   await page.addInitScript(
     ({ key }) => {
       window.localStorage.setItem(key, 'dark');
@@ -81,7 +82,7 @@ test('AC-111 [vis]: theme override applied before first paint (no flash)', async
 
   expect(
     byCheckpoint['DOMContentLoaded'],
-    `data-theme was "${byCheckpoint['DOMContentLoaded']}" at DOMContentLoaded with preference=dark seeded in localStorage["${THEME_PREFERENCE_KEY}"]. The inline FOUC script did not run before DOMContentLoaded, so users will see a flash of the light theme on reload.`,
+    `data-theme was "${byCheckpoint['DOMContentLoaded']}" at DOMContentLoaded with preference=dark seeded in localStorage["${THEME_PREFERENCE_KEY}"]. The pre-paint theme script (public/theme-init.js) did not run before DOMContentLoaded, so users will see a flash of the light theme on reload.`,
   ).toBe('dark');
   expect(
     byCheckpoint['firstRAF'],
