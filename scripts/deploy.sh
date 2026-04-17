@@ -27,21 +27,53 @@ REPO_DIR="/opt/projekt-manager"
 SECRETS_FILE="$REPO_DIR/secrets.env.age"
 
 cd "$REPO_DIR"
-git fetch origin
 
-EXPECTED_SHA="$(git rev-parse "$REF")"
-echo "Deploying $REF -> $EXPECTED_SHA"
+# Two-phase structure. Phase 1 (DEPLOY_REEXEC unset) fetches, checks out
+# the target SHA, and re-execs. Phase 2 (DEPLOY_REEXEC=1) is the rest of
+# the deploy, and runs from the target-SHA version of this script.
+#
+# Why: bash parses `$0` into memory once, at invocation time. The code
+# that runs after `git checkout` is still the version bash read BEFORE
+# the checkout — which is the *previous* working-tree's deploy.sh, not
+# the target SHA's. A roll-forward-then-rollback-then-forward sequence
+# silently executes the intermediate SHA's deploy.sh logic on the
+# third run (see 2026-04-17 session: first deploy at 773b2b4's
+# deploy.sh pulled only `app`; target was e047704 which expected
+# `--profile backup pull app backup` — backup image was never pulled
+# and the backup service never started; observed as "up 5/5" vs the
+# expected 6/6). Re-exec'ing with the newly-checked-out script drives
+# the feature matrix from the target SHA, not from whatever happened
+# to be on disk at invocation.
+if [ "${DEPLOY_REEXEC:-0}" != "1" ]; then
+  git fetch origin
 
-# Assert the checkout landed on the expected SHA. Without this, a silently
-# failed checkout (e.g. uncommitted local changes blocking the switch)
-# would continue past with a stale working tree and deploy the wrong code —
-# the exact failure mode hit in iteration 4 (#48 comment 2026-04-08).
-git checkout "$EXPECTED_SHA"
-actual="$(git rev-parse HEAD)"
-if [ "$actual" != "$EXPECTED_SHA" ]; then
-  echo "ERROR: git checkout landed at $actual, expected $EXPECTED_SHA" >&2
-  exit 1
+  EXPECTED_SHA="$(git rev-parse "$REF")"
+  echo "Deploying $REF -> $EXPECTED_SHA"
+
+  # Assert the checkout landed on the expected SHA. Without this, a silently
+  # failed checkout (e.g. uncommitted local changes blocking the switch)
+  # would continue past with a stale working tree and deploy the wrong code —
+  # the exact failure mode hit in iteration 4 (#48 comment 2026-04-08).
+  git checkout "$EXPECTED_SHA"
+  actual="$(git rev-parse HEAD)"
+  if [ "$actual" != "$EXPECTED_SHA" ]; then
+    echo "ERROR: git checkout landed at $actual, expected $EXPECTED_SHA" >&2
+    exit 1
+  fi
+
+  # Hand off to Phase 2 running on the newly-checked-out script. The
+  # env flag is both a circuit-breaker (no infinite re-exec loop) and
+  # the signal Phase 2 uses to skip the fetch/checkout it already ran.
+  export DEPLOY_REEXEC=1
+  exec "$0" "$@"
 fi
+
+# --- Phase 2 -----------------------------------------------------------
+# We are guaranteed to be running the target SHA's deploy.sh. HEAD was
+# moved to EXPECTED_SHA in Phase 1, so `git rev-parse HEAD` recovers it
+# without needing Phase 1 to thread state across the exec boundary.
+EXPECTED_SHA="$(git rev-parse HEAD)"
+echo "(continuing deploy at $EXPECTED_SHA)"
 
 # Decrypt secrets into the shell env. Process substitution keeps plaintext
 # off disk — `age -d` writes to an anonymous file descriptor that `source`
