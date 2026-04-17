@@ -137,6 +137,13 @@ services:
     # `docker compose up`; the only safe way to run is with an
     # operator-supplied SHA.
     image: ghcr.io/vlzware/projekt-manager-backup:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
+    # dcron exec'd as PID 1 hits Docker's PID-1 protection: its fork()+
+    # setpgid() for each cron entry fails with "setpgid: Operation not
+    # permitted" and the container crash-loops. `init: true` puts tini as
+    # PID 1 so crond runs as PID 2+ and its children can setpgid normally.
+    # Caught on the first test deploy of iteration/7-data — CI builds the
+    # image but never boots it, so the runtime crash never surfaced in CI.
+    init: true
     read_only: true
     tmpfs:
       # Operator-loaded drill identity (AC-175). The script
