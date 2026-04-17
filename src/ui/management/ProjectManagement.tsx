@@ -199,7 +199,7 @@ export function ProjectManagement() {
                   <td>
                     {renderActionsCell && showArchiveBtn && (
                       <button
-                        className={styles.dangerButton}
+                        className={styles.actionButton}
                         onClick={(e) => handleArchive(e, p)}
                         data-testid="project-archive-button"
                       >

@@ -196,8 +196,13 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
       return false;
     }
 
+    // Archive is a soft-delete. When the user has "Archivierte einblenden"
+    // on, keep the row visible with its archived state flipped so the UI
+    // matches a fresh fetch; when off, drop it from the local list.
     set((s) => ({
-      projects: s.projects.filter((p) => p.id !== id),
+      projects: s.showArchived
+        ? s.projects.map((p) => (p.id === id ? { ...p, deleted: true } : p))
+        : s.projects.filter((p) => p.id !== id),
     }));
     useProjectStore.getState().fetchProjects();
     return true;
