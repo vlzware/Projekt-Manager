@@ -189,27 +189,21 @@ jobs:
       # closed PR #67.
       - name: Validate Compose file references
         env:
-          # Placeholders for the variables that have no default in
-          # docker-compose.yml. These cover the current drift surface;
-          # any NEW required variable will trip the grep.
+          # Placeholders for variables in docker-compose.yml that have
+          # no `:-` default. Kept intentionally minimal so adding a new
+          # defaultless `${FOO}` trips the "variable is not set" grep
+          # below — the whole point of this check. Do NOT add a
+          # placeholder here "just in case": if a variable has a `:-`
+          # default, leave it out so the check can still catch a
+          # future removal of that default.
           POSTGRES_PASSWORD: placeholder
           MINIO_ROOT_USER: placeholder
           MINIO_ROOT_PASSWORD: placeholder
           CLOUDFLARE_API_TOKEN: placeholder
-          # Layer 2 backup service (ADR-0020) — referenced by the
-          # `backup` profile. Docker compose emits "variable is not
-          # set" even for services filtered by a disabled profile,
-          # because substitution runs before profile filtering. Must
-          # be set here too or the check fails on the non-backup
-          # runs.
-          R2_ACCESS_KEY_ID: placeholder
-          R2_SECRET_ACCESS_KEY: placeholder
-          R2_ENDPOINT: https://example.invalid
-          AGE_RECIPIENT: age1placeholder
-          # APP_IMAGE_TAG is a `:?`-gated variable in docker-compose.yml
-          # (H2 audit finding — mutable branch tag defaults removed).
-          # A placeholder lets `docker compose config` parse; real
-          # deploys pass a SHA tag via scripts/deploy.sh.
+          # APP_IMAGE_TAG is `:?`-gated (H2 audit finding — mutable
+          # branch tag defaults removed). A placeholder lets `docker
+          # compose config` parse; real deploys pass a SHA tag via
+          # scripts/deploy.sh.
           APP_IMAGE_TAG: placeholder
         run: |
           set -euo pipefail
