@@ -76,6 +76,25 @@ export interface ValidationIssue {
   message: string;
 }
 
+/**
+ * One envelope reference site whose `userId` is absent from the target
+ * `users` table. `path` follows the same shape as `ValidationIssue.path`
+ * (e.g. `customers[0].createdBy`, `project_workers[2].userId`).
+ */
+export interface MissingUserReference {
+  path: string;
+  userId: string;
+}
+
+/**
+ * Payload for the `MISSING_USER_REFS` error code and the dry-run preview.
+ * See api.md §14.4.1.
+ */
+export interface MissingUserRefsPayload {
+  missingUserIds: string[];
+  references: MissingUserReference[];
+}
+
 export interface DryRunPreview {
   schema_version: number;
   /**
@@ -91,6 +110,17 @@ export interface DryRunPreview {
     project_workers: number;
   };
   validation_errors: ValidationIssue[];
+  /**
+   * Missing-user references surfaced by the dry-run path (AC-162b). The
+   * commit-path error code `MISSING_USER_REFS` uses the same payload shape
+   * under `details`. The spec (api.md §14.2.4) deliberately does not mint
+   * a wire-field name for the preview, so this sibling field carries the
+   * same payload shape as the commit-path `details` for symmetry. `null`
+   * when no missing references were found; optional so pre-existing test
+   * fixtures that only care about `validation_errors` remain valid without
+   * spelling it out.
+   */
+  missing_user_refs?: MissingUserRefsPayload | null;
 }
 
 export interface ImportResult {

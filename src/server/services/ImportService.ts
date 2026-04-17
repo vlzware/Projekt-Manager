@@ -6,10 +6,11 @@
  * transaction. IDs are preserved; dry-run validates without writes.
  */
 
-import { sql } from 'drizzle-orm';
-import { customers, projects, projectWorkers } from '../db/schema.js';
-import type { Database } from '../db/connection.js';
+import { inArray, sql } from 'drizzle-orm';
+import { customers, projects, projectWorkers, users } from '../db/schema.js';
+import type { Database, TransactionalDatabase } from '../db/connection.js';
 import {
+  missingUserRefs,
   restoreConfirmationMismatch,
   schemaVersionMismatch,
   targetNotEmpty,
@@ -26,6 +27,8 @@ import {
   type ImportOptions,
   type ImportResult,
   type DryRunPreview,
+  type MissingUserReference,
+  type MissingUserRefsPayload,
   type ValidationIssue,
 } from '../../domain/dataExchange.js';
 
@@ -111,6 +114,72 @@ function validateEnvelope(envelope: Envelope): ValidationIssue[] {
   return issues;
 }
 
+/**
+ * Collect every envelope reference site whose user-id field must resolve
+ * against the target's `users` table. Null / missing audit-field values
+ * are skipped — they carry no reference, per api.md §14.2.4 and AC-162a.
+ * `project_workers[].userId` is non-nullable by schema so it is always a
+ * reference. Pure; unit-testable without a DB.
+ */
+function collectEnvelopeUserRefs(envelope: Envelope): MissingUserReference[] {
+  const refs: MissingUserReference[] = [];
+
+  for (let i = 0; i < envelope.customers.length; i++) {
+    const c = envelope.customers[i]!;
+    if (c.createdBy !== null && c.createdBy !== undefined) {
+      refs.push({ path: `customers[${i}].createdBy`, userId: c.createdBy });
+    }
+    if (c.updatedBy !== null && c.updatedBy !== undefined) {
+      refs.push({ path: `customers[${i}].updatedBy`, userId: c.updatedBy });
+    }
+  }
+
+  for (let i = 0; i < envelope.projects.length; i++) {
+    const p = envelope.projects[i]!;
+    if (p.createdBy !== null && p.createdBy !== undefined) {
+      refs.push({ path: `projects[${i}].createdBy`, userId: p.createdBy });
+    }
+    if (p.updatedBy !== null && p.updatedBy !== undefined) {
+      refs.push({ path: `projects[${i}].updatedBy`, userId: p.updatedBy });
+    }
+  }
+
+  for (let i = 0; i < envelope.project_workers.length; i++) {
+    const pw = envelope.project_workers[i]!;
+    refs.push({ path: `project_workers[${i}].userId`, userId: pw.userId });
+  }
+
+  return refs;
+}
+
+/**
+ * From a collected reference list and a set of user ids known to exist in
+ * the target, compute the `MISSING_USER_REFS` payload. Returns `null` when
+ * every reference resolves — callers use that to skip raising the error
+ * and to omit the sibling field from the dry-run preview.
+ *
+ * `missingUserIds` is deduplicated (insertion-ordered); `references`
+ * retains one entry per offending site (duplicates across distinct paths
+ * produce distinct entries — per api.md §14.4.1).
+ */
+function deriveMissingUserRefsPayload(
+  refs: MissingUserReference[],
+  presentIds: Set<string>,
+): MissingUserRefsPayload | null {
+  const offending = refs.filter((r) => !presentIds.has(r.userId));
+  if (offending.length === 0) return null;
+
+  const missingIds: string[] = [];
+  const seen = new Set<string>();
+  for (const r of offending) {
+    if (!seen.has(r.userId)) {
+      seen.add(r.userId);
+      missingIds.push(r.userId);
+    }
+  }
+  return { missingUserIds: missingIds, references: offending };
+}
+
 function toCustomerInsert(c: EnvelopeCustomer) {
   return {
     id: c.id,
@@ -153,19 +222,35 @@ function toAssignmentInsert(pw: EnvelopeAssignment) {
 export class ImportService {
   constructor(private db: Database) {}
 
+  /**
+   * One round-trip to the target `users` table resolves every referenced
+   * user id at once — `WHERE id = ANY(...)` is N+1-free and matches the
+   * Drizzle helper `inArray`. Empty input short-circuits without a query.
+   */
+  private async fetchPresentUserIds(
+    runner: TransactionalDatabase,
+    ids: string[],
+  ): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const rows = await runner.select({ id: users.id }).from(users).where(inArray(users.id, ids));
+    return new Set(rows.map((r) => r.id));
+  }
+
   async import(envelope: Envelope, opts: ImportOptions): Promise<ImportResult | DryRunPreview> {
     if (envelope.schema_version !== SCHEMA_VERSION) {
       throw schemaVersionMismatch(SCHEMA_VERSION, envelope.schema_version);
     }
 
     const validationIssues = validateEnvelope(envelope);
+    const userRefs = collectEnvelopeUserRefs(envelope);
+    const uniqueReferencedIds = Array.from(new Set(userRefs.map((r) => r.userId)));
 
     if (opts.dryRun) {
       // Read-only snapshot matches the ExportService pattern — the preview
       // answers "what would happen if I committed right now", and a
       // repeatable-read read-only transaction is the closest match to that
       // semantic without contending with concurrent writers.
-      const targetNonEmpty = await this.db.transaction(
+      const { targetNonEmpty, missingUserPayload } = await this.db.transaction(
         async (tx) => {
           const presenceResult = await tx.execute<{ present: boolean }>(
             sql`SELECT (
@@ -174,11 +259,22 @@ export class ImportService {
               OR EXISTS (SELECT 1 FROM project_workers)
             ) AS present`,
           );
-          return presenceResult.rows[0]?.present === true;
+          const presentIds = await this.fetchPresentUserIds(tx, uniqueReferencedIds);
+          return {
+            targetNonEmpty: presenceResult.rows[0]?.present === true,
+            missingUserPayload: deriveMissingUserRefsPayload(userRefs, presentIds),
+          };
         },
         { isolationLevel: 'repeatable read', accessMode: 'read only' },
       );
 
+      // AC-162b: on the dry-run path both classes are evaluated regardless
+      // of intra-envelope state. `validation_errors` continues to carry
+      // intra-envelope issues only; missing-user issues surface under the
+      // sibling `missing_user_refs` field. api.md §14.2.4 deliberately
+      // does not mint a wire-field name for the preview surface — we
+      // mirror the commit-path `details` shape so a future UI can render
+      // one component for both paths.
       return {
         schema_version: SCHEMA_VERSION,
         target_non_empty: targetNonEmpty,
@@ -188,11 +284,21 @@ export class ImportService {
           project_workers: envelope.project_workers.length,
         },
         validation_errors: validationIssues,
+        missing_user_refs: missingUserPayload,
       };
     }
 
+    // AC-162c: commit-path ordering. Intra-envelope integrity is reported
+    // first; the missing-user check runs only on an intra-consistent
+    // envelope. Never both codes in one response.
     if (validationIssues.length > 0) {
       throw validationError(STRINGS.errors.invalidInput, validationIssues);
+    }
+
+    const presentUserIds = await this.fetchPresentUserIds(this.db, uniqueReferencedIds);
+    const missingUserPayload = deriveMissingUserRefsPayload(userRefs, presentUserIds);
+    if (missingUserPayload !== null) {
+      throw missingUserRefs(missingUserPayload);
     }
 
     // Pre-map before opening the tx — pure transformation, no reason to hold

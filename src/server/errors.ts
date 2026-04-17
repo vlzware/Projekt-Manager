@@ -20,6 +20,7 @@ export type ErrorCode =
   | 'SCHEMA_VERSION_MISMATCH'
   | 'TARGET_NOT_EMPTY'
   | 'RESTORE_CONFIRMATION_MISMATCH'
+  | 'MISSING_USER_REFS'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
@@ -101,6 +102,21 @@ export function restoreConfirmationMismatch(): AppError {
     STRINGS.errors.restoreConfirmationMismatch,
     422,
   );
+}
+
+/**
+ * Envelope carries user-id references that do not exist in the target
+ * database. See api.md §14.2.4 / §14.4.1. `details.missingUserIds` is the
+ * deduplicated list of absent ids; `details.references` carries one entry
+ * per offending envelope reference site.
+ */
+export interface MissingUserRefsDetails {
+  missingUserIds: string[];
+  references: { path: string; userId: string }[];
+}
+
+export function missingUserRefs(details: MissingUserRefsDetails): AppError {
+  return new AppError('MISSING_USER_REFS', STRINGS.errors.missingUserRefs, 422, details);
 }
 
 /**

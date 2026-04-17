@@ -1129,4 +1129,370 @@ describe('Unified Data Exchange', () => {
       }
     });
   });
+
+  // ---------------------------------------------------------------
+  // AC-162a / AC-162b / AC-162c: missing-user-reference check
+  //
+  // The envelope carries user-id fields — `customers.createdBy`,
+  // `customers.updatedBy`, `projects.createdBy`, `projects.updatedBy`,
+  // `project_workers.userId`. On restore, those user ids must already
+  // exist in the target's `users` table. If any referenced id is absent,
+  // the commit path rejects with 422 `MISSING_USER_REFS`; the dry-run
+  // surfaces it alongside intra-envelope issues.
+  //
+  // AT-84 pins AC-162a (commit-path rejection + `details` shape).
+  // AT-85 pins AC-162b (dry-run surfaces both classes together).
+  // AT-86 pins AC-162c (commit-path ordering + single-code guarantee).
+  //
+  // Two ghost UUIDs (`GHOST_USER_A`, `GHOST_USER_B`) are valid UUIDs
+  // absent from the seed — any reference to them is, by construction,
+  // a missing-user reference. House style already uses `UUID_ZERO` for
+  // the same idea; distinct ids let "same user at two sites" and
+  // "multiple distinct missing users" tests isolate their assertions.
+  // ---------------------------------------------------------------
+  describe('AC-162a/b/c: missing-user references', () => {
+    // NB: `uuid()` hex-encodes then slices to 8 chars, so `ghosta`/`ghostb`
+    // collide on the prefix — we rely on the `i` counter to differentiate.
+    const GHOST_USER_A = uuid('ghosta', 1);
+    const GHOST_USER_B = uuid('ghostb', 2);
+
+    /**
+     * Shape we assert against for the MISSING_USER_REFS error body. The
+     * keys are `details.missingUserIds` and `details.references` per
+     * api.md §14.4.1 (error details keys are camelCase). The path string
+     * mirrors the intra-envelope validation-error path shape — e.g.
+     * `project_workers[0].userId`.
+     */
+    interface MissingUserRefsBody {
+      code: string;
+      message: string;
+      details?: {
+        missingUserIds?: unknown;
+        references?: unknown;
+      };
+    }
+
+    /**
+     * Count business-data rows directly — bypasses the API so these
+     * "DB unchanged" assertions don't re-enter the route under test.
+     * Pool-only query keeps the assertion independent of Drizzle's
+     * query layer (closer to a pure integrity check).
+     */
+    async function businessRowCounts(): Promise<{
+      customers: number;
+      projects: number;
+      project_workers: number;
+    }> {
+      const r = await pool.query<{ customers: string; projects: string; project_workers: string }>(
+        `SELECT
+           (SELECT COUNT(*) FROM customers)::text       AS customers,
+           (SELECT COUNT(*) FROM projects)::text        AS projects,
+           (SELECT COUNT(*) FROM project_workers)::text AS project_workers`,
+      );
+      const row = r.rows[0]!;
+      return {
+        customers: Number(row.customers),
+        projects: Number(row.projects),
+        project_workers: Number(row.project_workers),
+      };
+    }
+
+    // AT-84 — commit path. Envelope is intra-consistent (projects point
+    // at envelope customers, assignments point at envelope projects) but
+    // the user-id fields reference GHOST_USER_A and GHOST_USER_B — ids
+    // that do NOT exist in `users`. Must return 422 MISSING_USER_REFS.
+    it('returns 422 MISSING_USER_REFS on commit path when envelope user refs are absent from target', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        // Two distinct missing users, distributed across the allowed
+        // reference sites so the `details.references` array has one
+        // entry per offending site (AC-162a — "one entry per offending
+        // envelope reference site").
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.customers[0]!.updatedBy = GHOST_USER_B;
+        envelope.projects[0]!.createdBy = GHOST_USER_B;
+        envelope.projects[0]!.updatedBy = null; // null must NOT trigger the code
+        envelope.project_workers = [{ projectId: envelope.projects[0]!.id, userId: GHOST_USER_A }];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        expect(body.code).toBe('MISSING_USER_REFS');
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — `details.missingUserIds` is deduplicated. Envelope references
+    // GHOST_USER_A at four distinct sites and GHOST_USER_B at one; the
+    // deduplicated list must have exactly two entries, regardless of order.
+    it('deduplicates missingUserIds across repeat references', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.customers[0]!.updatedBy = GHOST_USER_A;
+        envelope.projects[0]!.createdBy = GHOST_USER_A;
+        envelope.projects[0]!.updatedBy = GHOST_USER_B;
+        envelope.project_workers = [{ projectId: envelope.projects[0]!.id, userId: GHOST_USER_A }];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        expect(body.code).toBe('MISSING_USER_REFS');
+        const ids = body.details?.missingUserIds;
+        expect(Array.isArray(ids)).toBe(true);
+        const sorted = [...(ids as string[])].sort();
+        expect(sorted).toEqual([GHOST_USER_A, GHOST_USER_B].sort());
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — `details.references` carries one entry per offending site
+    // and duplicate user-ids across distinct paths produce separate
+    // entries. Four references to GHOST_USER_A mapped to four distinct
+    // paths must yield four entries whose paths are all distinct.
+    it('references[] carries one entry per offending site (duplicates across distinct paths produce separate entries)', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.customers[0]!.updatedBy = GHOST_USER_A;
+        envelope.projects[0]!.createdBy = GHOST_USER_A;
+        envelope.projects[0]!.updatedBy = null;
+        envelope.project_workers = [{ projectId: envelope.projects[0]!.id, userId: GHOST_USER_A }];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        const refs = body.details?.references;
+        expect(Array.isArray(refs)).toBe(true);
+        const entries = refs as Array<{ path: string; userId: string }>;
+        // All four sites point at GHOST_USER_A; all four paths are distinct.
+        const matching = entries.filter((r) => r.userId === GHOST_USER_A);
+        expect(matching.length).toBe(4);
+        const paths = matching.map((r) => r.path);
+        expect(new Set(paths).size).toBe(paths.length);
+        // And each expected path shape is represented — the shape mirrors
+        // intra-envelope validation paths (api.md §14.4.1).
+        expect(paths).toEqual(
+          expect.arrayContaining([
+            'customers[0].createdBy',
+            'customers[0].updatedBy',
+            'projects[0].createdBy',
+            'project_workers[0].userId',
+          ]),
+        );
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — both `missingUserIds` and `references` are non-empty
+    // whenever the code is returned (api.md §14.4.1 paragraph on the
+    // details payload).
+    it('missingUserIds and references are both non-empty', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        expect(body.code).toBe('MISSING_USER_REFS');
+        const ids = body.details?.missingUserIds;
+        const refs = body.details?.references;
+        expect(Array.isArray(ids)).toBe(true);
+        expect(Array.isArray(refs)).toBe(true);
+        expect((ids as unknown[]).length).toBeGreaterThan(0);
+        expect((refs as unknown[]).length).toBeGreaterThan(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — null / missing audit-field values MUST NOT trigger the
+    // check. An envelope that mixes a ghost-user reference with a row
+    // whose audit fields are null must produce MISSING_USER_REFS (the
+    // ghost case) while leaving no `references[]` entry for the null-
+    // audit row. Folded into a single test so the null-safe assertion
+    // lives alongside a failing (today) assertion — keeps TDD discipline.
+    it('null/missing createdBy/updatedBy values do not trigger MISSING_USER_REFS alongside a ghost reference', async () => {
+      await wipeBusinessData();
+      try {
+        // Two customers: customer[0] carries all-null audit fields (must
+        // NOT be flagged); customer[1] carries a ghost createdBy (MUST
+        // be flagged). The assertion is two-sided, so the test fails
+        // today (no 422) AND pins the null-safe behavior for when the
+        // fix lands.
+        const envelope = buildFreshEnvelope();
+        envelope.customers.push({
+          id: uuid('cust', 2),
+          name: 'Null-Audit Kunde',
+          phone: null,
+          email: null,
+          address: null,
+          notes: null,
+          createdAt: '2026-01-03T00:00:00.000Z',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+          createdBy: null,
+          updatedBy: null,
+        });
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.customers[0]!.updatedBy = null;
+        envelope.projects[0]!.createdBy = null;
+        envelope.projects[0]!.updatedBy = null;
+        envelope.project_workers = [];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        expect(body.code).toBe('MISSING_USER_REFS');
+
+        // The ghost reference is flagged — path points at customers[0].createdBy.
+        const refs = (body.details?.references ?? []) as Array<{ path: string; userId: string }>;
+        const ghostHit = refs.find(
+          (r) => r.path === 'customers[0].createdBy' && r.userId === GHOST_USER_A,
+        );
+        expect(ghostHit).toBeDefined();
+
+        // The null-audit row (customers[1]) contributes NO reference entries.
+        // If the impl treated `null` as a reference, a `customers[1].*` path
+        // would appear here.
+        const nullSiteHit = refs.find((r) => /customers\[1\]/.test(r.path));
+        expect(nullSiteHit).toBeUndefined();
+
+        // And the deduplicated id list contains only the ghost — no null.
+        const ids = (body.details?.missingUserIds ?? []) as string[];
+        expect(ids).toEqual([GHOST_USER_A]);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — no writes on rejection. Full before/after row-count diff.
+    it('performs no writes when rejecting MISSING_USER_REFS', async () => {
+      await wipeBusinessData();
+      try {
+        const before = await businessRowCounts();
+        expect(before).toEqual({ customers: 0, projects: 0, project_workers: 0 });
+
+        const envelope = buildFreshEnvelope();
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.projects[0]!.createdBy = GHOST_USER_A;
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+        expect(res.statusCode).toBe(422);
+        expect((res.json() as { code: string }).code).toBe('MISSING_USER_REFS');
+
+        const after = await businessRowCounts();
+        expect(after).toEqual(before);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-85 — dry-run surfaces BOTH classes of issue.
+    // The envelope is intra-inconsistent (`projects[0].customerId` points
+    // at a UUID not present in envelope.customers) AND carries a
+    // missing-user reference. On `?dry_run=true`, the preview returns 200
+    // and surfaces both issues together; no writes.
+    it('dry-run surfaces both intra-envelope and missing-user issues together; no writes', async () => {
+      await wipeBusinessData();
+      try {
+        const before = await businessRowCounts();
+
+        const envelope = buildFreshEnvelope();
+        // Intra-envelope inconsistency: project references a customerId
+        // that doesn't exist in envelope.customers (AC-162c example).
+        envelope.projects[0]!.customerId = UUID_ZERO;
+        // Missing-user reference: createdBy points at a user absent in
+        // the target `users` table.
+        envelope.projects[0]!.createdBy = GHOST_USER_A;
+
+        const res = await authPost(ownerToken, '/api/import?dry_run=true', envelope);
+
+        expect(res.statusCode).toBe(200);
+
+        // Intra-envelope class — already surfaced via `validation_errors`
+        // in the existing preview shape.
+        const preview = res.json() as {
+          validation_errors?: Array<{ path: string; message: string }>;
+        };
+        expect(Array.isArray(preview.validation_errors)).toBe(true);
+        const intra = preview.validation_errors!.find((i) =>
+          /projects\[0\]\.customerId/.test(i.path),
+        );
+        expect(intra).toBeDefined();
+
+        // Missing-user class — the preview surfaces the ghost reference.
+        // Per the brief we do not mint a new field name here; instead we
+        // pin evidence: the ghost user id appears somewhere in the preview
+        // payload (either inside validation_errors, or under a
+        // missingUserIds/references sub-tree the impl chooses — spec
+        // §14.2.4 says "surfaces both classes of issue in the preview").
+        const serialized = JSON.stringify(preview);
+        expect(serialized).toContain(GHOST_USER_A);
+
+        const after = await businessRowCounts();
+        expect(after).toEqual(before);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-86 — commit-path ordering and single-code guarantee. Folded
+    // into a single test so the follow-up assertion (intra-consistent
+    // envelope with a ghost reference returns MISSING_USER_REFS) fails
+    // today — otherwise the "dual-class returns VALIDATION_ERROR only"
+    // half trivially passes on the current stub (no missing-user check
+    // exists, so MISSING_USER_REFS never leaks into the body anyway).
+    //
+    // Two commits against the same fresh target:
+    //   Pass 1 — dual-class envelope (intra-inconsistent AND missing-user
+    //            reference) → VALIDATION_ERROR only, no MISSING_USER_REFS.
+    //   Pass 2 — intra-consistent envelope, ghost reference only → 422
+    //            MISSING_USER_REFS.
+    // The two codes are never returned in the same response.
+    it('commit path reports VALIDATION_ERROR first; MISSING_USER_REFS surfaces only once intra-envelope is clean', async () => {
+      await wipeBusinessData();
+      try {
+        // Pass 1 — both classes present.
+        const dual = buildFreshEnvelope();
+        dual.projects[0]!.customerId = UUID_ZERO; // intra-envelope issue
+        dual.projects[0]!.createdBy = GHOST_USER_A; // missing-user issue
+        const res1 = await authPost(ownerToken, '/api/import', dual);
+
+        expect(res1.statusCode).toBeGreaterThanOrEqual(400);
+        expect(res1.statusCode).toBeLessThan(500);
+        const body1 = res1.json() as { code: string };
+        expect(body1.code).toBe('VALIDATION_ERROR');
+        // Single-code guarantee: MISSING_USER_REFS must not leak into the
+        // same response (neither as the code nor inside details).
+        expect(JSON.stringify(body1)).not.toContain('MISSING_USER_REFS');
+
+        // Pass 2 — intra-consistent, ghost reference only.
+        const clean = buildFreshEnvelope();
+        clean.projects[0]!.createdBy = GHOST_USER_A;
+        const res2 = await authPost(ownerToken, '/api/import', clean);
+
+        expect(res2.statusCode).toBe(422);
+        const body2 = res2.json() as { code: string };
+        expect(body2.code).toBe('MISSING_USER_REFS');
+        // And the reverse: the missing-user response must not carry
+        // VALIDATION_ERROR either — one code per response.
+        expect(JSON.stringify(body2).match(/"VALIDATION_ERROR"/)).toBeNull();
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
 });

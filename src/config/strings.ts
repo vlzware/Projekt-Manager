@@ -38,6 +38,8 @@ export const STRINGS = {
       'Die Datenbank ist nicht leer. Bestätigen Sie das Überschreiben, um fortzufahren.',
     restoreConfirmationMismatch:
       'Bestätigung fehlt oder stimmt nicht. Bitte den angezeigten Text exakt eingeben.',
+    missingUserRefs:
+      'Die Datei verweist auf Benutzer, die in der Zieldatenbank nicht vorhanden sind.',
   },
 
   entities: {
