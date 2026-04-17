@@ -152,15 +152,18 @@ services:
       # than persist the identity to disk.
       - /run/drill-key:mode=0700,uid=0,gid=0
       # Ephemeral Postgres workdir for Tier 1 verify-on-create
-      # (initdb output, WAL, socket). Kept out of any volume because
+      # (initdb output, WAL, socket) AND lockfile scratch for
+      # run-{backup,drill,rotation}.sh. Kept out of any volume because
       # it must never survive a run — the integrity proof is that
       # the process starts from initdb every time.
+      #
+      # Historically there was a second `- /var/run` mount here for
+      # the lockfiles, but on Alpine /var/run is a symlink to /run,
+      # so that tmpfs landed on /run and shadowed /run/drill-key
+      # above it (tmpfs mounts stack in list order; a fresh /run
+      # tmpfs hides every earlier mount under /run/*). Moving locks
+      # to /tmp drops one mount and the shadowing problem with it.
       - /tmp
-      # Lockfiles consumed by flock in run-{backup,drill,rotation}.sh.
-      # /var/run on Alpine is a tmpfs symlink target by default; making
-      # it explicit here means read_only:true does not block lock
-      # creation.
-      - /var/run
     mem_limit: 512m
     cpus: 1.0
     environment:

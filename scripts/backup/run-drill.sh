@@ -11,7 +11,7 @@
 # 2 lock held, 3+ runner failure.
 set -euo pipefail
 
-LOCKFILE="/var/run/drill.lock"
+LOCKFILE="/tmp/drill.lock"
 
 # Default identity path must match the tmpfs mountpoint in the compose
 # service and the destination load-drill-key.sh writes to. Keep the

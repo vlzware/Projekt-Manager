@@ -24,7 +24,7 @@
 # Exit codes: 0 success, 1 env missing, 2 lock held.
 set -euo pipefail
 
-LOCKFILE="/var/run/rotation.lock"
+LOCKFILE="/tmp/rotation.lock"
 
 DAILY_KEEP="${DAILY_KEEP:-7}"
 WEEKLY_KEEP="${WEEKLY_KEEP:-4}"

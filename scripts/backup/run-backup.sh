@@ -24,7 +24,7 @@
 #      artifact key is a fresh ISO timestamp per run.
 set -euo pipefail
 
-LOCKFILE="/var/run/backup.lock"
+LOCKFILE="/tmp/backup.lock"
 # Phase 3 sync: the backend stream (src/server/services/backup.ts)
 # must publish a CLI entrypoint that this script invokes. Expected path
 # inside the app image, exposed to the backup container via the shared
