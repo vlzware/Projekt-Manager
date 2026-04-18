@@ -71,7 +71,7 @@ curl -sS https://${DOMAIN}/api/health
 
 ### Contents of `secrets.env.age`
 
-Shell `KEY='value'` format. Three Layer 1 secrets (app + TLS) and six Layer 2 secrets (offsite backup — ADR-0020, `recovery.md` §3.4/§4):
+Shell `KEY='value'` format. Three Layer 1 secrets (app + TLS) and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
 
 Layer 1:
 
@@ -92,7 +92,7 @@ Layer 2:
 
 ### Rotate a secret
 
-`age` re-encrypts the whole file, so rotating one value means writing all of them back. The full setup procedure (including per-secret sources) lives in [recovery.md § 5](recovery.md). Short form for rotating one existing value:
+`age` re-encrypts the whole file, so rotating one value means writing all of them back. The full setup procedure (including per-secret sources) lives in [backup/setup.md §3](backup/setup.md#3-push-r2-credentials--recipient-to-the-vps). Short form for rotating one existing value:
 
 ```bash
 # On workstation (age must be installed locally). Decrypt current file
@@ -119,7 +119,7 @@ ssh <sudo-user>@vps "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
    - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` -- issue a new R2 API token in the Cloudflare dashboard; the endpoint URL is listed alongside. Revoke the old token after the rotation deploy.
    - `R2_BUCKET`, `R2_REGION` -- read off the R2 dashboard (or fall back to the compose defaults).
    - `AGE_RECIPIENT` -- not affected by `secrets.env.age` passphrase loss. Derive from the existing identity on the operator workstation: `age-keygen -y ~/secrets/age-backup.key`.
-2. Rebuild `secrets.env`, encrypt with `age -p`, upload (see [recovery.md § 5](recovery.md)).
+2. Rebuild `secrets.env`, encrypt with `age -p`, upload (see [backup/setup.md §3](backup/setup.md#3-push-r2-credentials--recipient-to-the-vps)).
 3. Record new passphrase in password manager.
 
 Backup blobs in R2 remain decryptable — they are encrypted against `AGE_RECIPIENT`'s keypair, not the `secrets.env.age` passphrase. Losing only the deploy passphrase does not cost backup recoverability.

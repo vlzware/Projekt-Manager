@@ -123,8 +123,10 @@ services:
   backup:
     # Layer 2 encrypted backup service — see ADR-0020 and
     # docs/spec/architecture.md §11.10. Runs a dcron loop that fires
-    # run-backup.sh every 15 min, run-drill.sh every 15 min +2 min
-    # offset, and run-rotation.sh daily at 03:00 UTC.
+    # run-backup.sh five times on weekdays (09/12/15/18/21 Europe/Berlin)
+    # and once on weekends (12:00), with run-drill.sh at a +2 min offset
+    # on each tick. Retention is linear (R2 bucket lock + 30-day
+    # lifecycle); no in-container rotation step.
     #
     # Pulled from GHCR — mirrors the `app` service's shape (ADR-0011's
     # "build in CI, distribute via GHCR" invariant extends to this
@@ -153,7 +155,7 @@ services:
       - /run/drill-key:mode=0700,uid=0,gid=0
       # Ephemeral Postgres workdir for Tier 1 verify-on-create
       # (initdb output, WAL, socket) AND lockfile scratch for
-      # run-{backup,drill,rotation}.sh. Kept out of any volume because
+      # run-{backup,drill}.sh. Kept out of any volume because
       # it must never survive a run — the integrity proof is that
       # the process starts from initdb every time.
       #
@@ -171,10 +173,11 @@ services:
       # canonical DB for pg_dump + manifest (AC-174 checksum query).
       DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD}@db:5432/projekt_manager
       # Cloudflare R2 credentials + bucket + recipient — sourced from
-      # secrets.env.age via scripts/deploy.sh (see recovery.md §5 for
-      # provisioning). AGE_RECIPIENT is the PUBLIC recipient only;
-      # the private identity is operator-held and loaded into tmpfs
-      # via load-drill-key.sh per recovery.md §7 (AC-175).
+      # secrets.env.age via scripts/deploy.sh (see
+      # docs/ops/backup/setup.md §3 for provisioning). AGE_RECIPIENT is
+      # the PUBLIC recipient only; the private identity is
+      # operator-held and loaded into tmpfs via load-drill-key.sh per
+      # docs/ops/backup/drills.md § Loading the drill key (AC-175).
       # `:-` empty defaults silence compose's "variable is not set"
       # warnings when the operator hasn't sourced secrets.env.age (dev
       # workflows, where the `backup` profile stays gated off). In
@@ -195,6 +198,13 @@ services:
       # compose so check-env-drift.sh sees it and so the runner's Zod
       # schema cannot silently fall back to its default at runtime.
       AGE_IDENTITY_PATH: ${AGE_IDENTITY_PATH:-/run/drill-key/identity}
+      # Container-local timezone. The crontab entries are written in
+      # Europe/Berlin local time (see scripts/backup/crontab) so the
+      # schedule tracks human working hours and DST transitions
+      # automatically. tzdata must be installed in the image
+      # (Dockerfile.backup) for this to take effect; without it dcron
+      # silently falls back to UTC.
+      TZ: Europe/Berlin
       NODE_ENV: production
     depends_on:
       db:

@@ -1,0 +1,35 @@
+# Layer 2 Backup — Credential Rotation
+
+Rotate the R2 token and (optionally) the age key pair. This is a planned operator procedure — not retention rotation (retention is linear and provider-managed; see [overview.md](overview.md)).
+
+Do it any time an R2 token is suspected of leak, on staff handover, or on a scheduled interval (recommended: annually).
+
+You are about to burn the current credentials; older encrypted backups in R2 remain readable only if you keep the corresponding age identity.
+
+## Procedure
+
+**Before step 1 — quiesce the scheduler.** Stop the backup service so it does not accumulate `AccessDenied` errors against the dead token while the next steps are in flight. The badge will fall stale until the redeploy completes; that is expected.
+
+```bash
+ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml stop backup"
+```
+
+1. **Burn the R2 token.** Cloudflare dashboard → R2 API Tokens → select the current token → **Delete**. Confirm. Every client using this token fails on its next call — the scheduler is already stopped, so the VPS side stays quiet.
+2. **Issue a fresh R2 token.** Re-run [setup.md §1.4](setup.md#14-create-the-api-token). Capture the new Access Key ID, Secret Access Key, Endpoint URL.
+3. **(Optional) Rotate the age key pair.** Do this if the private identity is suspected compromised, the operator workstation was lost, or on a slower cadence than the token rotation.
+
+   Cost: older R2 objects encrypted to the old recipient become unreadable by the new identity. Options:
+   - **Accept the gap.** Old dumps age out under the 30-day lifecycle. For the 14-day immutability window, any restore must still use the old identity — keep it in the password manager, marked "retired, read-only".
+   - **Re-encrypt the lock window.** For each still-locked old object: download, `age -d -i ~/secrets/age-backup.key.old`, `age -r <new-recipient>`, re-upload under a new timestamped key. Labour-intensive; skip unless the old identity is confirmed compromised.
+
+   To rotate: rerun [setup.md §2](setup.md#2-generate-the-age-key-pair) with `~/secrets/age-backup.key.new`, update the password-manager entries, move the old identity to a "retired" vault.
+
+4. **Push the new creds to the VPS.** Rerun [setup.md §3](setup.md#3-push-r2-credentials--recipient-to-the-vps) with the new R2 values and (if rotated) the new `AGE_RECIPIENT`.
+5. **Redeploy.** Rerun [setup.md §4](setup.md#4-first-deploy).
+6. **Restart the scheduler.** Bring the backup service back up so the next interval tick fires. No-op if the redeploy in step 5 already recreated and started the `backup` container; otherwise this flips it from the pre-step-1 stopped state:
+
+   ```bash
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml start backup"
+   ```
+
+7. **Sanity-check.** Immediately run the monthly drill per [drills.md § Monthly drill](drills.md#monthly-operator-workstation-drill) against the next completed backup. A rotation that passes the drill is successfully done; a rotation whose drill fails is a rollback candidate — restore the previous `secrets.env.age` from the password manager and investigate before retrying.

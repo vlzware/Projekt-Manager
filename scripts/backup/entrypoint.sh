@@ -30,7 +30,7 @@ done
 
 if (( ${#missing[@]} > 0 )); then
   echo "ERROR: backup container missing required env: ${missing[*]}" >&2
-  echo "       set via secrets.env.age on the VPS (docs/ops/recovery.md §5)." >&2
+  echo "       set via secrets.env.age on the VPS (docs/ops/backup/setup.md §3)." >&2
   exit 1
 fi
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Operator helper: load the age private identity into the backup
-# container's tmpfs for Tier 2 drills (docs/ops/recovery.md §7).
+# container's tmpfs for Tier 2 drills (docs/ops/backup/drills.md § Loading the drill key).
 #
 # Invoked from the VPS as:
 #   sudo -u deploy docker compose exec backup load-drill-key

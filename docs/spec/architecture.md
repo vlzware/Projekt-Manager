@@ -175,8 +175,7 @@ The Layer 2 implementation of [§11.9](#119-data-persistence-and-recovery) is a 
 
 - The `backup` compose service is scheduled by in-container cron; the compose file is the source of truth ([ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)). The backup interval is configurable **[C]**.
 - Each run produces the backup artifact (a full-state database dump, encrypted) and its manifest sidecar (per-table row count and deterministic content checksum, encrypted). The manifest checksum is computed as specified in [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
-- Retention follows a GFS rotation — 7 daily, 4 weekly, 12 monthly **[C]**. Promotion and unpinned-daily cleanup are executed by the backup script; the object store's lifecycle issues the actual deletes.
-- Bucket locks (14-day retention) plus a 30-day lifecycle rule make the destination immutable for the first 14 days and deletable for the next 16. Object versioning is not used.
+- Retention is linear: a 14-day bucket lock plus a 30-day lifecycle rule produce a 14–30 day rolling window of encrypted history — immutable for the first 14 days, deletable for the next 16. No in-container rotation, no weekly/monthly promotion, no object versioning. Scope rationale: [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
 
 **Encryption surface.**
 
@@ -225,7 +224,6 @@ The following values are centralized as single-source constants and may vary per
 - Seed default password
 - Restore confirmation phrase — typed by the caller to confirm an override-restore into a non-empty database (see [api.md §14.2.4](api.md#1424-unified-data-exchange))
 - Layer 2 backup interval — cadence of the `backup` compose service ([§11.10](#1110-full-state-backup-layer-2))
-- Layer 2 retention counts — number of daily, weekly, and monthly artifacts kept by GFS rotation ([§11.10](#1110-full-state-backup-layer-2))
 - Layer 2 freshness thresholds — age of `lastBackupAt` and `lastDrillAt` at which the owner-facing badge switches to amber and to red ([§11.10](#1110-full-state-backup-layer-2))
 
 ### 12.3 Configuration Requirements

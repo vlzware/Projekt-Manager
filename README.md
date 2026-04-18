@@ -84,12 +84,13 @@ First-time Playwright setup requires `npx playwright install` to download browse
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md) — onboarding overview, read this first
+- [Data](DATA.md) — three-layer map of persistence and recovery
 - [Contributing conventions](CONTRIBUTING.md) — code style, workflow
 - [Product Spec](docs/spec/index.md) — what the system does (living document)
 - [Architecture Decision Records](docs/adr/index.md) — documented big project decisions
 - [Kickoff](docs/project/kickoff.md) — project definition, scope, goals, and boundaries
 - [Plan](docs/project/plan.md) — development plan and iteration strategy
-- [Operator docs](docs/ops/) — server setup, deployment, TLS bootstrap
+- [Operator docs](docs/ops/) — server setup, deployment, TLS bootstrap, backup
 
 ## Project Structure
 

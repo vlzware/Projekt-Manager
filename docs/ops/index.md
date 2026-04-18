@@ -11,8 +11,9 @@
 
 ## Operations (repeatable)
 
-| Document                                           | Purpose                                |
-| -------------------------------------------------- | -------------------------------------- |
-| [manual-deploy.md](manual-deploy.md)               | Deploy, rollback, secrets management   |
-| [local-dev.md](local-dev.md)                       | Local development environment          |
-| [http-only-evaluation.md](http-only-evaluation.md) | Domain-less HTTP testing on a bare VPS |
+| Document                                           | Purpose                                                     |
+| -------------------------------------------------- | ----------------------------------------------------------- |
+| [manual-deploy.md](manual-deploy.md)               | Deploy, rollback, secrets management                        |
+| [backup/](backup/overview.md)                      | Layer 2 backup — setup, DR restore, drills, troubleshooting |
+| [local-dev.md](local-dev.md)                       | Local development environment                               |
+| [http-only-evaluation.md](http-only-evaluation.md) | Domain-less HTTP testing on a bare VPS                      |

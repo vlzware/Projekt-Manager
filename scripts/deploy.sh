@@ -99,8 +99,8 @@ export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
 # registry round-trip while starting).
 docker compose --profile backup pull app backup
 # The backup service is behind a profile so local dev (no R2 creds)
-# doesn't spin up a cron loop that will log AccessDenied every 15 min.
-# See docs/ops/recovery.md §6 and ADR-0020.
+# doesn't spin up a cron loop that will log AccessDenied on every
+# scheduled tick. See docs/ops/backup/setup.md §4 and ADR-0020.
 docker compose --profile backup up -d
 
 # Smoke test: probe the app container's /api/health endpoint directly,
