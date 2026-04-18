@@ -259,7 +259,7 @@ export const STRINGS = {
   },
 
   /**
-   * Unified data-exchange surface (ADR-0018, ui.md §8.11). Strings pinned
+   * Unified data-exchange surface (ADR-0018, ui/daten.md §8.11). Strings pinned
    * here so the Daten view and any future CLI-parity message share one
    * source. German copy reflects the spec: a single "Herunterladen" action
    * for export, a two-step upload→commit flow for import.

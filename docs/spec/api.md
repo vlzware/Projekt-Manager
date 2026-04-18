@@ -28,12 +28,12 @@ The API is the boundary between the front end and all persistent state ([archite
 
 #### 14.2.1 Authentication
 
-| Operation            | Input              | Output                                                                                                        | Notes                                                                                                                                                                                                                                                 |
-| -------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Login**            | username, password | session token, user profile (id, username, displayName, roles, email, themePreference) enveloped under `user` | Creates a new session. Rejects inactive users (`active = false`).                                                                                                                                                                                     |
-| **Logout**           | session token      | --                                                                                                            | Invalidates the specific session, not all sessions for the user.                                                                                                                                                                                      |
-| **Get current user** | (session)          | user profile (id, username, displayName, roles, email, themePreference) enveloped under `user`                | Returns the authenticated user's profile under the same `{ user: ... }` envelope as Login, so a typed client shares one response type. Used on app load to restore session (see [ui.md — Authentication Behavior](ui.md#94-authentication-behavior)). |
-| **Update self**      | themePreference?   | updated user profile enveloped under `user`                                                                   | Updates the authenticated user's own preferences. PATCH semantics — omitted fields are unchanged. Currently accepts `themePreference` only. Requires a valid session; no additional permission check (self-scope).                                    |
+| Operation            | Input              | Output                                                                                                        | Notes                                                                                                                                                                                                                                                                   |
+| -------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Login**            | username, password | session token, user profile (id, username, displayName, roles, email, themePreference) enveloped under `user` | Creates a new session. Rejects inactive users (`active = false`).                                                                                                                                                                                                       |
+| **Logout**           | session token      | --                                                                                                            | Invalidates the specific session, not all sessions for the user.                                                                                                                                                                                                        |
+| **Get current user** | (session)          | user profile (id, username, displayName, roles, email, themePreference) enveloped under `user`                | Returns the authenticated user's profile under the same `{ user: ... }` envelope as Login, so a typed client shares one response type. Used on app load to restore session (see [ui/behavior.md — Authentication Behavior](ui/behavior.md#94-authentication-behavior)). |
+| **Update self**      | themePreference?   | updated user profile enveloped under `user`                                                                   | Updates the authenticated user's own preferences. PATCH semantics — omitted fields are unchanged. Currently accepts `themePreference` only. Requires a valid session; no additional permission check (self-scope).                                                      |
 
 Design notes:
 
@@ -137,7 +137,7 @@ Design notes:
 
 - **Idempotent replay** follows the same contract as for projects — see [§14.2.2](#1422-projects) design notes for the client-supplied `id`, replay semantics, and `IDEMPOTENCY_CONFLICT` behavior.
 - **Field comparison for replay.** Participating fields: `name`, `phone`, `email`, `address`, `notes`. Rules: `null`, `undefined`, and missing are equivalent; nested address fields (`street`, `zip`, `city`) compare component-wise under the same rule.
-- **Duplicate-name handling is separate.** Name collisions are not blocked at the API — the client surfaces them (see [ui.md §8.9.2](ui.md#892-create-customer)). `IDEMPOTENCY_CONFLICT` addresses only retried writes keyed by a client-supplied id.
+- **Duplicate-name handling is separate.** Name collisions are not blocked at the API — the client surfaces them (see [ui/management.md §8.9.2](ui/management.md#892-create-customer)). `IDEMPOTENCY_CONFLICT` addresses only retried writes keyed by a client-supplied id.
 
 #### 14.2.6 Data Extraction
 
@@ -204,7 +204,7 @@ An optional third component, `details`, may carry structured validation informat
 
 #### 14.4.1 Error Categories
 
-The API must distinguish the following error categories. Each category has distinct client-side handling (see [ui.md — Asynchronous Mutation Behavior](ui.md#95-asynchronous-mutation-behavior)).
+The API must distinguish the following error categories. Each category has distinct client-side handling (see [ui/behavior.md — Asynchronous Mutation Behavior](ui/behavior.md#95-asynchronous-mutation-behavior)).
 
 | Category                 | Meaning                                                                                                                                                                                                                                   | Client behavior                                                                                                                                                |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -240,4 +240,4 @@ The error body uses the standard `{ code, message, details }` shape. The `detail
 
 ---
 
-_Cross-references: [index.md](index.md) for scope and assumptions, [data-model.md](data-model.md) for entity definitions, [ui.md](ui.md) for client-side behavior that consumes this API, [architecture.md](architecture.md) for responsibility layers and security requirements, [verification.md](verification.md) for acceptance criteria and API integration tests._
+_Cross-references: [index.md](index.md) for scope and assumptions, [data-model.md](data-model.md) for entity definitions, [ui/](ui/index.md) for client-side behavior that consumes this API, [architecture.md](architecture.md) for responsibility layers and security requirements, [verification.md](verification.md) for acceptance criteria and API integration tests._

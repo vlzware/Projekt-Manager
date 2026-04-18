@@ -185,7 +185,7 @@ Route definitions live in `src/server/routes/`. The health endpoint is registere
 
 The role-to-permission matrix in `src/config/permissions.ts` is the single source of truth for both layers: server routes import `hasPermission` via `requirePermission(...)` (403 on violation), and UI components import it via the `usePermission('<permission>')` hook in `src/hooks/usePermission.ts` (hide the affordance). Client-side gating is UX, not security — the server check is always authoritative. UI code never hardcodes role names; it asks for a permission. See [spec AC-121](docs/spec/verification.md) for the invariant and [§14.3](docs/spec/api.md#143-authorization-rules) for the server contract.
 
-Per-view navigation and the route guard share a second table in `src/config/routes.ts`: one `canAccess` predicate and one `isDefaultFor` (landing) predicate per view, mixing role- and permission-based checks uniformly. The `Header` nav and the `App` route guard both consume this table so the spec's per-role nav matrix ([spec ui.md §8.7.1](docs/spec/ui.md)) cannot drift between what the user sees and what the guard allows.
+Per-view navigation and the route guard share a second table in `src/config/routes.ts`: one `canAccess` predicate and one `isDefaultFor` (landing) predicate per view, mixing role- and permission-based checks uniformly. The `Header` nav and the `App` route guard both consume this table so the spec's per-role nav matrix ([spec ui/index.md §8.7.1](docs/spec/ui/index.md#871-views)) cannot drift between what the user sees and what the guard allows.
 
 **Data scoping** is orthogonal to permissions ([ADR-0019](docs/adr/0019-worker-data-scoping-repository-layer-predicate.md)). `project:read` and `customer:read` grant the _capability_ to read; `src/server/repositories/scope.ts` narrows the _extent_ (which rows are visible) with a predicate ANDed into repository queries — currently scoping workers to projects they are assigned to. Services that must bypass scope (e.g., `ExportService`) fail-fast when threaded a scoped caller, so a permission-churn regression cannot silently leak every row.
 
@@ -217,7 +217,7 @@ Common changes and where to look. The dependency direction in [Architecture Over
 
 1. Add view name to `ViewMode` in `src/domain/types.ts`.
 2. Create component under `src/ui/<view>/`. Reads from `useProjectStore`, filters client-side.
-3. Add a `RouteEntry` to `ROUTES` in `src/config/routes.ts` with `canAccess` and `isDefaultFor` predicates (mirrors the spec's per-role nav matrix — [spec ui.md §8.7.1](docs/spec/ui.md)). The `Header` nav and the `ProtectedRoute` guard both derive from this entry automatically.
+3. Add a `RouteEntry` to `ROUTES` in `src/config/routes.ts` with `canAccess` and `isDefaultFor` predicates (mirrors the spec's per-role nav matrix — [spec ui/index.md §8.7.1](docs/spec/ui/index.md#871-views)). The `Header` nav and the `ProtectedRoute` guard both derive from this entry automatically.
 4. Wire the component into the `VIEW_ELEMENTS` lookup in `src/App.tsx` so `<Routes>` knows what to render for the new key.
 5. Tests: copy structure from `src/ui/__tests__/KanbanBoard.test.tsx`.
 

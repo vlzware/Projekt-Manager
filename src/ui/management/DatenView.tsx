@@ -1,5 +1,5 @@
 /**
- * Daten view — unified business-data export + restore (ADR-0018, ui.md §8.11).
+ * Daten view — unified business-data export + restore (ADR-0018, ui/daten.md §8.11).
  *
  * Gated by `data:export` at the navigation level; the restore sub-form is
  * further gated by `data:restore`. The commit button obeys a three-part

@@ -3,7 +3,8 @@ import { test, expect, type Page } from '@playwright/test';
 /**
  * Per-user theme preference E2E — covers AC-119 and AC-120 from the
  * themePreference block (spec: docs/spec/verification.md §15.21,
- * docs/spec/ui.md §8.7.2 and §9.6, docs/spec/data-model.md §5.7).
+ * docs/spec/ui/index.md §8.7.2, docs/spec/ui/behavior.md §9.6,
+ * docs/spec/data-model.md §5.7).
  *
  * AC-119 [vis]: The user menu exposes a 3-way theme selector ("Hell",
  * "Dunkel", "Systemstandard"). Selecting an option updates the UI
@@ -37,7 +38,7 @@ const THEME_PREFERENCE_KEY = 'theme-preference';
 // Self-update API path. Pinned contract (api.md §14.2.1).
 const AUTH_ME_PATH = '/api/auth/me';
 
-// German labels for the theme selector. Pinned by docs/spec/ui.md §8.7.2.
+// German labels for the theme selector. Pinned by docs/spec/ui/index.md §8.7.2.
 // If the implementation picks different labels, these tests fail and
 // the spec gets updated, not the test.
 const DARSTELLUNG_LABEL = 'Darstellung';

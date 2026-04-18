@@ -1,5 +1,5 @@
 /**
- * Unified data-exchange state (ADR-0018 / ui.md §8.11).
+ * Unified data-exchange state (ADR-0018 / ui/daten.md §8.11).
  *
  * Drives the Daten view: parse an envelope file, run a server-side
  * dry-run, present the preview, then commit the restore. Export is a

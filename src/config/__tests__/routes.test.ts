@@ -1,11 +1,11 @@
 /**
  * Unit coverage for the central route table.
  *
- * Pins the per-role nav matrix in `docs/spec/ui.md §8.7.1` (AC-75) at
+ * Pins the per-role nav matrix in `docs/spec/ui/index.md §8.7.1` (AC-75) at
  * the table level — if a predicate drifts from the spec, this test
  * fires before the UI/guard ever sees the bad value.
  *
- * Also pins the per-role landing behavior (ui.md §8.1.2): exactly one
+ * Also pins the per-role landing behavior (ui/index.md §8.1.2): exactly one
  * entry is the landing for any given role set. AC-149 is exercised
  * elsewhere (route-guard test + E2E in Round 9); here we only pin the
  * table's observable contract.
@@ -27,7 +27,7 @@ type RoleName = 'owner' | 'office' | 'worker' | 'bookkeeper';
 
 const caller = (role: RoleName): RouteCaller => ({ roles: [role] });
 
-// Mirror of `docs/spec/ui.md §8.7.1`. Kept independent of the table
+// Mirror of `docs/spec/ui/index.md §8.7.1`. Kept independent of the table
 // source so a regression in either has to be reconciled by hand.
 const MATRIX: Record<RoleName, readonly string[]> = {
   owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten'],
@@ -68,7 +68,7 @@ describe('ROUTES — per-role nav matrix (AC-75)', () => {
   });
 });
 
-describe('ROUTES — landing (ui.md §8.1.2)', () => {
+describe('ROUTES — landing (ui/index.md §8.1.2)', () => {
   for (const role of Object.keys(LANDINGS) as RoleName[]) {
     it(`role '${role}' has exactly one landing entry at ${LANDINGS[role]}`, () => {
       const c = caller(role);

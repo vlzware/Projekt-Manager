@@ -5,7 +5,7 @@
  *   - Per-user landing choice (the "default view" after login, §8.1.2)
  *
  * Both the nav renderer (`Header`) and the route guard (`App`) consume
- * this table, so the per-role matrix in `docs/spec/ui.md §8.7.1` cannot
+ * this table, so the per-role matrix in `docs/spec/ui/index.md §8.7.1` cannot
  * drift between what the user sees and what the guard allows.
  *
  * Design echoes ADR-0019: explicit, declarative predicate functions
@@ -71,7 +71,7 @@ function hasRole(caller: RouteCaller, ...roles: Role[]): boolean {
 }
 
 /**
- * Worker / office / owner landing: Kanban (ui.md §8.1.2). Kept
+ * Worker / office / owner landing: Kanban (ui/index.md §8.1.2). Kept
  * explicit so a future role that also has Kanban access (e.g. a new
  * "supervisor") does not accidentally inherit the landing.
  */
@@ -87,7 +87,7 @@ function landsOnProjects(caller: RouteCaller): boolean {
 }
 
 /**
- * Route table — ordered to match the nav matrix in `docs/spec/ui.md
+ * Route table — ordered to match the nav matrix in `docs/spec/ui/index.md
  * §8.7.1`. The Header renders in this order.
  */
 export const ROUTES: readonly RouteEntry[] = [
@@ -123,7 +123,7 @@ export const ROUTES: readonly RouteEntry[] = [
     view: 'benutzer',
     path: '/users',
     label: STRINGS.ui.viewUsers,
-    // View gated on `user:manage` per ui.md §8.10 — owner-only under
+    // View gated on `user:manage` per ui/management.md §8.10 — owner-only under
     // the default role set, matching the nav matrix in §8.7.1.
     // Office holds `user:read` for worker-assignment dropdowns, not
     // administration, and is not admitted here.

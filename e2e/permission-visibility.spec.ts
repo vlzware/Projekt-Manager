@@ -26,7 +26,7 @@ type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
 
 interface RoleCase {
   username: string;
-  /** Access to the Kanban view (ui.md §8.7.1 — owner/office/worker). */
+  /** Access to the Kanban view (ui/index.md §8.7.1 — owner/office/worker). */
   canSeeKanban: boolean;
   /** Access to the Projekte/Kunden management views (owner/office/bookkeeper). */
   canSeeManagement: boolean;
@@ -50,7 +50,7 @@ interface RoleCase {
 /**
  * Expected visibility derived from ROLE_PERMISSIONS in
  * `src/config/permissions.ts` AND the nav matrix in
- * `docs/spec/ui.md §8.7.1` (AC-75). Keep in sync when either changes.
+ * `docs/spec/ui/index.md §8.7.1` (AC-75). Keep in sync when either changes.
  */
 const roleCases: Record<Role, RoleCase> = {
   owner: {
@@ -75,7 +75,7 @@ const roleCases: Record<Role, RoleCase> = {
     username: 'buero',
     canSeeKanban: true,
     canSeeManagement: true,
-    // Per the nav matrix in `docs/spec/ui.md §8.7.1` (AC-75), the
+    // Per the nav matrix in `docs/spec/ui/index.md §8.7.1` (AC-75), the
     // Benutzer tab is owner-only even though office holds `user:read`
     // in `permissions.ts`. The client-side route predicate gates
     // Benutzer on `user:manage` (owner-only) to make the nav match
@@ -204,7 +204,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
       }
 
       // -- Projekte management view --------------------------------------
-      // Only owner / office / bookkeeper see the Projekte tab (ui.md
+      // Only owner / office / bookkeeper see the Projekte tab (ui/index.md
       // §8.7.1 — worker is excluded). Skip the management assertions
       // entirely for worker since the view is not navigable.
       if (c.canSeeManagement) {
@@ -299,7 +299,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
 });
 
 /**
- * AC-75 — per-role nav visibility matrix (docs/spec/ui.md §8.7.1).
+ * AC-75 — per-role nav visibility matrix (docs/spec/ui/index.md §8.7.1).
  *
  * Distinct from AC-121 above: AC-75 pins the nav _set_ per role (which
  * tabs render in the header), AC-121 pins action-control visibility
@@ -343,7 +343,7 @@ test.describe('AC-75: per-role nav visibility matrix', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
   for (const [role, expected] of Object.entries(NAV_MATRIX) as [Role, readonly NavView[]][]) {
-    test(`${role} — header nav set matches the ui.md §8.7.1 matrix exactly`, async ({ page }) => {
+    test(`${role} — header nav set matches the ui/index.md §8.7.1 matrix exactly`, async ({ page }) => {
       await loginAs(page, roleCases[role].username);
 
       // Every matrix tab must be visible for this role.

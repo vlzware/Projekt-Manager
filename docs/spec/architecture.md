@@ -153,7 +153,7 @@ Integrations with external services (e.g., LLM APIs) follow a server-side proxy 
 - Upstream failures are mapped to the API's error categories (see [api.md §14.4.1](api.md#1441-error-categories)); internal details (service name, upstream status codes, stack traces) do not leak to the client.
 - The Content Security Policy (see [§13.6](#136-security)) is kept tight (`connectSrc: 'self'`) — the proxy pattern is what enables this.
 
-The first integration of this shape is the LLM-based email data extractor (see [ADR-0016](../adr/0016-llm-email-extraction-via-server-proxied-openrouter.md), [api.md §14.2.6](api.md#1426-data-extraction), [ui.md §8.12](ui.md#812-email-data-intake)).
+The first integration of this shape is the LLM-based email data extractor (see [ADR-0016](../adr/0016-llm-email-extraction-via-server-proxied-openrouter.md), [api.md §14.2.6](api.md#1426-data-extraction), [ui/email-intake.md §8.12](ui/email-intake.md#812-email-data-intake)).
 
 ### 11.9 Data persistence and recovery
 

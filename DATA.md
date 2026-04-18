@@ -24,7 +24,7 @@ Human-triggered JSON export/import via the **Daten** view. Restore-only semantic
 
 - **Rationale and scope:** [ADR-0018](docs/adr/0018-data-persistence-and-recovery-layered-strategy.md)
 - **API contract:** [spec api.md §14.2.4 — Unified Data Exchange](docs/spec/api.md#1424-unified-data-exchange)
-- **UI:** [spec ui.md §8.11 — Daten view](docs/spec/ui.md#811-daten-view)
+- **UI:** [spec ui/daten.md — Daten view](docs/spec/ui/daten.md#811-daten-view)
 - **Envelope shape:** [spec data-model.md §5.8](docs/spec/data-model.md#58-export-envelope)
 - **Code:** `src/server/services/{ExportService,ImportService}.ts`
 

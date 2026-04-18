@@ -70,7 +70,7 @@ export function Header() {
   }, [dropdownOpen]);
 
   // Navigation is driven from the central route table so the per-role
-  // matrix (`docs/spec/ui.md §8.7.1`, AC-75) has one source of truth —
+  // matrix (`docs/spec/ui/index.md §8.7.1`, AC-75) has one source of truth —
   // the guard in `App.tsx` consults the same table. Extractor visibility
   // is an action affordance (not a nav concern), so it stays permission-
   // driven via `usePermission`.

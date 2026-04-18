@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 /**
  * Theming state/timing tests — covers AC-111 and AC-112 from the theming
- * block (spec: docs/spec/verification.md §15.20, docs/spec/ui.md §9.6).
+ * block (spec: docs/spec/verification.md §15.20, docs/spec/ui/behavior.md §9.6).
  *
  * AC-111 [vis]: The theme override is resolved and applied to the document
  * root before the first paint of themed content. Reloading a session with
