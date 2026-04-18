@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Projekt-Manager</title>
+    <!--
+      Pre-paint theme restoration. Blocks HTML parsing synchronously so
+      data-theme is set before any themed content paints. Kept as a
+      'self'-origin file (public/theme-init.js) so the app's CSP
+      (script-src 'self') permits it without 'unsafe-inline' or a hash.
+    -->
+    <script src="/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

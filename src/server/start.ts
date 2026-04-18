@@ -16,11 +16,12 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { STRINGS } from '../config/strings.js';
 import { buildApp } from './app.js';
 import { bootstrapAdminIfEmpty } from './bootstrap.js';
-import { assertProductionSafe, validateEnv } from './config/env.js';
+import { assertAppServerEnv, assertProductionSafe, validateEnv } from './config/env.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
+import { startSessionReaper } from './session-reaper.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
 
@@ -83,6 +84,10 @@ async function start(): Promise<void> {
   // assertProductionSafe() lives in env.ts so it can be unit-tested directly
   // (see env.test.ts) — see ADR-0013 and consolidation review C-2/C-4.
   assertProductionSafe(env);
+  // STORAGE_* are optional at schema level (the backup-runner CLI shares
+  // the same validator but doesn't use MinIO); the app server cannot run
+  // without them, so enforce here.
+  assertAppServerEnv(env);
   if (isProduction) {
     rejectDevCredentials();
   }
@@ -136,6 +141,18 @@ async function start(): Promise<void> {
   if (deleted > 0) {
     console.log(`Cleaned up ${deleted} expired sessions.`);
   }
+
+  // Schedule periodic cleanup so long-running deployments don't accumulate
+  // expired rows between restarts. Handle is captured for the graceful
+  // shutdown hook below.
+  const reaper = startSessionReaper({
+    db,
+    intervalMinutes: env.SESSION_CLEANUP_INTERVAL_MINUTES,
+    logger: {
+      info: (msg) => console.log(msg),
+      error: (err, msg) => console.error(msg, err),
+    },
+  });
 
   const app = buildApp({ logger: true, db });
 
@@ -194,6 +211,8 @@ async function start(): Promise<void> {
   // where SIGTERM during startup causes an unclean exit.
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, async () => {
+      // Wait for any in-flight sweep so pool.end() isn't called under its feet.
+      await reaper.stop();
       await app.close();
       await pool.end();
       process.exit(0);

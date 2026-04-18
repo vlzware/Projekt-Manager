@@ -1,24 +1,39 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
-import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
-import type { ViewMode } from '@/domain/types';
+import { usePermission } from '@/hooks/usePermission';
+import { useRouterNav } from '@/hooks/useRouterNav';
+import { visibleRoutesForUser, isLandingViewForUser } from '@/config/routes';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
+import { BACKUP_THRESHOLDS } from '@/config/backupThresholds';
+import { deriveBadgeState } from '@/domain/backupBadge';
+import type { ThemePreference } from '@/config/themeStorage';
 import { SummaryArea } from './SummaryArea';
+import { BackupBadge } from './BackupBadge';
 import { EmailExtractModal } from '../extraction/EmailExtractModal';
 import { PasswordChangeModal } from './PasswordChangeModal';
 import styles from './Header.module.css';
 
+const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
+  { value: 'light', label: STRINGS.theme.light },
+  { value: 'dark', label: STRINGS.theme.dark },
+  { value: 'system', label: STRINGS.theme.system },
+];
+
 export function Header() {
   const activeView = useUIStore((s) => s.activeView);
   const authUser = useAuthStore((s) => s.authUser);
+  const backupStatus = useAuthStore((s) => s.backupStatus);
   const logout = useAuthStore((s) => s.logout);
+  const updateThemePreference = useAuthStore((s) => s.updateThemePreference);
   const { navigateTo } = useRouterNav();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [extractOpen, setExtractOpen] = useState(false);
   const [pwChangeOpen, setPwChangeOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -31,17 +46,58 @@ export function Header() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [dropdownOpen]);
 
-  const canReadUsers = authUser?.roles.some((r) => r === 'owner' || r === 'office') ?? false;
-  const canExtract = canReadUsers; // owner and office can use extraction
+  // The dropdown is right-anchored by default (opens leftward). When the
+  // header wraps and the button lands near the left edge of the viewport,
+  // that leftward open clips off-screen. Flip to left-anchor in that
+  // case. A fixed breakpoint can't decide this reliably — wrap depends
+  // on summary content width, not viewport alone — so we measure the
+  // button's position on open. Mutating the class directly (rather than
+  // via setState) avoids a cascading render before paint.
+  useLayoutEffect(() => {
+    if (!dropdownOpen || !buttonRef.current || !dropdownRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const viewportWidth = document.documentElement.clientWidth;
+    // Dropdown's min-width from Header.module.css. Kept inline because
+    // it's stable and reading the live style would layout-thrash.
+    const dropdownMinWidth = 140;
+    const leftwardFits = rect.right >= dropdownMinWidth;
+    const rightwardFits = viewportWidth - rect.left >= dropdownMinWidth;
+    // Only flip when the default (leftward open) would clip AND the
+    // flipped direction actually has room. If neither fits, keep the
+    // default so the clipping is at least symmetric with the wide-
+    // layout case.
+    dropdownRef.current.classList.toggle(styles.dropdownAlignLeft, !leftwardFits && rightwardFits);
+  }, [dropdownOpen]);
 
-  const views: { key: ViewMode; label: string }[] = [
-    { key: 'kanban', label: STRINGS.ui.viewKanban },
-    { key: 'kalender', label: STRINGS.ui.viewCalendar },
-    { key: 'projekte', label: STRINGS.ui.viewProjects },
-    { key: 'kunden', label: STRINGS.ui.viewCustomers },
-    ...(canReadUsers ? [{ key: 'benutzer' as ViewMode, label: STRINGS.ui.viewUsers }] : []),
-    { key: 'daten', label: STRINGS.ui.viewData },
-  ];
+  // Navigation is driven from the central route table so the per-role
+  // matrix (`docs/spec/ui/index.md §8.7.1`, AC-75) has one source of truth —
+  // the guard in `App.tsx` consults the same table. Extractor visibility
+  // is an action affordance (not a nav concern), so it stays permission-
+  // driven via `usePermission`.
+  const visibleRoutes = authUser ? visibleRoutesForUser(authUser) : [];
+  const canExtract = usePermission('customer:write');
+
+  // AC-170 + AC-171: the backup-freshness badge renders ONLY on the
+  // owner's landing view. Two gates:
+  //   1. Role: only owners get the badge surface at all. Non-owners
+  //      never see it (the server also omits `backupStatus` for them,
+  //      so the state would be `unknown` — but hiding the surface
+  //      entirely matches AC-170's "not rendered" wording).
+  //   2. Route: the caller is on their own landing view. Navigating
+  //      to `/customers` (etc.) drops the badge per AC-170.
+  //
+  // `backupStatus === undefined` for an owner means the server could
+  // not read the row (DB down). AC-171 forbids silently hiding the
+  // badge in that case — `deriveBadgeState(undefined, …)` returns the
+  // `unknown` branch, which the component renders as "Status unbekannt".
+  // Do NOT gate on `backupStatus !== undefined` here; that would
+  // reintroduce the misleading-state defect.
+  const isOwner = authUser ? authUser.roles.includes('owner') : false;
+  const onOwnerLanding = authUser ? isLandingViewForUser(authUser, activeView) : false;
+  const showBackupBadge = isOwner && onOwnerLanding;
+  const backupBadgeState = showBackupBadge
+    ? deriveBadgeState(backupStatus, new Date(), BACKUP_THRESHOLDS)
+    : null;
 
   const handleLogout = async () => {
     setDropdownOpen(false);
@@ -51,51 +107,60 @@ export function Header() {
     await logout();
   };
 
+  const handleThemeSelect = (value: ThemePreference) => {
+    // Fire-and-forget: the store handles optimistic update, server
+    // round-trip, and revert-on-failure. Swallow the returned promise so
+    // the click handler stays synchronous from React's perspective.
+    void updateThemePreference(value);
+  };
+
   return (
     <header className={styles.header} data-testid="header">
       <div className={styles.navGroup}>
         <div className={styles.appName}>{BRANDING.appName}</div>
         <div className={styles.viewToggle}>
-          {views.map((v) => (
+          {visibleRoutes.map((r) => (
             <button
-              key={v.key}
-              className={`${styles.viewButton} ${activeView === v.key ? styles.viewButtonActive : ''}`}
-              onClick={() => navigateTo(pathFromView(v.key))}
-              data-testid={`view-toggle-${v.key}`}
+              key={r.view}
+              className={`${styles.viewButton} ${activeView === r.view ? styles.viewButtonActive : ''}`}
+              onClick={() => navigateTo(r.path)}
+              data-testid={`view-toggle-${r.view}`}
             >
-              {v.label}
+              {r.label}
             </button>
           ))}
         </div>
-      </div>
-      {canExtract && (
-        <button
-          className={styles.extractButton}
-          onClick={() => setExtractOpen(true)}
-          data-testid="extract-button"
-          title={STRINGS.ui.extractEmail}
-        >
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        {canExtract && (
+          <button
+            className={styles.extractButton}
+            onClick={() => setExtractOpen(true)}
+            data-testid="extract-button"
+            title={STRINGS.ui.extractEmail}
           >
-            <rect x="2" y="4" width="20" height="16" rx="2" />
-            <path d="M22 4L12 13L2 4" />
-          </svg>
-        </button>
-      )}
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <rect x="2" y="4" width="20" height="16" rx="2" />
+              <path d="M22 4L12 13L2 4" />
+            </svg>
+          </button>
+        )}
+        {backupBadgeState && <BackupBadge state={backupBadgeState} variant="inverse" />}
+      </div>
       <div className={styles.summaryWrapper}>
         <SummaryArea />
       </div>
       {authUser && (
         <div className={styles.userMenu} ref={menuRef}>
           <button
+            ref={buttonRef}
             className={styles.userButton}
             data-testid="user-indicator"
             onClick={() => setDropdownOpen(!dropdownOpen)}
@@ -103,7 +168,25 @@ export function Header() {
             {authUser.displayName}
           </button>
           {dropdownOpen && (
-            <div className={styles.dropdown}>
+            <div ref={dropdownRef} className={styles.dropdown}>
+              <div className={styles.dropdownSection}>
+                <div className={styles.dropdownSectionLabel}>{STRINGS.theme.section}</div>
+                {THEME_OPTIONS.map((opt) => {
+                  const selected = authUser.themePreference === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={`${styles.dropdownItem} ${selected ? styles.dropdownItemSelected : ''}`}
+                      aria-pressed={selected}
+                      data-testid={`theme-option-${opt.value}`}
+                      onClick={() => handleThemeSelect(opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
               <button
                 className={styles.dropdownItem}
                 data-testid="pw-change-button"

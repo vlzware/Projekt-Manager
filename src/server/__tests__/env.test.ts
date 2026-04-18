@@ -16,7 +16,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
-import { assertProductionSafe } from '../config/env.js';
+import { assertAppServerEnv, assertProductionSafe } from '../config/env.js';
 import type { Env } from '../config/env.js';
 
 /** Minimal Env shape with only the fields assertProductionSafe reads. */
@@ -37,6 +37,16 @@ function makeEnv(overrides: Partial<Env>): Env {
     BOOTSTRAP_ADMIN_DISPLAY_NAME: undefined,
     OPENROUTER_API_KEY: undefined,
     OPENROUTER_MODEL: 'google/gemini-2.5-flash-lite',
+    SESSION_CLEANUP_INTERVAL_MINUTES: 60,
+    // Layer 2 backup env — optional at the app-server level; declared
+    // here so the fixture stays in sync with the schema shape.
+    R2_ACCESS_KEY_ID: undefined,
+    R2_SECRET_ACCESS_KEY: undefined,
+    R2_ENDPOINT: undefined,
+    R2_BUCKET: undefined,
+    R2_REGION: 'auto',
+    AGE_RECIPIENT: undefined,
+    AGE_IDENTITY_PATH: '/run/drill-key/identity',
     ...overrides,
   };
 }
@@ -81,6 +91,49 @@ describe('assertProductionSafe', () => {
     expect(() =>
       assertProductionSafe(makeEnv({ NODE_ENV: 'test', ALLOW_INSECURE_HTTP: 'false' })),
     ).not.toThrow();
+  });
+});
+
+/**
+ * `assertAppServerEnv` — the app-server-only presence check for the MinIO
+ * storage surface. The shared schema keeps STORAGE_* optional so the
+ * backup-runner CLI can share validateEnv(); this guard restores the
+ * fail-fast semantic where it matters (start.ts) without forcing the
+ * backup path to carry values it never reads.
+ */
+describe('assertAppServerEnv', () => {
+  it('throws when STORAGE_ENDPOINT is missing', () => {
+    expect(() => assertAppServerEnv(makeEnv({ STORAGE_ENDPOINT: undefined }))).toThrow(
+      /STORAGE_ENDPOINT/,
+    );
+  });
+
+  it('throws when STORAGE_ACCESS_KEY is missing', () => {
+    expect(() => assertAppServerEnv(makeEnv({ STORAGE_ACCESS_KEY: undefined }))).toThrow(
+      /STORAGE_ACCESS_KEY/,
+    );
+  });
+
+  it('throws when STORAGE_SECRET_KEY is missing', () => {
+    expect(() => assertAppServerEnv(makeEnv({ STORAGE_SECRET_KEY: undefined }))).toThrow(
+      /STORAGE_SECRET_KEY/,
+    );
+  });
+
+  it('lists every missing field in a single error', () => {
+    expect(() =>
+      assertAppServerEnv(
+        makeEnv({
+          STORAGE_ENDPOINT: undefined,
+          STORAGE_ACCESS_KEY: undefined,
+          STORAGE_SECRET_KEY: undefined,
+        }),
+      ),
+    ).toThrow(/STORAGE_ENDPOINT.*STORAGE_ACCESS_KEY.*STORAGE_SECRET_KEY/s);
+  });
+
+  it('passes when all three STORAGE_* are set', () => {
+    expect(() => assertAppServerEnv(makeEnv({}))).not.toThrow();
   });
 });
 
@@ -130,5 +183,16 @@ describe('start.ts call-site pin for assertProductionSafe', () => {
     // invoked, not merely imported or referenced.
     const callPattern = /\bassertProductionSafe\s*\(\s*\S[^)]*\)/;
     expect(stripped).toMatch(callPattern);
+  });
+
+  // Same technique as the guard above: the reaper module owns the sweep
+  // logic (unit-tested in session-reaper.test.ts), but the wiring in
+  // start.ts is what actually schedules it in the running binary. A
+  // regression that drops the call or feeds a literal 60 instead of the
+  // validated env value would leave the unit tests green. This pin catches
+  // the detachment.
+  it('passes env.SESSION_CLEANUP_INTERVAL_MINUTES to startSessionReaper', () => {
+    expect(stripped).toMatch(/\bstartSessionReaper\s*\(/);
+    expect(stripped).toMatch(/intervalMinutes\s*:\s*env\.SESSION_CLEANUP_INTERVAL_MINUTES\b/);
   });
 });

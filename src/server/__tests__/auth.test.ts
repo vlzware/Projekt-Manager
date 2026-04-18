@@ -1,8 +1,9 @@
 /**
  * API integration tests: Authentication & session management.
  *
- * Tests AT-1 through AT-7 from the test specification (verification.md §16.3).
- * Runs against a real test database via Fastify inject (no network).
+ * Tests AT-1 through AT-7, AT-58, AT-59, AT-60 from the test specification
+ * (verification.md §16.2). Runs against a real test database via Fastify
+ * inject (no network).
  *
  * Seed users (from data-model.md §7.2) — referenced via SEED_USERS to
  * keep the coupling to `src/server/seed.ts` single-sourced:
@@ -20,6 +21,7 @@ import {
   login,
   authGet,
   authPost,
+  authPatch,
   createExpiredSession,
   deactivateUser,
 } from '../../test/api-helpers.js';
@@ -491,12 +493,14 @@ describe('Authentication & Session Management', () => {
       const observerToken = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
       const mutatorToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
 
-      // Find a project the observer can see. Pick angebot — non-terminal,
-      // the forward transition is always safe.
+      // Find a project the observer can see. Worker1 is scoped
+      // (AC-145/ADR-0019) to their assigned projects — pick one in
+      // a non-terminal state so the forward transition is always safe.
+      // `geplant` is one of worker1's seeded assignments (2024-007, 008).
       const initialObserver = await authGet(observerToken, '/api/projects');
       expect(initialObserver.statusCode).toBe(200);
       const projectsObserver = initialObserver.json().data as Record<string, unknown>[];
-      const target = projectsObserver.find((p) => p.status === 'angebot');
+      const target = projectsObserver.find((p) => p.status === 'geplant');
       expect(target).toBeDefined();
       const targetId = target!.id as string;
       const initialStatus = target!.status as string;
@@ -505,6 +509,7 @@ describe('Authentication & Session Management', () => {
       const transitionRes = await authPost(
         mutatorToken,
         `/api/projects/${targetId}/transition/forward`,
+        { expectedStatus: initialStatus },
       );
       expect(transitionRes.statusCode).toBe(200);
       const transitioned = transitionRes.json() as Record<string, unknown>;
@@ -524,6 +529,124 @@ describe('Authentication & Session Management', () => {
       expect(directGet.statusCode).toBe(200);
       const direct = directGet.json() as Record<string, unknown>;
       expect(direct.status).toBe(newStatus);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AT-58: Self-update with a valid themePreference round-trips
+  // AC-116 [crit]
+  //
+  // Contract pinned here (api.md §14.2.1 + design notes):
+  //   - Endpoint:   PATCH /api/auth/me
+  //   - Body:       { themePreference?: 'light' | 'dark' | 'system' }
+  //   - Response:   200 { user: <UserProfile> } — same envelope as
+  //                 GET /api/auth/me and POST /api/auth/login.
+  //   - PATCH semantics: omitted fields unchanged.
+  //
+  // The second GET /api/auth/me proves the value is actually persisted
+  // on the user row, not just echoed from the request body. Without
+  // the read-back, a broken endpoint that returns the input unchanged
+  // would pass the first assertion silently.
+  // ---------------------------------------------------------------
+  describe('AT-58: Self-update with a valid themePreference', () => {
+    it("PATCH /api/auth/me with themePreference='dark' updates the user row", async () => {
+      // Use worker1 — the owner is deactivated / mutated by other
+      // tests in this file (AT-7 deactivates office, AC-29 advances
+      // a project via owner). worker1 is left alone by the preceding
+      // blocks and has no special permissions required for self-update
+      // (self-scope only, per api.md §14.2.1 design notes).
+      const token = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
+
+      // Sanity-check the starting state — the worker has not set a
+      // preference yet, so the seed default 'system' must be in place.
+      // This guards against a regression where the initial value
+      // happens to be 'dark' and the assertion below passes by
+      // coincidence.
+      const beforeRes = await authGet(token, '/api/auth/me');
+      expect(beforeRes.statusCode).toBe(200);
+      expect(beforeRes.json().user.themePreference).toBe('system');
+
+      // PATCH to 'dark'. 200 OK + enveloped user with the new value.
+      const patchRes = await authPatch(token, '/api/auth/me', {
+        themePreference: 'dark',
+      });
+      expect(patchRes.statusCode).toBe(200);
+      const patchBody = patchRes.json();
+      expect(patchBody.user).toBeDefined();
+      expect(patchBody.user.themePreference).toBe('dark');
+      // passwordHash must never leak back through any /me path.
+      expect(patchBody.user).not.toHaveProperty('passwordHash');
+
+      // Read-back: the next GET /api/auth/me must return 'dark'.
+      // This is the load-bearing assertion — proves persistence,
+      // not just request echo.
+      const afterRes = await authGet(token, '/api/auth/me');
+      expect(afterRes.statusCode).toBe(200);
+      expect(afterRes.json().user.themePreference).toBe('dark');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AT-59: Self-update without a valid session is rejected
+  // AC-117 [crit]
+  //
+  // api.md §14.2.1 design note: "missing or invalid session →
+  // authentication error". A PATCH with no cookie is exactly the
+  // "missing session" branch. The error code must be UNAUTHENTICATED
+  // (not SESSION_EXPIRED) — SESSION_EXPIRED is reserved for requests
+  // that presented a cookie which no longer validates. The distinction
+  // drives different client UX (login screen vs. expiry message).
+  // ---------------------------------------------------------------
+  describe('AT-59: Self-update without a valid session', () => {
+    it('PATCH /api/auth/me without session cookie returns 401 UNAUTHENTICATED', async () => {
+      const res = await getApp().inject({
+        method: 'PATCH',
+        url: '/api/auth/me',
+        // No cookie header — session absent.
+        payload: { themePreference: 'dark' },
+      });
+
+      expect(res.statusCode).toBe(401);
+
+      const body = res.json();
+      expect(body.code).toBe('UNAUTHENTICATED');
+      expect(typeof body.message).toBe('string');
+      expect(body.message.length).toBeGreaterThan(0);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AT-60: Self-update with an invalid themePreference is rejected
+  // AC-118 [crit]
+  //
+  // api.md §14.2.1 design note: "request body violating the allowed
+  // value set (e.g., themePreference outside 'light' | 'dark' |
+  // 'system') → validation error". The accepted range is exactly
+  // those three literals; anything else — here 'ultraviolet' — must
+  // be rejected with VALIDATION_ERROR.
+  //
+  // HTTP status: the codebase returns 422 from validationError()
+  // (errors.ts), but some paths return 400 via the fastify schema
+  // layer. Match the pattern from projects-crud.test.ts AT-19 and
+  // pin on the range (4xx client error) + the machine-readable code.
+  // ---------------------------------------------------------------
+  describe('AT-60: Self-update with an invalid themePreference', () => {
+    it("PATCH /api/auth/me with themePreference='ultraviolet' returns VALIDATION_ERROR", async () => {
+      const token = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
+
+      const res = await authPatch(token, '/api/auth/me', {
+        themePreference: 'ultraviolet',
+      });
+
+      // Client error, not server error — validation fires before
+      // any DB interaction.
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      expect(res.statusCode).toBeLessThan(500);
+
+      const body = res.json();
+      expect(body.code).toBe('VALIDATION_ERROR');
+      expect(typeof body.message).toBe('string');
+      expect(body.message.length).toBeGreaterThan(0);
     });
   });
 });

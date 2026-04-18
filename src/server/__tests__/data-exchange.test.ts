@@ -1,0 +1,1498 @@
+/**
+ * API integration tests: Unified Data Exchange.
+ *
+ * Covers AC-133 through AC-141 (verification.md §15.14) for the unified
+ * business-data export/import surface introduced by ADR-0018:
+ *
+ *   GET  /api/export             → envelope snapshot (permission: data:export)
+ *   POST /api/import[?flags]     → restore-only import    (permission: data:restore)
+ *
+ * Envelope shape (data-model.md §5.8):
+ *   { schema_version: number,
+ *     exported_at: ISO 8601,
+ *     customers: Customer[],
+ *     projects: Project[],
+ *     project_workers: { projectId, userId }[] }
+ *
+ * Written ahead of implementation (TDD). Until the endpoints exist these
+ * tests fail with HTTP 404 or assertion mismatches — never with TypeScript
+ * compile errors. The test file defines the contract; the implementation
+ * catches up.
+ */
+
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { sql } from 'drizzle-orm';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import type pg from 'pg';
+
+import {
+  startApp,
+  stopApp,
+  login,
+  authGet,
+  authPost,
+  getApp,
+  authDelete,
+} from '../../test/api-helpers.js';
+import {
+  SEED_DEFAULT_PASSWORD,
+  SEED_USERS,
+  EXPECTED_RESTORE_PHRASE,
+} from '../../test/seedAssumptions.js';
+import { createDatabase } from '../db/connection.js';
+import { seed } from '../seed.js';
+import type { Database } from '../db/connection.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const migrationsFolder = path.resolve(__dirname, '../db/migrations');
+
+/**
+ * Current schema version. Exports must stamp this value; imports must
+ * reject any mismatch (see ADR-0018 §Decision — strict version rejection,
+ * no data-format migration code).
+ *
+ * When `src/server/seed.ts` or data-model.md §5.8 bumps the schema, bump
+ * this constant; the import should then reject the old value the next
+ * test run, which is exactly the test's purpose.
+ */
+const CURRENT_SCHEMA_VERSION = 1;
+
+const UUID_ZERO = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Deterministic UUID factory for fixture envelopes. The prefix is hex-
+ * encoded so non-hex category markers like `cust` / `proj` stay usable
+ * in fixture code without producing invalid PG uuid syntax.
+ */
+function uuid(prefix: string, i: number): string {
+  const hex = Array.from(prefix)
+    .map((ch) => ch.charCodeAt(0).toString(16).padStart(2, '0'))
+    .join('')
+    .padEnd(8, '0')
+    .slice(0, 8);
+  const n = String(i).padStart(12, '0');
+  return `${hex}-0000-4000-8000-${n}`;
+}
+
+function isoNow(): string {
+  return new Date().toISOString();
+}
+
+/**
+ * Build an envelope for the empty-DB import path. Fresh IDs so the test
+ * can verify ID preservation after export→import→export.
+ */
+function buildFreshEnvelope(): ExportEnvelope {
+  const customerId = uuid('cust', 1);
+  const projectId = uuid('proj', 1);
+  return {
+    schema_version: CURRENT_SCHEMA_VERSION,
+    exported_at: isoNow(),
+    customers: [
+      {
+        id: customerId,
+        name: 'Import Kunde Alpha',
+        phone: '0221-9000001',
+        email: 'alpha@example.de',
+        address: { street: 'Ringstr. 1', zip: '50667', city: 'Köln' },
+        notes: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        createdBy: null,
+        updatedBy: null,
+      },
+    ],
+    projects: [
+      {
+        id: projectId,
+        number: '2026-900',
+        title: 'Import Projekt Alpha',
+        status: 'anfrage',
+        statusChangedAt: '2026-01-05T00:00:00.000Z',
+        customerId,
+        plannedStart: null,
+        plannedEnd: null,
+        estimatedValue: null,
+        notes: null,
+        deleted: false,
+        createdAt: '2026-01-05T00:00:00.000Z',
+        updatedAt: '2026-01-05T00:00:00.000Z',
+        createdBy: null,
+        updatedBy: null,
+      },
+    ],
+    project_workers: [],
+  };
+}
+
+/**
+ * Build an envelope distinct from the seed — different IDs, names, and
+ * counts — so override-vs-seed tests can detect wipe-and-restore.
+ */
+function buildOverrideEnvelope(): ExportEnvelope {
+  const c1 = uuid('cust', 10);
+  const c2 = uuid('cust', 11);
+  const p1 = uuid('proj', 10);
+  const p2 = uuid('proj', 11);
+  return {
+    schema_version: CURRENT_SCHEMA_VERSION,
+    exported_at: isoNow(),
+    customers: [
+      {
+        id: c1,
+        name: 'Override Kunde Eins',
+        phone: null,
+        email: null,
+        address: null,
+        notes: null,
+        createdAt: '2026-02-01T00:00:00.000Z',
+        updatedAt: '2026-02-01T00:00:00.000Z',
+        createdBy: null,
+        updatedBy: null,
+      },
+      {
+        id: c2,
+        name: 'Override Kunde Zwei',
+        phone: null,
+        email: null,
+        address: null,
+        notes: null,
+        createdAt: '2026-02-02T00:00:00.000Z',
+        updatedAt: '2026-02-02T00:00:00.000Z',
+        createdBy: null,
+        updatedBy: null,
+      },
+    ],
+    projects: [
+      {
+        id: p1,
+        number: '2026-OV-1',
+        title: 'Override Projekt Eins',
+        status: 'anfrage',
+        statusChangedAt: '2026-02-05T00:00:00.000Z',
+        customerId: c1,
+        plannedStart: null,
+        plannedEnd: null,
+        estimatedValue: null,
+        notes: null,
+        deleted: false,
+        createdAt: '2026-02-05T00:00:00.000Z',
+        updatedAt: '2026-02-05T00:00:00.000Z',
+        createdBy: null,
+        updatedBy: null,
+      },
+      {
+        id: p2,
+        number: '2026-OV-2',
+        title: 'Override Projekt Zwei (archived)',
+        status: 'erledigt',
+        statusChangedAt: '2026-02-06T00:00:00.000Z',
+        customerId: c2,
+        plannedStart: null,
+        plannedEnd: null,
+        estimatedValue: null,
+        notes: null,
+        deleted: true,
+        createdAt: '2026-02-06T00:00:00.000Z',
+        updatedAt: '2026-02-06T00:00:00.000Z',
+        createdBy: null,
+        updatedBy: null,
+      },
+    ],
+    project_workers: [],
+  };
+}
+
+/**
+ * Shape we assert against. Any field the current export omits makes the
+ * corresponding assertion fail loudly — that is the entire point of the
+ * row-level-fidelity AC.
+ */
+interface ExportEnvelope {
+  schema_version: number;
+  exported_at: string;
+  customers: Array<Record<string, unknown> & { id: string }>;
+  projects: Array<Record<string, unknown> & { id: string; deleted: boolean }>;
+  project_workers: Array<{ projectId: string; userId: string }>;
+  // Index signature so an envelope is assignable to the authPost payload
+  // type Record<string, unknown> without per-call casting.
+  [key: string]: unknown;
+}
+
+// ---------------------------------------------------------------
+// A dedicated db/pool for direct-SQL operations the API does not cover
+// (wiping business data between tests so the "empty DB" and "atomic
+// rollback" branches are exercised). Uses the same connection string as
+// the app — two pools against the same PG instance are fine; data-integrity
+// tests do the same.
+// ---------------------------------------------------------------
+let db: Database;
+let pool: pg.Pool;
+
+async function wipeBusinessData(): Promise<void> {
+  await db.execute(
+    sql`TRUNCATE TABLE project_workers, projects, customers RESTART IDENTITY CASCADE`,
+  );
+}
+
+/**
+ * Re-seed the database. Because `seed(..., { force: true })` TRUNCATEs the
+ * sessions table (see src/server/seed.ts), every previously-issued session
+ * token becomes invalid. Callers MUST refresh any tokens they hold —
+ * see `reseedAndRelogin` below. Using `reseed()` directly is intentional
+ * for the initial startApp() path (no tokens yet).
+ */
+async function reseed(): Promise<void> {
+  await seed(db, { force: true });
+}
+
+describe('Unified Data Exchange', () => {
+  let ownerToken: string;
+  let officeToken: string;
+  let workerToken: string;
+  let bookkeeperToken: string;
+
+  /**
+   * Reseed + refresh all session tokens. Seed TRUNCATEs sessions, so any
+   * token obtained before the call becomes invalid (401 on next request).
+   * Tests that reseed between sub-cases MUST call this, not plain `reseed()`.
+   */
+  async function reseedAndRelogin(): Promise<void> {
+    await reseed();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    officeToken = await login(SEED_USERS.office.username, SEED_DEFAULT_PASSWORD);
+    workerToken = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
+    bookkeeperToken = await login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD);
+  }
+
+  beforeAll(async () => {
+    await startApp();
+
+    const conn = createDatabase();
+    db = conn.db;
+    pool = conn.pool;
+    await pool.query('SELECT 1');
+    await migrate(db, { migrationsFolder });
+
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    officeToken = await login(SEED_USERS.office.username, SEED_DEFAULT_PASSWORD);
+    workerToken = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
+    bookkeeperToken = await login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD);
+  });
+
+  afterAll(async () => {
+    if (pool) await pool.end();
+    await stopApp();
+  });
+
+  // ---------------------------------------------------------------
+  // AC-133: export rejects unauthenticated or unauthorized callers
+  // ---------------------------------------------------------------
+  describe('AC-133: export auth gate', () => {
+    // AC-133: unauthenticated GET /api/export → 401 (UNAUTHENTICATED)
+    it('returns 401 when not authenticated', async () => {
+      const res = await getApp().inject({ method: 'GET', url: '/api/export' });
+      expect(res.statusCode).toBe(401);
+    });
+
+    // AC-133: workers lack data:export → 403 NOT_PERMITTED
+    it('returns 403 NOT_PERMITTED for worker (lacks data:export)', async () => {
+      const res = await authGet(workerToken, '/api/export');
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    // AC-133: bookkeepers lack data:export → 403 NOT_PERMITTED
+    it('returns 403 NOT_PERMITTED for bookkeeper (lacks data:export)', async () => {
+      const res = await authGet(bookkeeperToken, '/api/export');
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    // AC-133: owner has data:export → 200
+    it('returns 200 for owner (holds data:export)', async () => {
+      const res = await authGet(ownerToken, '/api/export');
+      expect(res.statusCode).toBe(200);
+    });
+
+    // AC-133: office has data:export → 200
+    it('returns 200 for office (holds data:export)', async () => {
+      const res = await authGet(officeToken, '/api/export');
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-134: import rejects unauthenticated or unauthorized callers
+  // ---------------------------------------------------------------
+  describe('AC-134: import auth gate', () => {
+    // AC-134: unauthenticated POST /api/import → 401 UNAUTHENTICATED
+    it('returns 401 when not authenticated', async () => {
+      const res = await getApp().inject({
+        method: 'POST',
+        url: '/api/import',
+        payload: buildFreshEnvelope(),
+      });
+      expect(res.statusCode).toBe(401);
+    });
+
+    // AC-134: office does NOT hold data:restore (owner-only per §14.3) → 403
+    it('returns 403 NOT_PERMITTED for office (lacks data:restore)', async () => {
+      const res = await authPost(officeToken, '/api/import', buildFreshEnvelope());
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    // AC-134: worker lacks data:restore → 403
+    it('returns 403 NOT_PERMITTED for worker (lacks data:restore)', async () => {
+      const res = await authPost(workerToken, '/api/import', buildFreshEnvelope());
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    // AC-134: bookkeeper lacks data:restore → 403
+    it('returns 403 NOT_PERMITTED for bookkeeper (lacks data:restore)', async () => {
+      const res = await authPost(bookkeeperToken, '/api/import', buildFreshEnvelope());
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    // AC-134: owner holds data:restore; into empty DB a valid envelope
+    // is accepted (200). We wipe + restore-seed around this case so sibling
+    // tests see the seed unchanged.
+    it('returns 200 for owner (holds data:restore) on empty DB', async () => {
+      await wipeBusinessData();
+      try {
+        const res = await authPost(ownerToken, '/api/import', buildFreshEnvelope());
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-135: export envelope shape and row-level fidelity
+  // ---------------------------------------------------------------
+  describe('AC-135: export envelope shape', () => {
+    let archivedProjectId: string;
+
+    // Soft-delete one seeded project so the "archived rows are included"
+    // branch has something to check. Archived rows must still appear in
+    // the export with `deleted: true`.
+    beforeAll(async () => {
+      // Seed is already in place from the outer beforeAll; don't wipe it
+      // here (that would invalidate tokens the outer describe just
+      // issued). Just soft-delete a project.
+      const list = await authGet(ownerToken, '/api/projects');
+      const projects = list.json().data as Array<{ id: string; status: string }>;
+      const target = projects.find((p) => p.status === 'angebot') ?? projects[0]!;
+      archivedProjectId = target.id;
+      const del = await authDelete(ownerToken, `/api/projects/${archivedProjectId}`);
+      expect(del.statusCode).toBe(200);
+    });
+
+    afterAll(async () => {
+      // Restore the seed so downstream describes see the canonical dataset.
+      await reseedAndRelogin();
+    });
+
+    // AC-135: top-level envelope contains schema_version, exported_at,
+    // customers[], projects[], project_workers[] — every field present.
+    it('returns schema_version, exported_at, customers, projects, project_workers', async () => {
+      const res = await authGet(ownerToken, '/api/export');
+      expect(res.statusCode).toBe(200);
+
+      const env = res.json() as ExportEnvelope;
+      expect(typeof env.schema_version).toBe('number');
+      expect(env.schema_version).toBe(CURRENT_SCHEMA_VERSION);
+
+      expect(typeof env.exported_at).toBe('string');
+      // Must parse as a real Date (not NaN).
+      expect(Number.isNaN(Date.parse(env.exported_at))).toBe(false);
+
+      expect(Array.isArray(env.customers)).toBe(true);
+      expect(Array.isArray(env.projects)).toBe(true);
+      expect(Array.isArray(env.project_workers)).toBe(true);
+    });
+
+    // AC-135: customers.length matches the seeded row count (21 per
+    // src/server/seed.ts). Off-by-one = seed drift the test should surface.
+    it('exports every seeded customer (21 from seed)', async () => {
+      const res = await authGet(ownerToken, '/api/export');
+      const env = res.json() as ExportEnvelope;
+      expect(env.customers.length).toBe(21);
+    });
+
+    // AC-135: projects count matches seeded count INCLUDING archived rows.
+    // Seed = 19 projects; none are archived in seed. We soft-deleted one
+    // above, so the export must still include 19 (archived = included).
+    it('exports every project INCLUDING archived (deleted=true) rows', async () => {
+      const res = await authGet(ownerToken, '/api/export');
+      const env = res.json() as ExportEnvelope;
+      expect(env.projects.length).toBe(19);
+
+      const archived = env.projects.find((p) => p.id === archivedProjectId);
+      expect(archived).toBeDefined();
+      expect(archived!.deleted).toBe(true);
+    });
+
+    // AC-135: row-level fidelity — every customer carries id,createdAt,updatedAt.
+    it('customer rows carry id, createdAt, updatedAt', async () => {
+      const res = await authGet(ownerToken, '/api/export');
+      const env = res.json() as ExportEnvelope;
+      for (const c of env.customers) {
+        expect(typeof c.id).toBe('string');
+        expect(c.createdAt).toBeDefined();
+        expect(c.updatedAt).toBeDefined();
+      }
+    });
+
+    // AC-135: row-level fidelity — every project carries id,createdAt,updatedAt,deleted.
+    it('project rows carry id, createdAt, updatedAt, deleted', async () => {
+      const res = await authGet(ownerToken, '/api/export');
+      const env = res.json() as ExportEnvelope;
+      for (const p of env.projects) {
+        expect(typeof p.id).toBe('string');
+        expect(p.createdAt).toBeDefined();
+        expect(p.updatedAt).toBeDefined();
+        expect(typeof p.deleted).toBe('boolean');
+      }
+    });
+
+    // AC-135: project_workers entries carry projectId and userId.
+    it('project_workers rows carry projectId and userId', async () => {
+      const res = await authGet(ownerToken, '/api/export');
+      const env = res.json() as ExportEnvelope;
+      // Seed has 7 assignments — but this test does not pin the count,
+      // only that whatever is returned has the documented shape.
+      for (const a of env.project_workers) {
+        expect(typeof a.projectId).toBe('string');
+        expect(typeof a.userId).toBe('string');
+      }
+    });
+
+    // AC-135 (exclusion): users, sessions, password hashes must not appear
+    // anywhere in the serialized envelope. Grep-style check on the JSON
+    // string catches accidental inclusion via row spread / serializer leak.
+    it('does NOT serialize users, sessions, or password fields', async () => {
+      const res = await authGet(ownerToken, '/api/export');
+      const serialized = res.body;
+      expect(serialized).not.toMatch(/"users"\s*:/);
+      expect(serialized).not.toMatch(/"sessions"\s*:/);
+      expect(serialized.toLowerCase()).not.toContain('passwordhash');
+      expect(serialized.toLowerCase()).not.toContain('password_hash');
+      expect(serialized).not.toMatch(/"password"\s*:/);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-136: schema_version mismatch is rejected, with no writes
+  // ---------------------------------------------------------------
+  describe('AC-136: schema_version mismatch rejection', () => {
+    // AC-136: envelope version current+1 → rejected with specific code, no writes.
+    it('rejects an envelope with a newer schema_version', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const baseline = before.json() as ExportEnvelope;
+
+      const bad = buildOverrideEnvelope();
+      bad.schema_version = CURRENT_SCHEMA_VERSION + 1;
+      const body = { ...bad, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+      const res = await authPost(ownerToken, '/api/import?override=true', body);
+
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      expect(res.statusCode).toBeLessThan(500);
+      expect(res.json().code).toBe('SCHEMA_VERSION_MISMATCH');
+
+      const after = await authGet(ownerToken, '/api/export');
+      const post = after.json() as ExportEnvelope;
+      expect(post.customers.length).toBe(baseline.customers.length);
+      expect(post.projects.length).toBe(baseline.projects.length);
+    });
+
+    // AC-136: envelope version current-1 → same rejection. No migration.
+    it('rejects an envelope with an older schema_version', async () => {
+      const bad = buildOverrideEnvelope();
+      bad.schema_version = CURRENT_SCHEMA_VERSION - 1;
+      const body = { ...bad, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+      const res = await authPost(ownerToken, '/api/import?override=true', body);
+
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      expect(res.statusCode).toBeLessThan(500);
+      expect(res.json().code).toBe('SCHEMA_VERSION_MISMATCH');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-137: import into empty DB preserves IDs, all-or-nothing
+  // ---------------------------------------------------------------
+  describe('AC-137: import into empty DB', () => {
+    // AC-137 happy path: empty target, valid envelope → 200 and IDs match.
+    it('imports a valid envelope and preserves row IDs exactly', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const res = await authPost(ownerToken, '/api/import', envelope);
+        expect(res.statusCode).toBe(200);
+
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+
+        const customerIds = new Set(out.customers.map((c) => c.id));
+        for (const c of envelope.customers) expect(customerIds.has(c.id)).toBe(true);
+
+        const projectIds = new Set(out.projects.map((p) => p.id));
+        for (const p of envelope.projects) expect(projectIds.has(p.id)).toBe(true);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AC-137 atomicity: an envelope with a project referencing a customer
+    // NOT in `customers` must fail the whole transaction — the earlier,
+    // valid rows must not be persisted.
+    it('rolls back entirely if any row is invalid (atomic import)', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        // Replace the last project's customerId with a non-existent one.
+        const broken = {
+          ...envelope,
+          projects: [
+            ...envelope.projects,
+            {
+              ...envelope.projects[0]!,
+              id: uuid('proj', 99),
+              number: '2026-999',
+              customerId: UUID_ZERO, // references nothing
+            },
+          ],
+        };
+        const res = await authPost(ownerToken, '/api/import', broken);
+        expect(res.statusCode).toBeGreaterThanOrEqual(400);
+
+        // DB must still be empty — neither the valid project nor the
+        // "valid" customer should have been persisted.
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+        expect(out.project_workers.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Envelope uniqueness validation
+  //
+  // Referential integrity alone is not enough: an envelope with two
+  // customers sharing the same id (or two projects sharing the same id /
+  // the same number, or two project_workers rows with the same composite
+  // key) currently slips past `validateEnvelopeReferences` and reaches the
+  // INSERT, where Postgres raises a 23505 unique-violation that surfaces
+  // to the caller as a generic 500. The validation layer must catch these
+  // collisions up-front and return the same 422 VALIDATION_ERROR shape
+  // used by the referential-integrity checks — so dry-run can preview
+  // them without a write, and non-dry-run never touches the DB at all.
+  // ---------------------------------------------------------------
+  describe('Envelope uniqueness validation', () => {
+    // Start from an empty DB so a duplicate-detection failure cannot be
+    // confused with TARGET_NOT_EMPTY (AC-138) or with a collision against
+    // the seed. The seed is restored in the finally of each test.
+    //
+    // Note: `wipeBusinessData()` truncates business tables only — the
+    // `users` table survives, so seeded user IDs (if any are needed in a
+    // test) remain valid. The tests below do not rely on that, because
+    // validation must reject duplicate composite keys before any insert.
+
+    it('rejects duplicate customer ids (non-dry-run) with 422 VALIDATION_ERROR', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const dupId = envelope.customers[0]!.id;
+        envelope.customers.push({
+          ...envelope.customers[0]!,
+          // Same id as customers[0] — intentional collision.
+          id: dupId,
+          name: 'Duplicate Kunde',
+          email: 'duplicate@example.de',
+          createdAt: '2026-01-03T00:00:00.000Z',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+        });
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+
+        // `details` carries the validation issues. The existing
+        // referential-integrity path stores them as a plain array;
+        // accept either the array-directly or a {validation_errors:[…]}
+        // wrapper so the test pins structure, not incidental nesting.
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const dup = issues!.find((i) => /customers\[1\]/.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        // No rows written — DB remains empty. This is the point of
+        // validating before the transaction opens.
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+        expect(out.project_workers.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('reports duplicate customer ids in dry-run validation_errors without writes', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const dupId = envelope.customers[0]!.id;
+        envelope.customers.push({
+          ...envelope.customers[0]!,
+          id: dupId,
+          name: 'Duplicate Kunde',
+          email: 'duplicate2@example.de',
+          createdAt: '2026-01-03T00:00:00.000Z',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+        });
+
+        const res = await authPost(ownerToken, '/api/import?dry_run=true', envelope);
+        // Dry-run never throws for invalid envelopes — the preview carries
+        // the errors so the UI can render them. This is the clean proof
+        // that validation (not the DB) surfaces the issue.
+        expect(res.statusCode).toBe(200);
+
+        const preview = res.json() as {
+          validation_errors: Array<{ path: string; message: string }>;
+        };
+        expect(Array.isArray(preview.validation_errors)).toBe(true);
+        const dup = preview.validation_errors.find((i) => /customers\[1\]/.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        // No state change.
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('rejects duplicate project ids (non-dry-run) with 422 VALIDATION_ERROR', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const dupId = envelope.projects[0]!.id;
+        envelope.projects.push({
+          ...envelope.projects[0]!,
+          // Same id as projects[0] — intentional collision.
+          id: dupId,
+          // Different number so the test isolates duplicate-id detection
+          // from duplicate-number detection (covered by the next test).
+          number: '2026-901',
+          title: 'Duplicate Projekt',
+          createdAt: '2026-01-06T00:00:00.000Z',
+          updatedAt: '2026-01-06T00:00:00.000Z',
+        });
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const dup = issues!.find((i) => /projects\[1\]/.test(i.path) && /id/i.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('rejects two projects sharing a number (different ids) with 422', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const sharedNumber = envelope.projects[0]!.number;
+        envelope.projects.push({
+          ...envelope.projects[0]!,
+          // Different id — uniqueness collision is on `number` only.
+          id: uuid('proj', 2),
+          number: sharedNumber,
+          title: 'Same Number Projekt',
+          createdAt: '2026-01-07T00:00:00.000Z',
+          updatedAt: '2026-01-07T00:00:00.000Z',
+        });
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const dup = issues!.find((i) => /projects\[1\]/.test(i.path) && /number/i.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('rejects duplicate project_workers composite key with 422', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const projectId = envelope.projects[0]!.id;
+        // userId can be any UUID: uniqueness validation must run before
+        // the FK check against users. If the impl instead tried the insert,
+        // it would FK-fail on this id — but the test pins that the
+        // VALIDATION path rejects first, so the FK is never consulted.
+        const userId = uuid('user', 1);
+        envelope.project_workers = [
+          { projectId, userId },
+          { projectId, userId },
+        ];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const dup = issues!.find((i) => /project_workers\[1\]/.test(i.path));
+        expect(dup).toBeDefined();
+        expect(dup!.message.toLowerCase()).toMatch(/duplicate|duplikat|doppelt/);
+
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+        expect(out.project_workers.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-138: non-empty target refused without override
+  // ---------------------------------------------------------------
+  describe('AC-138: non-empty target refused without override', () => {
+    // AC-138: with seed present and no override flag → refused with a
+    // specific error code; no state change.
+    it('rejects with a conflict-category error when target is non-empty', async () => {
+      // Seed is present from startApp(); confirm baseline.
+      const before = await authGet(ownerToken, '/api/export');
+      const baseline = before.json() as ExportEnvelope;
+      expect(baseline.customers.length).toBeGreaterThan(0);
+
+      const env = buildOverrideEnvelope();
+      const res = await authPost(ownerToken, '/api/import', env);
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('TARGET_NOT_EMPTY');
+
+      const after = await authGet(ownerToken, '/api/export');
+      const post = after.json() as ExportEnvelope;
+      expect(post.customers.length).toBe(baseline.customers.length);
+      expect(post.projects.length).toBe(baseline.projects.length);
+      // Original seeded IDs still present.
+      const preIds = new Set(baseline.customers.map((c) => c.id));
+      for (const c of post.customers) expect(preIds.has(c.id)).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-139: override wipes+restores atomically; invalid input rolls back
+  // ---------------------------------------------------------------
+  describe('AC-139: override wipe+restore', () => {
+    // AC-139 happy path: seed + override flag + valid envelope →
+    // existing rows gone, new rows present, IDs preserved.
+    it('wipes existing data and imports the new envelope when override=true', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const seeded = before.json() as ExportEnvelope;
+      // Sanity: seed has distinct IDs from the override envelope.
+      const env = buildOverrideEnvelope();
+      const seedIds = new Set(seeded.customers.map((c) => c.id));
+      for (const c of env.customers) expect(seedIds.has(c.id)).toBe(false);
+
+      try {
+        const body = { ...env, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBe(200);
+
+        const after = await authGet(ownerToken, '/api/export');
+        const post = after.json() as ExportEnvelope;
+
+        // Only the new envelope's rows survive.
+        expect(post.customers.length).toBe(env.customers.length);
+        expect(post.projects.length).toBe(env.projects.length);
+        const newCustomerIds = new Set(post.customers.map((c) => c.id));
+        for (const c of env.customers) expect(newCustomerIds.has(c.id)).toBe(true);
+        // No seed survivors.
+        for (const c of seeded.customers) expect(newCustomerIds.has(c.id)).toBe(false);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AC-139 atomicity: invalid envelope + override → rollback, seed intact.
+    it('rolls back entirely on invalid envelope even with override (atomic)', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const seeded = before.json() as ExportEnvelope;
+
+      const broken = buildOverrideEnvelope();
+      // A project referencing a customerId not present in the envelope.
+      broken.projects[0]!.customerId = UUID_ZERO;
+
+      try {
+        const body = { ...broken, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBeGreaterThanOrEqual(400);
+
+        // Seed must be unchanged — rollback covers the wipe, not just the insert.
+        const after = await authGet(ownerToken, '/api/export');
+        const post = after.json() as ExportEnvelope;
+        expect(post.customers.length).toBe(seeded.customers.length);
+        expect(post.projects.length).toBe(seeded.projects.length);
+        const seededIds = new Set(seeded.customers.map((c) => c.id));
+        for (const c of post.customers) expect(seededIds.has(c.id)).toBe(true);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-140: dry-run — full validation, preview, no writes
+  // ---------------------------------------------------------------
+  describe('AC-140: dry-run import', () => {
+    // AC-140 valid + dry-run: returns a preview of would-be writes, no state change.
+    it('returns a preview for a valid envelope and performs no writes', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const baseline = before.json() as ExportEnvelope;
+
+      const env = buildOverrideEnvelope();
+      const res = await authPost(ownerToken, '/api/import?dry_run=true', env);
+      expect(res.statusCode).toBe(200);
+
+      const preview = res.json() as {
+        target_non_empty: boolean;
+        would_write: { customers: number; projects: number; project_workers: number };
+        validation_errors: unknown[];
+      };
+      expect(preview.would_write).toBeDefined();
+      expect(preview.would_write.customers).toBe(env.customers.length);
+      expect(preview.would_write.projects).toBe(env.projects.length);
+      expect(preview.would_write.project_workers).toBe(env.project_workers.length);
+      expect(Array.isArray(preview.validation_errors)).toBe(true);
+      expect(preview.validation_errors.length).toBe(0);
+      // AC-140 (target_non_empty): the seeded DB is non-empty, so the
+      // preview must declare it. The UI uses this to gate the override
+      // warning; committing without override still fails with
+      // TARGET_NOT_EMPTY (AC-138).
+      expect(preview.target_non_empty).toBe(true);
+
+      // No writes.
+      const after = await authGet(ownerToken, '/api/export');
+      const post = after.json() as ExportEnvelope;
+      expect(post.customers.length).toBe(baseline.customers.length);
+      expect(post.projects.length).toBe(baseline.projects.length);
+    });
+
+    // AC-140 (target_non_empty, empty DB branch): dry-run against a wiped
+    // target must report target_non_empty: false so the UI skips the
+    // warning and enables commit directly.
+    it('reports target_non_empty=false when the DB is empty', async () => {
+      await wipeBusinessData();
+      try {
+        const env = buildFreshEnvelope();
+        const res = await authPost(ownerToken, '/api/import?dry_run=true', env);
+        expect(res.statusCode).toBe(200);
+
+        const preview = res.json() as { target_non_empty: boolean };
+        expect(preview.target_non_empty).toBe(false);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AC-140 invalid + dry-run: preview carries validation errors, still no writes.
+    it('reports validation_errors for an invalid envelope and performs no writes', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const baseline = before.json() as ExportEnvelope;
+
+      const broken = buildOverrideEnvelope();
+      broken.projects[0]!.customerId = UUID_ZERO; // FK violation
+
+      const res = await authPost(ownerToken, '/api/import?dry_run=true', broken);
+      expect(res.statusCode).toBe(200);
+
+      const preview = res.json() as { validation_errors: unknown[] };
+      expect(Array.isArray(preview.validation_errors)).toBe(true);
+      expect(preview.validation_errors.length).toBeGreaterThan(0);
+
+      // Still no writes.
+      const after = await authGet(ownerToken, '/api/export');
+      const post = after.json() as ExportEnvelope;
+      expect(post.customers.length).toBe(baseline.customers.length);
+      expect(post.projects.length).toBe(baseline.projects.length);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-141: roundtrip byte-equivalence (modulo exported_at)
+  // ---------------------------------------------------------------
+  describe('AC-141: full roundtrip produces byte-identical content', () => {
+    // AC-141: seed → export1 → wipe → import(override) → export2 →
+    // customers/projects/project_workers must match exactly. Only
+    // exported_at may drift between runs.
+    it('exports → imports → re-exports without drift (exported_at excluded)', async () => {
+      const e1Res = await authGet(ownerToken, '/api/export');
+      expect(e1Res.statusCode).toBe(200);
+      const e1 = e1Res.json() as ExportEnvelope;
+
+      try {
+        await wipeBusinessData();
+
+        const imp = await authPost(ownerToken, '/api/import', e1);
+        expect(imp.statusCode).toBe(200);
+
+        const e2Res = await authGet(ownerToken, '/api/export');
+        expect(e2Res.statusCode).toBe(200);
+        const e2 = e2Res.json() as ExportEnvelope;
+
+        expect(e2.schema_version).toBe(e1.schema_version);
+        // exported_at will differ — explicitly excluded from the compare.
+        expect(typeof e2.exported_at).toBe('string');
+
+        // Strict content equality — if a field changes on roundtrip
+        // (coercion, truncation, default injection) this fails and
+        // reveals the drift.
+        expect(e2.customers).toEqual(e1.customers);
+        expect(e2.projects).toEqual(e1.projects);
+        expect(e2.project_workers).toEqual(e1.project_workers);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-160: restore confirmation phrase gate
+  // Server-authoritative check on override into a non-empty DB.
+  // AT-82 pins enforcement (missing, case-wrong, trim, happy path).
+  // AT-83 pins the two exempt paths (dry-run, empty target).
+  // ---------------------------------------------------------------
+  describe('AC-160: restore confirmation phrase gate', () => {
+    // AT-82 — missing phrase: override into non-empty DB without a
+    // `confirmation_phrase` rejects with 422 RESTORE_CONFIRMATION_MISMATCH
+    // and leaves the seed untouched.
+    it('rejects override into non-empty DB when confirmation_phrase is missing', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const baseline = before.json() as ExportEnvelope;
+
+      const env = buildOverrideEnvelope();
+      const res = await authPost(ownerToken, '/api/import?override=true', env);
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('RESTORE_CONFIRMATION_MISMATCH');
+
+      const after = await authGet(ownerToken, '/api/export');
+      const post = after.json() as ExportEnvelope;
+      expect(post.customers.length).toBe(baseline.customers.length);
+      expect(post.projects.length).toBe(baseline.projects.length);
+    });
+
+    // AT-82 — case sensitivity: a phrase that differs only in case is
+    // rejected. The body wraps the lowercased value in whitespace so a
+    // permissive implementation that trimmed but ignored case would still
+    // fail this test — the assertion isolates "case" from "trim".
+    it('rejects override when confirmation_phrase has wrong casing', async () => {
+      const before = await authGet(ownerToken, '/api/export');
+      const baseline = before.json() as ExportEnvelope;
+
+      const env = buildOverrideEnvelope();
+      const body = {
+        ...env,
+        confirmation_phrase: `  ${EXPECTED_RESTORE_PHRASE.toLowerCase()}  `,
+      };
+      const res = await authPost(ownerToken, '/api/import?override=true', body);
+
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('RESTORE_CONFIRMATION_MISMATCH');
+
+      const after = await authGet(ownerToken, '/api/export');
+      const post = after.json() as ExportEnvelope;
+      expect(post.customers.length).toBe(baseline.customers.length);
+    });
+
+    // AT-82 — happy path: matching phrase commits the atomic wipe+restore.
+    it('accepts override with a matching confirmation_phrase', async () => {
+      const env = buildOverrideEnvelope();
+      const body = { ...env, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+      try {
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBe(200);
+
+        const after = await authGet(ownerToken, '/api/export');
+        const post = after.json() as ExportEnvelope;
+        expect(post.customers.length).toBe(env.customers.length);
+        const newIds = new Set(post.customers.map((c) => c.id));
+        for (const c of env.customers) expect(newIds.has(c.id)).toBe(true);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-82 — trim: leading/trailing whitespace around the phrase is tolerated.
+    it('accepts override when confirmation_phrase has surrounding whitespace', async () => {
+      const env = buildOverrideEnvelope();
+      const body = { ...env, confirmation_phrase: `  ${EXPECTED_RESTORE_PHRASE}\n` };
+      try {
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-83 — dry-run exempt: dry-run against a non-empty DB without a
+    // phrase returns the preview (no writes, no enforcement).
+    it('accepts dry_run without confirmation_phrase on non-empty DB', async () => {
+      const env = buildOverrideEnvelope();
+      const res = await authPost(ownerToken, '/api/import?override=true&dry_run=true', env);
+      expect(res.statusCode).toBe(200);
+      const preview = res.json() as { target_non_empty: boolean };
+      expect(preview.target_non_empty).toBe(true);
+    });
+
+    // AT-83 — empty-target exempt: override into an empty DB succeeds
+    // without a phrase (there is nothing to wipe).
+    it('accepts override into empty DB without confirmation_phrase', async () => {
+      const env = buildFreshEnvelope();
+      try {
+        await wipeBusinessData();
+        const res = await authPost(ownerToken, '/api/import?override=true', env);
+        expect(res.statusCode).toBe(200);
+
+        const after = await authGet(ownerToken, '/api/export');
+        const post = after.json() as ExportEnvelope;
+        expect(post.customers.length).toBe(env.customers.length);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-162a / AC-162b / AC-162c: missing-user-reference check
+  //
+  // The envelope carries user-id fields — `customers.createdBy`,
+  // `customers.updatedBy`, `projects.createdBy`, `projects.updatedBy`,
+  // `project_workers.userId`. On restore, those user ids must already
+  // exist in the target's `users` table. If any referenced id is absent,
+  // the commit path rejects with 422 `MISSING_USER_REFS`; the dry-run
+  // surfaces it alongside intra-envelope issues.
+  //
+  // AT-84 pins AC-162a (commit-path rejection + `details` shape).
+  // AT-85 pins AC-162b (dry-run surfaces both classes together).
+  // AT-86 pins AC-162c (commit-path ordering + single-code guarantee).
+  //
+  // Two ghost UUIDs (`GHOST_USER_A`, `GHOST_USER_B`) are valid UUIDs
+  // absent from the seed — any reference to them is, by construction,
+  // a missing-user reference. House style already uses `UUID_ZERO` for
+  // the same idea; distinct ids let "same user at two sites" and
+  // "multiple distinct missing users" tests isolate their assertions.
+  // ---------------------------------------------------------------
+  describe('AC-162a/b/c: missing-user references', () => {
+    // NB: `uuid()` hex-encodes then slices to 8 chars, so `ghosta`/`ghostb`
+    // collide on the prefix — we rely on the `i` counter to differentiate.
+    const GHOST_USER_A = uuid('ghosta', 1);
+    const GHOST_USER_B = uuid('ghostb', 2);
+
+    /**
+     * Shape we assert against for the MISSING_USER_REFS error body. The
+     * keys are `details.missingUserIds` and `details.references` per
+     * api.md §14.4.1 (error details keys are camelCase). The path string
+     * mirrors the intra-envelope validation-error path shape — e.g.
+     * `project_workers[0].userId`.
+     */
+    interface MissingUserRefsBody {
+      code: string;
+      message: string;
+      details?: {
+        missingUserIds?: unknown;
+        references?: unknown;
+      };
+    }
+
+    /**
+     * Count business-data rows directly — bypasses the API so these
+     * "DB unchanged" assertions don't re-enter the route under test.
+     * Pool-only query keeps the assertion independent of Drizzle's
+     * query layer (closer to a pure integrity check).
+     */
+    async function businessRowCounts(): Promise<{
+      customers: number;
+      projects: number;
+      project_workers: number;
+    }> {
+      const r = await pool.query<{ customers: string; projects: string; project_workers: string }>(
+        `SELECT
+           (SELECT COUNT(*) FROM customers)::text       AS customers,
+           (SELECT COUNT(*) FROM projects)::text        AS projects,
+           (SELECT COUNT(*) FROM project_workers)::text AS project_workers`,
+      );
+      const row = r.rows[0]!;
+      return {
+        customers: Number(row.customers),
+        projects: Number(row.projects),
+        project_workers: Number(row.project_workers),
+      };
+    }
+
+    // AT-84 — commit path. Envelope is intra-consistent (projects point
+    // at envelope customers, assignments point at envelope projects) but
+    // the user-id fields reference GHOST_USER_A and GHOST_USER_B — ids
+    // that do NOT exist in `users`. Must return 422 MISSING_USER_REFS.
+    it('returns 422 MISSING_USER_REFS on commit path when envelope user refs are absent from target', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        // Two distinct missing users, distributed across the allowed
+        // reference sites so the `details.references` array has one
+        // entry per offending site (AC-162a — "one entry per offending
+        // envelope reference site").
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.customers[0]!.updatedBy = GHOST_USER_B;
+        envelope.projects[0]!.createdBy = GHOST_USER_B;
+        envelope.projects[0]!.updatedBy = null; // null must NOT trigger the code
+        envelope.project_workers = [{ projectId: envelope.projects[0]!.id, userId: GHOST_USER_A }];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        expect(body.code).toBe('MISSING_USER_REFS');
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — `details.missingUserIds` is deduplicated. Envelope references
+    // GHOST_USER_A at four distinct sites and GHOST_USER_B at one; the
+    // deduplicated list must have exactly two entries, regardless of order.
+    it('deduplicates missingUserIds across repeat references', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.customers[0]!.updatedBy = GHOST_USER_A;
+        envelope.projects[0]!.createdBy = GHOST_USER_A;
+        envelope.projects[0]!.updatedBy = GHOST_USER_B;
+        envelope.project_workers = [{ projectId: envelope.projects[0]!.id, userId: GHOST_USER_A }];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        expect(body.code).toBe('MISSING_USER_REFS');
+        const ids = body.details?.missingUserIds;
+        expect(Array.isArray(ids)).toBe(true);
+        const sorted = [...(ids as string[])].sort();
+        expect(sorted).toEqual([GHOST_USER_A, GHOST_USER_B].sort());
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — `details.references` carries one entry per offending site
+    // and duplicate user-ids across distinct paths produce separate
+    // entries. Four references to GHOST_USER_A mapped to four distinct
+    // paths must yield four entries whose paths are all distinct.
+    it('references[] carries one entry per offending site (duplicates across distinct paths produce separate entries)', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.customers[0]!.updatedBy = GHOST_USER_A;
+        envelope.projects[0]!.createdBy = GHOST_USER_A;
+        envelope.projects[0]!.updatedBy = null;
+        envelope.project_workers = [{ projectId: envelope.projects[0]!.id, userId: GHOST_USER_A }];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        const refs = body.details?.references;
+        expect(Array.isArray(refs)).toBe(true);
+        const entries = refs as Array<{ path: string; userId: string }>;
+        // All four sites point at GHOST_USER_A; all four paths are distinct.
+        const matching = entries.filter((r) => r.userId === GHOST_USER_A);
+        expect(matching.length).toBe(4);
+        const paths = matching.map((r) => r.path);
+        expect(new Set(paths).size).toBe(paths.length);
+        // And each expected path shape is represented — the shape mirrors
+        // intra-envelope validation paths (api.md §14.4.1).
+        expect(paths).toEqual(
+          expect.arrayContaining([
+            'customers[0].createdBy',
+            'customers[0].updatedBy',
+            'projects[0].createdBy',
+            'project_workers[0].userId',
+          ]),
+        );
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — both `missingUserIds` and `references` are non-empty
+    // whenever the code is returned (api.md §14.4.1 paragraph on the
+    // details payload).
+    it('missingUserIds and references are both non-empty', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        expect(body.code).toBe('MISSING_USER_REFS');
+        const ids = body.details?.missingUserIds;
+        const refs = body.details?.references;
+        expect(Array.isArray(ids)).toBe(true);
+        expect(Array.isArray(refs)).toBe(true);
+        expect((ids as unknown[]).length).toBeGreaterThan(0);
+        expect((refs as unknown[]).length).toBeGreaterThan(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — null / missing audit-field values MUST NOT trigger the
+    // check. An envelope that mixes a ghost-user reference with a row
+    // whose audit fields are null must produce MISSING_USER_REFS (the
+    // ghost case) while leaving no `references[]` entry for the null-
+    // audit row. Folded into a single test so the null-safe assertion
+    // lives alongside a failing (today) assertion — keeps TDD discipline.
+    it('null/missing createdBy/updatedBy values do not trigger MISSING_USER_REFS alongside a ghost reference', async () => {
+      await wipeBusinessData();
+      try {
+        // Two customers: customer[0] carries all-null audit fields (must
+        // NOT be flagged); customer[1] carries a ghost createdBy (MUST
+        // be flagged). The assertion is two-sided, so the test fails
+        // today (no 422) AND pins the null-safe behavior for when the
+        // fix lands.
+        const envelope = buildFreshEnvelope();
+        envelope.customers.push({
+          id: uuid('cust', 2),
+          name: 'Null-Audit Kunde',
+          phone: null,
+          email: null,
+          address: null,
+          notes: null,
+          createdAt: '2026-01-03T00:00:00.000Z',
+          updatedAt: '2026-01-03T00:00:00.000Z',
+          createdBy: null,
+          updatedBy: null,
+        });
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.customers[0]!.updatedBy = null;
+        envelope.projects[0]!.createdBy = null;
+        envelope.projects[0]!.updatedBy = null;
+        envelope.project_workers = [];
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as MissingUserRefsBody;
+        expect(body.code).toBe('MISSING_USER_REFS');
+
+        // The ghost reference is flagged — path points at customers[0].createdBy.
+        const refs = (body.details?.references ?? []) as Array<{ path: string; userId: string }>;
+        const ghostHit = refs.find(
+          (r) => r.path === 'customers[0].createdBy' && r.userId === GHOST_USER_A,
+        );
+        expect(ghostHit).toBeDefined();
+
+        // The null-audit row (customers[1]) contributes NO reference entries.
+        // If the impl treated `null` as a reference, a `customers[1].*` path
+        // would appear here.
+        const nullSiteHit = refs.find((r) => /customers\[1\]/.test(r.path));
+        expect(nullSiteHit).toBeUndefined();
+
+        // And the deduplicated id list contains only the ghost — no null.
+        const ids = (body.details?.missingUserIds ?? []) as string[];
+        expect(ids).toEqual([GHOST_USER_A]);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-84 — no writes on rejection. Full before/after row-count diff.
+    it('performs no writes when rejecting MISSING_USER_REFS', async () => {
+      await wipeBusinessData();
+      try {
+        const before = await businessRowCounts();
+        expect(before).toEqual({ customers: 0, projects: 0, project_workers: 0 });
+
+        const envelope = buildFreshEnvelope();
+        envelope.customers[0]!.createdBy = GHOST_USER_A;
+        envelope.projects[0]!.createdBy = GHOST_USER_A;
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+        expect(res.statusCode).toBe(422);
+        expect((res.json() as { code: string }).code).toBe('MISSING_USER_REFS');
+
+        const after = await businessRowCounts();
+        expect(after).toEqual(before);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-85 — dry-run surfaces BOTH classes of issue.
+    // The envelope is intra-inconsistent (`projects[0].customerId` points
+    // at a UUID not present in envelope.customers) AND carries a
+    // missing-user reference. On `?dry_run=true`, the preview returns 200
+    // and surfaces both issues together; no writes.
+    it('dry-run surfaces both intra-envelope and missing-user issues together; no writes', async () => {
+      await wipeBusinessData();
+      try {
+        const before = await businessRowCounts();
+
+        const envelope = buildFreshEnvelope();
+        // Intra-envelope inconsistency: project references a customerId
+        // that doesn't exist in envelope.customers (AC-162c example).
+        envelope.projects[0]!.customerId = UUID_ZERO;
+        // Missing-user reference: createdBy points at a user absent in
+        // the target `users` table.
+        envelope.projects[0]!.createdBy = GHOST_USER_A;
+
+        const res = await authPost(ownerToken, '/api/import?dry_run=true', envelope);
+
+        expect(res.statusCode).toBe(200);
+
+        // Intra-envelope class — already surfaced via `validation_errors`
+        // in the existing preview shape.
+        const preview = res.json() as {
+          validation_errors?: Array<{ path: string; message: string }>;
+        };
+        expect(Array.isArray(preview.validation_errors)).toBe(true);
+        const intra = preview.validation_errors!.find((i) =>
+          /projects\[0\]\.customerId/.test(i.path),
+        );
+        expect(intra).toBeDefined();
+
+        // Missing-user class — the preview surfaces the ghost reference.
+        // Per the brief we do not mint a new field name here; instead we
+        // pin evidence: the ghost user id appears somewhere in the preview
+        // payload (either inside validation_errors, or under a
+        // missingUserIds/references sub-tree the impl chooses — spec
+        // §14.2.4 says "surfaces both classes of issue in the preview").
+        const serialized = JSON.stringify(preview);
+        expect(serialized).toContain(GHOST_USER_A);
+
+        const after = await businessRowCounts();
+        expect(after).toEqual(before);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    // AT-86 — commit-path ordering and single-code guarantee. Folded
+    // into a single test so the follow-up assertion (intra-consistent
+    // envelope with a ghost reference returns MISSING_USER_REFS) fails
+    // today — otherwise the "dual-class returns VALIDATION_ERROR only"
+    // half trivially passes on the current stub (no missing-user check
+    // exists, so MISSING_USER_REFS never leaks into the body anyway).
+    //
+    // Two commits against the same fresh target:
+    //   Pass 1 — dual-class envelope (intra-inconsistent AND missing-user
+    //            reference) → VALIDATION_ERROR only, no MISSING_USER_REFS.
+    //   Pass 2 — intra-consistent envelope, ghost reference only → 422
+    //            MISSING_USER_REFS.
+    // The two codes are never returned in the same response.
+    it('commit path reports VALIDATION_ERROR first; MISSING_USER_REFS surfaces only once intra-envelope is clean', async () => {
+      await wipeBusinessData();
+      try {
+        // Pass 1 — both classes present.
+        const dual = buildFreshEnvelope();
+        dual.projects[0]!.customerId = UUID_ZERO; // intra-envelope issue
+        dual.projects[0]!.createdBy = GHOST_USER_A; // missing-user issue
+        const res1 = await authPost(ownerToken, '/api/import', dual);
+
+        expect(res1.statusCode).toBeGreaterThanOrEqual(400);
+        expect(res1.statusCode).toBeLessThan(500);
+        const body1 = res1.json() as { code: string };
+        expect(body1.code).toBe('VALIDATION_ERROR');
+        // Single-code guarantee: MISSING_USER_REFS must not leak into the
+        // same response (neither as the code nor inside details).
+        expect(JSON.stringify(body1)).not.toContain('MISSING_USER_REFS');
+
+        // Pass 2 — intra-consistent, ghost reference only.
+        const clean = buildFreshEnvelope();
+        clean.projects[0]!.createdBy = GHOST_USER_A;
+        const res2 = await authPost(ownerToken, '/api/import', clean);
+
+        expect(res2.statusCode).toBe(422);
+        const body2 = res2.json() as { code: string };
+        expect(body2.code).toBe('MISSING_USER_REFS');
+        // And the reverse: the missing-user response must not carry
+        // VALIDATION_ERROR either — one code per response.
+        expect(JSON.stringify(body2).match(/"VALIDATION_ERROR"/)).toBeNull();
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+});

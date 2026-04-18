@@ -15,7 +15,10 @@
 | [0011](0011-build-images-in-ci-distribute-via-ghcr.md)                      | Build app images in CI, distribute via GHCR                     | Accepted | 2026-04-09 |
 | [0012](0012-manual-pull-based-deploy-over-wireguard.md)                     | Manual pull-based deploy over WireGuard                         | Accepted | 2026-04-10 |
 | [0013](0013-http-only-evaluation-mode.md)                                   | HTTP-only evaluation mode for full-stack integration testing    | Accepted | 2026-04-10 |
-| [0014](0014-ac-tier-system-critical-vs-design.md)                           | AC tier system — critical vs design test coverage               | Accepted | 2026-04-12 |
+| [0014](0014-ac-tier-system-critical-vs-design.md)                           | AC tier system — critical, design, and infra coverage           | Accepted | 2026-04-12 |
 | [0015](0015-copy-paste-textarea-email-data-intake.md)                       | Copy/paste textarea for email data intake                       | Accepted | 2026-04-13 |
 | [0016](0016-llm-email-extraction-via-server-proxied-openrouter.md)          | LLM email extraction via server-proxied OpenRouter              | Accepted | 2026-04-13 |
 | [0017](0017-soft-delete-as-board-archive.md)                                | Project soft-delete as board archive, not audit trail           | Accepted | 2026-04-13 |
+| [0018](0018-data-persistence-and-recovery-layered-strategy.md)              | Data persistence and recovery — layered strategy                | Accepted | 2026-04-15 |
+| [0019](0019-worker-data-scoping-repository-layer-predicate.md)              | Worker data scoping — repository-layer predicate                | Accepted | 2026-04-16 |
+| [0020](0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)    | Layer 2 — encrypted R2 backups with operator-loaded drills      | Accepted | 2026-04-17 |

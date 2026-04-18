@@ -17,15 +17,15 @@
 
 The system is organized into seven responsibility layers. The split between **Routes**, **Services**, and **Storage** on the server side is load-bearing — routes never reach into the database directly; they delegate to services, which orchestrate repositories and emit domain events.
 
-| Layer        | Responsibility                                                                                                                                                                                                                                                                                                                                        |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Config**   | State definitions, thresholds, colors, company assumptions, role definitions, German strings, validated env. Imported by other layers, imports nothing application-internal.                                                                                                                                                                          |
-| **Domain**   | Pure functions: transition rules, aging calculation, date/session validation, summary computation, types. Never imports from state, API, routes, services, storage, or UI.                                                                                                                                                                            |
-| **Storage**  | Encapsulates all database and object storage operations. Repository modules expose typed query/mutation functions; the object storage client wraps the S3-compatible SDK. Imported primarily by the Services layer. Exception: authentication middleware reads the session repository directly — architecturally this is part of the route auth hook. |
-| **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, domain event emission. Imports from domain, storage, config. Never imports from routes or middleware.                                                                                                 |
-| **Routes**   | Thin HTTP adapters: request schema validation, cookie handling, authentication and authorization pre-handlers, response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                 |
-| **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports.                                                                                                                                                                                                          |
-| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared hooks are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                            |
+| Layer        | Responsibility                                                                                                                                                                                                                                                                                                                                                    |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Config**   | State definitions, thresholds, colors, company assumptions, role definitions, German strings, validated env. Imported by other layers, imports nothing application-internal.                                                                                                                                                                                      |
+| **Domain**   | Pure functions: transition rules, aging calculation, date/session validation, summary computation, types. Never imports from state, API, routes, services, storage, or UI.                                                                                                                                                                                        |
+| **Storage**  | Encapsulates all database and object storage operations. Repository modules expose typed query/mutation functions; the object storage client wraps the underlying object-storage SDK. Imported primarily by the Services layer. Exception: authentication middleware reads the session repository directly — architecturally this is part of the route auth hook. |
+| **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, domain event emission. Imports from domain, storage, config. Never imports from routes or middleware.                                                                                                             |
+| **Routes**   | Thin HTTP adapters: request schema validation, cookie handling, authentication and authorization pre-handlers, response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                             |
+| **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports.                                                                                                                                                                                                                      |
+| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared hooks are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                                        |
 
 **Dependency direction** (no reverse imports):
 
@@ -47,10 +47,10 @@ The state layer is a client-side cache delegating to the API.
 - **Projects** — the full project list (fetched from API), grouped by workflow state for Kanban rendering.
 - **Customers** — the full customer list, used in project forms and the customer management view.
 - **Users** — the user list (for admin views and worker assignment dropdowns). Only fetched when needed and when the user has `user:read` permission.
-- **Auth** — the authenticated user profile and session state.
+- **Auth** — the authenticated user profile (including theme preference) and session state.
 - **View state** — active view, active filter (by workflow state, aged-buffer subset, or custom criteria), selected entity ID for detail views.
 - **Mutation tracking** — in-flight flags and error messages per mutation. Confirm-dialog state for transition confirmations.
-- **Import state** — parsed file contents, validation preview, submission progress, result summary.
+- **Import state** — parsed envelope, dry-run preview, submission progress, result summary (see [api.md §14.2.4](api.md#1424-unified-data-exchange)).
 
 **Mutations** (per [§11.1](#111-mandatory-constraints)):
 
@@ -60,7 +60,8 @@ The state layer is a client-side cache delegating to the API.
 - Create or update a customer
 - Create, update, deactivate, or reactivate a user (admin)
 - Reset a user's password (admin); change own password
-- Bulk import projects or customers
+- Update own preferences (theme preference)
+- Export business data / restore from an export envelope (see [api.md §14.2.4](api.md#1424-unified-data-exchange))
 - Login / logout
 - Fetch or refresh project list, customer list, user list
 - Set or clear a filter (local only — no API call)
@@ -95,7 +96,7 @@ Events carry the entity ID, the acting user ID, and a timestamp at minimum. Payl
 
 ### 11.4 Object Storage Module
 
-The object storage module encapsulates all binary/file storage operations. It is wired as an infrastructure module and exercised in test and deployed environments against real object storage. The storage plumbing exists so that adding user-facing upload paths requires only a new API endpoint and UI component.
+The object storage module encapsulates all binary/file storage operations. It is wired as an infrastructure module and exercised in test and deployed environments against real object storage.
 
 Capabilities at minimum:
 
@@ -106,7 +107,7 @@ Capabilities at minimum:
 
 ### 11.5 Extensibility Checklist
 
-Structural requirements that keep future extensions cheap. Each row states a contract the codebase must uphold and the failure mode that would close the door.
+Structural requirements for the system's documented extension paths. Each row states a contract the codebase must uphold and the failure mode that would close the door.
 
 | Door                                             | Contract                                                                                                          | Closed if...                                                                                                 |
 | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -119,8 +120,6 @@ Structural requirements that keep future extensions cheap. Each row states a con
 | Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                    | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers)                |
 | Multi-language                                   | All user-facing strings are centralized in configuration; no inline literals in components                        | Inline literals in components; string configuration bypassed                                                 |
 | Adding management views for new entities         | Management views follow a uniform pattern (searchable table + CRUD forms) and consume the shared state layer      | Entity-specific CRUD logic is wired directly into view components instead of through the state layer and API |
-| Adding export formats (e.g. CSV)                 | Export operations accept a `format` parameter; the API contract does not assume JSON-only responses               | Export logic is hardcoded to produce JSON with no format dispatch                                            |
-| Adding bulk operations for new entities          | Bulk import/export follow a uniform result shape (`{ imported, errors }` for import; entity array for export)     | Each bulk operation has a bespoke result format                                                              |
 
 ### 11.6 Deployment Topology
 
@@ -131,7 +130,7 @@ The deployed system consists of four components:
 | **Reverse proxy**  | TLS termination, HTTP → HTTPS redirect or non-binding, request forwarding to the application. Production uses automated certificate management — see [ADR-0003](../adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) and AC-45. The evaluation (HTTP-only) mode substitutes an HTTP-only configuration per [ADR-0013](../adr/0013-http-only-evaluation-mode.md). |
 | **Application**    | Serves the front end and exposes the API. Frontend and backend may be a single deployable unit or separate services — this is an ADR decision. The app container listens only on the reverse-proxy-visible network, never on the public interface directly.                                                                                                                             |
 | **Database**       | Persistent storage for projects, users, and sessions.                                                                                                                                                                                                                                                                                                                                   |
-| **Object storage** | Binary/file storage for future attachments.                                                                                                                                                                                                                                                                                                                                             |
+| **Object storage** | Binary/file storage.                                                                                                                                                                                                                                                                                                                                                                    |
 
 These components may run on the same provider or on separate providers. The spec does not prescribe hosting vendors, managed services, or container strategies — those are ADR decisions. Network topology is further constrained by [ADR-0008](../adr/0008-vpn-first-network-access.md) (VPN-first access) and by the AC-45 HTTPS-or-nothing rule.
 
@@ -144,6 +143,56 @@ Any deployed environment must exercise all four components end-to-end. A topolog
 - **Deploy:** manual, pull-based. The operator promotes a CI-built image to the hosted environment over VPN. See [ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md).
 - A failed deployment must not take down the currently running system. The deploy script polls the health endpoint after container swap.
 - Environment separation and rollback mechanisms are documented in [docs/ops/manual-deploy.md](../../docs/ops/manual-deploy.md).
+
+### 11.8 External Integrations
+
+Integrations with external services (e.g., LLM APIs) follow a server-side proxy pattern:
+
+- The external-service credential lives in server-side environment configuration and is never exposed to the browser.
+- The browser calls a local API route; the server forwards the request to the external service and relays a sanitized response.
+- Upstream failures are mapped to the API's error categories (see [api.md §14.4.1](api.md#1441-error-categories)); internal details (service name, upstream status codes, stack traces) do not leak to the client.
+- The Content Security Policy (see [§13.6](#136-security)) is kept tight (`connectSrc: 'self'`) — the proxy pattern is what enables this.
+
+The first integration of this shape is the LLM-based email data extractor (see [ADR-0016](../adr/0016-llm-email-extraction-via-server-proxied-openrouter.md), [api.md §14.2.6](api.md#1426-data-extraction), [ui/email-intake.md §8.12](ui/email-intake.md#812-email-data-intake)).
+
+### 11.9 Data persistence and recovery
+
+Persistence and recovery are handled in three independent layers, each scoped to a different class of data. See [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) for the rationale and tradeoffs; the table below is a summary only.
+
+| Layer                  | Captures                                                                  | Trigger                                       | Restore                                                                                                   | Verification                                                                                                                          |
+| ---------------------- | ------------------------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Business data**      | Customers, projects, project-worker assignments (including archived rows) | Human via UI, `data:export` permission        | Unified restore endpoint ([api.md §14.2.4](api.md#1424-unified-data-exchange)), `data:restore` permission | CI roundtrip: seed → export → wipe → import → export → byte-compare (see AC-141)                                                      |
+| **Full DB state**      | Everything in PostgreSQL                                                  | Scheduled job in the `backup` compose service | `pg_restore` from the decrypted backup artifact                                                           | Tier 1 verify-on-create every run; Tier 2 verify-on-cycle when the operator key is loaded ([§11.10](#1110-full-state-backup-layer-2)) |
+| **Binary attachments** | Uploaded files                                                            | Continuous, storage-provider-owned            | Provider restore mechanics                                                                                | Provider durability SLA + documented deployment requirements                                                                          |
+
+The layers are complementary, not substitutes — app-level export is not disaster recovery, `pg_dump` is not portable, and binary durability is a storage-provider property. The binary layer's implementation surface is the object storage module ([§11.4](#114-object-storage-module)).
+
+### 11.10 Full-state backup (Layer 2)
+
+The Layer 2 implementation of [§11.9](#119-data-persistence-and-recovery) is a dedicated `backup` compose service that runs on a configurable interval and writes, per run, three artifacts to an off-site object store — the encrypted dump, the encrypted manifest sidecar, and the unencrypted status mirror object — plus upserts a single row in the application database. Rationale, alternatives, consequences, provider choice, tool choice, and key-layout convention live in [ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md).
+
+**Topology.**
+
+- The `backup` compose service is scheduled by in-container cron; the compose file is the source of truth ([ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)). The backup interval is configurable **[C]**.
+- Each run produces the backup artifact (a full-state database dump, encrypted) and its manifest sidecar (per-table row count and deterministic content checksum, encrypted). The manifest checksum is computed as specified in [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
+- Retention is linear: a 14-day bucket lock plus a 30-day lifecycle rule produce a 14–30 day rolling window of encrypted history — immutable for the first 14 days, deletable for the next 16. No in-container rotation, no weekly/monthly promotion, no object versioning. Scope rationale: [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
+
+**Encryption surface.**
+
+- Dumps and manifests are encrypted with an asymmetric recipient. The public recipient key ships in container env; the private identity must never be present on the VPS outside a tmpfs mount ([§13.6](#136-security)).
+- For Tier 2 drills, the operator loads the private identity into tmpfs via a helper script; the identity is lost on reboot and never persists to disk.
+
+**Verification (dual tier).**
+
+- **Tier 1 — verify-on-create** runs every backup, unattended. The freshly produced plaintext dump is restored into an ephemeral database instance, container-internal (not a sibling service), the manifest is recomputed, and it is compared to the source manifest. A mismatch fails the run: no upload, and the status surface reports failure.
+- **Tier 2 — verify-on-cycle** runs every backup when the operator's identity is present in tmpfs. The just-uploaded encrypted dump is downloaded, decrypted, restored into the ephemeral database instance, and its manifest is compared. When the key is absent, the drill is skipped with a distinct log line; freshness surfaces via the status row rather than as a failure.
+
+**Status surface (dual-write).**
+
+- Primary: the `meta_backup_status` row ([data-model.md §5.9](data-model.md#59-backup-status-entity)), read by the backend on the authenticated admin landing view and on the login screen.
+- Mirror: an unencrypted status mirror object in the off-site object store carrying the same fields, readable without the application. This exists so backup health is inspectable during a database outage.
+- On the authenticated admin landing view, the badge is visible only to callers with role `owner`. On the login screen, the badge is visible to anyone who reaches the screen — network reach is VPN-gated per [ADR-0008](../adr/0008-vpn-first-network-access.md), which is the threat-model anchor. Amber and red thresholds are configurable **[C]** (see [§12.2](#122-company-configurable-settings)).
+- When the status source is unreachable, the rendering surface MUST display a neutral "status unknown" state — silent absence is a misleading-state defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)).
 
 ---
 
@@ -164,6 +213,7 @@ Rules that apply to all installations:
 The following values are centralized as single-source constants and may vary per deployment without code changes elsewhere. Each corresponds to a `[C]` marker somewhere in this spec.
 
 - App name, branding, footer text
+- Brand accent color — explicit light and dark values (see [§12.5](#125-theming-model))
 - Workflow state configuration — labels, colors, order, count, aging thresholds, collapse tiers
 - German UI and error strings
 - Date and locale display settings
@@ -172,11 +222,30 @@ The following values are centralized as single-source constants and may vary per
 - Session duration
 - Role set and per-role permission matrix
 - Seed default password
+- Restore confirmation phrase — typed by the caller to confirm an override-restore into a non-empty database (see [api.md §14.2.4](api.md#1424-unified-data-exchange))
+- Layer 2 backup interval — cadence of the `backup` compose service ([§11.10](#1110-full-state-backup-layer-2))
+- Layer 2 freshness thresholds — age of `lastBackupAt` and `lastDrillAt` at which the owner-facing badge switches to amber and to red ([§11.10](#1110-full-state-backup-layer-2))
 
 ### 12.3 Configuration Requirements
 
 - Configuration must be represented explicitly, not scattered as literals across the codebase.
 - Configuration sources may be static (environment variables, config files), but API and domain boundaries must not assume configuration can only live in source code — the design must permit a move to persisted company settings without restructuring those layers.
+
+### 12.4 User-Configurable Settings
+
+Values controlled per user, independent of the deployment-level configuration in §12.2. Stored on the user record and updated via the self-update API operation.
+
+- Theme preference — `'light' | 'dark' | 'system'`, default `'system'` (see [data-model.md §5.7](data-model.md#57-user-theme-preference))
+
+### 12.5 Theming Model
+
+The visual theme (color scheme) is expressed through a two-layer token system. Components consume only the semantic layer; the primitive layer is an implementation detail.
+
+- **Primitive tokens** — the raw palette, no semantics. Defined once.
+- **Semantic tokens** — roles that components reference (surface, text, border, accent, …). Mapped to primitive values.
+- **Theme overrides** — a non-default theme (e.g. dark) is a set of semantic-layer overrides scoped by an attribute on the document root. Component stylesheets render different palettes without code changes.
+- **Data-driven colors** — state colors from the workflow state configuration remain data-driven and are the single exception to the "no palette values outside the tokens source" rule.
+- **Brand accent [C]** — supplied by the branding configuration (§12.2); components consume it via a single semantic token.
 
 ---
 
@@ -234,7 +303,19 @@ The UI must tolerate incomplete project data without crashing:
 - API endpoints validate authentication and authorization on every request. No security-by-obscurity.
 - API input is validated and sanitized. No raw user input reaches the database.
 - Error messages do not leak internal details (no stack traces, no database field names, no path information).
-- HTTPS is required in the deployed environment. The application does not serve over plain HTTP in production.
+- HTTPS is required in the deployed environment. The application does not serve over plain HTTP in production. The guarded evaluation mode (see [§13.6.1](#1361-insecure-mode-behavior), [AC-45](verification.md#156-deployment), and [ADR-0013](../adr/0013-http-only-evaluation-mode.md)) is the only documented exception, restricted to non-production environments.
+
+#### 13.6.1 Insecure-mode behavior
+
+When the application is run in insecure (HTTP-only) evaluation mode:
+
+- Session cookies omit the `Secure` attribute so authentication works over plain HTTP.
+- HSTS is not sent.
+- The Content Security Policy does not upgrade insecure requests.
+- The UI shows a non-dismissible warning banner on every page; the browser tab title is prefixed to indicate insecure mode.
+- The server refuses to start if insecure mode is active in production (fail-closed).
+
+The activation mechanism (env var, compose override) and CSP wiring details are operational concerns — see [ADR-0013](../adr/0013-http-only-evaluation-mode.md).
 
 ### 13.7 Observability
 
@@ -246,7 +327,7 @@ Every new API endpoint must satisfy:
 
 1. **Authentication**: valid, active session required (see [ADR-0005](../adr/0005-session-management-httponly-cookies.md), [api.md section 14.3](api.md#143-authorization-rules)).
 2. **Authorization**: role-based permission check on every protected route.
-3. **Input validation**: request schema validation on request body and params (see [api.md section 14.2](api.md#142-operations)). For bulk operations, per-item semantic validation may live in the service layer per §11.2.
+3. **Input validation**: request schema validation on request body and params (see [api.md section 14.2](api.md#142-operations)). For endpoints accepting composite payloads (e.g., the unified import envelope), per-row semantic validation may live in the service layer per §11.2.
 4. **Error handling**: use application error types, no stack traces or DB field names leaked.
 5. **Rate limiting**: configured on authentication endpoints (login, password change). Mutation endpoints are not rate-limited — at current scale with VPN-only access ([ADR-0008](../adr/0008-vpn-first-network-access.md)), this is a known, accepted limitation.
 6. **CSRF protection**: mechanism defined in [ADR-0005](../adr/0005-session-management-httponly-cookies.md).

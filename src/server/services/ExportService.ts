@@ -1,99 +1,81 @@
 /**
- * Export service — business logic for project and customer data export.
+ * Unified business-data export. See ADR-0018 and data-model.md §5.8.
  */
 
-import { eq, and, inArray } from 'drizzle-orm';
+import { asc } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
-
-/**
- * Drizzle transactions have the same query-builder API as the full Database
- * but lack the $client property. This helper narrows the export's tx to
- * the Database type expected by fetchWorkersForProjects, which only uses
- * the query-builder surface.
- */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type QueryRunner = any;
-import { projects, customers } from '../db/schema.js';
-import { toProject, fetchWorkersForProjects } from '../repositories/project-read.js';
+import { customers, projects, projectWorkers } from '../db/schema.js';
+import { SCHEMA_VERSION, type Envelope } from '../../domain/dataExchange.js';
 import { toCustomerResponse } from '../repositories/customer.js';
+import { isUnscoped } from '../repositories/scope.js';
+import type { AuthUser } from '../middleware/auth.js';
+import { formatDateOnly } from '../../domain/dateFormat.js';
+import type { WorkflowState } from '../../config/stateConfig.js';
 
 export class ExportService {
   constructor(private db: Database) {}
 
   /**
-   * Export projects as a consistent snapshot.
-   * Uses REPEATABLE READ so all queries see the same database state.
+   * Export every row of the business-data layer as a single envelope.
+   * Deterministic ordering across all three tables so AT-77 can byte-compare
+   * successive exports after a roundtrip.
+   *
+   * The caller is threaded through as a fail-fast tripwire: this service
+   * deliberately bypasses the per-caller scope seam (ADR-0019) because an
+   * export is, by definition, the whole dataset. Today only owner/office
+   * hold `data:export`, but if a scoped role ever gains it via permission
+   * churn, this assertion fires before any row leaks. See ADR-0019
+   * "Alternatives considered" for why scope is enforced at the seam rather
+   * than in the permission check.
    */
-  async exportProjects(filters?: { status?: string | string[]; customerId?: string }) {
-    return this.db.transaction(
+  async export(caller: AuthUser): Promise<Envelope> {
+    if (!isUnscoped(caller)) {
+      throw new Error(
+        `ExportService.export must be invoked with an unscoped caller; got roles=[${caller.roles.join(', ')}]`,
+      );
+    }
+
+    const { customerRows, projectRows, assignmentRows } = await this.db.transaction(
       async (tx) => {
-        const conditions = [eq(projects.deleted, false)];
-
-        if (filters?.status) {
-          const statuses = Array.isArray(filters.status) ? filters.status : [filters.status];
-          if (statuses.length === 1) {
-            conditions.push(eq(projects.status, statuses[0]!));
-          } else if (statuses.length > 1) {
-            conditions.push(inArray(projects.status, statuses));
-          }
-        }
-
-        if (filters?.customerId) {
-          conditions.push(eq(projects.customerId, filters.customerId));
-        }
-
-        const rows = await tx
+        // Sequential — drizzle runs each tx query on the same pg client, so
+        // Promise.all here would trigger pg's "concurrent query" deprecation
+        // warning without any real parallelism.
+        const customerRows = await tx.select().from(customers).orderBy(asc(customers.id));
+        const projectRows = await tx.select().from(projects).orderBy(asc(projects.id));
+        const assignmentRows = await tx
           .select()
-          .from(projects)
-          .where(and(...conditions));
-
-        const customerIds = [...new Set(rows.map((r) => r.customerId))];
-        const customerRows =
-          customerIds.length > 0
-            ? await tx.select().from(customers).where(inArray(customers.id, customerIds))
-            : [];
-        const customerMap = new Map(customerRows.map((c) => [c.id, c]));
-
-        const workerMap = await fetchWorkersForProjects(
-          tx as QueryRunner,
-          rows.map((r) => r.id),
-        );
-        return rows.map((r) =>
-          toProject(r, customerMap.get(r.customerId) ?? null, workerMap.get(r.id) ?? []),
-        );
+          .from(projectWorkers)
+          .orderBy(asc(projectWorkers.projectId), asc(projectWorkers.userId));
+        return { customerRows, projectRows, assignmentRows };
       },
       { isolationLevel: 'repeatable read', accessMode: 'read only' },
     );
-  }
 
-  /**
-   * Export customers as a consistent snapshot.
-   * Uses REPEATABLE READ so all queries see the same database state.
-   */
-  async exportCustomers(filters?: { hasProjects?: string }) {
-    return this.db.transaction(
-      async (tx) => {
-        let rows = await tx.select().from(customers);
-
-        if (filters?.hasProjects === 'true' || filters?.hasProjects === 'false') {
-          const projectCustomerIds = await tx
-            .select({ customerId: projects.customerId })
-            .from(projects)
-            .where(eq(projects.deleted, false))
-            .groupBy(projects.customerId);
-
-          const idsWithProjects = new Set(projectCustomerIds.map((r) => r.customerId));
-
-          if (filters.hasProjects === 'true') {
-            rows = rows.filter((c) => idsWithProjects.has(c.id));
-          } else {
-            rows = rows.filter((c) => !idsWithProjects.has(c.id));
-          }
-        }
-
-        return rows.map(toCustomerResponse);
-      },
-      { isolationLevel: 'repeatable read', accessMode: 'read only' },
-    );
+    return {
+      schema_version: SCHEMA_VERSION,
+      exported_at: new Date().toISOString(),
+      customers: customerRows.map(toCustomerResponse),
+      projects: projectRows.map((p) => ({
+        id: p.id,
+        number: p.number,
+        title: p.title,
+        status: p.status as WorkflowState,
+        statusChangedAt: p.statusChangedAt.toISOString(),
+        customerId: p.customerId,
+        plannedStart: p.plannedStart ? formatDateOnly(p.plannedStart) : null,
+        plannedEnd: p.plannedEnd ? formatDateOnly(p.plannedEnd) : null,
+        estimatedValue: p.estimatedValue,
+        notes: p.notes,
+        deleted: p.deleted,
+        createdAt: p.createdAt.toISOString(),
+        updatedAt: p.updatedAt.toISOString(),
+        createdBy: p.createdBy,
+        updatedBy: p.updatedBy,
+      })),
+      project_workers: assignmentRows.map((a) => ({
+        projectId: a.projectId,
+        userId: a.userId,
+      })),
+    };
   }
 }

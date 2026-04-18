@@ -45,6 +45,7 @@ Reasonable assumptions will be made in regards of all company-specific details. 
 ## Target environment
 
 - generally non-technical users. Web-based services are preferred, local installation of software is generally to be avoided;
+- installation of web-apps (PWA) is acceptable;
 - Thunderbird or other external email client;
 - orgaMAX, or similar bookkeeping software, contains currently all customer data, manually maintained;
 - Windows OS, Android smartphones, office PCs and laptops;
@@ -57,19 +58,19 @@ Reasonable assumptions will be made in regards of all company-specific details. 
 - All customer's and project's data is saved and managed in the central system. UIs are available for easily working with and previewing the data;
 - A calendar overview is available, where the projects can be seen and planned;
 - A Kanban view is available, where all tasks are shown in the three simple groups - waiting, in progress, done. Proper colors, formatting, etc. are to be used to discern among different types of tasks and their belonging to the projects;
-- A "worker" view is available, where only the relevant projects are shown to the particular worker, on a calendar view. Detailed view, with information the worker needs - such as object data, GPS coordinates, etc., if available, are also presented;
+- A "worker" view is available, where only the relevant projects are shown to the particular worker, on a calendar/Kanban view. Detailed view, with information the worker needs - such as object data, GPS coordinates, etc., if available, are also presented;
 - The worker has the option to add notes and information, as well as upload pictures, Aufmass, etc.
 - The system takes care to optimize the binary files for size and organize them into a neat structure. Alerts are sent when approaching predefined limits on space;
-- The system maintains a configurable list of events and list of persons who are to be notified when these events trigger. The main notification should be per email with an additional, optional WhatsApp notification;
+- The system maintains a configurable list of events and list of persons who are to be notified when these events trigger. Any form of notification is acceptable, as long it can be delivered instanteneously under standard circumstances;
 - The system consists of modules with a clear separation of concerns. Data moves between them following well established, open standards, allowing the integration of new modules, import/export and the customization of the whole system (see [Company specifics](#company-specifics)).
 - A simplified view for the bookkeeper includes a list of all invoices, with the option for searching, grouping and exporting them;
 - An administrator's view is available, where users, groups and rights can be set and changed;
 - All internals and developer information is in English, all user facing information - in German;
 - End-to-End tests are defined and executed on all integrations (CI);
-- ~~Continuous Delivery (CD) is set up with the target hosting;~~ replaced with a pull system from GHCR
+- A semi-automated, operator-in-the-loop system for deployment;
 - A detailed "Handbuch" in German is provided, describing in detail and with the help of screenshots, diagrams, etc. the functions of the system in a user-friendly way;
 - Tooltips, hints, help information and others as needed are provided in the UI as well;
-- The company's data from the database is backed up automatically at regular intervals.
+- The company's data from the database is backed up automatically at regular intervals to counteract the app's potential unreliability.
 
 ## Not Doing
 
@@ -88,6 +89,7 @@ Reasonable assumptions will be made in regards of all company-specific details. 
 - Automated scheduling / route optimization / other automations
 - GPS tracking of crews
 - Integration with anything not mentioned here (Google Calendar, email automation, etc.)
+- Continuous Delivery (CD) is out of scope for reasons of security and operational burden
 
 ## First demo checkpoint (Iteration 1)
 

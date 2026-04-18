@@ -1,1 +1,0 @@
-ALTER TABLE "projects" ADD CONSTRAINT "projects_end_requires_start" CHECK ("projects"."planned_end" IS NULL OR "projects"."planned_start" IS NOT NULL);

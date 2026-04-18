@@ -6,43 +6,37 @@
  * See e2e/visual-regression-management.spec.ts for delete flow.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { STRINGS } from '@/config/strings';
-import { STATE_CONFIGS } from '@/config/stateConfig';
+import { STATE_CONFIGS, STATE_FALLBACK_COLOR } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
+import { usePermission } from '@/hooks/usePermission';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
+import { ProjectCreateForm } from './ProjectCreateForm';
+import { ProjectEditForm } from './ProjectEditForm';
 import styles from './Management.module.css';
 
 export function ProjectManagement() {
+  const canCreate = usePermission('project:create');
+  const canUpdate = usePermission('project:update');
+  const canDelete = usePermission('project:delete');
+  const canPurge = usePermission('project:purge');
   const projects = useProjectManagementStore((s) => s.projects);
-  const customers = useProjectManagementStore((s) => s.customers);
   const loading = useProjectManagementStore((s) => s.loading);
   const error = useProjectManagementStore((s) => s.error);
+  const showArchived = useProjectManagementStore((s) => s.showArchived);
   const fetchProjects = useProjectManagementStore((s) => s.fetchProjects);
   const fetchCustomers = useProjectManagementStore((s) => s.fetchCustomers);
-  const createProject = useProjectManagementStore((s) => s.createProject);
-  const updateProject = useProjectManagementStore((s) => s.updateProject);
-  const updateDates = useProjectManagementStore((s) => s.updateDates);
+  const setShowArchived = useProjectManagementStore((s) => s.setShowArchived);
   const deleteProject = useProjectManagementStore((s) => s.deleteProject);
+  const purgeProject = useProjectManagementStore((s) => s.purgeProject);
   const clearError = useProjectManagementStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
 
   const [search, setSearch] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editProject, setEditProject] = useState<Project | null>(null);
-
-  // Create form fields
-  const [number, setNumber] = useState('');
-  const [title, setTitle] = useState('');
-  const [customerId, setCustomerId] = useState('');
-  const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
-  const [notes, setNotes] = useState('');
-  const [estimatedValue, setEstimatedValue] = useState('');
-  const [plannedStart, setPlannedStart] = useState('');
-  const [plannedEnd, setPlannedEnd] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchProjects();
@@ -60,92 +54,43 @@ export function ProjectManagement() {
     return () => clearTimeout(timer);
   }, [search, fetchProjects]);
 
-  // Close customer dropdown on outside click
-  const closeDropdown = useCallback((e: MouseEvent) => {
-    if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-      setCustomerDropdownOpen(false);
-    }
-  }, []);
-
+  // Refetch when showArchived toggles. The store reads `showArchived` from
+  // its own state at request time, so we only need to trigger a refetch
+  // here — no need to forward the flag as an argument.
+  const prevShowArchived = useRef(showArchived);
   useEffect(() => {
-    if (!customerDropdownOpen) return;
-    document.addEventListener('mousedown', closeDropdown);
-    return () => document.removeEventListener('mousedown', closeDropdown);
-  }, [customerDropdownOpen, closeDropdown]);
+    if (showArchived === prevShowArchived.current) return;
+    prevShowArchived.current = showArchived;
+    fetchProjects(search || undefined);
+  }, [showArchived, fetchProjects, search]);
 
-  const resetForm = () => {
-    setNumber('');
-    setTitle('');
-    setCustomerId('');
-    setNotes('');
-    setEstimatedValue('');
-    setPlannedStart('');
-    setPlannedEnd('');
-  };
-
-  const handleCreate = async () => {
-    if (!number.trim() || !title.trim() || !customerId) return;
-    setSubmitting(true);
-
-    const ok = await createProject({
-      number: number.trim(),
-      title: title.trim(),
-      customerId,
-    });
-
-    setSubmitting(false);
-    if (ok) {
-      setFormOpen(false);
-      resetForm();
-    }
-  };
-
-  const handleSaveEdit = async () => {
-    if (!editProject || !title.trim()) return;
-    setSubmitting(true);
-
-    const parsedValue = estimatedValue.trim() ? parseFloat(estimatedValue.replace(',', '.')) : null;
-
-    const result = await updateProject(editProject.id, {
-      title: title.trim(),
-      estimatedValue: parsedValue != null && !isNaN(parsedValue) ? parsedValue : null,
-      notes: notes.trim() || null,
-    });
-
-    // Save dates if they changed (separate API endpoint)
-    const origStart = editProject.plannedStart ? editProject.plannedStart.slice(0, 10) : '';
-    const origEnd = editProject.plannedEnd ? editProject.plannedEnd.slice(0, 10) : '';
-    if (plannedStart !== origStart || plannedEnd !== origEnd) {
-      await updateDates(editProject.id, {
-        plannedStart: plannedStart || null,
-        plannedEnd: plannedEnd || null,
-      });
-    }
-
-    setSubmitting(false);
-    if (result) {
-      setEditProject(null);
-      resetForm();
-    }
-  };
-
-  const handleDelete = async (e: React.MouseEvent, project: Project) => {
+  const handleArchive = async (e: React.MouseEvent, project: Project) => {
     e.stopPropagation();
     const confirmed = await requestConfirm(
-      STRINGS.ui.deleteConfirm(`${project.number} — ${project.title}`),
+      STRINGS.projects.archiveConfirm(`${project.number} — ${project.title}`),
     );
     if (!confirmed) return;
     await deleteProject(project.id);
   };
 
+  const handlePurge = async (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    const confirmed = await requestConfirm(
+      STRINGS.projects.purgeConfirm(`${project.number} — ${project.title}`),
+    );
+    if (!confirmed) return;
+    await purgeProject(project.id);
+  };
+
   const handleRowClick = (project: Project) => {
-    setEditProject(project);
-    setTitle(project.title);
-    setNotes(project.notes ?? '');
-    setEstimatedValue(project.estimatedValue != null ? String(project.estimatedValue) : '');
-    setPlannedStart(project.plannedStart ? project.plannedStart.slice(0, 10) : '');
-    setPlannedEnd(project.plannedEnd ? project.plannedEnd.slice(0, 10) : '');
     clearError();
+    setEditProject(project);
+  };
+
+  const openCreateForm = () => {
+    clearError();
+    setEditProject(null);
+    setFormOpen(true);
   };
 
   const stateLabel = (status: string) => {
@@ -155,24 +100,30 @@ export function ProjectManagement() {
 
   const stateColor = (status: string) => {
     const cfg = STATE_CONFIGS.find((c) => c.key === status);
-    return cfg?.color ?? '#94a3b8';
+    return cfg?.color ?? STATE_FALLBACK_COLOR;
   };
 
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
-        <button
-          className={styles.createButton}
-          onClick={() => {
-            clearError();
-            resetForm();
-            setEditProject(null);
-            setFormOpen(true);
-          }}
-          data-testid="project-create-button"
-        >
-          {STRINGS.ui.create}
-        </button>
+        {canCreate && (
+          <button
+            className={styles.createButton}
+            onClick={openCreateForm}
+            data-testid="project-create-button"
+          >
+            {STRINGS.ui.create}
+          </button>
+        )}
+        <label className={styles.checkboxLabel}>
+          <input
+            type="checkbox"
+            checked={showArchived}
+            onChange={(e) => setShowArchived(e.target.checked)}
+            data-testid="project-show-archived-toggle"
+          />
+          {STRINGS.projects.showArchived}
+        </label>
         <input
           className={styles.searchInput}
           placeholder={STRINGS.ui.search}
@@ -193,40 +144,82 @@ export function ProjectManagement() {
             <th>{STRINGS.ui.status}</th>
             <th>{STRINGS.ui.dates}</th>
             <th>{STRINGS.ui.value}</th>
-            <th>{STRINGS.ui.actions}</th>
+            {(canDelete || canPurge) && <th>{STRINGS.ui.actions}</th>}
           </tr>
         </thead>
         <tbody>
-          {projects.map((p) => (
-            <tr key={p.id} className={styles.clickableRow} onClick={() => handleRowClick(p)}>
-              <td>{p.number}</td>
-              <td>{p.title}</td>
-              <td>{p.customer?.name ?? '—'}</td>
-              <td>
-                <span className={styles.badge} style={{ backgroundColor: stateColor(p.status) }}>
-                  {stateLabel(p.status)}
-                </span>
-              </td>
-              <td>
-                {p.plannedStart
-                  ? `${new Date(p.plannedStart).toLocaleDateString('de-DE')}${p.plannedEnd ? ' – ' + new Date(p.plannedEnd).toLocaleDateString('de-DE') : ''}`
-                  : STRINGS.projects.noDate}
-              </td>
-              <td>
-                {p.estimatedValue != null
-                  ? p.estimatedValue.toLocaleString('de-DE', {
-                      style: 'currency',
-                      currency: 'EUR',
-                    })
-                  : '—'}
-              </td>
-              <td>
-                <button className={styles.dangerButton} onClick={(e) => handleDelete(e, p)}>
-                  {STRINGS.ui.delete}
-                </button>
-              </td>
-            </tr>
-          ))}
+          {projects.map((p) => {
+            const rowClassName = p.deleted
+              ? `${styles.clickableRow} ${styles.rowInactive}`
+              : styles.clickableRow;
+            // AC-159: the purge action is gated on archive state + toggle
+            // + permission. The archive action is gated on permission +
+            // non-archived row. A caller with only `project:delete` still
+            // gets the actions cell for non-archived rows; a caller with
+            // only `project:purge` gets the cell for archived rows when
+            // the show-archived toggle is on.
+            const showArchiveBtn = canDelete && !p.deleted;
+            const showPurgeBtn = canPurge && p.deleted && showArchived;
+            const renderActionsCell = showArchiveBtn || showPurgeBtn;
+            return (
+              <tr key={p.id} className={rowClassName} onClick={() => handleRowClick(p)}>
+                <td>{p.number}</td>
+                <td>{p.title}</td>
+                <td>{p.customer?.name ?? '—'}</td>
+                <td>
+                  <span className={styles.badge} style={{ backgroundColor: stateColor(p.status) }}>
+                    {stateLabel(p.status)}
+                  </span>
+                  {p.deleted && (
+                    <>
+                      {' '}
+                      <span
+                        className={`${styles.badge} ${styles.badgeArchived}`}
+                        data-testid="project-archived-badge"
+                      >
+                        {STRINGS.projects.archivedBadge}
+                      </span>
+                    </>
+                  )}
+                </td>
+                <td>
+                  {p.plannedStart
+                    ? `${new Date(p.plannedStart).toLocaleDateString('de-DE')}${p.plannedEnd ? ' – ' + new Date(p.plannedEnd).toLocaleDateString('de-DE') : ''}`
+                    : STRINGS.projects.noDate}
+                </td>
+                <td>
+                  {p.estimatedValue != null
+                    ? p.estimatedValue.toLocaleString('de-DE', {
+                        style: 'currency',
+                        currency: 'EUR',
+                      })
+                    : '—'}
+                </td>
+                {(canDelete || canPurge) && (
+                  <td>
+                    {renderActionsCell && showArchiveBtn && (
+                      <button
+                        className={styles.actionButton}
+                        onClick={(e) => handleArchive(e, p)}
+                        data-testid="project-archive-button"
+                      >
+                        {STRINGS.projects.archive}
+                      </button>
+                    )}
+                    {renderActionsCell && showPurgeBtn && (
+                      <button
+                        className={styles.dangerButton}
+                        onClick={(e) => handlePurge(e, p)}
+                        data-testid="project-purge-button"
+                      >
+                        {STRINGS.projects.purge}
+                      </button>
+                    )}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
 
@@ -234,182 +227,14 @@ export function ProjectManagement() {
         <div className={styles.noResults}>{STRINGS.ui.noResults}</div>
       )}
 
-      {/* Create form */}
-      {formOpen && (
-        <div className={styles.formOverlay} onClick={() => setFormOpen(false)}>
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
-            <h2 className={styles.formTitle}>
-              {STRINGS.entities.project} {STRINGS.ui.create}
-            </h2>
+      {formOpen && <ProjectCreateForm onClose={() => setFormOpen(false)} />}
 
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.number} *</label>
-              <input
-                className={styles.formInput}
-                value={number}
-                onChange={(e) => setNumber(e.target.value)}
-                data-testid="project-number-input"
-                autoFocus
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.title} *</label>
-              <input
-                className={styles.formInput}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                data-testid="project-title-input"
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.customer} *</label>
-              <div
-                className={styles.selectWrapper}
-                data-testid="project-customer-select"
-                ref={dropdownRef}
-              >
-                <input
-                  className={styles.formInput}
-                  value={customerId ? (customers.find((c) => c.id === customerId)?.name ?? '') : ''}
-                  readOnly
-                  onClick={() => setCustomerDropdownOpen(!customerDropdownOpen)}
-                  placeholder={STRINGS.ui.search}
-                />
-                {customerDropdownOpen && (
-                  <div className={styles.selectDropdown}>
-                    {customers.map((c) => (
-                      <div
-                        key={c.id}
-                        className={styles.selectOption}
-                        onClick={() => {
-                          setCustomerId(c.id);
-                          setCustomerDropdownOpen(false);
-                        }}
-                      >
-                        {c.name}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {error && <div className={styles.error}>{error}</div>}
-
-            <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setFormOpen(false)}>
-                {STRINGS.ui.cancel}
-              </button>
-              <button
-                className={styles.submitButton}
-                onClick={handleCreate}
-                disabled={submitting || !number.trim() || !title.trim() || !customerId}
-                data-testid="project-submit"
-              >
-                {STRINGS.ui.create}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Edit panel (click row → edit project) */}
       {editProject && !formOpen && (
-        <div className={styles.formOverlay} onClick={() => setEditProject(null)}>
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
-            <h2 className={styles.formTitle}>
-              {editProject.number} — {STRINGS.ui.edit}
-            </h2>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.title} *</label>
-              <input
-                className={styles.formInput}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                data-testid="project-title-edit"
-                autoFocus
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.customer}</label>
-              <input
-                className={styles.formInput}
-                value={editProject.customer?.name ?? '—'}
-                readOnly
-                disabled
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.dateStart}</label>
-              <input
-                className={styles.formInput}
-                type="date"
-                value={plannedStart}
-                onChange={(e) => {
-                  setPlannedStart(e.target.value);
-                  // Clear end if start is cleared (same rule as detail panel)
-                  if (!e.target.value) setPlannedEnd('');
-                }}
-                data-testid="project-start-edit"
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.dateEnd}</label>
-              <input
-                className={styles.formInput}
-                type="date"
-                value={plannedEnd}
-                onChange={(e) => setPlannedEnd(e.target.value)}
-                min={plannedStart || undefined}
-                disabled={!plannedStart}
-                data-testid="project-end-edit"
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.value}</label>
-              <input
-                className={styles.formInput}
-                value={estimatedValue}
-                onChange={(e) => setEstimatedValue(e.target.value)}
-                placeholder="0,00"
-                data-testid="project-value-edit"
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.notes}</label>
-              <textarea
-                className={styles.formTextarea}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                data-testid="project-notes-input"
-              />
-            </div>
-
-            {error && <div className={styles.error}>{error}</div>}
-
-            <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setEditProject(null)}>
-                {STRINGS.ui.cancel}
-              </button>
-              <button
-                className={styles.submitButton}
-                onClick={handleSaveEdit}
-                disabled={submitting || !title.trim()}
-                data-testid="project-save"
-              >
-                {STRINGS.ui.save}
-              </button>
-            </div>
-          </div>
-        </div>
+        <ProjectEditForm
+          project={editProject}
+          canUpdate={canUpdate}
+          onClose={() => setEditProject(null)}
+        />
       )}
     </div>
   );

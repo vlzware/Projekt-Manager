@@ -1,8 +1,9 @@
 /**
  * API integration tests: User management operations.
  *
- * Tests AT-27 to AT-34, AT-38 from the test specification (verification.md §16.3).
- * Covers user CRUD, deactivate/reactivate, password reset, and permission enforcement.
+ * Tests AT-27 to AT-34, AT-38, AT-56 from the test specification (verification.md §16.2).
+ * Covers user CRUD, deactivate/reactivate, password reset, permission enforcement,
+ * and the themePreference default for newly-created users (AC-115).
  * Runs against a real test database via Fastify inject (no network).
  *
  * These tests are written ahead of the implementation (TDD). They define
@@ -138,6 +139,47 @@ describe('User Management Operations', () => {
 
       expect(res.statusCode).toBe(201);
       expect(res.json().email).toBe('test@example.de');
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AT-56: Newly created user defaults themePreference to 'system'
+  // AC-115 [crit] (data-model.md §5.7, verification.md §15.21)
+  //
+  // The admin create-user payload does not expose themePreference —
+  // only the user themselves controls their preference via the
+  // self-update operation (api.md §14.2.1). A brand-new account must
+  // therefore land on the documented default 'system', both in the
+  // create response and in the subsequent GET /api/users/:id fetch
+  // (which pins that the default was actually persisted, not just
+  // filled in by the response serializer).
+  // ---------------------------------------------------------------
+  describe('AT-56: New user defaults themePreference to system', () => {
+    it("returns themePreference='system' on create and on GET", async () => {
+      const createRes = await authPost(ownerToken, '/api/users', {
+        username: 'testuser_at56',
+        displayName: 'Theme Default Test',
+        password: 'ThemePass123!',
+        roles: ['worker'],
+      });
+
+      expect(createRes.statusCode).toBe(201);
+
+      const created = createRes.json();
+      // The create response is the serialized UserProfile — it MUST
+      // carry the themePreference field and MUST default to 'system'
+      // when the caller omitted it. A response that silently drops
+      // the field, or defaults to 'light'/'dark', would let a client
+      // render a mismatched theme on first login.
+      expect(created.themePreference).toBe('system');
+
+      // Fetch the row back — proves the DB row was written with
+      // 'system', not just that the response object was patched in
+      // memory. A regression that forgot to persist the default
+      // fails here even if the create response is patched.
+      const getRes = await authGet(ownerToken, `/api/users/${created.id}`);
+      expect(getRes.statusCode).toBe(200);
+      expect(getRes.json().themePreference).toBe('system');
     });
   });
 

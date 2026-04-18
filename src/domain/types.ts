@@ -1,4 +1,5 @@
 import type { WorkflowState } from '@/config/stateConfig';
+import type { ThemePreference } from '@/config/themeStorage';
 
 export interface Address {
   street: string;
@@ -59,6 +60,12 @@ export interface User {
   roles: string[];
   email: string | null;
   active: boolean;
+  /**
+   * Server-authoritative color-scheme preference — see data-model.md §5.7.
+   * New users default to `'system'` at the DB level (see migration 0013
+   * and the CHECK constraint `users_valid_theme_preference`).
+   */
+  themePreference: ThemePreference;
   createdAt: string;
   updatedAt: string;
   lastLoginAt: string | null;
@@ -66,10 +73,19 @@ export interface User {
   updatedBy: string | null;
 }
 
-export interface ImportResult {
-  imported: number;
-  updated?: number;
-  errors: { index: number; message: string }[];
+/**
+ * Profile shape returned by the authenticated-user endpoints (login,
+ * GET /api/auth/me, PATCH /api/auth/me). A narrower projection than
+ * `User`; see api.md §14.2.1 and the AuthUser interface in the server
+ * middleware.
+ */
+export interface AuthUserProfile {
+  id: string;
+  username: string;
+  displayName: string;
+  roles: string[];
+  email: string | null;
+  themePreference: ThemePreference;
 }
 
 export interface SummaryData {

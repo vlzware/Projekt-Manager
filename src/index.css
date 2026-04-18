@@ -1,3 +1,6 @@
+/* @import first: tokens must resolve before any module stylesheet loads. */
+@import './styles/tokens.css';
+
 /* Minimal reset */
 *,
 *::before,
@@ -17,8 +20,8 @@ body {
   -moz-osx-font-smoothing: grayscale;
   font-size: 16px;
   line-height: 1.5;
-  color: #1e293b;
-  background: #f8fafc;
+  color: var(--color-text);
+  background: var(--color-surface-base);
 }
 
 #root {

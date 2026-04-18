@@ -14,29 +14,33 @@ export function KanbanBoard() {
   const filterAgedOnly = useUIStore((s) => s.filterAgedOnly);
   const filterNoDates = useUIStore((s) => s.filterNoDates);
   const activeTier = useCollapseTier();
-  const [expanded, setExpanded] = useState<Set<WorkflowState>>(new Set());
+  // Per-column override of the auto-collapse tier. `true` = forced collapsed,
+  // `false` = forced expanded, absent = follow the tier.
+  const [userOverride, setUserOverride] = useState<Map<WorkflowState, boolean>>(new Map());
 
-  const toggleExpand = useCallback((key: WorkflowState) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
+  const toggleCollapsed = useCallback((key: WorkflowState, currentlyCollapsed: boolean) => {
+    setUserOverride((prev) => {
+      const next = new Map(prev);
+      next.set(key, !currentlyCollapsed);
       return next;
     });
   }, []);
 
-  // When a filter badge is clicked, expand only the matching column and
-  // collapse all others — draws attention to the relevant column.
-  // When cleared, reset so auto-collapse tiers take over again.
+  // When a filter badge is clicked, force the matching column expanded and
+  // all others collapsed — draws attention to the relevant column.
+  // When cleared, drop all overrides so auto-collapse tiers take over again.
   // Uses "adjust state during render" (React docs) instead of useEffect
   // to avoid cascading renders.
   const [prevFilter, setPrevFilter] = useState(activeFilter);
   if (prevFilter !== activeFilter) {
     setPrevFilter(activeFilter);
-    setExpanded(activeFilter ? new Set([activeFilter]) : new Set());
+    if (activeFilter) {
+      const forced = new Map<WorkflowState, boolean>();
+      for (const c of STATE_CONFIGS) forced.set(c.key, c.key !== activeFilter);
+      setUserOverride(forced);
+    } else {
+      setUserOverride(new Map());
+    }
   }
 
   // Filters are mutually exclusive (see uiStore). Apply whichever is active.
@@ -60,7 +64,8 @@ export function KanbanBoard() {
           );
 
         const autoCollapsed = activeTier > 0 && config.collapseTier >= activeTier;
-        const collapsed = autoCollapsed && !expanded.has(config.key);
+        const override = userOverride.get(config.key);
+        const collapsed = override ?? autoCollapsed;
 
         return (
           <KanbanColumn
@@ -68,7 +73,7 @@ export function KanbanBoard() {
             config={config}
             projects={columnProjects}
             collapsed={collapsed}
-            onToggleExpand={() => toggleExpand(config.key)}
+            onToggleExpand={() => toggleCollapsed(config.key, collapsed)}
           />
         );
       })}

@@ -1,0 +1,34 @@
+# Backup container crontab (dcron format, root user).
+#
+# Installed in the image at /etc/crontabs/root (Dockerfile.backup).
+# dcron in the entrypoint runs as `crond -f -l 2` so wakeups appear
+# in `docker compose logs backup`.
+#
+# Times are Europe/Berlin — the container sets TZ=Europe/Berlin (see
+# docker-compose.yml services.backup.environment and the tzdata package
+# in Dockerfile.backup). DST transitions are handled by tzdata; no
+# manual adjustment needed twice a year.
+#
+# Schedule (Europe/Berlin local time):
+#   09:00, 12:00, 15:00, 18:00, 21:00  weekdays  run-backup
+#   12:00                              weekends  run-backup
+#   +2 min offset on each tick                   run-drill
+#
+# Rationale: humans edit data during working hours; a 3-hour backup
+# window matches the pace at which business data actually changes.
+# Drill follows the same cadence so every backup is Tier-2 verified
+# when the operator's key is loaded (AC-168 skip path when absent).
+#
+# No rotation entry: retention is linear (14-day bucket lock + 30-day
+# lifecycle) — R2 handles the deletes. See ADR-0020 §Decision and
+# docs/ops/backup/overview.md.
+#
+# No MAILTO directive: dcron does not implement the vixie-cron mail
+# envelope, so there is nothing to silence. Each script's output goes
+# straight to the container's stdout/stderr via docker's json-file
+# driver.
+
+0 9,12,15,18,21 * * 1-5 /usr/local/bin/run-backup.sh
+0 12            * * 6,0 /usr/local/bin/run-backup.sh
+2 9,12,15,18,21 * * 1-5 /usr/local/bin/run-drill.sh
+2 12            * * 6,0 /usr/local/bin/run-drill.sh

@@ -22,25 +22,38 @@ import {
 } from 'drizzle-orm/pg-core';
 
 // ---------------------------------------------------------------
-// Users (data-model.md §5.3)
+// Users (data-model.md §5.3, §5.7)
 // ---------------------------------------------------------------
-export const users = pgTable('users', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  username: varchar('username', { length: 255 }).notNull().unique(),
-  displayName: varchar('display_name', { length: 255 }).notNull(),
-  passwordHash: text('password_hash').notNull(),
-  roles: text('roles').array().notNull().default([]),
-  email: varchar('email', { length: 255 }),
-  active: boolean('active').notNull().default(true),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
-  // Audit references — nullable for seeded/bootstrapped records (data-model.md §5.5).
-  // No FK back to users.id: self-referential FKs complicate bootstrapping
-  // and deletion without adding meaningful integrity guarantees here.
-  createdBy: uuid('created_by'),
-  updatedBy: uuid('updated_by'),
-});
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    username: varchar('username', { length: 255 }).notNull().unique(),
+    displayName: varchar('display_name', { length: 255 }).notNull(),
+    passwordHash: text('password_hash').notNull(),
+    roles: text('roles').array().notNull().default([]),
+    email: varchar('email', { length: 255 }),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+    // Audit references — nullable for seeded/bootstrapped records (data-model.md §5.5).
+    // No FK back to users.id: self-referential FKs complicate bootstrapping
+    // and deletion without adding meaningful integrity guarantees here.
+    createdBy: uuid('created_by'),
+    updatedBy: uuid('updated_by'),
+    // data-model.md §5.7: 'light' | 'dark' | 'system'. DB default matches
+    // the documented new-user default; the CHECK constraint below is the
+    // defense-in-depth backstop pinned by AT-57 / AC-115.
+    themePreference: text('theme_preference').notNull().default('system'),
+  },
+  (table) => [
+    check(
+      'users_valid_theme_preference',
+      sql`${table.themePreference} IN ('light', 'dark', 'system')`,
+    ),
+  ],
+);
 
 // ---------------------------------------------------------------
 // Sessions (data-model.md §5.4)
@@ -146,4 +159,29 @@ export const projectWorkers = pgTable(
     primaryKey({ columns: [table.projectId, table.userId] }),
     index('idx_project_workers_user_id').on(table.userId),
   ],
+);
+
+// ---------------------------------------------------------------
+// Backup status (data-model.md §5.9, ADR-0020)
+//
+// Single-row table. The `singleton` primary key is a fixed sentinel
+// enforced by a CHECK so the app never has to distinguish "first
+// write" from "nth write" — it always upserts the same row. A row
+// is pre-seeded by the migration so repositories can rely on its
+// existence (upsert on the sentinel PK).
+// ---------------------------------------------------------------
+export const metaBackupStatus = pgTable(
+  'meta_backup_status',
+  {
+    singleton: boolean('singleton').primaryKey().default(true),
+    lastBackupAt: timestamp('last_backup_at', { withTimezone: true }),
+    lastBackupOk: boolean('last_backup_ok').notNull().default(false),
+    lastDrillAt: timestamp('last_drill_at', { withTimezone: true }),
+    // `lastDrillOk: boolean | null` per data-model.md §5.9 —
+    // null is the authoritative "never-run" signal, distinct from "skipped".
+    lastDrillOk: boolean('last_drill_ok'),
+    lastError: text('last_error'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [check('meta_backup_status_singleton', sql`${table.singleton} = true`)],
 );

@@ -31,6 +31,15 @@ export const STRINGS = {
     serverError: 'Ein interner Fehler ist aufgetreten.',
     invalidInput: 'Ungültige Eingabe.',
     notFound: (entity: string) => `${entity} nicht gefunden.`,
+    idempotencyConflict: 'Diese Anfrage-ID wurde bereits mit abweichenden Daten verwendet.',
+    schemaVersionMismatch:
+      'Die Datenformat-Version der Datei passt nicht zur aktuellen Version des Systems.',
+    targetNotEmpty:
+      'Die Datenbank ist nicht leer. Bestätigen Sie das Überschreiben, um fortzufahren.',
+    restoreConfirmationMismatch:
+      'Bestätigung fehlt oder stimmt nicht. Bitte den angezeigten Text exakt eingeben.',
+    missingUserRefs:
+      'Die Datei verweist auf Benutzer, die in der Zieldatenbank nicht vorhanden sind.',
   },
 
   entities: {
@@ -54,6 +63,17 @@ export const STRINGS = {
 
   projects: {
     noDate: 'Kein Termin',
+    numberTaken: (n: string) => `Projektnummer "${n}" ist bereits vergeben.`,
+    numberAvailable: 'Verfügbar',
+    archive: 'Archivieren',
+    archiveConfirm: (identifier: string) => `Projekt ${identifier} wirklich archivieren?`,
+    showArchived: 'Archivierte einblenden',
+    archivedBadge: 'Archiviert',
+    purge: 'Endgültig löschen',
+    purgeConfirm: (identifier: string) =>
+      `Projekt ${identifier} wird endgültig gelöscht. Alle zugeordneten Daten gehen dabei verloren. Fortfahren?`,
+    purgeRequiresArchive:
+      'Das Projekt muss zunächst archiviert werden, bevor es endgültig gelöscht werden kann.',
     transitionConfirm: (from: string, to: string) => `Status ändern: ${from} → ${to}?`,
     cannotAdvanceTerminal:
       'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',
@@ -70,7 +90,7 @@ export const STRINGS = {
     unknownImportError: 'Unbekannter Fehler beim Import.',
     // Import error translations — never leak pg constraint names, table
     // names, column names, SQLSTATE codes, or English text. See C-5.
-    duplicateNumber: 'Projektnummer ist bereits vergeben.',
+    duplicateNumber: (n: string) => `Projektnummer "${n}" ist bereits vergeben.`,
     foreignKeyViolation: 'Verknüpfter Datensatz existiert nicht (z. B. zugeordnete Mitarbeiter).',
     dateConstraintViolation: 'Datumsangaben verletzen eine Integritätsregel.',
     concurrentModification:
@@ -91,6 +111,8 @@ export const STRINGS = {
 
   customers: {
     duplicateName: 'Ein Kunde mit diesem Namen existiert bereits.',
+    duplicateNameConfirm: (name: string) =>
+      `Ein Kunde mit dem Namen "${name}" existiert bereits. Trotzdem erstellen?`,
     nameRequired: 'Kundenname ist erforderlich.',
     hasProjects: 'Kunde kann nicht gelöscht werden, da noch aktive Projekte zugeordnet sind.',
     deleteWithArchived: (n: number) =>
@@ -132,6 +154,15 @@ export const STRINGS = {
     resetSuccess: 'Passwort wurde zurückgesetzt.',
   },
 
+  // Theme selector in the user menu — labels pinned by spec §8.7.2 and by
+  // the e2e contract in e2e/theme-preference.spec.ts.
+  theme: {
+    section: 'Darstellung',
+    light: 'Hell',
+    dark: 'Dunkel',
+    system: 'Systemstandard',
+  },
+
   ui: {
     confirm: 'Bestätigen',
     ok: 'OK',
@@ -167,8 +198,10 @@ export const STRINGS = {
 
     // Management actions
     create: 'Erstellen',
+    createAnyway: 'Trotzdem erstellen',
     save: 'Speichern',
     edit: 'Bearbeiten',
+    viewDetails: 'Details',
     delete: 'Löschen',
     search: 'Suchen...',
     noResults: 'Keine Ergebnisse.',
@@ -206,31 +239,68 @@ export const STRINGS = {
     newCustomer: 'Neuer Kunde',
     description: 'Beschreibung',
 
-    // Import/Export
-    import: 'Import',
-    export: 'Export',
-    importSubmit: 'Importieren',
-    exportDownload: 'Exportieren',
+    // Data exchange (Daten view) — kept here for shared labels.
     entityType: 'Datentyp',
     customers: 'Kunden',
     projects: 'Projekte',
-    preview: 'Vorschau',
-    importResult: 'Ergebnis',
-    importedCount: (n: number) => `${n} importiert`,
-    errorCount: (n: number) => `${n} Fehler`,
-    row: 'Zeile',
-    uploadFile: 'JSON-Datei auswählen',
-    statusFilter: 'Status-Filter',
     all: 'Alle',
-    withProjects: 'Mit Projekten',
-    withoutProjects: 'Ohne Projekte',
+    uploadFile: 'JSON-Datei auswählen',
     fileTooLarge: (maxMb: number) => `Datei zu groß. Maximal ${maxMb} MB erlaubt.`,
     noPermission: 'Keine Berechtigung.',
+
+    // Not-permitted route surface (AC-149). Rendered when an
+    // authenticated user opens a URL their role cannot access. Stays
+    // on the forbidden path — the client does not redirect, only
+    // displays this message.
+    notPermittedHeading: 'Kein Zugriff',
+    notPermittedBody:
+      'Sie sind für diesen Bereich nicht berechtigt. Bitte wählen Sie eine verfügbare Ansicht.',
+    notPermittedHome: 'Zur Startansicht',
+  },
+
+  /**
+   * Unified data-exchange surface (ADR-0018, ui/daten.md §8.11). Strings pinned
+   * here so the Daten view and any future CLI-parity message share one
+   * source. German copy reflects the spec: a single "Herunterladen" action
+   * for export, a two-step upload→commit flow for import.
+   */
+  dataExchange: {
+    exportHeading: 'Export',
+    exportDescription: 'Lädt alle Kunden, Projekte und Zuordnungen als eine JSON-Datei herunter.',
+    exportAction: 'Herunterladen',
+
+    importHeading: 'Wiederherstellen',
+    importDescription:
+      'Stellt den Datenbestand aus einer zuvor exportierten JSON-Datei wieder her.',
+    importAction: 'Wiederherstellen',
+    projectWorkers: 'Zuordnungen',
+    wouldWriteHeader: 'Anzahl',
+    validationErrorsHeading: 'Validierungsfehler',
+    restoreDestructiveNotice: 'Die bestehenden Daten werden unwiderruflich gelöscht.',
+    restorePhrasePrompt: (phrase: string) => `Zur Bestätigung bitte „${phrase}" eingeben:`,
+    importSuccessHeading: 'Wiederherstellung erfolgreich.',
   },
 
   aging: {
     sinceNDays: (n: number) => `seit ${n} Tagen`,
     agedBuffer: (count: number, label: string, days: number) =>
       `${count} ${label} seit >${days} Tagen`,
+  },
+
+  /**
+   * Backup-freshness badge copy (AC-170, AC-171). Centralized so the
+   * derivation layer's reason strings and the visible German label
+   * share a single source. `unknown` pins the exact wording named in
+   * AC-171; the others map to the reason union in
+   * `src/domain/backupBadge.ts` — labels must cover every member.
+   */
+  backup: {
+    green: 'Backup: aktuell',
+    drillStale: 'Backup: aktuell, Drill-Schlüssel neu laden',
+    backupStale: 'Backup: veraltet',
+    lastRunFailed: 'Backup: fehlgeschlagen',
+    backupNeverRun: 'Backup: noch nie ausgeführt',
+    drillNeverRun: 'Drill: noch nie ausgeführt',
+    unknown: 'Status unbekannt',
   },
 } as const;

@@ -2,9 +2,17 @@
  * Customer repository — CRUD operations.
  */
 
-import { eq, and, count, ilike } from 'drizzle-orm';
-import type { Database } from '../db/connection.js';
+import { eq, and, count, ilike, asc, sql } from 'drizzle-orm';
+import type { Database, TransactionalDatabase } from '../db/connection.js';
 import { customers, projects } from '../db/schema.js';
+import type { AuthUser } from '../middleware/auth.js';
+import {
+  customerScopeForCaller,
+  isCustomerInScope,
+  isUnscoped,
+  OUT_OF_SCOPE,
+  type ScopedReadResult,
+} from './scope.js';
 
 /** Escape LIKE-pattern metacharacters so user input is treated literally. */
 function escapeLike(value: string): string {
@@ -30,21 +38,31 @@ export function toCustomerResponse(row: CustomerRow) {
 
 export async function listCustomers(
   db: Database,
+  caller: AuthUser,
   opts: { offset?: number; limit?: number; search?: string } = {},
 ): Promise<{ customers: ReturnType<typeof toCustomerResponse>[]; total: number }> {
-  const baseCondition = opts.search
+  // AC-146: apply per-caller read scope. Worker sees only customers linked
+  // through non-deleted projects they're assigned to; owner/office/bookkeeper
+  // unscoped.
+  const searchCondition = opts.search
     ? ilike(customers.name, `%${escapeLike(opts.search)}%`)
     : undefined;
+  const scopeCondition = customerScopeForCaller(caller) ?? undefined;
 
-  const baseQuery = baseCondition
-    ? db.select().from(customers).where(baseCondition)
-    : db.select().from(customers);
+  const whereClause =
+    searchCondition && scopeCondition
+      ? and(searchCondition, scopeCondition)
+      : (searchCondition ?? scopeCondition);
+
+  const baseQuery = whereClause
+    ? db.select().from(customers).where(whereClause).orderBy(asc(customers.name))
+    : db.select().from(customers).orderBy(asc(customers.name));
 
   const paginatedQuery =
     opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
 
-  const countQuery = baseCondition
-    ? db.select({ value: count() }).from(customers).where(baseCondition)
+  const countQuery = whereClause
+    ? db.select({ value: count() }).from(customers).where(whereClause)
     : db.select({ value: count() }).from(customers);
 
   const [rows, countResult] = await Promise.all([paginatedQuery, countQuery]);
@@ -56,28 +74,59 @@ export async function listCustomers(
   };
 }
 
+/**
+ * Get a customer by id, respecting the caller's read scope (AC-148).
+ *
+ * Three-valued result (ADR-0019):
+ *   - `null`              — row does not exist (→ 404 NOT_FOUND)
+ *   - `OUT_OF_SCOPE`      — row exists but caller cannot reach it via any
+ *                           assigned non-deleted project (→ 403 NOT_PERMITTED)
+ *   - hydrated row        — in-scope row
+ */
 export async function getCustomer(
   db: Database,
+  caller: AuthUser,
   id: string,
 ): Promise<
-  | (ReturnType<typeof toCustomerResponse> & {
+  ScopedReadResult<
+    ReturnType<typeof toCustomerResponse> & {
       projectCount: number;
       archivedProjectCount: number;
-    })
-  | null
+    }
+  >
 > {
   const rows = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
   if (rows.length === 0) return null;
+
+  if (!(await isCustomerInScope(db, caller, id))) {
+    return OUT_OF_SCOPE;
+  }
+
+  // Scope the project counts to the caller's assignment graph. A worker
+  // assigned to 1 of 2 projects for this customer must see projectCount: 1,
+  // not 2 — surfacing the higher number leaks row existence the worker
+  // cannot otherwise observe and misleads the UI (ADR-0019). Unscoped
+  // callers (owner/office/bookkeeper) get the full count unchanged. The
+  // EXISTS fragment mirrors `projectScopeForCaller` in scope.ts — same
+  // correlation (`projects.id` from the outer query), kept local here
+  // because the surrounding query is driven off projects directly.
+  const callerAssignmentFilter = isUnscoped(caller)
+    ? undefined
+    : sql`EXISTS (
+        SELECT 1 FROM project_workers pw
+        WHERE pw.project_id = projects.id
+          AND pw.user_id = ${caller.id}
+      )`;
 
   const [[activeCount], [archivedCount]] = await Promise.all([
     db
       .select({ value: count() })
       .from(projects)
-      .where(and(eq(projects.customerId, id), eq(projects.deleted, false))),
+      .where(and(eq(projects.customerId, id), eq(projects.deleted, false), callerAssignmentFilter)),
     db
       .select({ value: count() })
       .from(projects)
-      .where(and(eq(projects.customerId, id), eq(projects.deleted, true))),
+      .where(and(eq(projects.customerId, id), eq(projects.deleted, true), callerAssignmentFilter)),
   ]);
 
   return {
@@ -90,6 +139,7 @@ export async function getCustomer(
 export async function createCustomer(
   db: Database,
   data: {
+    id?: string;
     name: string;
     phone?: string | null;
     email?: string | null;
@@ -102,6 +152,7 @@ export async function createCustomer(
   const rows = await db
     .insert(customers)
     .values({
+      ...(data.id !== undefined ? { id: data.id } : {}),
       name: data.name,
       phone: data.phone ?? null,
       email: data.email ?? null,
@@ -113,6 +164,16 @@ export async function createCustomer(
     .returning();
 
   return toCustomerResponse(rows[0]!);
+}
+
+/**
+ * Fetch the raw DB row by id. Returns null when absent. Used by the
+ * idempotency path in CustomerService.createCustomer — it compares stored
+ * fields (notably the raw JSONB address) against the request body.
+ */
+export async function getCustomerRow(db: Database, id: string): Promise<CustomerRow | null> {
+  const rows = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
+  return rows[0] ?? null;
 }
 
 export async function updateCustomer(
@@ -143,28 +204,10 @@ export async function updateCustomer(
   return toCustomerResponse(rows[0]!);
 }
 
-export async function deleteCustomer(db: Database, id: string): Promise<boolean> {
+export async function deleteCustomer(db: TransactionalDatabase, id: string): Promise<boolean> {
   const rows = await db
     .delete(customers)
     .where(eq(customers.id, id))
     .returning({ id: customers.id });
   return rows.length > 0;
-}
-
-/**
- * Find customers by exact name match (case-insensitive, trimmed).
- * Returns an array so the caller can detect ambiguous matches.
- * Uses ILIKE with escaped metacharacters for exact case-insensitive match.
- */
-export async function findCustomersByName(db: Database, name: string): Promise<CustomerRow[]> {
-  return db
-    .select()
-    .from(customers)
-    .where(ilike(customers.name, escapeLike(name.trim())));
-}
-
-/** @deprecated Use findCustomersByName (plural) for ambiguity detection. */
-export async function findCustomerByName(db: Database, name: string): Promise<CustomerRow | null> {
-  const rows = await findCustomersByName(db, name);
-  return rows[0] ?? null;
 }

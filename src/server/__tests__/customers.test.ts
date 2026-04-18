@@ -261,6 +261,37 @@ describe('Customer CRUD Operations', () => {
       const body = res.json();
       expect(body.code).toBe('NOT_FOUND');
     });
+
+    // AC-154 [crit] data prerequisite: the warning dialog is fed by
+    // `archivedProjectCount` from this endpoint. Pin both counts on
+    // a customer with a mix of active + archived projects.
+    it('returns archivedProjectCount reflecting soft-deleted projects', async () => {
+      const createRes = await authPost(ownerToken, '/api/customers', {
+        name: 'AT-26 Counts Fixture',
+      });
+      const countsCustomerId = createRes.json().id as string;
+
+      const activeRes = await authPost(ownerToken, '/api/projects', {
+        number: 'AT-26-ACTIVE',
+        title: 'Active project',
+        customerId: countsCustomerId,
+      });
+      expect(activeRes.statusCode).toBe(201);
+
+      const archivedRes = await authPost(ownerToken, '/api/projects', {
+        number: 'AT-26-ARCHIVED',
+        title: 'Archived project',
+        customerId: countsCustomerId,
+      });
+      expect(archivedRes.statusCode).toBe(201);
+      await authDelete(ownerToken, `/api/projects/${archivedRes.json().id}`);
+
+      const getRes = await authGet(ownerToken, `/api/customers/${countsCustomerId}`);
+      expect(getRes.statusCode).toBe(200);
+      const customer = getRes.json();
+      expect(customer.projectCount).toBe(1);
+      expect(customer.archivedProjectCount).toBe(1);
+    });
   });
 
   // ---------------------------------------------------------------

@@ -257,4 +257,94 @@ test.describe('Management flows', () => {
       await freshContext.close();
     }
   });
+
+  // ---------------------------------------------------------------
+  // AC-122: Modal keyboard contract — Esc closes, Enter submits the
+  // primary action when focus is in the form. These tests reuse the
+  // customer created in step 18 and the user created in step 22, but
+  // make no DB changes — Esc cancels the create form, Enter on the
+  // password change modal submits but rejects (wrong current pw).
+  // ---------------------------------------------------------------
+  test('AC-122: Esc closes the customer create modal without saving', async ({ page }) => {
+    await page.getByTestId('view-toggle-kunden').click();
+    await expect(page.getByTestId('customer-table')).toBeVisible();
+
+    await page.getByTestId('customer-create-button').click();
+    const nameInput = page.getByTestId('customer-name-input');
+    await expect(nameInput).toBeVisible();
+    await nameInput.fill('Esc-Test (should not persist)');
+
+    await page.keyboard.press('Escape');
+
+    // Modal closed — name input no longer in the DOM.
+    await expect(nameInput).toBeHidden();
+    // The not-yet-saved customer must not appear in the table.
+    await expect(page.getByText('Esc-Test (should not persist)')).toHaveCount(0);
+  });
+
+  test('AC-122: Enter in the customer edit form submits the primary action', async ({ page }) => {
+    await page.getByTestId('view-toggle-kunden').click();
+    await expect(page.getByTestId('customer-table')).toBeVisible();
+
+    // Open the customer created in step 18 by clicking its row.
+    await page.getByText(testCustomerName).click();
+
+    const nameInput = page.getByTestId('customer-name-input');
+    await expect(nameInput).toBeVisible();
+    // Edit the name (this is reverted at the end of the test for net-zero).
+    const editedName = `${testCustomerName} (Enter-Test)`;
+    await nameInput.fill(editedName);
+
+    // Press Enter while the input is focused — the form submits.
+    await Promise.all([
+      page.waitForResponse((resp) => resp.url().includes('/api/customers') && resp.ok()),
+      nameInput.press('Enter'),
+    ]);
+    // Modal closes after a successful save.
+    await expect(nameInput).toBeHidden();
+    await expect(page.getByText(editedName)).toBeVisible();
+
+    // Net-zero teardown: revert the name back so later assertions
+    // referencing testCustomerName still resolve.
+    await page.getByText(editedName).click();
+    const reopenInput = page.getByTestId('customer-name-input');
+    await reopenInput.fill(testCustomerName);
+    await Promise.all([
+      page.waitForResponse((resp) => resp.url().includes('/api/customers') && resp.ok()),
+      reopenInput.press('Enter'),
+    ]);
+    await expect(reopenInput).toBeHidden();
+    await expect(page.getByText(testCustomerName)).toBeVisible();
+  });
+
+  // ---------------------------------------------------------------
+  // AC-123: Backdrop click does not close form modals. Protects
+  // against accidental loss of typed data.
+  // ---------------------------------------------------------------
+  test('AC-123: clicking the backdrop does not close the customer create modal', async ({
+    page,
+  }) => {
+    await page.getByTestId('view-toggle-kunden').click();
+    await expect(page.getByTestId('customer-table')).toBeVisible();
+
+    await page.getByTestId('customer-create-button').click();
+    const nameInput = page.getByTestId('customer-name-input');
+    await expect(nameInput).toBeVisible();
+    await nameInput.fill('Backdrop-Test (must persist)');
+
+    // Click on the overlay — the area outside the form panel. The
+    // modal must remain open and the typed value must survive.
+    const panel = page.locator('form', { has: page.getByTestId('customer-name-input') });
+    const box = await panel.boundingBox();
+    expect(box).not.toBeNull();
+    // Click 10px left of the panel's left edge — guaranteed outside.
+    await page.mouse.click(box!.x - 10, box!.y + 20);
+
+    await expect(nameInput).toBeVisible();
+    await expect(nameInput).toHaveValue('Backdrop-Test (must persist)');
+
+    // Clean teardown — close via Esc (AC-122).
+    await page.keyboard.press('Escape');
+    await expect(nameInput).toBeHidden();
+  });
 });

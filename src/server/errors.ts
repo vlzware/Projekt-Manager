@@ -14,8 +14,13 @@ export type ErrorCode =
   | 'NOT_PERMITTED'
   | 'VALIDATION_ERROR'
   | 'CONFLICT'
+  | 'IDEMPOTENCY_CONFLICT'
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
+  | 'SCHEMA_VERSION_MISMATCH'
+  | 'TARGET_NOT_EMPTY'
+  | 'RESTORE_CONFIRMATION_MISMATCH'
+  | 'MISSING_USER_REFS'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
@@ -74,6 +79,63 @@ export function validationError(message: string, details?: unknown): AppError {
 
 export function conflict(message: string): AppError {
   return new AppError('CONFLICT', message, 409);
+}
+
+export function idempotencyConflict(): AppError {
+  return new AppError('IDEMPOTENCY_CONFLICT', STRINGS.errors.idempotencyConflict, 409);
+}
+
+export function schemaVersionMismatch(expected: number, got: number): AppError {
+  return new AppError('SCHEMA_VERSION_MISMATCH', STRINGS.errors.schemaVersionMismatch, 422, {
+    expected,
+    got,
+  });
+}
+
+export function targetNotEmpty(): AppError {
+  return new AppError('TARGET_NOT_EMPTY', STRINGS.errors.targetNotEmpty, 409);
+}
+
+export function restoreConfirmationMismatch(): AppError {
+  return new AppError(
+    'RESTORE_CONFIRMATION_MISMATCH',
+    STRINGS.errors.restoreConfirmationMismatch,
+    422,
+  );
+}
+
+/**
+ * Envelope carries user-id references that do not exist in the target
+ * database. See api.md §14.2.4 / §14.4.1. `details.missingUserIds` is the
+ * deduplicated list of absent ids; `details.references` carries one entry
+ * per offending envelope reference site.
+ */
+export interface MissingUserRefsDetails {
+  missingUserIds: string[];
+  references: { path: string; userId: string }[];
+}
+
+export function missingUserRefs(details: MissingUserRefsDetails): AppError {
+  return new AppError('MISSING_USER_REFS', STRINGS.errors.missingUserRefs, 422, details);
+}
+
+/**
+ * Walk a (possibly wrapped) Error chain looking for the `constraint` property
+ * that node-postgres attaches to integrity-constraint violations (23xxx).
+ * Returns null when absent — some driver configurations (custom parsers,
+ * stripped errors) omit it, in which case callers must fall back.
+ */
+export function extractPgConstraint(err: unknown): string | null {
+  let current: unknown = err;
+  for (let depth = 0; depth < 5 && current; depth++) {
+    if (!(current instanceof Error)) break;
+    const withConstraint = current as Error & { constraint?: string };
+    if (typeof withConstraint.constraint === 'string' && withConstraint.constraint.length > 0) {
+      return withConstraint.constraint;
+    }
+    current = (current as Error & { cause?: unknown }).cause;
+  }
+  return null;
 }
 
 /**

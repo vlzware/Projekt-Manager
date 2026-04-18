@@ -18,25 +18,27 @@
 
 .searchInput {
   padding: 8px 12px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 0.875rem;
   min-width: 220px;
   margin-left: auto;
   outline: none;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   transition: border-color 0.15s;
 }
 
 .searchInput:focus {
-  border-color: #3b82f6;
+  border-color: var(--color-focus-ring);
 }
 
 .createButton {
   padding: 8px 16px;
   border: none;
   border-radius: 6px;
-  background: #3b82f6;
-  color: #ffffff;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
@@ -45,7 +47,7 @@
 }
 
 .createButton:hover {
-  background: #2563eb;
+  background: var(--color-accent-hover);
 }
 
 /* Table */
@@ -58,17 +60,17 @@
 .table th {
   text-align: left;
   padding: 10px 12px;
-  background: #f1f5f9;
-  border-bottom: 2px solid #e2e8f0;
+  background: var(--color-surface-muted);
+  border-bottom: 2px solid var(--color-border-subtle);
   font-weight: 600;
-  color: #475569;
+  color: var(--color-text-secondary);
   white-space: nowrap;
 }
 
 .table td {
   padding: 10px 12px;
-  border-bottom: 1px solid #e2e8f0;
-  color: #1e293b;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text);
   vertical-align: top;
 }
 
@@ -81,7 +83,7 @@
 }
 
 .table tbody tr:hover {
-  background: #f8fafc;
+  background: var(--color-surface-base);
 }
 
 .rowInactive {
@@ -91,7 +93,7 @@
 .noResults {
   padding: 40px 20px;
   text-align: center;
-  color: #94a3b8;
+  color: var(--color-text-subtle);
   font-size: 0.9rem;
 }
 
@@ -100,25 +102,29 @@
   display: inline-block;
   padding: 2px 8px;
   border-radius: 10px;
-  color: #ffffff;
+  color: var(--color-text-on-accent);
   font-size: 0.75rem;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .badgeActive {
-  background: #22c55e;
+  background: var(--color-success);
 }
 
 .badgeInactive {
-  background: #94a3b8;
+  background: var(--color-text-subtle);
+}
+
+.badgeArchived {
+  background: var(--color-text-subtle);
 }
 
 /* Form overlay */
 .formOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(var(--color-overlay-rgb), 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -126,12 +132,12 @@
 }
 
 .formPanel {
-  background: #ffffff;
+  background: var(--color-surface-raised);
   border-radius: 8px;
   padding: 24px;
   width: 100%;
   max-width: 500px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 8px 24px rgba(var(--color-overlay-rgb), 0.15);
   max-height: 90vh;
   overflow-y: auto;
 }
@@ -140,7 +146,7 @@
   font-size: 1.125rem;
   font-weight: 600;
   margin: 0 0 16px;
-  color: #1e293b;
+  color: var(--color-text);
 }
 
 .formGroup {
@@ -151,56 +157,80 @@
   display: block;
   font-size: 0.8rem;
   font-weight: 500;
-  color: #475569;
+  color: var(--color-text-secondary);
   margin-bottom: 4px;
 }
 
 .formInput {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 0.875rem;
   outline: none;
   box-sizing: border-box;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   transition: border-color 0.15s;
 }
 
 .formInput:focus {
-  border-color: #3b82f6;
+  border-color: var(--color-focus-ring);
+}
+
+.formInput:disabled {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  cursor: not-allowed;
 }
 
 .formSelect {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 0.875rem;
   outline: none;
   box-sizing: border-box;
-  background: #ffffff;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   cursor: pointer;
 }
 
 .formSelect:focus {
-  border-color: #3b82f6;
+  border-color: var(--color-focus-ring);
+}
+
+.formSelect:disabled {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  cursor: not-allowed;
 }
 
 .formTextarea {
   width: 100%;
   padding: 8px 10px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   font-size: 0.875rem;
   outline: none;
   box-sizing: border-box;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   resize: vertical;
   min-height: 80px;
   font-family: inherit;
 }
 
 .formTextarea:focus {
-  border-color: #3b82f6;
+  border-color: var(--color-focus-ring);
+}
+
+.formTextarea:disabled {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  cursor: not-allowed;
+  resize: none;
 }
 
 .checkboxGroup {
@@ -214,7 +244,7 @@
   align-items: center;
   gap: 6px;
   font-size: 0.875rem;
-  color: #1e293b;
+  color: var(--color-text);
   cursor: pointer;
 }
 
@@ -229,8 +259,8 @@
   padding: 8px 20px;
   border: none;
   border-radius: 6px;
-  background: #3b82f6;
-  color: #ffffff;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
   font-size: 0.875rem;
   font-weight: 500;
   cursor: pointer;
@@ -238,11 +268,11 @@
 }
 
 .submitButton:hover {
-  background: #2563eb;
+  background: var(--color-accent-hover);
 }
 
 .submitButton:disabled {
-  background: #94a3b8;
+  background: var(--color-text-subtle);
   cursor: not-allowed;
 }
 
@@ -256,8 +286,8 @@
   display: inline-block;
   width: 14px;
   height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.3);
-  border-top-color: #fff;
+  border: 2px solid rgba(var(--color-on-inverse-rgb), 0.3);
+  border-top-color: var(--color-surface-raised);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
   vertical-align: middle;
@@ -266,25 +296,25 @@
 
 .cancelButton {
   padding: 8px 20px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: #ffffff;
-  color: #475569;
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
   font-size: 0.875rem;
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .cancelButton:hover {
-  background: #f1f5f9;
+  background: var(--color-surface-muted);
 }
 
 .actionButton {
   padding: 6px 12px;
-  border: 1px solid #cbd5e1;
+  border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: #ffffff;
-  color: #475569;
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
   font-size: 0.8rem;
   cursor: pointer;
   transition: background 0.15s;
@@ -292,15 +322,15 @@
 }
 
 .actionButton:hover {
-  background: #f1f5f9;
+  background: var(--color-surface-muted);
 }
 
 .dangerButton {
   padding: 6px 12px;
-  border: 1px solid #fecaca;
+  border: 1px solid var(--color-danger-border);
   border-radius: 6px;
-  background: #ffffff;
-  color: #dc2626;
+  background: var(--color-surface-raised);
+  color: var(--color-danger-text);
   font-size: 0.8rem;
   cursor: pointer;
   transition: background 0.15s;
@@ -308,15 +338,15 @@
 }
 
 .dangerButton:hover {
-  background: #fef2f2;
+  background: var(--color-danger-bg);
 }
 
 .error {
   padding: 10px 14px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
   border-radius: 6px;
-  color: #dc2626;
+  color: var(--color-danger-text);
   font-size: 0.875rem;
 }
 
@@ -326,25 +356,25 @@
   top: 100%;
   left: 0;
   right: 0;
-  background: #ffffff;
-  border: 1px solid #cbd5e1;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
   border-top: none;
   border-radius: 0 0 6px 6px;
   max-height: 200px;
   overflow-y: auto;
   z-index: 60;
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 8px rgba(var(--color-overlay-rgb), 0.1);
 }
 
 .selectOption {
   padding: 8px 10px;
   cursor: pointer;
   font-size: 0.875rem;
-  color: #1e293b;
+  color: var(--color-text);
 }
 
 .selectOption:hover {
-  background: #f1f5f9;
+  background: var(--color-surface-muted);
 }
 
 .selectWrapper {
@@ -355,15 +385,15 @@
 .sectionTitle {
   font-size: 1rem;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--color-text);
   margin: 0 0 12px;
   padding-bottom: 8px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--color-border-subtle);
 }
 
 .section {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
   padding: 16px;
 }
@@ -377,20 +407,20 @@
 
 .resultBox {
   padding: 12px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success-border);
   border-radius: 6px;
   font-size: 0.875rem;
-  color: #166534;
+  color: var(--color-success-text);
 }
 
 .resultBoxError {
   padding: 12px;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
   border-radius: 6px;
   font-size: 0.875rem;
-  color: #dc2626;
+  color: var(--color-danger-text);
 }
 
 .errorRow {
@@ -398,12 +428,57 @@
   font-size: 0.8rem;
 }
 
-.permissionHint {
-  padding: 8px 12px;
-  background: #fefce8;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-  color: #92400e;
+.sectionDivider {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.fieldHintError {
+  margin-top: 4px;
   font-size: 0.8rem;
-  margin-top: 8px;
+  color: var(--color-danger-text);
+}
+
+.fieldHintOk {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--color-success-text);
+}
+
+.selectOptionSecondary {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+/* Data-exchange view (Daten) */
+.sectionDescription {
+  margin: 0 0 12px;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.previewPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fileName {
+  margin-top: 6px;
+  font-size: 0.8rem;
+  color: var(--color-text-subtle);
+}
+
+.validationList {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  color: var(--color-danger-text);
+  font-size: 0.8rem;
+}
+
+.resultList {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  font-size: 0.875rem;
 }

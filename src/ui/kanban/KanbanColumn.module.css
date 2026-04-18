@@ -24,19 +24,36 @@
 }
 
 .columnAction {
-  background: #fef3c7;
+  background: var(--color-warning-bg);
 }
 
 .columnBuffer,
 .columnActive,
 .columnDone {
-  background: #f1f5f9;
+  background: var(--color-surface-muted);
 }
 
 .header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   padding: 8px 10px;
   border-bottom: 3px solid;
   background: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.header:hover {
+  background: var(--color-surface-base);
+}
+
+.collapseChevron {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
 }
 
 .collapsedHeader {
@@ -53,15 +70,15 @@
   text-orientation: mixed;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #334155;
+  color: var(--color-text-strong);
   white-space: nowrap;
 }
 
 .collapsedCount {
   font-size: 0.75rem;
   font-weight: 500;
-  color: #64748b;
-  background: #e2e8f0;
+  color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
   padding: 1px 7px;
   border-radius: 10px;
 }
@@ -69,7 +86,7 @@
 .label {
   font-size: 13px;
   font-weight: 600;
-  color: #1e293b;
+  color: var(--color-text);
 }
 
 .cards {

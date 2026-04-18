@@ -226,7 +226,7 @@ See [wireguard-setup.md](wireguard-setup.md).
 
 ### Phase 7 -- Git access for deploy user
 
-Read-only Deploy Key scoped to this repo (outbound only -- unaffected by ADR-0012 cutover).
+Read-only Deploy Key scoped to this repo (outbound only).
 
 1. Generate keypair:
 
@@ -358,70 +358,64 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 
 9. Log in from WireGuard client with new password to confirm.
 
+### Phase 8.2 -- Reset pgdata (test VPS only)
+
+Wipes the Postgres volume and re-runs the first-login ritual on a clean DB. **Do not run on a VPS that holds real data** — this deletes all users, customers, projects, and sessions. The test-VPS use case: a schema change or migration collapse has diverged from the deployed DB's ledger (see troubleshooting's `source <(age -d …)` entry and the 2026-04-18 session), and recreating is cheaper than reconciling.
+
+The bootstrap env vars are injected inline (shell-only), not written to `.env`. The plaintext admin password never touches disk.
+
+1. Stop and remove app + db containers. Use `docker` directly rather than `docker compose down` — the latter requires all secret vars to interpolate, which aren't sourced at this point:
+
+   ```bash
+   sudo -u deploy docker stop projekt-manager-app-1 projekt-manager-db-1
+   sudo -u deploy docker rm   projekt-manager-app-1 projekt-manager-db-1
+   ```
+
+2. Remove the Postgres volume:
+
+   ```bash
+   sudo -u deploy docker volume rm projekt-manager_pgdata
+   ```
+
+3. Bring the stack back up with inline bootstrap env. The `eval "$(age -d …)"` form avoids the process-substitution deadlock (troubleshooting.md):
+
+   ```bash
+   cd /opt/projekt-manager
+   set -a
+   eval "$(sudo -u deploy age -d secrets.env.age)"   # prompts for passphrase once
+   set +a
+   export APP_IMAGE_TAG="sha-$(sudo -u deploy git -C . rev-parse HEAD)"
+   export BOOTSTRAP_ADMIN_USERNAME="admin"
+   BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -base64 24)"
+   echo "$BOOTSTRAP_ADMIN_PASSWORD"   # save to password manager NOW
+   export BOOTSTRAP_ADMIN_PASSWORD
+   export BOOTSTRAP_ADMIN_DISPLAY_NAME="Admin"
+   sudo -u deploy --preserve-env docker compose up -d
+   ```
+
+   Omit `--profile backup` (as shown) when you want the backup cron to stay idle — the previous backup container remains `Exited` and is untouched. Add `--profile backup` to start it alongside.
+
+4. Confirm bootstrap ran:
+
+   ```bash
+   sudo -u deploy docker compose logs app --tail=30 | grep -F 'Bootstrap admin user'
+   ```
+
+5. Log in from a WireGuard client as `admin` with the generated password, then rotate via the UI (user menu → change password) or the `/api/auth/change-password` flow in Phase 8.1 step 6.
+
+6. Clear the bootstrap vars and recreate the app container so they are no longer injected:
+
+   ```bash
+   unset BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD BOOTSTRAP_ADMIN_DISPLAY_NAME
+   sudo -u deploy --preserve-env docker compose up -d --force-recreate app
+   sudo -u deploy docker compose logs app --tail=30 | grep -F 'Bootstrap admin user' || echo 'ok -- no bootstrap'
+   ```
+
+   Alternative: run `scripts/deploy.sh <ref>` — it sources `secrets.env.age` without bootstrap vars and recreates the app as part of the normal deploy flow.
+
 ### Phase 9 -- Deploy bootstrap
 
-Sets up `scripts/deploy.sh` with encrypted secrets. See [manual-deploy.md](manual-deploy.md#bootstrap-first-run-on-fresh-vps) for the authoritative procedure.
-
-1. Install `age`:
-
-   ```bash
-   sudo apt update && sudo apt install -y age
-   ```
-
-2. GHCR login (classic PAT, `read:packages`):
-
-   ```bash
-   sudo -u deploy docker login ghcr.io -u vlzware --password-stdin <<< '<PAT>'
-   ```
-
-3. Verify pull:
-
-   ```bash
-   sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main
-   ```
-
-4. Create and upload `secrets.env.age` (on workstation):
-
-   ```bash
-   cat > /tmp/secrets.env <<'EOF'
-   POSTGRES_PASSWORD='...'
-   MINIO_ROOT_PASSWORD='...'
-   CLOUDFLARE_API_TOKEN='...'
-   EOF
-   age -p -o secrets.env.age /tmp/secrets.env
-   shred -u /tmp/secrets.env
-
-   scp secrets.env.age <sudo-user>@vps:/tmp/secrets.env.age
-   ```
-
-   On VPS:
-
-   ```bash
-   sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
-   sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
-   sudo chmod 0600 /opt/projekt-manager/secrets.env.age
-   ```
-
-5. Remove plaintext secrets from `.env`.
-
-6. First deploy:
-
-   ```bash
-   sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
-   ```
-
-7. Lock down deploy user (ONLY after step 6 succeeds):
-
-   ```bash
-   sudo usermod -s /usr/sbin/nologin deploy
-   sudo rm -f /home/deploy/.ssh/authorized_keys
-   ```
-
-8. Prove locked-down flow:
-   ```bash
-   sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose down'
-   sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
-   ```
+Sets up `scripts/deploy.sh` with encrypted secrets and performs the first deploy. See [manual-deploy.md § Bootstrap](manual-deploy.md#bootstrap-first-run-on-fresh-vps) for the authoritative procedure.
 
 **Verify from WireGuard client:**
 

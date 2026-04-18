@@ -74,7 +74,7 @@ Encrypt the environment file and commit it. The decrypt key still has to live on
 
 ### Ansible Vault over SSH
 
-Orchestrate deploys from the operator's laptop via Ansible with a vault for secrets. Rejected: introduces the same class of remote-trust-link the cutover is trying to remove, just shifted one layer. Also adds a tool whose own security posture the project does not audit.
+Orchestrate deploys from the operator workstation via Ansible with a vault for secrets. Rejected: introduces the same class of remote-trust-link the cutover is trying to remove, just shifted one layer. Also adds a tool whose own security posture the project does not audit.
 
 ## Consequences
 

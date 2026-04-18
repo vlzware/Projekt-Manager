@@ -1,0 +1,63 @@
+/**
+ * Not-permitted route surface (AC-149).
+ *
+ * Styled in the same danger register as the mutation-error banner in
+ * App.module.css — a deliberate visual echo so the two surfaces read as
+ * members of the same error family (no invented visual language).
+ * Difference: this one occupies the full view area, not the slim
+ * top-banner strip, because it replaces the view itself rather than
+ * annotating one.
+ */
+
+.container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 40px 20px;
+}
+
+.panel {
+  max-width: 560px;
+  width: 100%;
+  padding: 24px 28px;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  border-radius: 8px;
+  color: var(--color-danger-text);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.heading {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.body {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.actions {
+  margin-top: 4px;
+}
+
+.homeLink {
+  background: none;
+  border: 1px solid var(--color-danger-border);
+  color: var(--color-danger-text);
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+
+.homeLink:hover {
+  background: var(--color-surface-base);
+}

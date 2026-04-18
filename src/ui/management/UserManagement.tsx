@@ -7,127 +7,40 @@
  */
 
 import { useEffect, useState } from 'react';
-import { useAuthStore } from '@/state/authStore';
 import { useUserStore } from '@/state/userStore';
-import { useConfirmStore } from '@/state/confirmStore';
+import { usePermission } from '@/hooks/usePermission';
 import { STRINGS } from '@/config/strings';
 import type { User } from '@/domain/types';
+import { UserCreateForm } from './UserCreateForm';
+import { UserDetailPanel } from './UserDetailPanel';
 import styles from './Management.module.css';
 
-const AVAILABLE_ROLES = Object.keys(STRINGS.roles);
-
 export function UserManagement() {
-  const authUser = useAuthStore((s) => s.authUser);
-  const canManage = authUser?.roles.some((r) => r === 'owner') ?? false;
+  const canManage = usePermission('user:manage');
 
   const users = useUserStore((s) => s.users);
   const loading = useUserStore((s) => s.loading);
   const error = useUserStore((s) => s.error);
   const fetchUsers = useUserStore((s) => s.fetchUsers);
-  const createUser = useUserStore((s) => s.createUser);
-  const deactivateUser = useUserStore((s) => s.deactivateUser);
-  const reactivateUser = useUserStore((s) => s.reactivateUser);
-  const deleteUser = useUserStore((s) => s.deleteUser);
-  const resetUserPassword = useUserStore((s) => s.resetPassword);
   const clearError = useUserStore((s) => s.clearError);
-  const requestConfirm = useConfirmStore((s) => s.request);
 
   const [formOpen, setFormOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [username, setUsername] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [password, setPassword] = useState('');
-  const [passwordConfirm, setPasswordConfirm] = useState('');
-  const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
-  const [submitting, setSubmitting] = useState(false);
-  const [resetOpen, setResetOpen] = useState(false);
-  const [resetPw, setResetPw] = useState('');
-  const [resetPwConfirm, setResetPwConfirm] = useState('');
-  const [resetSuccess, setResetSuccess] = useState(false);
 
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
 
-  const resetForm = () => {
-    setUsername('');
-    setDisplayName('');
-    setPassword('');
-    setPasswordConfirm('');
-    setSelectedRoles([]);
-  };
-
-  const toggleRole = (role: string) => {
-    setSelectedRoles((prev) =>
-      prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role],
-    );
-  };
-
-  const passwordsMatch = password === passwordConfirm;
-
-  const handleCreate = async () => {
-    if (
-      !username.trim() ||
-      !displayName.trim() ||
-      !password.trim() ||
-      !passwordsMatch ||
-      selectedRoles.length === 0
-    )
-      return;
-    setSubmitting(true);
-
-    const ok = await createUser({
-      username: username.trim(),
-      displayName: displayName.trim(),
-      password: password.trim(),
-      roles: selectedRoles,
-    });
-
-    setSubmitting(false);
-    if (ok) {
-      setFormOpen(false);
-      resetForm();
-    }
-  };
-
-  const resetPwMatch = resetPw === resetPwConfirm;
-
-  const handleDelete = async (user: User) => {
-    const confirmed = await requestConfirm(STRINGS.ui.deleteConfirm(user.displayName));
-    if (!confirmed) return;
-
+  const openCreateForm = () => {
+    clearError();
     setSelectedUser(null);
-    await deleteUser(user.id);
+    setFormOpen(true);
   };
 
-  const handleResetPassword = async (user: User) => {
-    if (!resetPw.trim() || !resetPwMatch) return;
-    setSubmitting(true);
-
-    const ok = await resetUserPassword(user.id, resetPw);
-    setSubmitting(false);
-
-    if (ok) {
-      setResetSuccess(true);
-      setResetPw('');
-      setResetPwConfirm('');
-    }
-  };
-
-  const handleDeactivate = async (user: User) => {
-    const confirmed = await requestConfirm(STRINGS.ui.deactivateConfirm(user.displayName));
-    if (!confirmed) return;
-
-    setSelectedUser(null);
-    await deactivateUser(user.id);
-  };
-
-  const handleReactivate = async (user: User) => {
-    const confirmed = await requestConfirm(STRINGS.ui.reactivateConfirm(user.displayName));
-    if (!confirmed) return;
-
-    setSelectedUser(null);
-    await reactivateUser(user.id);
+  const handleRowClick = (u: User) => {
+    setSelectedUser(u);
+    setFormOpen(false);
+    clearError();
   };
 
   return (
@@ -136,12 +49,7 @@ export function UserManagement() {
         {canManage && (
           <button
             className={styles.createButton}
-            onClick={() => {
-              clearError();
-              resetForm();
-              setSelectedUser(null);
-              setFormOpen(true);
-            }}
+            onClick={openCreateForm}
             data-testid="user-create-button"
           >
             {STRINGS.ui.create}
@@ -166,11 +74,7 @@ export function UserManagement() {
             <tr
               key={u.id}
               className={`${styles.clickableRow} ${u.active ? '' : `${styles.rowInactive} deactivated`}`}
-              onClick={() => {
-                setSelectedUser(u);
-                setFormOpen(false);
-                clearError();
-              }}
+              onClick={() => handleRowClick(u)}
             >
               <td>{u.username}</td>
               <td>{u.displayName}</td>
@@ -192,249 +96,10 @@ export function UserManagement() {
         <div className={styles.noResults}>{STRINGS.ui.noResults}</div>
       )}
 
-      {/* Create form */}
-      {formOpen && (
-        <div className={styles.formOverlay} onClick={() => setFormOpen(false)}>
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
-            <h2 className={styles.formTitle}>
-              {STRINGS.entities.user} {STRINGS.ui.create}
-            </h2>
+      {formOpen && <UserCreateForm onClose={() => setFormOpen(false)} />}
 
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.username} *</label>
-              <input
-                className={styles.formInput}
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                data-testid="user-username-input"
-                autoFocus
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.displayName} *</label>
-              <input
-                className={styles.formInput}
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                data-testid="user-displayname-input"
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.auth.password} *</label>
-              <input
-                className={styles.formInput}
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                data-testid="user-password-input"
-              />
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.password.confirm} *</label>
-              <input
-                className={styles.formInput}
-                type="password"
-                value={passwordConfirm}
-                onChange={(e) => setPasswordConfirm(e.target.value)}
-                data-testid="user-password-confirm-input"
-              />
-              {password && passwordConfirm && !passwordsMatch && (
-                <div className={styles.error}>{STRINGS.password.mismatch}</div>
-              )}
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.roles} *</label>
-              <div className={styles.checkboxGroup}>
-                {AVAILABLE_ROLES.map((role) => (
-                  <label key={role} className={styles.checkboxLabel}>
-                    <input
-                      type="checkbox"
-                      checked={selectedRoles.includes(role)}
-                      onChange={() => toggleRole(role)}
-                      data-testid={`user-role-${role}`}
-                    />
-                    {STRINGS.roles[role]}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {error && <div className={styles.error}>{error}</div>}
-
-            <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={() => setFormOpen(false)}>
-                {STRINGS.ui.cancel}
-              </button>
-              <button
-                className={styles.submitButton}
-                onClick={handleCreate}
-                disabled={
-                  submitting ||
-                  !username.trim() ||
-                  !displayName.trim() ||
-                  !password.trim() ||
-                  !passwordsMatch ||
-                  selectedRoles.length === 0
-                }
-                data-testid="user-submit"
-              >
-                {STRINGS.ui.create}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* User detail / deactivate / reactivate / reset password */}
       {selectedUser && !formOpen && (
-        <div
-          className={styles.formOverlay}
-          onClick={() => {
-            setSelectedUser(null);
-            setResetOpen(false);
-            setResetSuccess(false);
-          }}
-        >
-          <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
-            <h2 className={styles.formTitle}>{selectedUser.displayName}</h2>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.username}</label>
-              <div>{selectedUser.username}</div>
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.roles}</label>
-              <div>{selectedUser.roles.map((r) => STRINGS.roles[r] ?? r).join(', ')}</div>
-            </div>
-
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel}>{STRINGS.ui.status}</label>
-              <span
-                className={`${styles.badge} ${selectedUser.active ? styles.badgeActive : styles.badgeInactive}`}
-              >
-                {selectedUser.active ? STRINGS.ui.active : STRINGS.ui.inactive}
-              </span>
-            </div>
-
-            {/* Reset password section (owner only) */}
-            {canManage && resetOpen && (
-              <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #e2e8f0' }}>
-                {resetSuccess ? (
-                  <div className={styles.resultBox}>{STRINGS.password.resetSuccess}</div>
-                ) : (
-                  <>
-                    <div className={styles.formGroup}>
-                      <label className={styles.formLabel}>{STRINGS.password.newPassword} *</label>
-                      <input
-                        className={styles.formInput}
-                        type="password"
-                        value={resetPw}
-                        onChange={(e) => setResetPw(e.target.value)}
-                        data-testid="user-reset-pw-input"
-                        autoFocus
-                      />
-                    </div>
-                    <div className={styles.formGroup}>
-                      <label className={styles.formLabel}>{STRINGS.password.confirm} *</label>
-                      <input
-                        className={styles.formInput}
-                        type="password"
-                        value={resetPwConfirm}
-                        onChange={(e) => setResetPwConfirm(e.target.value)}
-                        data-testid="user-reset-pw-confirm"
-                      />
-                      {resetPw && resetPwConfirm && !resetPwMatch && (
-                        <div className={styles.error}>{STRINGS.password.mismatch}</div>
-                      )}
-                    </div>
-                    <div className={styles.formActions}>
-                      <button
-                        className={styles.cancelButton}
-                        onClick={() => {
-                          setResetOpen(false);
-                          setResetPw('');
-                          setResetPwConfirm('');
-                        }}
-                      >
-                        {STRINGS.ui.cancel}
-                      </button>
-                      <button
-                        className={styles.submitButton}
-                        onClick={() => handleResetPassword(selectedUser)}
-                        disabled={submitting || !resetPw.trim() || !resetPwMatch}
-                        data-testid="user-reset-pw-submit"
-                      >
-                        {STRINGS.password.resetPassword}
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {error && <div className={styles.error}>{error}</div>}
-
-            <div className={styles.formActions}>
-              <button
-                className={styles.cancelButton}
-                onClick={() => {
-                  setSelectedUser(null);
-                  setResetOpen(false);
-                  setResetSuccess(false);
-                }}
-              >
-                {STRINGS.ui.close}
-              </button>
-              {canManage && !resetOpen && (
-                <button
-                  className={styles.actionButton}
-                  onClick={() => {
-                    setResetOpen(true);
-                    setResetSuccess(false);
-                    setResetPw('');
-                    setResetPwConfirm('');
-                    clearError();
-                  }}
-                  data-testid="user-reset-pw-button"
-                >
-                  {STRINGS.password.resetPassword}
-                </button>
-              )}
-              {canManage && selectedUser.active && (
-                <button
-                  className={styles.dangerButton}
-                  onClick={() => handleDeactivate(selectedUser)}
-                  data-testid="user-deactivate-button"
-                >
-                  {STRINGS.ui.deactivate}
-                </button>
-              )}
-              {canManage && !selectedUser.active && (
-                <button
-                  className={styles.actionButton}
-                  onClick={() => handleReactivate(selectedUser)}
-                  data-testid="user-reactivate-button"
-                >
-                  {STRINGS.ui.reactivate}
-                </button>
-              )}
-              {canManage && selectedUser.id !== authUser?.id && (
-                <button
-                  className={styles.dangerButton}
-                  onClick={() => handleDelete(selectedUser)}
-                  data-testid="user-delete-button"
-                >
-                  {STRINGS.ui.delete}
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <UserDetailPanel user={selectedUser} onClose={() => setSelectedUser(null)} />
       )}
     </div>
   );

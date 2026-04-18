@@ -44,6 +44,21 @@ export default defineConfig({
         },
       },
       {
+        // Component tests: React components and hooks with React Testing
+        // Library, under jsdom. No network, no database — stores and
+        // API client are stubbed per-file.
+        extends: true,
+        test: {
+          name: 'component',
+          environment: 'jsdom',
+          include: [
+            'src/ui/**/__tests__/**/*.test.{ts,tsx}',
+            'src/hooks/**/__tests__/**/*.test.{ts,tsx}',
+          ],
+          setupFiles: ['src/test/component-setup.ts'],
+        },
+      },
+      {
         // Integration tests: shared PostgreSQL database, Fastify server.
         // Files run sequentially to prevent seed/mutation race conditions.
         extends: true,

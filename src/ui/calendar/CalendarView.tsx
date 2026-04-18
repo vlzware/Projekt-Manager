@@ -3,7 +3,7 @@ import { addMonths, subMonths, addWeeks, subWeeks, startOfWeek, endOfWeek, forma
 import { LOCALE } from '@/config/localeConfig';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
-import { useRouterNav } from '@/hooks/useRouterNav';
+import { useRouterNav, pathFromView } from '@/hooks/useRouterNav';
 import { STRINGS } from '@/config/strings';
 import { CalendarGrid } from './CalendarGrid';
 import styles from './CalendarView.module.css';
@@ -47,7 +47,7 @@ export function CalendarView() {
     // calls setView which clears filters, so the filter must be set AFTER
     // the navigation. The filter is mutually exclusive with the
     // workflow-state filter (see uiStore).
-    navigateTo('/kanban');
+    navigateTo(pathFromView('kanban'));
     setFilterNoDates(true);
   };
 

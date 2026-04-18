@@ -1,0 +1,230 @@
+/*
+ * Design tokens — two layers.
+ *
+ *   1. Primitive layer: raw palette, no semantics. Grouped by hue.
+ *   2. Semantic layer: role names that components reference.
+ *
+ * Components consume only the semantic layer. A sibling [data-theme="..."]
+ * block may override semantic values without touching primitives.
+ */
+
+:root {
+  /* ----- Primitive palette --------------------------------------------- */
+
+  /* Neutral (slate) */
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
+
+  /* Pure */
+  --color-white: #ffffff;
+
+  /*
+   * Accent primitives live in src/config/brandingConfig.ts and are injected
+   * at boot by src/styles/applyBranding.ts as --brand-accent-light and
+   * --brand-accent-dark. The semantic accent tokens below resolve through
+   * those custom properties; the fallback hexes mirror the default BRANDING
+   * values so the pre-JS frame matches the post-JS frame.
+   */
+
+  /* Red (danger) */
+  --color-red-50: #fef2f2;
+  --color-red-200: #fecaca;
+  --color-red-300: #fca5a5;
+  --color-red-400: #f87171;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+  --color-red-900: #7f1d1d;
+  --color-red-950: #450a0a;
+
+  /* Amber / yellow (warning) */
+  --color-amber-100: #fef3c7;
+  --color-amber-300: #fcd34d;
+  --color-amber-400: #fbbf24;
+  --color-amber-500: #f59e0b;
+  --color-amber-700: #b45309;
+  --color-amber-800: #92400e;
+  --color-amber-900: #854d0e;
+  --color-amber-950: #422006;
+  --color-yellow-50: #fefce8;
+  --color-yellow-200: #fde68a;
+
+  /* Green (success) */
+  --color-green-50: #f0fdf4;
+  --color-green-200: #bbf7d0;
+  --color-green-300: #86efac;
+  --color-green-400: #4ade80;
+  --color-green-500: #22c55e;
+  --color-green-800: #166534;
+  --color-green-950: #052e16;
+
+  /* ----- Semantic layer ------------------------------------------------- */
+
+  /* Surface */
+  --color-surface-base: var(--color-slate-50);
+  --color-surface-raised: var(--color-white);
+  --color-surface-muted: var(--color-slate-100);
+  --color-surface-sunken: var(--color-slate-200);
+  --color-surface-inverse: var(--color-slate-800);
+  --color-surface-inverse-raised: var(--color-slate-700);
+  --color-surface-inverse-hover: var(--color-slate-600);
+
+  /* Text */
+  --color-text: var(--color-slate-800);
+  --color-text-secondary: var(--color-slate-600);
+  --color-text-muted: var(--color-slate-500);
+  --color-text-subtle: var(--color-slate-400);
+  --color-text-strong: var(--color-slate-700);
+  /* Dark text on blue accents — both blue-500 (light) and blue-400 (dark) are
+     too light for white text to meet WCAG AA (2.54:1 and 3.68:1 respectively).
+     Slate-900 reaches 4.97:1 / 7.31:1. */
+  --color-text-on-accent: var(--color-slate-900);
+  --color-text-on-inverse: var(--color-slate-50);
+  --color-text-on-inverse-muted: var(--color-slate-200);
+  --color-text-on-inverse-subtle: var(--color-slate-400);
+
+  /* Border */
+  --color-border: var(--color-slate-300);
+  --color-border-subtle: var(--color-slate-200);
+  --color-border-muted: var(--color-slate-100);
+  --color-border-inverse: var(--color-slate-600);
+
+  /*
+   * Accent — resolves through the brand accent custom property
+   * (--brand-accent-light), set by src/styles/applyBranding.ts at boot.
+   * The fallback hex matches the default BRANDING.accent.light so the
+   * pre-JS frame is indistinguishable from the post-JS frame.
+   *
+   * Hover and active-surface are derived via color-mix so any branded
+   * accent gets a tonally-consistent set without the customer having
+   * to hand-pick three colors. `rgb(from …)` in LoginForm/CalendarGrid
+   * consumes --color-focus-ring the same way. The stricter baseline of
+   * the two is Chrome 125+, Firefox 128+, Safari 16.4+ — this project
+   * targets evergreen browsers so that floor is acceptable.
+   */
+  --color-accent: var(--brand-accent-light, #3b82f6);
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 88%, black);
+  --color-accent-active-surface: color-mix(in srgb, var(--color-accent) 45%, black);
+  --color-focus-ring: var(--color-accent);
+
+  /* Status — danger */
+  --color-danger: var(--color-red-600);
+  --color-danger-strong: var(--color-red-500);
+  --color-danger-bg: var(--color-red-50);
+  --color-danger-border: var(--color-red-200);
+  --color-danger-text: var(--color-red-600);
+  --color-danger-inverse-bg: var(--color-red-950);
+  --color-danger-inverse-hover: var(--color-red-900);
+  --color-danger-inverse-text: var(--color-red-300);
+
+  /* Status — warning */
+  --color-warning: var(--color-amber-500);
+  --color-warning-bg: var(--color-amber-100);
+  --color-warning-text: var(--color-amber-700);
+  --color-warning-on-inverse-text: var(--color-amber-400);
+  --color-warning-inverse-bg: var(--color-amber-950);
+  --color-warning-inverse-border: var(--color-amber-900);
+
+  /* Status — success */
+  --color-success: var(--color-green-500);
+  --color-success-bg: var(--color-green-50);
+  --color-success-border: var(--color-green-200);
+  --color-success-text: var(--color-green-800);
+
+  /* Alpha overlays — rgb triplets for rgba() usage. Each mirrors a
+     primitive above; CSS cannot convert hex → triplet, so they are
+     maintained by hand. Keep in sync with the referenced primitive.
+     Focus-ring alpha is expressed inline with rgb(from --color-focus-ring
+     ... / α) at the call sites — no triplet needed because the accent
+     value is only known at runtime (set by applyBranding.ts). */
+  --color-overlay-rgb: 0, 0, 0; /* black */
+  --color-warning-rgb: 245, 158, 11; /* --color-amber-500 */
+  --color-on-inverse-rgb: 255, 255, 255; /* --color-white */
+}
+
+/*
+ * Dark theme override — overrides the semantic layer only; primitives are
+ * shared with :root. Inverse chrome goes deeper than surface-base so the
+ * header/footer remain a grounded dark frame distinct from the body.
+ */
+[data-theme='dark'] {
+  /* Surface */
+  --color-surface-base: var(--color-slate-900);
+  --color-surface-raised: var(--color-slate-800);
+  --color-surface-muted: var(--color-slate-700);
+  --color-surface-sunken: var(--color-slate-950);
+  --color-surface-inverse: var(--color-slate-950);
+  --color-surface-inverse-raised: var(--color-slate-800);
+  --color-surface-inverse-hover: var(--color-slate-700);
+
+  /* Text */
+  --color-text: var(--color-slate-100);
+  --color-text-secondary: var(--color-slate-300);
+  --color-text-muted: var(--color-slate-400);
+  --color-text-subtle: var(--color-slate-500);
+  --color-text-strong: var(--color-slate-50);
+  --color-text-on-accent: var(--color-slate-900);
+  --color-text-on-inverse: var(--color-slate-100);
+  --color-text-on-inverse-muted: var(--color-slate-300);
+  --color-text-on-inverse-subtle: var(--color-slate-500);
+
+  /* Border */
+  --color-border: var(--color-slate-700);
+  --color-border-subtle: var(--color-slate-800);
+  --color-border-muted: var(--color-slate-800);
+  --color-border-inverse: var(--color-slate-700);
+
+  /*
+   * Accent — mirrors the :root pattern but resolves through
+   * --brand-accent-dark. Fallback hex matches the default
+   * BRANDING.accent.dark.
+   */
+  --color-accent: var(--brand-accent-dark, #60a5fa);
+  --color-accent-hover: color-mix(in srgb, var(--color-accent) 88%, black);
+  --color-accent-active-surface: color-mix(in srgb, var(--color-accent) 45%, black);
+  --color-focus-ring: var(--color-accent);
+
+  /* Status — danger */
+  --color-danger: var(--color-red-400);
+  --color-danger-strong: var(--color-red-500);
+  --color-danger-bg: var(--color-red-950);
+  --color-danger-border: var(--color-red-900);
+  --color-danger-text: var(--color-red-300);
+  --color-danger-inverse-bg: var(--color-red-950);
+  --color-danger-inverse-hover: var(--color-red-900);
+  --color-danger-inverse-text: var(--color-red-300);
+
+  /* Status — warning */
+  --color-warning: var(--color-amber-400);
+  --color-warning-bg: var(--color-amber-950);
+  --color-warning-text: var(--color-amber-300);
+  --color-warning-on-inverse-text: var(--color-amber-300);
+  --color-warning-inverse-bg: var(--color-amber-950);
+  --color-warning-inverse-border: var(--color-amber-800);
+
+  /* Status — success */
+  --color-success: var(--color-green-400);
+  --color-success-bg: var(--color-green-950);
+  --color-success-border: var(--color-green-800);
+  --color-success-text: var(--color-green-300);
+
+  /* Alpha overlays — overlay kept black (shadows over a dark surface still
+     read as depth); other triplets re-mirror their dark-mode semantic target.
+     No --color-focus-ring-rgb: call sites use rgb(from --color-focus-ring). */
+  --color-overlay-rgb: 0, 0, 0; /* black */
+  --color-warning-rgb: 251, 191, 36; /* --color-amber-400 */
+  --color-on-inverse-rgb: 241, 245, 249; /* --color-slate-100 */
+}
+
+body {
+  background: var(--color-surface-base);
+  color: var(--color-text);
+}

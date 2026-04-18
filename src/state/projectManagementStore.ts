@@ -11,15 +11,34 @@ import { projectApi, customerApi } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';
 
+/**
+ * Result of `createProject`. Mirrors `CreateCustomerOutcome` — see that
+ * type's comment for the meaning of `'conflict'`.
+ */
+export type CreateProjectOutcome = { status: 'ok' } | { status: 'error' } | { status: 'conflict' };
+
 interface ProjectManagementState {
   projects: Project[];
   customers: Customer[];
   loading: boolean;
   error: string | null;
+  /**
+   * Whether the list should include archived (soft-deleted) projects.
+   * Default `false` — archived rows are hidden. Toggled by the
+   * "Archivierte einblenden" checkbox in the management toolbar (AC-152).
+   */
+  showArchived: boolean;
 
   fetchProjects: (search?: string) => Promise<void>;
+  searchProjects: (search: string) => Promise<Project[]>;
   fetchCustomers: () => Promise<void>;
-  createProject: (data: { number: string; title: string; customerId: string }) => Promise<boolean>;
+  setShowArchived: (v: boolean) => void;
+  createProject: (data: {
+    id?: string;
+    number: string;
+    title: string;
+    customerId: string;
+  }) => Promise<CreateProjectOutcome>;
   updateProject: (
     id: string,
     data: {
@@ -34,6 +53,13 @@ interface ProjectManagementState {
     dates: { plannedStart?: string | null; plannedEnd?: string | null },
   ) => Promise<Project | null>;
   deleteProject: (id: string) => Promise<boolean>;
+  /**
+   * Hard-delete an archived project (AC-155..158). Returns:
+   *   - true on 204 success (row removed from local state)
+   *   - true on 404 — treat as "already gone", remove locally, no error
+   *   - false on 409 (not archived) / 403 — surfaces server message
+   */
+  purgeProject: (id: string) => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -42,10 +68,17 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
   customers: [],
   loading: false,
   error: null,
+  showArchived: false,
 
   fetchProjects: async (search?: string) => {
     set({ loading: true, error: null });
-    const result = await projectApi.list(search ? { search } : undefined);
+    const { showArchived } = get();
+    // Build the param bag from current state — omit undefined fields so
+    // the server sees only what we actually meant to send.
+    const params: { search?: string; includeArchived?: boolean } = {};
+    if (search) params.search = search;
+    if (showArchived) params.includeArchived = true;
+    const result = await projectApi.list(Object.keys(params).length ? params : undefined);
 
     if (!result.ok) {
       if (result.sessionExpired) {
@@ -59,6 +92,10 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
     set({ projects: result.data.data, loading: false });
   },
 
+  setShowArchived: (v: boolean) => {
+    set({ showArchived: v });
+  },
+
   fetchCustomers: async () => {
     const result = await customerApi.list();
     if (!result.ok) {
@@ -68,6 +105,17 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
     set({ customers: result.data.customers });
   },
 
+  searchProjects: async (search) => {
+    const trimmed = search.trim();
+    if (!trimmed) return [];
+    const result = await projectApi.list({ search: trimmed });
+    if (!result.ok) {
+      if (result.sessionExpired) handleSessionExpired();
+      return [];
+    }
+    return result.data.data;
+  },
+
   createProject: async (data) => {
     set({ error: null });
     const result = await projectApi.create(data);
@@ -75,16 +123,24 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
     if (!result.ok) {
       if (result.sessionExpired) {
         handleSessionExpired();
-        return false;
+        return { status: 'error' };
+      }
+      if (result.error.code === 'IDEMPOTENCY_CONFLICT') {
+        // Refresh the list *before* committing the error message —
+        // `fetchProjects` clears `error` while loading.
+        await get().fetchProjects();
+        useProjectStore.getState().fetchProjects();
+        set({ error: result.error.message });
+        return { status: 'conflict' };
       }
       set({ error: result.error.message });
-      return false;
+      return { status: 'error' };
     }
 
     // Refetch management list and also refresh the kanban store
     await get().fetchProjects();
     useProjectStore.getState().fetchProjects();
-    return true;
+    return { status: 'ok' };
   },
 
   updateProject: async (id, data) => {
@@ -136,6 +192,43 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
         handleSessionExpired();
         return false;
       }
+      set({ error: result.error.message });
+      return false;
+    }
+
+    // Archive is a soft-delete. When the user has "Archivierte einblenden"
+    // on, keep the row visible with its archived state flipped so the UI
+    // matches a fresh fetch; when off, drop it from the local list.
+    set((s) => ({
+      projects: s.showArchived
+        ? s.projects.map((p) => (p.id === id ? { ...p, deleted: true } : p))
+        : s.projects.filter((p) => p.id !== id),
+    }));
+    useProjectStore.getState().fetchProjects();
+    return true;
+  },
+
+  purgeProject: async (id) => {
+    set({ error: null });
+    const result = await projectApi.purge(id);
+
+    if (!result.ok) {
+      if (result.sessionExpired) {
+        handleSessionExpired();
+        return false;
+      }
+      // 404 on purge is a race — another client just removed the row, or
+      // the local list is stale. Either way the user's intent ("make it
+      // go away") is satisfied; drop the row locally and succeed.
+      if (result.category === 'not_found') {
+        set((s) => ({
+          projects: s.projects.filter((p) => p.id !== id),
+        }));
+        useProjectStore.getState().fetchProjects();
+        return true;
+      }
+      // 409 CONFLICT (not archived) and 403 NOT_PERMITTED surface the
+      // server's German message to the user.
       set({ error: result.error.message });
       return false;
     }

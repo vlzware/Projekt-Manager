@@ -71,13 +71,23 @@ describe('Role-based Permission Enforcement', () => {
     const tokenFor = (role: RestrictedRole): string =>
       role === 'worker' ? workerToken : bookkeeperToken;
 
+    // Project *discovery* uses the owner token — the unscoped view covers
+    // every status deterministically, so the test does not accidentally
+    // conflate "role can't mutate" with "role can't even see the row".
+    // The restricted role's token is only used for the mutation under
+    // assertion. Without this split the worker case would pass by seed
+    // coincidence (arbeiter1 happens to be assigned to geplant/in_arbeit
+    // projects); bookkeeper would fail if workers' seed coverage shrank.
     it.each(restrictedRoles)(
       '%s cannot transition forward — returns 403 NOT_PERMITTED',
       async (role) => {
-        const token = tokenFor(role);
-        const project = await findProjectByStatus(token, 'geplant');
+        const project = await findProjectByStatus(ownerToken, 'geplant');
 
-        const res = await authPost(token, `/api/projects/${project.id}/transition/forward`);
+        const res = await authPost(
+          tokenFor(role),
+          `/api/projects/${project.id}/transition/forward`,
+          { expectedStatus: 'geplant' },
+        );
 
         expect(res.statusCode).toBe(403);
 
@@ -91,10 +101,13 @@ describe('Role-based Permission Enforcement', () => {
     it.each(restrictedRoles)(
       '%s cannot transition backward — returns 403 NOT_PERMITTED',
       async (role) => {
-        const token = tokenFor(role);
-        const project = await findProjectByStatus(token, 'in_arbeit');
+        const project = await findProjectByStatus(ownerToken, 'in_arbeit');
 
-        const res = await authPost(token, `/api/projects/${project.id}/transition/backward`);
+        const res = await authPost(
+          tokenFor(role),
+          `/api/projects/${project.id}/transition/backward`,
+          { expectedStatus: 'in_arbeit' },
+        );
 
         expect(res.statusCode).toBe(403);
 
@@ -106,10 +119,9 @@ describe('Role-based Permission Enforcement', () => {
     );
 
     it.each(restrictedRoles)('%s cannot update dates — returns 403 NOT_PERMITTED', async (role) => {
-      const token = tokenFor(role);
-      const project = await findProjectByStatus(token, 'geplant');
+      const project = await findProjectByStatus(ownerToken, 'geplant');
 
-      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+      const res = await authPatch(tokenFor(role), `/api/projects/${project.id}/dates`, {
         plannedStart: '2026-10-01',
         plannedEnd: '2026-10-15',
       });
@@ -140,7 +152,9 @@ describe('Role-based Permission Enforcement', () => {
     it('can transition forward — returns 200', async () => {
       const project = await findProjectByStatus(ownerToken, 'abnahme');
 
-      const res = await authPost(ownerToken, `/api/projects/${project.id}/transition/forward`);
+      const res = await authPost(ownerToken, `/api/projects/${project.id}/transition/forward`, {
+        expectedStatus: 'abnahme',
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -159,7 +173,9 @@ describe('Role-based Permission Enforcement', () => {
       // anfrage -> angebot is safe since seed has 2 anfrage projects.
       const project = await findProjectByStatus(officeToken, 'anfrage');
 
-      const res = await authPost(officeToken, `/api/projects/${project.id}/transition/forward`);
+      const res = await authPost(officeToken, `/api/projects/${project.id}/transition/forward`, {
+        expectedStatus: 'anfrage',
+      });
 
       expect(res.statusCode).toBe(200);
 
@@ -215,7 +231,9 @@ describe('Role-based Permission Enforcement', () => {
 
     it('cannot transition a project — returns 403 NOT_PERMITTED', async () => {
       const project = await findProjectByStatus(ownerToken, 'anfrage');
-      const res = await authPost(noPermsToken, `/api/projects/${project.id}/transition/forward`);
+      const res = await authPost(noPermsToken, `/api/projects/${project.id}/transition/forward`, {
+        expectedStatus: 'anfrage',
+      });
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe('NOT_PERMITTED');
     });

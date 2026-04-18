@@ -12,10 +12,10 @@
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border: 1px solid #475569;
+  border: 1px solid var(--color-border-inverse);
   border-radius: 14px;
-  background: #334155;
-  color: #e2e8f0;
+  background: var(--color-surface-inverse-raised);
+  color: var(--color-text-on-inverse-muted);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -24,25 +24,25 @@
 }
 
 .indicator:hover {
-  border-color: #94a3b8;
+  border-color: var(--color-text-subtle);
 }
 
 .activeIndicator {
-  border-color: #3b82f6;
-  background: #1e3a5f;
+  border-color: var(--color-accent);
+  background: var(--color-accent-active-surface);
 }
 
 .agedIndicator {
-  border-color: #854d0e;
-  background: #422006;
+  border-color: var(--color-warning-inverse-border);
+  background: var(--color-warning-inverse-bg);
 }
 
 .clearButton {
   padding: 4px 10px;
-  border: 1px solid #ef4444;
+  border: 1px solid var(--color-danger-strong);
   border-radius: 14px;
-  background: #450a0a;
-  color: #fca5a5;
+  background: var(--color-danger-inverse-bg);
+  color: var(--color-danger-inverse-text);
   cursor: pointer;
   font-size: 12px;
   font-weight: 500;
@@ -51,5 +51,5 @@
 }
 
 .clearButton:hover {
-  background: #7f1d1d;
+  background: var(--color-danger-inverse-hover);
 }

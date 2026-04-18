@@ -33,7 +33,7 @@ export function customerRoutes(db: Database) {
       },
       async (request, reply) => {
         const query = request.query as { offset?: number; limit?: number; search?: string };
-        const result = await customerService.listCustomers(query);
+        const result = await customerService.listCustomers(request.user!, query);
         return reply.code(200).send(result);
       },
     );
@@ -53,7 +53,7 @@ export function customerRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const customer = await customerService.getCustomer(id);
+        const customer = await customerService.getCustomer(request.user!, id);
         return reply.code(200).send(customer);
       },
     );
@@ -68,6 +68,7 @@ export function customerRoutes(db: Database) {
             required: ['name'],
             additionalProperties: false,
             properties: {
+              id: { type: 'string', format: 'uuid' },
               name: { type: 'string', minLength: 1 },
               phone: { type: ['string', 'null'] },
               email: { type: ['string', 'null'] },
@@ -89,6 +90,7 @@ export function customerRoutes(db: Database) {
       },
       async (request, reply) => {
         const body = request.body as {
+          id?: string;
           name: string;
           phone?: string | null;
           email?: string | null;

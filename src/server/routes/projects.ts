@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
 import { ProjectService } from '../services/ProjectService.js';
+import { STATE_KEYS, type WorkflowState } from '../../config/stateConfig.js';
 
 export function projectRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
@@ -35,6 +36,7 @@ export function projectRoutes(db: Database) {
               search: { type: 'string' },
               hasNoDates: { type: 'string' },
               customerId: { type: 'string', format: 'uuid' },
+              includeArchived: { type: 'string' },
             },
           },
         },
@@ -48,14 +50,16 @@ export function projectRoutes(db: Database) {
           search?: string;
           hasNoDates?: string;
           customerId?: string;
+          includeArchived?: string;
         };
-        const result = await projectService.listProjects({
+        const result = await projectService.listProjects(request.user!, {
           offset: query.offset,
           limit: query.limit,
           status: query.status,
           search: query.search,
           hasNoDates: query.hasNoDates === 'true',
           customerId: query.customerId,
+          includeArchived: query.includeArchived === 'true',
         });
 
         return reply.code(200).send({ data: result.data, total: result.total });
@@ -74,6 +78,7 @@ export function projectRoutes(db: Database) {
             required: ['number', 'title', 'customerId'],
             additionalProperties: false,
             properties: {
+              id: { type: 'string', format: 'uuid' },
               number: { type: 'string', minLength: 1 },
               title: { type: 'string', minLength: 1 },
               customerId: { type: 'string', format: 'uuid' },
@@ -90,6 +95,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const body = request.body as {
+          id?: string;
           number: string;
           title: string;
           customerId: string;
@@ -124,7 +130,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.getProject(id);
+        const project = await projectService.getProject(request.user!, id);
         return reply.code(200).send(project);
       },
     );
@@ -143,12 +149,26 @@ export function projectRoutes(db: Database) {
               id: { type: 'string', format: 'uuid' },
             },
           },
+          body: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['expectedStatus'],
+            properties: {
+              expectedStatus: { type: 'string', enum: STATE_KEYS },
+            },
+          },
         },
         preHandler: requirePermission('project:transition'),
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.transitionForward(id, request.user!.id, request.log);
+        const { expectedStatus } = request.body as { expectedStatus: WorkflowState };
+        const project = await projectService.transitionForward(
+          id,
+          request.user!.id,
+          expectedStatus,
+          request.log,
+        );
         return reply.code(200).send(project);
       },
     );
@@ -167,12 +187,26 @@ export function projectRoutes(db: Database) {
               id: { type: 'string', format: 'uuid' },
             },
           },
+          body: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['expectedStatus'],
+            properties: {
+              expectedStatus: { type: 'string', enum: STATE_KEYS },
+            },
+          },
         },
         preHandler: requirePermission('project:transition'),
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.transitionBackward(id, request.user!.id, request.log);
+        const { expectedStatus } = request.body as { expectedStatus: WorkflowState };
+        const project = await projectService.transitionBackward(
+          id,
+          request.user!.id,
+          expectedStatus,
+          request.log,
+        );
         return reply.code(200).send(project);
       },
     );
@@ -279,6 +313,34 @@ export function projectRoutes(db: Database) {
         const { id } = request.params as { id: string };
         await projectService.deleteProject(id, request.user!.id, request.log);
         return reply.code(200).send({ success: true, deleted: true });
+      },
+    );
+
+    // ---------------------------------------------------------------
+    // DELETE /api/projects/:id/purge — hard-delete (AC-155..158)
+    //
+    // Requires the narrower `project:purge` permission (owner-only).
+    // `project:delete` (which office holds) does not grant purge.
+    // Precondition: the project must already be archived; a non-archived
+    // target returns 409 CONFLICT with German copy directing the user
+    // to archive first.
+    // ---------------------------------------------------------------
+    app.delete(
+      '/api/projects/:id/purge',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', format: 'uuid' } },
+          },
+        },
+        preHandler: requirePermission('project:purge'),
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        await projectService.purgeProject(id, request.user!.id, request.log);
+        return reply.code(204).send();
       },
     );
   };

@@ -3,6 +3,7 @@ import { STRINGS } from '@/config/strings';
 import type { Project } from '@/domain/types';
 import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
 import { useProjectTransition } from '@/hooks/useProjectTransition';
+import { usePermission } from '@/hooks/usePermission';
 import { useProjectStore } from '@/state/projectStore';
 import { dateInputValue } from './dateInputValue';
 import styles from './ProjectDetailPanel.module.css';
@@ -19,7 +20,10 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
   // Always get fresh project data from store
   const currentProject = projects.find((p) => p.id === project.id) ?? project;
   const config = STATE_CONFIG_MAP[currentProject.status];
-  const { canForward, canBackward, forward, backward } = useProjectTransition(currentProject);
+  const { canForward, canBackward, forward, backward, inFlight } =
+    useProjectTransition(currentProject);
+  const canTransition = usePermission('project:transition');
+  const canUpdateDates = usePermission('project:dates');
 
   const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -76,12 +80,13 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           </div>
 
           {/* Transitions */}
-          {(canForward || canBackward) && (
+          {canTransition && (canForward || canBackward) && (
             <div className={styles.transitionButtons}>
               {canForward && (
                 <button
                   className={styles.forwardBtn}
                   onClick={forward}
+                  disabled={inFlight}
                   data-testid="detail-forward-button"
                 >
                   {STRINGS.ui.nextStep}
@@ -91,6 +96,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                 <button
                   className={styles.backwardBtn}
                   onClick={backward}
+                  disabled={inFlight}
                   data-testid="detail-backward-button"
                 >
                   {STRINGS.ui.prevStep}
@@ -133,31 +139,33 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
           )}
 
           {/* Dates */}
-          <div className={styles.section}>
-            <div className={styles.sectionLabel}>{STRINGS.ui.dates}</div>
-            <div className={styles.dateInputs}>
-              <div className={styles.dateField}>
-                <label className={styles.dateLabel}>{STRINGS.ui.dateStart}</label>
-                <input
-                  type="date"
-                  className={styles.dateInput}
-                  value={dateInputValue(currentProject.plannedStart)}
-                  onChange={handleStartDateChange}
-                  data-testid="detail-date-start"
-                />
-              </div>
-              <div className={styles.dateField}>
-                <label className={styles.dateLabel}>{STRINGS.ui.dateEnd}</label>
-                <input
-                  type="date"
-                  className={styles.dateInput}
-                  value={dateInputValue(currentProject.plannedEnd)}
-                  onChange={handleEndDateChange}
-                  data-testid="detail-date-end"
-                />
+          {canUpdateDates && (
+            <div className={styles.section}>
+              <div className={styles.sectionLabel}>{STRINGS.ui.dates}</div>
+              <div className={styles.dateInputs}>
+                <div className={styles.dateField}>
+                  <label className={styles.dateLabel}>{STRINGS.ui.dateStart}</label>
+                  <input
+                    type="date"
+                    className={styles.dateInput}
+                    value={dateInputValue(currentProject.plannedStart)}
+                    onChange={handleStartDateChange}
+                    data-testid="detail-date-start"
+                  />
+                </div>
+                <div className={styles.dateField}>
+                  <label className={styles.dateLabel}>{STRINGS.ui.dateEnd}</label>
+                  <input
+                    type="date"
+                    className={styles.dateInput}
+                    value={dateInputValue(currentProject.plannedEnd)}
+                    onChange={handleEndDateChange}
+                    data-testid="detail-date-end"
+                  />
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Workers */}
           {currentProject.assignedWorkers && currentProject.assignedWorkers.length > 0 && (

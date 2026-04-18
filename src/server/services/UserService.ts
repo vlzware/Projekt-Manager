@@ -5,11 +5,6 @@
 
 import type { Database } from '../db/connection.js';
 
-// Drizzle transactions share the query-builder API with Database but lack
-// the $client property. Repository functions only use query methods, so
-// passing a transaction is safe at runtime.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbLike = any;
 import {
   findById,
   listUsers as listUsersRepo,
@@ -112,9 +107,9 @@ export class UserService {
     // Atomic: deactivation + session invalidation in one transaction.
     // If session cleanup fails, the deactivation rolls back too.
     const user = await this.db.transaction(async (tx) => {
-      const result = await deactivateUserRepo(tx as DbLike, id, actorId);
+      const result = await deactivateUserRepo(tx, id, actorId);
       if (!result) throw notFound(STRINGS.entities.user);
-      await deleteSessionsByUserId(tx as DbLike, id);
+      await deleteSessionsByUserId(tx, id);
       return result;
     });
 
@@ -138,8 +133,8 @@ export class UserService {
     // The sessions FK has ON DELETE CASCADE, but explicit cleanup inside
     // the same transaction makes the intent clear and order-independent.
     await this.db.transaction(async (tx) => {
-      await deleteSessionsByUserId(tx as DbLike, id);
-      const deleted = await deleteUserRepo(tx as DbLike, id);
+      await deleteSessionsByUserId(tx, id);
+      const deleted = await deleteUserRepo(tx, id);
       if (!deleted) throw notFound(STRINGS.entities.user);
     });
 
@@ -164,8 +159,8 @@ export class UserService {
 
     // Atomic: password change + session invalidation in one transaction.
     await this.db.transaction(async (tx) => {
-      await changePasswordRepo(tx as DbLike, id, newHash, actorId);
-      await deleteSessionsByUserId(tx as DbLike, id);
+      await changePasswordRepo(tx, id, newHash, actorId);
+      await deleteSessionsByUserId(tx, id);
     });
 
     log.info({ userId: id, actorId }, 'password_reset');

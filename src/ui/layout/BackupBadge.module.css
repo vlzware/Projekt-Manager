@@ -1,0 +1,68 @@
+/*
+ * Backup-freshness badge — login-screen and owner-landing surface.
+ *
+ * Uses the existing semantic token chain (success / warning / danger /
+ * text-subtle) so a theme override via tokens.css paints the indicator
+ * without per-badge overrides. No inline styles; no hardcoded hex.
+ *
+ * The container's own surface tokens (`--color-surface-raised` +
+ * `--color-border`) follow the page background; the badge reads as a
+ * raised chip on both the light login screen and the dark header frame
+ * via the inverted-context override below.
+ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/*
+ * Inverted-surface variant — applied by the Header consumer only. Keeps
+ * the badge legible when placed on the dark header frame without
+ * forcing the login-screen caller to pass a prop.
+ */
+.badgeInverse {
+  border-color: var(--color-border-inverse);
+  background: var(--color-surface-inverse-raised);
+  color: var(--color-text-on-inverse);
+}
+
+.indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.indicatorGreen {
+  background: var(--color-success);
+}
+
+.indicatorAmber {
+  background: var(--color-warning);
+}
+
+.indicatorRed {
+  background: var(--color-danger-strong);
+}
+
+.indicatorUnknown {
+  /* Neutral gray — the "we don't know" state. Uses a non-status token
+     so it does not read as success/warning/danger. */
+  background: var(--color-text-subtle);
+}
+
+.label {
+  display: inline-block;
+}

@@ -7,7 +7,6 @@
  *   - aria-labelledby points at the title (the label, not the description)
  *   - aria-describedby points at the message
  *   - Escape key cancels
- *   - Click on backdrop cancels
  *   - Initial focus on the confirm button (consistent with browser confirm())
  *   - Focus trap: Tab/Shift-Tab cycle inside the dialog only
  *   - Focus restoration: the element focused before the dialog opened is
@@ -105,7 +104,7 @@ export function ConfirmDialog() {
   if (!isOpen) return null;
 
   return (
-    <div className={styles.overlay} onClick={() => resolve(false)} data-testid="confirm-overlay">
+    <div className={styles.overlay} data-testid="confirm-overlay">
       <div
         ref={dialogRef}
         className={styles.dialog}
@@ -113,7 +112,6 @@ export function ConfirmDialog() {
         aria-modal="true"
         aria-labelledby={TITLE_ID}
         aria-describedby={MESSAGE_ID}
-        onClick={(e) => e.stopPropagation()}
         data-testid="confirm-dialog"
       >
         <h2 id={TITLE_ID} className={styles.title}>

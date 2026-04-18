@@ -10,19 +10,19 @@
  */
 
 import type { Database } from '../db/connection.js';
+import type { ThemePreference } from '../../config/themeStorage.js';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbLike = any;
 import {
   findByUsername,
   updateLastLogin,
   changePassword as changePasswordRepo,
+  updateSelf as updateSelfRepo,
 } from '../repositories/user.js';
 import { createSession, deleteSession, deleteSessionsByUserId } from '../repositories/session.js';
 import { hashPassword, verifyPassword } from '../password.js';
 import { checkPasswordPolicy } from '../config/password-policy.js';
 import { STRINGS } from '../../config/strings.js';
-import { invalidCredentials, validationError } from '../errors.js';
+import { invalidCredentials, notFound, validationError } from '../errors.js';
 import { AUTH_CONFIG } from '../config/index.js';
 import type { ServiceLogger } from './Logger.js';
 
@@ -68,8 +68,30 @@ export class AuthService {
         displayName: user.displayName,
         roles: user.roles,
         email: user.email,
+        // data-model.md §5.7 / api.md §14.2.1 — login response exposes
+        // the user's stored theme preference so the client can render
+        // the correct scheme on first paint without an extra round-trip.
+        // Narrow the raw text column to the domain literal union; the
+        // CHECK constraint in migration 0013 guarantees validity.
+        themePreference: user.themePreference as ThemePreference,
       },
     };
+  }
+
+  /**
+   * Self-scope profile update — used by PATCH /api/auth/me (api.md §14.2.1).
+   * Only fields the user themselves controls appear in `patch`; identity-
+   * bearing fields stay administrative (see `UserService`).
+   */
+  async updateSelfPreferences(
+    actingUserId: string,
+    patch: { themePreference?: ThemePreference },
+    log: ServiceLogger,
+  ) {
+    const updated = await updateSelfRepo(this.db, actingUserId, patch);
+    if (!updated) throw notFound(STRINGS.entities.user);
+    log.info({ userId: actingUserId }, 'user_self_updated');
+    return updated;
   }
 
   async logout(token: string, userId: string, ip: string, log: ServiceLogger) {
@@ -125,8 +147,8 @@ export class AuthService {
     // Atomic: password change + session invalidation in one transaction.
     // If session cleanup fails, the password change rolls back.
     await this.db.transaction(async (tx) => {
-      await changePasswordRepo(tx as DbLike, user.id, newHash, user.id);
-      await deleteSessionsByUserId(tx as DbLike, user.id, currentToken);
+      await changePasswordRepo(tx, user.id, newHash, user.id);
+      await deleteSessionsByUserId(tx, user.id, currentToken);
     });
 
     log.info({ userId, ip }, 'password_change');

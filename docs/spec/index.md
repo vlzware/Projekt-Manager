@@ -4,9 +4,8 @@ This spec defines **what** the application does — not how it does it, how it w
 
 - **How** (implementation): [ARCHITECTURE.md](../../ARCHITECTURE.md) at the repo root — the navigation guide to the codebase. Major decisions with context and rationale live in [ADRs](../adr/index.md).
 - **Why** (vision, final scope, out-of-scope): [Kickoff](../project/kickoff.md).
+- **Conventions** (rules the spec must satisfy): [review/conventions-spec.md](../../review/conventions-spec.md).
 - **`[C]`** marks values deliberately made configurable so the application can be adjusted to a real company's needs.
-
-The spec is a reference document. It strives for focused, concise language and easy navigation. Each rule or constraint is stated once at its authoritative location and cross-referenced elsewhere — single source of truth over restatement. Logical completeness ensures implementability without vagueness on the main points; minute implementation details are left to the implementers.
 
 ---
 
@@ -18,7 +17,7 @@ The system provides:
 
 - **Workflow views** — Kanban board and Calendar — making inaction visible through board structure, aging indicators, and summary counts.
 - **Management views** — tabular interfaces for projects, customers, and users with full CRUD capabilities.
-- **Data exchange** — bulk import and export of projects and customers for integration with external systems.
+- **Data exchange** — unified export of business data and restore-only import from an exported envelope (see [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) and [api.md §14.2.4](api.md#1424-unified-data-exchange)).
 
 All views are role-gated. The system enforces that every pending action (unanswered inquiry, unscheduled job, unsent invoice) is impossible to overlook.
 
@@ -44,8 +43,9 @@ All views are role-gated. The system enforces that every pending action (unanswe
 
 ### Data Exchange
 
-- Bulk import of projects and customers with partial-success semantics
-- Export of projects and customers in JSON with filter support
+- Unified export of the business-data layer (customers, projects, project-worker assignments) for backup and portability, gated by `data:export`.
+- Unified restore-only import from an exported envelope, gated by `data:restore`.
+- Email-based data intake via LLM extraction (paste email text, review extracted customer and project fields, save).
 
 ### Cross-Cutting
 
@@ -100,10 +100,12 @@ Three action states, four buffer states, one active, one terminal. The Kanban bo
 
 The system is authenticated and implements a **four-role permission matrix**. The roles — `owner`, `office`, `worker`, `bookkeeper` — are enforced server-side on every protected route via a role-based permission check. See [api.md §14.3](api.md#143-authorization-rules) for the full role ↔ permission mapping.
 
-- **Owner** carries full read + write permissions on projects and customers, plus administrative user management (create, update, deactivate, reactivate, reset password).
-- **Office** carries full read + write permissions on projects and customers, plus read access to user accounts.
-- **Worker** and **bookkeeper** have read-only access to projects and customers, plus change-own-password.
+- **Owner** carries full read + write permissions on projects and customers, plus administrative user management (create, update, deactivate, reactivate, reset password) and the unified data-exchange surface (`data:export`, `data:restore`).
+- **Office** carries full read + write permissions on projects and customers, plus read access to user accounts and `data:export` (read-only access to the business-data backup).
+- **Worker** has read-only access scoped to the projects the worker is assigned to (assignment recorded in `project_workers`). Customer reads are scoped to the customers referenced by those projects — a worker can reach a customer's detail from a project the worker is assigned to, but the customer list and direct customer lookups exclude customers the worker has no project link to. Workers also have change-own-password.
+- **Bookkeeper** currently has unscoped read access to projects and customers plus change-own-password. This is an MVP placeholder: the kickoff calls for an invoice-oriented view ([kickoff.md](../project/kickoff.md)) tailored to the bookkeeping role, which is not yet implemented. Until that view lands, the bookkeeper is given the broader read surface rather than no view at all. Tightening the scope is deferred until the invoice-oriented view in [kickoff.md](../project/kickoff.md) is specified — not in scope for iteration 7.
 - Self-registration is not available — users are created by an administrator, by seed data, or by the first-run bootstrap (see [§4.5](#45-authentication)).
+- The Daten navigation tab ([ui/daten.md §8.11](ui/daten.md#811-daten-view)) is governed by `data:export`; the restore form within it is additionally governed by `data:restore`.
 
 The role set and per-role permission list are configurable **[C]**.
 
@@ -117,15 +119,15 @@ All data is stored in a persistent database, accessed through an API layer. Seed
 
 ### 4.5 Authentication
 
-| Attribute                            | Assumed Value                                                                                                                |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Authentication method                | Username + password                                                                                                          |
-| Password policy                      | Min 8 characters, max 72 UTF-8 bytes, common-password blocklist **[C]**                                                      |
-| Session duration                     | 24 hours **[C]**                                                                                                             |
-| Maximum concurrent sessions per user | Unlimited                                                                                                                    |
-| Default admin account                | Environment-variable bootstrap on first run (`BOOTSTRAP_ADMIN_*`) — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
-| Self-registration                    | Not available                                                                                                                |
-| Password-change side effect          | See [data-model.md §5.4](data-model.md#54-session)                                                                           |
+| Attribute                            | Assumed Value                                                                                        |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Authentication method                | Username + password                                                                                  |
+| Password policy                      | Min 8 characters, max 72 UTF-8 bytes, common-password blocklist **[C]**                              |
+| Session duration                     | 24 hours **[C]**                                                                                     |
+| Maximum concurrent sessions per user | Unlimited                                                                                            |
+| Default admin account                | Environment-driven bootstrap on first run — see [ADR-0010](../adr/0010-first-run-admin-bootstrap.md) |
+| Self-registration                    | Not available                                                                                        |
+| Password-change side effect          | See [data-model.md §5.4](data-model.md#54-session)                                                   |
 
 **Password policy detail.** The minimum length is 8 characters; the maximum is 72 UTF-8 bytes — the system enforces a hard ceiling so long inputs fail loudly rather than silently truncating. A blocklist of common passwords is checked on every password set to reject trivially guessable values. Both checks run through a single validation path so the bootstrap path and the change-password endpoint cannot diverge. See [ADR-0006](../adr/0006-password-policy-nist-blocklist.md).
 
@@ -137,14 +139,14 @@ For development, initial users come from seed data (see [data-model.md §7.2](da
 
 This specification is split across multiple files:
 
-| File                                   | Sections | Contents                                                                                     |
-| -------------------------------------- | -------- | -------------------------------------------------------------------------------------------- |
-| **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                                    |
-| **[data-model.md](data-model.md)**     | 5–7      | Project, Customer, User, Session entities; state metadata; persistence principles; seed data |
-| **[ui.md](ui.md)**                     | 8–10     | Layout, navigation, workflow views, management views, import/export, interactions            |
-| **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security            |
-| **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                             |
-| **[verification.md](verification.md)** | 15–17    | Acceptance criteria, test specifications, risks                                              |
+| File                                   | Sections | Contents                                                                                      |
+| -------------------------------------- | -------- | --------------------------------------------------------------------------------------------- |
+| **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                                     |
+| **[data-model.md](data-model.md)**     | 5–7      | Project, Customer, User, Session entities; state metadata; persistence principles; seed data  |
+| **[ui/](ui/index.md)**                 | 8–10     | UI: shell, navigation, workflow views, management, Daten, email intake, behavior + responsive |
+| **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security             |
+| **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                              |
+| **[verification.md](verification.md)** | 15–17    | Acceptance criteria, test specifications, risks                                               |
 
 The test-spec traceability matrix (AC ↔ tests) lives in [docs/testing/traceability.md](../testing/traceability.md) — not in the spec itself, because it is a verification artifact maintained alongside the test suite (see [CONTRIBUTING.md §Workflow](../../CONTRIBUTING.md#workflow) step 3).
 

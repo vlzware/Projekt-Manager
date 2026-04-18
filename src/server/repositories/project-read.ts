@@ -2,20 +2,23 @@
  * Project repository — read & create operations.
  */
 
-import { eq, count, inArray, and, ilike, or, isNull } from 'drizzle-orm';
+import { eq, count, inArray, and, ilike, or, isNull, desc } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { projects, projectWorkers, users, customers } from '../db/schema.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
+import { formatDateOnly } from '../../domain/dateFormat.js';
+import type { AuthUser } from '../middleware/auth.js';
+import {
+  projectScopeForCaller,
+  isProjectInScope,
+  OUT_OF_SCOPE,
+  type ScopedReadResult,
+} from './scope.js';
 
 /** Escape LIKE-pattern metacharacters so user input is treated literally. */
 function escapeLike(value: string): string {
   return value.replace(/[%_\\]/g, '\\$&');
-}
-
-/** Format a Date from a `date` column as YYYY-MM-DD (no time component). */
-function toDateString(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
 
 export type ProjectRow = typeof projects.$inferSelect;
@@ -26,6 +29,18 @@ export class ProjectNotFoundError extends Error {
   constructor() {
     super(STRINGS.errors.notFound(STRINGS.entities.project));
     this.name = 'ProjectNotFoundError';
+  }
+}
+
+/**
+ * Thrown when a purge (hard-delete) targets a project that is not yet
+ * archived. The service maps this to 409 CONFLICT with a German message
+ * directing the caller to archive first (AC-156).
+ */
+export class ProjectNotArchivedError extends Error {
+  constructor() {
+    super(STRINGS.projects.purgeRequiresArchive);
+    this.name = 'ProjectNotArchivedError';
   }
 }
 
@@ -57,8 +72,8 @@ export function toProject(
     statusChangedAt: row.statusChangedAt.toISOString(),
     customerId: row.customerId,
     customer: customer ? toCustomer(customer) : null,
-    plannedStart: row.plannedStart ? toDateString(row.plannedStart) : null,
-    plannedEnd: row.plannedEnd ? toDateString(row.plannedEnd) : null,
+    plannedStart: row.plannedStart ? formatDateOnly(row.plannedStart) : null,
+    plannedEnd: row.plannedEnd ? formatDateOnly(row.plannedEnd) : null,
     assignedWorkers: workers.length > 0 ? workers : null,
     estimatedValue: row.estimatedValue ? Number(row.estimatedValue) : null,
     notes: row.notes ?? null,
@@ -136,14 +151,26 @@ export interface ListProjectsOpts {
   search?: string;
   hasNoDates?: boolean;
   customerId?: string;
+  /**
+   * When true, include soft-deleted (archived) rows in the result.
+   * Default `false` — archived rows excluded (AC-151). The flag composes
+   * with all other filters via AND.
+   */
+  includeArchived?: boolean;
 }
 
 export async function listProjects(
   db: Database,
+  caller: AuthUser,
   opts: ListProjectsOpts = {},
 ): Promise<{ data: ReturnType<typeof toProject>[]; total: number }> {
-  // Build WHERE conditions
-  const conditions = [eq(projects.deleted, false)];
+  // Build WHERE conditions. AC-151: only exclude archived rows when
+  // includeArchived is not truthy — when true, the deleted predicate is
+  // omitted so archived rows appear. All other filters still AND-compose.
+  const conditions = [];
+  if (!opts.includeArchived) {
+    conditions.push(eq(projects.deleted, false));
+  }
 
   if (opts.status) {
     const statuses = Array.isArray(opts.status) ? opts.status : [opts.status];
@@ -163,6 +190,11 @@ export async function listProjects(
     conditions.push(eq(projects.customerId, opts.customerId));
   }
 
+  // AC-145: apply per-caller read scope. Owner/office/bookkeeper → null
+  // (no additional filter); worker → EXISTS-predicate over project_workers.
+  const scope = projectScopeForCaller(caller);
+  if (scope) conditions.push(scope);
+
   const whereClause = and(...conditions);
 
   // For search, we need to join customers to search across customer name.
@@ -179,7 +211,8 @@ export async function listProjects(
       .select({ project: projects, customer: customers })
       .from(projects)
       .innerJoin(customers, eq(projects.customerId, customers.id))
-      .where(and(whereClause, searchCondition));
+      .where(and(whereClause, searchCondition))
+      .orderBy(desc(projects.createdAt));
 
     const paginatedQuery =
       opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
@@ -205,7 +238,7 @@ export async function listProjects(
   }
 
   // No search — simpler query path
-  const baseQuery = db.select().from(projects).where(whereClause);
+  const baseQuery = db.select().from(projects).where(whereClause).orderBy(desc(projects.createdAt));
   const paginatedQuery =
     opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
 
@@ -231,10 +264,24 @@ export async function listProjects(
   return { data, total };
 }
 
+/**
+ * Get a project by id, respecting the caller's read scope.
+ *
+ * Three-valued result (ADR-0019):
+ *   - `null`              — row does not exist (→ 404 NOT_FOUND)
+ *   - `OUT_OF_SCOPE`      — row exists but caller is not assigned
+ *                           (→ 403 NOT_PERMITTED; AC-147)
+ *   - `ReturnType<toProject>` — in-scope row
+ *
+ * The two-step fetch (no-scope row lookup, then scope check) is deliberate:
+ * a single scoped query cannot distinguish "not found" from "out of scope".
+ * The separation honors the spec's explicit 403-over-404 contract.
+ */
 export async function getProject(
   db: Database,
+  caller: AuthUser,
   id: string,
-): Promise<ReturnType<typeof toProject> | null> {
+): Promise<ScopedReadResult<ReturnType<typeof toProject>>> {
   const rows = await db
     .select()
     .from(projects)
@@ -242,6 +289,11 @@ export async function getProject(
     .limit(1);
 
   if (rows.length === 0) return null;
+
+  if (!(await isProjectInScope(db, caller, id))) {
+    return OUT_OF_SCOPE;
+  }
+
   const row = rows[0]!;
   const [workers, customerRows] = await Promise.all([
     fetchWorkersForProject(db, id),
@@ -257,6 +309,7 @@ export async function getProject(
 export async function insertProject(
   db: Database,
   data: {
+    id?: string;
     number: string;
     title: string;
     status: WorkflowState;
@@ -275,6 +328,7 @@ export async function insertProject(
     const rows = await tx
       .insert(projects)
       .values({
+        ...(data.id !== undefined ? { id: data.id } : {}),
         number: data.number,
         title: data.title,
         status: data.status,
@@ -382,6 +436,18 @@ export async function updateProject(
 }
 
 /**
+ * Fetch the raw DB row by id (including soft-deleted). Used by the
+ * idempotency path in ProjectService.createProject — it compares the stored
+ * project against the request body. We intentionally ignore the `deleted`
+ * flag here: a client replaying a create must not get a soft-deleted row
+ * back, but the caller needs to disambiguate "id taken" from "id free".
+ */
+export async function getProjectRowById(db: Database, id: string): Promise<ProjectRow | null> {
+  const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+/**
  * Soft-delete a project (set deleted = true).
  */
 export async function softDeleteProject(db: Database, id: string, userId: string): Promise<void> {
@@ -392,4 +458,31 @@ export async function softDeleteProject(db: Database, id: string, userId: string
     .returning({ id: projects.id });
 
   if (rows.length === 0) throw new ProjectNotFoundError();
+}
+
+/**
+ * Hard-delete a project (AC-155). Distinguishes three outcomes:
+ *   - Row does not exist                → ProjectNotFoundError
+ *   - Row exists but `deleted = false`  → ProjectNotArchivedError
+ *   - Row exists and `deleted = true`   → deletes the row; resolves
+ *
+ * `project_workers` rows cascade via the FK (`onDelete: 'cascade'` in
+ * the schema), so no explicit cleanup is needed here.
+ *
+ * The two-step fetch-then-delete is deliberate: a single DELETE
+ * gated by `deleted = true` would collapse the not-found and
+ * not-archived cases into the same zero-rows-affected signal, and
+ * the service layer must return different HTTP codes for each.
+ */
+export async function hardDeleteProject(db: Database, id: string): Promise<void> {
+  const existing = await db
+    .select({ id: projects.id, deleted: projects.deleted })
+    .from(projects)
+    .where(eq(projects.id, id))
+    .limit(1);
+
+  if (existing.length === 0) throw new ProjectNotFoundError();
+  if (!existing[0]!.deleted) throw new ProjectNotArchivedError();
+
+  await db.delete(projects).where(eq(projects.id, id));
 }

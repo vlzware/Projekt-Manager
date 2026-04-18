@@ -16,6 +16,7 @@ import {
 import { useCustomerStore } from '@/state/customerStore';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useProjectStore } from '@/state/projectStore';
+import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
 import type { Customer } from '@/domain/types';
 import styles from '../management/Management.module.css';
@@ -53,8 +54,30 @@ export function EmailExtractModal({ onClose }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Client-supplied UUIDs for idempotent create. Generated once per modal
+  // instance (on mount) and stable across re-renders and retries. The
+  // customer id is only used when the user creates a new customer; the
+  // project id is only used when a project is actually being created. A
+  // single stable id per slot lets a retry after a transient failure
+  // collapse to a replay rather than duplicating the row.
+  //
+  // Freshness across logical opens depends on the parent unmounting the
+  // modal between opens (see Header.tsx — `{extractOpen && <Modal/>}`).
+  // If a future refactor keeps the modal mounted for transitions, these
+  // refs would reuse UUIDs across logical opens — breaking idempotency
+  // by turning a fresh create into a replay against a stale id.
+  const customerCreateIdRef = useRef<string>(crypto.randomUUID());
+  const projectCreateIdRef = useRef<string>(crypto.randomUUID());
+
   const fetchCustomers = useCustomerStore((s) => s.fetchCustomers);
   const fetchMgmtProjects = useProjectManagementStore((s) => s.fetchProjects);
+
+  const safeClose = useCallback(() => {
+    if (extracting || saving) return;
+    onClose();
+  }, [extracting, saving, onClose]);
+
+  useEscapeKey(safeClose);
 
   // Search for existing customers when match search changes.
   // Empty search is handled via derivation (effectiveMatchResults below)
@@ -85,6 +108,7 @@ export function EmailExtractModal({ onClose }: Props) {
   }, [matchDropdownOpen, closeDropdown]);
 
   const handleExtract = async () => {
+    if (extracting || !emailText.trim()) return;
     setError(null);
     setExtracting(true);
 
@@ -110,6 +134,7 @@ export function EmailExtractModal({ onClose }: Props) {
   };
 
   const handleSave = async () => {
+    if (saving) return;
     setError(null);
     setSaving(true);
 
@@ -129,6 +154,7 @@ export function EmailExtractModal({ onClose }: Props) {
           : null;
 
       const custResult = await createCustomerFromExtraction({
+        id: customerCreateIdRef.current,
         name: customerName.trim(),
         phone: phone.trim() || null,
         email: email.trim() || null,
@@ -142,6 +168,12 @@ export function EmailExtractModal({ onClose }: Props) {
       }
 
       custId = custResult.data.id;
+      // Record the committed id so a subsequent retry (e.g. project step
+      // below failed transiently) skips the customer-create branch and
+      // uses the existing row instead of replaying the create — which
+      // would either waste an idempotent call or, if the user edited a
+      // field between attempts, provoke an IDEMPOTENCY_CONFLICT.
+      setSelectedCustomerId(custId);
     }
 
     // Step 2: create project if title is provided
@@ -149,6 +181,7 @@ export function EmailExtractModal({ onClose }: Props) {
       const num = projectNumber.trim() || generateProjectNumber();
 
       const projResult = await createProjectFromExtraction({
+        id: projectCreateIdRef.current,
         number: num,
         title: projectTitle.trim(),
         customerId: custId,
@@ -172,8 +205,20 @@ export function EmailExtractModal({ onClose }: Props) {
   };
 
   return (
-    <div className={styles.formOverlay} onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={styles.formPanel} onClick={(e) => e.stopPropagation()}>
+    <div className={styles.formOverlay}>
+      <form
+        className={styles.formPanel}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!extracted) {
+            if (extracting || !emailText.trim()) return;
+            void handleExtract();
+          } else {
+            if (saving || (!selectedCustomerId && !customerName.trim())) return;
+            void handleSave();
+          }
+        }}
+      >
         <h2 className={styles.formTitle}>{STRINGS.ui.extractEmail}</h2>
 
         {!extracted ? (
@@ -186,6 +231,7 @@ export function EmailExtractModal({ onClose }: Props) {
                 placeholder={STRINGS.ui.extractPlaceholder}
                 rows={10}
                 autoFocus
+                disabled={extracting}
                 data-testid="extract-email-input"
               />
             </div>
@@ -193,12 +239,17 @@ export function EmailExtractModal({ onClose }: Props) {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={onClose}>
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={safeClose}
+                disabled={extracting}
+              >
                 {STRINGS.ui.cancel}
               </button>
               <button
+                type="submit"
                 className={styles.submitButton}
-                onClick={handleExtract}
                 disabled={extracting || !emailText.trim()}
                 data-testid="extract-submit"
               >
@@ -236,6 +287,7 @@ export function EmailExtractModal({ onClose }: Props) {
                 }}
                 onClick={() => effectiveMatchResults.length > 0 && setMatchDropdownOpen(true)}
                 placeholder={STRINGS.ui.search}
+                disabled={saving}
                 data-testid="extract-customer-search"
               />
               {matchDropdownOpen && effectiveMatchResults.length > 0 && (
@@ -266,6 +318,7 @@ export function EmailExtractModal({ onClose }: Props) {
                     className={styles.formInput}
                     value={customerName}
                     onChange={(e) => setCustomerName(e.target.value)}
+                    disabled={saving}
                     data-testid="extract-customer-name"
                   />
                 </div>
@@ -275,6 +328,7 @@ export function EmailExtractModal({ onClose }: Props) {
                     className={styles.formInput}
                     value={street}
                     onChange={(e) => setStreet(e.target.value)}
+                    disabled={saving}
                   />
                 </div>
                 <div className={styles.formGroup}>
@@ -283,6 +337,7 @@ export function EmailExtractModal({ onClose }: Props) {
                     className={styles.formInput}
                     value={zip}
                     onChange={(e) => setZip(e.target.value)}
+                    disabled={saving}
                   />
                 </div>
                 <div className={styles.formGroup}>
@@ -291,6 +346,7 @@ export function EmailExtractModal({ onClose }: Props) {
                     className={styles.formInput}
                     value={city}
                     onChange={(e) => setCity(e.target.value)}
+                    disabled={saving}
                   />
                 </div>
                 <div className={styles.formGroup}>
@@ -299,6 +355,7 @@ export function EmailExtractModal({ onClose }: Props) {
                     className={styles.formInput}
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
+                    disabled={saving}
                   />
                 </div>
                 <div className={styles.formGroup}>
@@ -307,6 +364,7 @@ export function EmailExtractModal({ onClose }: Props) {
                     className={styles.formInput}
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
+                    disabled={saving}
                   />
                 </div>
               </>
@@ -322,6 +380,7 @@ export function EmailExtractModal({ onClose }: Props) {
                 value={projectNumber}
                 onChange={(e) => setProjectNumber(e.target.value)}
                 placeholder={generateProjectNumber()}
+                disabled={saving}
                 data-testid="extract-project-number"
               />
             </div>
@@ -332,6 +391,7 @@ export function EmailExtractModal({ onClose }: Props) {
                 className={styles.formInput}
                 value={projectTitle}
                 onChange={(e) => setProjectTitle(e.target.value)}
+                disabled={saving}
                 data-testid="extract-project-title"
               />
             </div>
@@ -339,12 +399,17 @@ export function EmailExtractModal({ onClose }: Props) {
             {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.formActions}>
-              <button className={styles.cancelButton} onClick={onClose}>
+              <button
+                type="button"
+                className={styles.cancelButton}
+                onClick={safeClose}
+                disabled={saving}
+              >
                 {STRINGS.ui.cancel}
               </button>
               <button
+                type="submit"
                 className={styles.submitButton}
-                onClick={handleSave}
                 disabled={saving || (!selectedCustomerId && !customerName.trim())}
                 data-testid="extract-save"
               >
@@ -353,7 +418,7 @@ export function EmailExtractModal({ onClose }: Props) {
             </div>
           </>
         )}
-      </div>
+      </form>
     </div>
   );
 }

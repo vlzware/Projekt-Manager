@@ -18,7 +18,7 @@
  *     (that's the whole reason this file exists).
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import path from 'path';
@@ -26,6 +26,7 @@ import { fileURLToPath } from 'url';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { buildApp } from '../app.js';
 import { validateEnv } from '../config/env.js';
+import { getRateLimit } from '../config/index.js';
 import { createDatabase } from '../db/connection.js';
 import { seed } from '../seed.js';
 import { SEED_USERS } from '../../test/seedAssumptions.js';
@@ -37,7 +38,15 @@ let app: FastifyInstance;
 let pool: pg.Pool;
 
 describe('Login rate limiting (end-to-end)', () => {
+  // Vitest runs with NODE_ENV=test, where `getRateLimit()` defaults the
+  // login ceiling to 30/min so E2E flows with many fresh contexts don't
+  // throttle. Pin the production ceiling (5/min) explicitly here — this
+  // test is the one that verifies the *production* behaviour.
+  const originalLimit = process.env.LOGIN_RATE_LIMIT_MAX;
+
   beforeAll(async () => {
+    process.env.LOGIN_RATE_LIMIT_MAX = '5';
+
     // buildApp() reads the validated env (see config/index.ts and app.ts) —
     // any test that bypasses startApp() must call validateEnv() itself.
     validateEnv();
@@ -61,6 +70,8 @@ describe('Login rate limiting (end-to-end)', () => {
   afterAll(async () => {
     if (app) await app.close();
     if (pool) await pool.end();
+    if (originalLimit === undefined) delete process.env.LOGIN_RATE_LIMIT_MAX;
+    else process.env.LOGIN_RATE_LIMIT_MAX = originalLimit;
   });
 
   // The production limit is `{ max: 5, timeWindow: '1 minute' }` per IP for
@@ -169,5 +180,58 @@ describe('Login rate limiting (end-to-end)', () => {
     expect(typeof body.message).toBe('string');
     expect(body.message.length).toBeGreaterThan(0);
     expect(sixth.headers['retry-after']).toBeDefined();
+  });
+});
+
+// Unit-level pins on getRateLimit()'s environment-aware default. The
+// integration block above proves the 5/min ceiling actually rejects the
+// 6th request; these cases pin the selection logic between production
+// (5/min) and dev/test (30/min) so a regression that swaps the branches
+// is caught without spinning up the app.
+describe('getRateLimit() login default selection', () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalOverride = process.env.LOGIN_RATE_LIMIT_MAX;
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalOverride === undefined) delete process.env.LOGIN_RATE_LIMIT_MAX;
+    else process.env.LOGIN_RATE_LIMIT_MAX = originalOverride;
+  });
+
+  it('production with no override → 5/min', () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.LOGIN_RATE_LIMIT_MAX;
+    expect(getRateLimit().login.max).toBe(5);
+  });
+
+  it('missing NODE_ENV is treated as production → 5/min (fail-closed)', () => {
+    delete process.env.NODE_ENV;
+    delete process.env.LOGIN_RATE_LIMIT_MAX;
+    expect(getRateLimit().login.max).toBe(5);
+  });
+
+  it('development with no override → 30/min (E2E-friendly)', () => {
+    process.env.NODE_ENV = 'development';
+    delete process.env.LOGIN_RATE_LIMIT_MAX;
+    expect(getRateLimit().login.max).toBe(30);
+  });
+
+  it('test with no override → 30/min (E2E-friendly)', () => {
+    process.env.NODE_ENV = 'test';
+    delete process.env.LOGIN_RATE_LIMIT_MAX;
+    expect(getRateLimit().login.max).toBe(30);
+  });
+
+  it('override wins over NODE_ENV default', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.LOGIN_RATE_LIMIT_MAX = '100';
+    expect(getRateLimit().login.max).toBe(100);
+  });
+
+  it('invalid override (non-numeric) falls back to the NODE_ENV default', () => {
+    process.env.NODE_ENV = 'development';
+    process.env.LOGIN_RATE_LIMIT_MAX = 'notanumber';
+    expect(getRateLimit().login.max).toBe(30);
   });
 });

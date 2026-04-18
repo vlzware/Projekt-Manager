@@ -53,7 +53,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
   function runTransition(
     projectId: string,
     computeNext: (current: WorkflowState) => WorkflowState | null,
-    apiCall: (id: string) => Promise<ApiResult<Project>>,
+    apiCall: (id: string, expectedStatus: WorkflowState) => Promise<ApiResult<Project>>,
   ): void {
     const project = get().projects.find((p) => p.id === projectId);
     if (!project) return;
@@ -66,7 +66,7 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       mutationError: null,
     }));
 
-    apiCall(projectId)
+    apiCall(projectId, project.status)
       .then((result) => {
         if (!result.ok) {
           if (result.sessionExpired) {

@@ -4,8 +4,9 @@
 
 import { randomBytes } from 'node:crypto';
 import { and, eq, lt, ne } from 'drizzle-orm';
-import type { Database } from '../db/connection.js';
+import type { Database, TransactionalDatabase } from '../db/connection.js';
 import { sessions, users } from '../db/schema.js';
+import type { ThemePreference } from '../../config/themeStorage.js';
 
 export type SessionRow = typeof sessions.$inferSelect;
 
@@ -18,6 +19,7 @@ export interface SessionWithUser {
     roles: string[];
     email: string | null;
     active: boolean;
+    themePreference: ThemePreference;
   };
 }
 
@@ -55,6 +57,7 @@ export async function findSession(db: Database, token: string): Promise<SessionW
         roles: users.roles,
         email: users.email,
         active: users.active,
+        themePreference: users.themePreference,
       },
     })
     .from(sessions)
@@ -62,7 +65,18 @@ export async function findSession(db: Database, token: string): Promise<SessionW
     .where(eq(sessions.token, token))
     .limit(1);
 
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    session: row.session,
+    user: {
+      ...row.user,
+      // DB CHECK `users_valid_theme_preference` (migration 0013) guarantees
+      // the column is always one of the three literals — narrow the raw
+      // text type to the domain union for downstream type safety.
+      themePreference: row.user.themePreference as ThemePreference,
+    },
+  };
 }
 
 /**
@@ -77,7 +91,7 @@ export async function deleteSession(db: Database, token: string): Promise<void> 
  * (e.g. the current session on password change).
  */
 export async function deleteSessionsByUserId(
-  db: Database,
+  db: TransactionalDatabase,
   userId: string,
   excludeToken?: string,
 ): Promise<void> {

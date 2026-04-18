@@ -89,6 +89,27 @@ test.describe('Kanban board flows', () => {
         await expect(page.getByTestId(col)).toBeVisible();
       }
     });
+
+    test('clicking an expanded column header collapses it, and again expands it', async ({
+      page,
+    }) => {
+      // Regression: a column that is not auto-collapsed by the tier must
+      // still toggle on header click. At 1920px viewport, tier is 0 and
+      // all columns render expanded — the toggle is the user's only way
+      // to collapse them. The expanded column renders the full header with
+      // its `column-header-*` testid; the collapsed column renders only
+      // the vertical strip (no such testid). Switching between those two
+      // renderings is the observable proof that the toggle fires.
+      const header = page.getByTestId('column-header-anfrage');
+      const column = page.getByTestId('kanban-column-anfrage');
+      await expect(header).toBeVisible();
+
+      await header.click();
+      await expect(header).toHaveCount(0);
+
+      await column.click();
+      await expect(page.getByTestId('column-header-anfrage')).toBeVisible();
+    });
   });
 
   test.describe('Summary filter', () => {
@@ -116,6 +137,48 @@ test.describe('Kanban board flows', () => {
       await expect(clearFilter).toBeVisible();
       await clearFilter.click();
       // After clearing, anfrage should show its original count
+      await expect(page.getByTestId('column-count-anfrage')).toContainText('2');
+    });
+
+    test('switches to Kanban and applies the filter when chip is clicked from another view', async ({
+      page,
+    }) => {
+      // AC-9 cross-view navigation: indicators are visible across all
+      // views; activating one from a non-Kanban view jumps to Kanban
+      // with the filter applied.
+      await page.getByTestId('view-toggle-kalender').click();
+      await expect(page.getByTestId('calendar-view')).toBeVisible();
+
+      // The summary indicators are still in the header on the calendar view.
+      await page.getByTestId('summary-action-rechnung_faellig').click();
+
+      // Now back on Kanban with the filter active.
+      await expect(page.getByTestId('kanban-board')).toBeVisible();
+      await expect(page.getByTestId('column-count-rechnung_faellig')).toContainText('3');
+      await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
+
+      // Clear filter to leave seed state intact for later tests.
+      await page.getByTestId('clear-filter').click();
+      await expect(page.getByTestId('column-count-anfrage')).toContainText('2');
+    });
+
+    test('toggles off when the same active chip is clicked, without navigating', async ({
+      page,
+    }) => {
+      // Apply filter on Kanban.
+      await page.getByTestId('summary-action-rechnung_faellig').click();
+      await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
+
+      // Switch to calendar — switching views clears filters per spec §8.7.1,
+      // so re-apply the filter from the calendar to set up the toggle.
+      await page.getByTestId('view-toggle-kalender').click();
+      await page.getByTestId('summary-action-rechnung_faellig').click();
+      await expect(page.getByTestId('kanban-board')).toBeVisible();
+      await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
+
+      // Click the same chip again — should clear the filter and stay on Kanban.
+      await page.getByTestId('summary-action-rechnung_faellig').click();
+      await expect(page.getByTestId('kanban-board')).toBeVisible();
       await expect(page.getByTestId('column-count-anfrage')).toContainText('2');
     });
   });

@@ -5,40 +5,30 @@
  * and useLocation are available. In unit tests that render <App /> directly
  * (no router), the hook falls back to the Zustand UI store.
  *
- * Path ↔ ViewMode mapping:
- *   /kanban   → 'kanban'
- *   /calendar → 'kalender'
+ * Path ↔ ViewMode mapping lives in the central route table
+ * (`src/config/routes.ts`) — this module re-exports the helpers so
+ * existing callers keep a single import site.
  */
 
 import { useInRouterContext, useNavigate, useLocation } from 'react-router-dom';
 import { useUIStore } from '@/state/uiStore';
+import { viewFromPath, pathFromView, type RouteView } from '@/config/routes';
 import type { ViewMode } from '@/domain/types';
 
-const PATH_TO_VIEW: Record<string, ViewMode> = {
-  '/kanban': 'kanban',
-  '/calendar': 'kalender',
-  '/customers': 'kunden',
-  '/projects': 'projekte',
-  '/users': 'benutzer',
-  '/data': 'daten',
-};
+/**
+ * Compile-time mirror check: `RouteView` (config layer, can't import
+ * `ViewMode`) must equal `ViewMode` exactly. If the two unions drift,
+ * these two assignments fail `tsc --noEmit` and the offender gets
+ * caught at build time. No runtime cost.
+ */
+type _RouteViewMirrorsViewMode = RouteView extends ViewMode ? true : never;
+type _ViewModeMirrorsRouteView = ViewMode extends RouteView ? true : never;
+const _routeViewMirror: _RouteViewMirrorsViewMode = true;
+const _viewModeMirror: _ViewModeMirrorsRouteView = true;
+void _routeViewMirror;
+void _viewModeMirror;
 
-const VIEW_TO_PATH: Record<ViewMode, string> = {
-  kanban: '/kanban',
-  kalender: '/calendar',
-  kunden: '/customers',
-  projekte: '/projects',
-  benutzer: '/users',
-  daten: '/data',
-};
-
-export function viewFromPath(pathname: string): ViewMode {
-  return PATH_TO_VIEW[pathname] ?? 'kanban';
-}
-
-export function pathFromView(view: ViewMode): string {
-  return VIEW_TO_PATH[view];
-}
+export { viewFromPath, pathFromView };
 
 /**
  * Hook that navigates via React Router when available, or falls back

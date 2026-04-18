@@ -1,6 +1,6 @@
 # Operations — Troubleshooting
 
-Knowledge learned the hard way during iteration 4 rollout. Each entry names the trap, the root cause, and the workaround — in that order. Add new entries as they are discovered; keep them terse.
+Knowledge learned the hard way. Each entry names the trap, the root cause, and the workaround — in that order. Add new entries as they are discovered; keep them terse.
 
 ## Caddy `{$VAR:default}` does not default empty strings
 
@@ -21,14 +21,6 @@ Knowledge learned the hard way during iteration 4 rollout. Each entry names the 
 - `docker compose up -d --force-recreate <svc>` — always recreates. Use this when you edited a bind-mounted file (Caddyfile, Corefile, etc.) and need the container to see the new content.
 
 **Rule of thumb:** After editing `.env` → `up -d`. After editing a bind-mounted file → `up -d --force-recreate`. `restart` alone is almost never what you want.
-
-## GitHub Actions `workflow_run` uses the default branch's workflow file
-
-**Trap:** A workflow triggered via `on: workflow_run` executes the version of the workflow file **from `main`** (or whatever the default branch is), not the version on the branch that triggered it. Iteration-branch edits to `deploy.yml` have no effect until they are merged to `main`.
-
-**Root cause:** Documented GitHub Actions behavior — `workflow_run` is considered an event fired from the default branch's perspective to avoid a branch being able to modify its own automation and escalate privileges.
-
-**Workaround:** When debugging a `workflow_run`-triggered pipeline, cherry-pick the workflow file change to `main` first, or use `workflow_dispatch` on the iteration branch for interactive iteration. `docs/ops/cd-pipeline.md` documents this at the bottom under "Caveats"; if you miss it, you lose a debugging hour.
 
 ## \[skip ci\] matches anywhere in the commit body, including quoted text
 
@@ -64,3 +56,19 @@ For docs prose, backslash escape reads cleanest. For commit messages (which GitH
 **Trap:** Diagnosing env issues with `env | grep <NAME>` dumps the full value wherever the command output is displayed. If the shell is an agent transcript or a shared session, the secret is now in the log.
 
 **Workaround:** Habit — filter values by default. Use `env | grep -E '^(TOKEN\|KEY\|PASSWORD\|SECRET)=' | sed -E 's/=.*/=<redacted>/'` or similar. If a value has already been exposed, rotate it immediately; do not rely on "I can scroll up and delete the line".
+
+## `source <(age -d …)` hangs after the passphrase prompt
+
+**Trap:** `source <(age -d secrets.env.age)` prints the prompt, accepts the passphrase, then hangs indefinitely. The shell never returns. `scripts/deploy.sh` uses this exact form successfully, so the pattern itself is not broken — it just fails in some interactive contexts.
+
+**Root cause:** Process substitution wires `age`'s stdout to an anonymous FIFO while the passphrase is read from `/dev/tty`. Exact coordination between tty input, FIFO drain, and `source` varies with terminal type, SSH pty allocation, and whether a wrapping process (agent, multiplexer) intercepts the tty. When any step blocks, the pipeline deadlocks and no error surfaces.
+
+**Workaround:** Use command substitution instead — `age` runs to completion before `eval` sees any input, so there is no FIFO to deadlock on:
+
+```bash
+set -a
+eval "$(age -d secrets.env.age)"
+set +a
+```
+
+`set -a` in the calling shell still auto-exports every `KEY=value` assignment, matching the process-substitution form's net effect. Plaintext stays in memory only. Prefer this form for ad-hoc and interactive use; `scripts/deploy.sh` keeps the process-substitution form because it runs in a controlled non-interactive-enough context where the race doesn't trigger.

@@ -11,12 +11,15 @@ services:
     # Pulled from GHCR — see ADR-0011. The tag is the commit SHA of
     # the currently-deployed revision, set by scripts/deploy.sh via
     # APP_IMAGE_TAG (see ADR-0012 for the manual pull-based deploy
-    # flow that replaces the former deploy.yml). Default falls back
-    # to the `main` branch tag so a manual `docker compose up` on
-    # the VPS picks up a sensible image without requiring the env
-    # var. The dev overlay (docker-compose.dev.yml) reintroduces
-    # `build: .` so local development still builds from source.
-    image: ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG:-main}
+    # flow that replaces the former deploy.yml). No default: the `:?`
+    # substitution refuses to start compose without an explicit tag,
+    # so an unsynchronised `docker compose up` cannot silently pull
+    # `:main` (which was the pre-C2-audit default and drifted from
+    # whatever branch the operator was actually on). scripts/deploy.sh
+    # exports APP_IMAGE_TAG before every compose invocation; the dev
+    # overlay (docker-compose.dev.yml) reintroduces `build: .` so
+    # local development still builds from source.
+    image: ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
     read_only: true
     tmpfs:
       - /tmp
@@ -47,6 +50,12 @@ services:
       # disabled when the key is absent.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-2.5-flash-lite}
+      # Periodic session-reaper cadence. Default 60 min matches env.ts;
+      # lower values tighten revocation latency at the cost of more DB
+      # traffic. Forwarded explicitly so the container sees the override
+      # — without this line, the Zod schema silently falls back to its
+      # default at runtime (the failure mode check-env-drift.sh guards).
+      SESSION_CLEANUP_INTERVAL_MINUTES: ${SESSION_CLEANUP_INTERVAL_MINUTES:-60}
     healthcheck:
       test:
         [
@@ -110,6 +119,107 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       STORAGE_BUCKET: projekt-manager
     restart: 'no'
+
+  backup:
+    # Layer 2 encrypted backup service — see ADR-0020 and
+    # docs/spec/architecture.md §11.10. Runs a dcron loop that fires
+    # run-backup.sh five times on weekdays (09/12/15/18/21 Europe/Berlin)
+    # and once on weekends (12:00), with run-drill.sh at a +2 min offset
+    # on each tick. Retention is linear (R2 bucket lock + 30-day
+    # lifecycle); no in-container rotation step.
+    #
+    # Pulled from GHCR — mirrors the `app` service's shape (ADR-0011's
+    # "build in CI, distribute via GHCR" invariant extends to this
+    # image; see .github/workflows/ci.yml build-and-push job). The tag
+    # is the commit SHA of the currently-deployed revision, set by
+    # scripts/deploy.sh via APP_IMAGE_TAG. No default: mirrors the
+    # `app` service's `:?` gate so compose refuses to start without an
+    # explicit tag. Mutable branch-tag defaults (`:main`, an iteration
+    # slug) previously risked silently pulling stale code on a manual
+    # `docker compose up`; the only safe way to run is with an
+    # operator-supplied SHA.
+    image: ghcr.io/vlzware/projekt-manager-backup:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
+    # dcron exec'd as PID 1 hits Docker's PID-1 protection: its fork()+
+    # setpgid() for each cron entry fails with "setpgid: Operation not
+    # permitted" and the container crash-loops. `init: true` puts tini as
+    # PID 1 so crond runs as PID 2+ and its children can setpgid normally.
+    # Caught on the first test deploy of iteration/7-data — CI builds the
+    # image but never boots it, so the runtime crash never surfaced in CI.
+    init: true
+    read_only: true
+    tmpfs:
+      # Operator-loaded drill identity (AC-175). The script
+      # load-drill-key.sh asserts this mount is tmpfs before writing;
+      # removing this directive will make the script refuse rather
+      # than persist the identity to disk.
+      - /run/drill-key:mode=0700,uid=0,gid=0
+      # Ephemeral Postgres workdir for Tier 1 verify-on-create
+      # (initdb output, WAL, socket) AND lockfile scratch for
+      # run-{backup,drill}.sh. Kept out of any volume because
+      # it must never survive a run — the integrity proof is that
+      # the process starts from initdb every time.
+      #
+      # Historically there was a second `- /var/run` mount here for
+      # the lockfiles, but on Alpine /var/run is a symlink to /run,
+      # so that tmpfs landed on /run and shadowed /run/drill-key
+      # above it (tmpfs mounts stack in list order; a fresh /run
+      # tmpfs hides every earlier mount under /run/*). Moving locks
+      # to /tmp drops one mount and the shadowing problem with it.
+      - /tmp
+    mem_limit: 512m
+    cpus: 1.0
+    environment:
+      # Same DATABASE_URL as the app — the backup service reads the
+      # canonical DB for pg_dump + manifest (AC-174 checksum query).
+      DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD}@db:5432/projekt_manager
+      # Cloudflare R2 credentials + bucket + recipient — sourced from
+      # secrets.env.age via scripts/deploy.sh (see
+      # docs/ops/backup/setup.md §3 for provisioning). AGE_RECIPIENT is
+      # the PUBLIC recipient only; the private identity is
+      # operator-held and loaded into tmpfs via load-drill-key.sh per
+      # docs/ops/backup/drills.md § Loading the drill key (AC-175).
+      # `:-` empty defaults silence compose's "variable is not set"
+      # warnings when the operator hasn't sourced secrets.env.age (dev
+      # workflows, where the `backup` profile stays gated off). In
+      # prod, deploy.sh sources secrets into the shell env before
+      # compose, and shell env always beats a compose default — so
+      # the defaults here never mask a genuinely missing secret at
+      # runtime. The backup service itself validates these at startup
+      # (scripts/backup/entrypoint.sh) and refuses to run on empties.
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_BUCKET: ${R2_BUCKET:-projekt-manager-backups}
+      R2_REGION: ${R2_REGION:-auto}
+      AGE_RECIPIENT: ${AGE_RECIPIENT:-}
+      # Tmpfs path where the operator loads the age private identity
+      # for Tier 2 drills (AC-168, AC-175). Default matches the tmpfs
+      # mount above and scripts/backup/run-drill.sh — kept explicit in
+      # compose so check-env-drift.sh sees it and so the runner's Zod
+      # schema cannot silently fall back to its default at runtime.
+      AGE_IDENTITY_PATH: ${AGE_IDENTITY_PATH:-/run/drill-key/identity}
+      # Container-local timezone. The crontab entries are written in
+      # Europe/Berlin local time (see scripts/backup/crontab) so the
+      # schedule tracks human working hours and DST transitions
+      # automatically. tzdata must be installed in the image
+      # (Dockerfile.backup) for this to take effect; without it dcron
+      # silently falls back to UTC.
+      TZ: Europe/Berlin
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    # No `ports:` — the backup service speaks only to `db` over the
+    # internal compose network and to R2 outbound. No inbound surface
+    # from anywhere.
+    restart: unless-stopped
+    logging: *default-logging
+    profiles:
+      # Omitted from a bare `docker compose up` so local dev doesn't
+      # spin up a cron loop with empty R2 creds. Production deploy
+      # opts in via `--profile backup` (scripts/deploy.sh sets this);
+      # the runbook references the same profile.
+      - backup
 
   caddy:
     build: ./docker/caddy

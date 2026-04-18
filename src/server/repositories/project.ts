@@ -13,10 +13,14 @@ export {
   toProject,
   listProjects,
   getProject,
+  getProjectRowById,
   insertProject,
   updateProject,
   softDeleteProject,
+  hardDeleteProject,
+  fetchWorkersForProject,
   ProjectNotFoundError,
+  ProjectNotArchivedError,
 } from './project-read.js';
 export {
   transitionForward,

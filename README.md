@@ -4,7 +4,7 @@ A centralized system for consolidation, control, and viewing of data and process
 
 ## Status
 
-**Iteration 7 — Cleanup and Data**: UI polish, import/export consolidation, workflow alignment for testing/deployment/migrations, R2 integration, and automated plus manual backup and recovery. Walking skeleton live at `https://prmng.org` behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME and first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
+Live at `https://prmng.org` behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME and first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
 
 ## Prerequisites
 
@@ -68,16 +68,7 @@ The `SEED` variable in `.env` controls database seeding on backend startup:
 
 Seeding is always skipped in production (`NODE_ENV=production`).
 
-All seed users share the password **`changeme`**.
-
-| Username      | Display Name           | Role              |
-| ------------- | ---------------------- | ----------------- |
-| `inhaber`     | Thomas Berger          | owner             |
-| `buero`       | Maria Schmidt          | office            |
-| `arbeiter1`   | Jan Nowak              | worker            |
-| `arbeiter2`   | Lukas Fischer          | worker            |
-| `buchhalter`  | Petra Weiß             | bookkeeper        |
-| `deaktiviert` | Ehemaliger Mitarbeiter | worker (inactive) |
+Seed user list and credentials: [docs/ops/local-dev.md § Seed users](docs/ops/local-dev.md#seed-users).
 
 ### Tests
 
@@ -93,12 +84,13 @@ First-time Playwright setup requires `npx playwright install` to download browse
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md) — onboarding overview, read this first
-- [Contributing conventions](CONTRIBUTING.md) — code style, workflow, branching, issues
+- [Data](DATA.md) — three-layer map of persistence and recovery
+- [Contributing conventions](CONTRIBUTING.md) — code style, workflow
 - [Product Spec](docs/spec/index.md) — what the system does (living document)
-- [Architecture Decision Records](docs/adr/index.md) — documented project decisions
+- [Architecture Decision Records](docs/adr/index.md) — documented big project decisions
 - [Kickoff](docs/project/kickoff.md) — project definition, scope, goals, and boundaries
 - [Plan](docs/project/plan.md) — development plan and iteration strategy
-- [Operator docs](docs/ops/) — server setup, deployment, TLS bootstrap
+- [Operator docs](docs/ops/) — server setup, deployment, TLS bootstrap, backup
 
 ## Project Structure
 

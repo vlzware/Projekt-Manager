@@ -9,6 +9,7 @@
  */
 
 import { STRINGS } from '@/config/strings';
+import type { ThemePreference } from '@/config/themeStorage';
 
 export interface ApiError {
   code: string;
@@ -186,7 +187,10 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 
 // --- Typed API functions -----------------------------------------------------
 
-import type { Project, Customer, User, ImportResult } from '@/domain/types';
+import type { Project, Customer, User } from '@/domain/types';
+import type { WorkflowState } from '@/config/stateConfig';
+import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
+import type { BackupStatus } from '@/domain/backupBadge';
 
 interface AuthUser {
   id: string;
@@ -194,11 +198,24 @@ interface AuthUser {
   displayName: string;
   roles: string[];
   email: string | null;
+  themePreference: ThemePreference;
 }
 
+/**
+ * Response envelope for /api/auth/login and /api/auth/me.
+ *
+ * The server includes `backupStatus` only when the caller holds the
+ * `owner` role (api.md §14.2.1, verification.md AC-170). Other roles
+ * get an envelope without the key — absence drives the UI's "no badge
+ * on this surface" branch without requiring a separate role check.
+ */
 interface LoginResponse {
   user: AuthUser;
+  backupStatus?: BackupStatus;
 }
+
+/** Response shape for the public GET /api/backup/status surface. */
+export type BackupStatusResponse = { available: true; status: BackupStatus } | { available: false };
 
 interface ProjectListResponse {
   data: Project[];
@@ -239,6 +256,9 @@ export const authApi = {
       method: 'POST',
       body: { currentPassword, newPassword },
     }),
+
+  updateSelf: (patch: { themePreference?: ThemePreference }) =>
+    apiCall<LoginResponse>('/api/auth/me', { method: 'PATCH', body: patch }),
 };
 
 export const projectApi = {
@@ -247,6 +267,7 @@ export const projectApi = {
     search?: string;
     customerId?: string;
     hasNoDates?: boolean;
+    includeArchived?: boolean;
   }) =>
     apiCall<ProjectListResponse>(
       '/api/projects' + toQuery(params as Record<string, string | number | boolean | undefined>),
@@ -255,6 +276,7 @@ export const projectApi = {
   get: (id: string) => apiCall<Project>(`/api/projects/${id}`),
 
   create: (data: {
+    id?: string;
     number: string;
     title: string;
     customerId: string;
@@ -280,22 +302,30 @@ export const projectApi = {
   delete: (id: string) =>
     apiCall<{ success: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
 
-  transitionForward: (id: string) =>
-    apiCall<Project>(`/api/projects/${id}/transition/forward`, { method: 'POST' }),
+  /**
+   * Hard-delete an already-archived project. 204 on success. A
+   * non-archived target returns 409 CONFLICT with German copy
+   * directing the user to archive first; a non-existent target
+   * returns 404 NOT_FOUND. Requires `project:purge` (owner-only).
+   */
+  purge: (id: string) => apiCall<null>(`/api/projects/${id}/purge`, { method: 'DELETE' }),
 
-  transitionBackward: (id: string) =>
-    apiCall<Project>(`/api/projects/${id}/transition/backward`, { method: 'POST' }),
+  transitionForward: (id: string, expectedStatus: WorkflowState) =>
+    apiCall<Project>(`/api/projects/${id}/transition/forward`, {
+      method: 'POST',
+      body: { expectedStatus },
+    }),
+
+  transitionBackward: (id: string, expectedStatus: WorkflowState) =>
+    apiCall<Project>(`/api/projects/${id}/transition/backward`, {
+      method: 'POST',
+      body: { expectedStatus },
+    }),
 
   updateDates: (id: string, dates: { plannedStart?: string | null; plannedEnd?: string | null }) =>
     apiCall<Project>(`/api/projects/${id}/dates`, {
       method: 'PATCH',
       body: dates,
-    }),
-
-  bulkImport: (projects: Record<string, unknown>[]) =>
-    apiCall<ImportResult>('/api/projects/bulk/import', {
-      method: 'POST',
-      body: { projects },
     }),
 };
 
@@ -305,9 +335,13 @@ export const customerApi = {
       '/api/customers' + toQuery(params as Record<string, string | number | boolean | undefined>),
     ),
 
-  get: (id: string) => apiCall<Customer & { projectCount: number }>(`/api/customers/${id}`),
+  get: (id: string) =>
+    apiCall<Customer & { projectCount: number; archivedProjectCount: number }>(
+      `/api/customers/${id}`,
+    ),
 
   create: (data: {
+    id?: string;
     name: string;
     phone?: string | null;
     email?: string | null;
@@ -328,12 +362,6 @@ export const customerApi = {
 
   delete: (id: string) =>
     apiCall<{ success: boolean }>(`/api/customers/${id}`, { method: 'DELETE' }),
-
-  bulkImport: (customers: Record<string, unknown>[]) =>
-    apiCall<ImportResult>('/api/customers/bulk/import', {
-      method: 'POST',
-      body: { customers },
-    }),
 };
 
 export const userApi = {
@@ -374,18 +402,34 @@ export const userApi = {
     }),
 };
 
-export const exportApi = {
-  projects: (params?: { status?: string; customerId?: string }) =>
-    apiCall<Project[]>(
-      '/api/export/projects' +
-        toQuery(params as Record<string, string | number | boolean | undefined>),
-    ),
+/**
+ * Unified business-data export/import (ADR-0018, api.md §14.2.4).
+ *
+ * Export is GET /api/export (permission: data:export).
+ * Import is POST /api/import?dry_run=&override= (permission: data:restore).
+ * The dry-run response is a DryRunPreview; the non-dry response is an
+ * ImportResult. The caller disambiguates via the `dryRun` option.
+ */
+export const dataApi = {
+  export: () => apiCall<Envelope>('/api/export'),
 
-  customers: (params?: { hasProjects?: string }) =>
-    apiCall<Customer[]>(
-      '/api/export/customers' +
-        toQuery(params as Record<string, string | number | boolean | undefined>),
-    ),
+  import: (
+    envelope: Envelope,
+    opts: { dryRun: boolean; override: boolean; confirmationPhrase?: string | null },
+  ) => {
+    const params = new URLSearchParams();
+    if (opts.dryRun) params.set('dry_run', 'true');
+    if (opts.override) params.set('override', 'true');
+    const qs = params.toString();
+    const body =
+      opts.confirmationPhrase != null
+        ? { ...envelope, confirmation_phrase: opts.confirmationPhrase }
+        : envelope;
+    return apiCall<ImportResult | DryRunPreview>('/api/import' + (qs ? '?' + qs : ''), {
+      method: 'POST',
+      body,
+    });
+  },
 };
 
 export interface ExtractionResult {
@@ -406,6 +450,19 @@ export interface ExtractionResult {
 export const extractApi = {
   extract: (text: string) =>
     apiCall<ExtractionResult>('/api/extract', { method: 'POST', body: { text } }),
+};
+
+/**
+ * Public backup-status endpoint — no authentication required.
+ *
+ * Rendered on the login screen for operator visibility when the app
+ * DB is also down (ADR-0008 VPN-gate is the threat-model anchor, see
+ * api.md §14.2.7). The authenticated `/api/auth/me` flow carries the
+ * same status as an embedded `backupStatus` field for owner callers,
+ * so this endpoint is only consumed from the unauth login screen.
+ */
+export const backupApi = {
+  status: () => apiCall<BackupStatusResponse>('/api/backup/status'),
 };
 
 export type { AuthUser };

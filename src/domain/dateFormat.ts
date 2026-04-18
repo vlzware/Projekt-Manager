@@ -3,6 +3,23 @@ import { LOCALE } from '@/config/localeConfig';
 import { STRINGS } from '@/config/strings';
 
 /**
+ * Format a `Date` as YYYY-MM-DD using its LOCAL components.
+ *
+ * `toISOString().slice(0, 10)` is wrong for this purpose: it emits the
+ * UTC date, which under a non-UTC server timezone shifts a `date`-typed
+ * row read by node-postgres — pg returns `2026-07-01` as `Date(2026-07-01
+ * 00:00 local)`, then UTC slicing yields `2026-06-30` for any TZ east
+ * of UTC. Use the local components so the formatted string matches the
+ * date the JS `Date` actually represents.
+ */
+export function formatDateOnly(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+/**
  * Format an ISO date string to German DD.MM.YYYY format.
  */
 export function formatDateDE(isoDate: string): string {
