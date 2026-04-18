@@ -2,13 +2,15 @@
 
 # Documentation Conventions (general)
 
-Rules for documents:
+Rules for documents (non-negotiable):
 
-- **D-SSOT** — SSOT with references: one canonical location, everything else links to it.
+- **D-SSOT** — SSOT with references: one canonical location, everything else links to it — **CRITICAL**.
 - **D-STAL** — Reflects current reality.
-- **D-BLPR** — For each statement/paragraph: can this be shorter without losing logic?
+
+Guidelines for documents (judgement is required):
+
 - **D-BLDI** — Where possible, a simple diagram is worth more than a whole paragraph of prose.
-- **D-BLSI** — All documentation files, except top-level ones, have a hard cap of 200 lines.
-- **D-TOPL** — Top-level files have a soft cap of ~100 lines. More content belongs in downstream files with a reference.
+- **D-BLPR** — For each statement/paragraph: can this be shorter without losing logic?
+- **D-BLSI** — If a documentation file exceeds 200 lines, propose a solution for splitting. Argumented exceptions are accepted.
 
 Note: The listed documents are all written by AI agents and may contain errors, inaccuracies and/or omissions.
