@@ -93,6 +93,25 @@ Contents:
 - Notes (read-only in the Kanban/Calendar context; editable in the Project Management View, [management.md §8.8.3](management.md#883-edit-project))
 - Timestamps: created, last updated, status changed
 
+### 8.4.1 Activity Feed
+
+The detail panel surfaces the project's activity history — a reverse-chronological list of `audit_log` entries scoped to this project (`entityType = 'project'` for this `entityId`, plus related `project_worker` entries whose payload references this project). See [data-model.md §5.10](../data-model.md#510-audit-log-entity) and [api.md §14.2.8](../api.md#1428-audit-log).
+
+**Content per row (newest first):**
+
+- A German one-line description derived from `action` and `payload` — e.g. `"Status geändert: Geplant → In Arbeit"`, `"Termine aktualisiert"`, `"Mitarbeiter zugewiesen: Jan Nowak"`. Mapping from `(action, payload)` to string is configured **[C]**.
+- Actor display: `displayName` for `user`-actor entries, resolved server-side for owner and office callers. For worker callers the server returns `actorId` only on rows the worker themselves authored (`actorId == caller.id`) — the UI renders the worker's own label on those rows; on every other worker-visible row `actorId` is null and the UI renders a neutral German label `"Benutzer"` (per [api.md §14.2.8](../api.md#1428-audit-log) — a client-side identity lookup would bypass the API's scope). `system`-actor entries display the German label `"System"` and the `actorReason` as supporting text.
+- Timestamp — `createdAt` in German locale (`DD.MM.YYYY HH:mm`).
+- Payload drawer — a disclosure toggle (`Details anzeigen`) revealing the field-level `{ before, after }` diff for updates. Rendered only when the API returns a `payload` for the entry. For worker callers the API returns the full `payload` on self-authored rows and strips it on every other row (per [api.md §14.2.8](../api.md#1428-audit-log)); the drawer is therefore present on the worker's own activity and absent on others' by contract, not by client-side hiding.
+
+**Pagination:** default page size matches the list endpoints. A `"Ältere anzeigen"` action fetches the next page and appends; a page-boundary does not collapse already-visible rows.
+
+**Empty-state:** `"Keine Aktivität"` when the scoped result set is empty.
+
+**Permission:** the activity feed is rendered whenever the caller can open the project detail panel — `audit:read` is granted to owner, office, and worker. For workers the drawer is rendered on self-authored rows only (see API contract above); for owner and office the drawer is rendered on any entry carrying a payload.
+
+**Destructive-action rows:** entries whose `action` is `purge`, `delete` on `entityType = 'user'`, or `update` on `entityType = 'user'` touching `roles` are admitted only to callers for whom the `auditDestructiveScopeForCaller` predicate ([api.md §14.2.8](../api.md#1428-audit-log)) returns null (owner under the default matrix). Every other role with `audit:read` has the predicate contribute a repository-layer `WHERE` fragment that excludes these rows — they are never returned by the API. Client-side hiding is defense-in-depth, not the authoritative gate.
+
 ---
 
 ## 8.5 Summary Area

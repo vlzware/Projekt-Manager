@@ -4,14 +4,14 @@ Section 8 of the [product spec](../index.md): UI surface. Split into per-subsyst
 
 ## Structure
 
-| File                                       | Sections   | Contents                                                       |
-| ------------------------------------------ | ---------- | -------------------------------------------------------------- |
-| **index.md** (this file)                   | §8.1, §8.7 | Shell: top-level layout states, navigation matrix, user menu   |
-| **[workflow-views.md](workflow-views.md)** | §8.2–§8.6  | Kanban, Calendar, Project Detail Panel, Summary, Color Coding  |
-| **[management.md](management.md)**         | §8.8–§8.10 | Project, Customer, and User management tabular CRUD views      |
-| **[daten.md](daten.md)**                   | §8.11      | Daten view — unified business-data restore + export            |
-| **[email-intake.md](email-intake.md)**     | §8.12      | Email Data Intake — modal LLM extraction to customer + project |
-| **[behavior.md](behavior.md)**             | §9, §10    | Cross-cutting behavioral rules + responsive column collapse    |
+| File                                       | Sections          | Contents                                                                     |
+| ------------------------------------------ | ----------------- | ---------------------------------------------------------------------------- |
+| **index.md** (this file)                   | §8.1, §8.7        | Shell: top-level layout states, navigation matrix, user menu                 |
+| **[workflow-views.md](workflow-views.md)** | §8.2–§8.6         | Kanban, Calendar, Project Detail Panel, Summary, Color Coding                |
+| **[management.md](management.md)**         | §8.8–§8.10, §8.13 | Project, Customer, and User management tabular CRUD views; global Audit View |
+| **[daten.md](daten.md)**                   | §8.11             | Daten view — unified business-data restore + export                          |
+| **[email-intake.md](email-intake.md)**     | §8.12             | Email Data Intake — modal LLM extraction to customer + project               |
+| **[behavior.md](behavior.md)**             | §9, §10           | Cross-cutting behavioral rules + responsive column collapse                  |
 
 ---
 
@@ -77,14 +77,15 @@ The authenticated layout provides navigation between all available views. The na
 
 ### 8.7.1 Views
 
-| View      | Label      | Access                                                                                               | Default                                                  |
-| --------- | ---------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Kanban    | "Kanban"   | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                      | Yes for owner, office, worker (landing view after login) |
-| Calendar  | "Kalender" | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                      | No                                                       |
-| Projects  | "Projekte" | Owner, office, bookkeeper. Worker: hidden.                                                           | Yes for bookkeeper (landing view after login)            |
-| Customers | "Kunden"   | Owner, office, bookkeeper. Worker: hidden.                                                           | No                                                       |
-| Users     | "Benutzer" | `user:manage` permission required (owner only under the default role set). Everyone else: hidden.    | No                                                       |
-| Daten     | "Daten"    | `data:export` permission required (owner, office under the default role set). Everyone else: hidden. | No                                                       |
+| View      | Label       | Access                                                                                                                                                                                                                                           | Default                                                  |
+| --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------- |
+| Kanban    | "Kanban"    | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                                                                                                                                                                  | Yes for owner, office, worker (landing view after login) |
+| Calendar  | "Kalender"  | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                                                                                                                                                                  | No                                                       |
+| Projects  | "Projekte"  | Owner, office, bookkeeper. Worker: hidden.                                                                                                                                                                                                       | Yes for bookkeeper (landing view after login)            |
+| Customers | "Kunden"    | Owner, office, bookkeeper. Worker: hidden.                                                                                                                                                                                                       | No                                                       |
+| Users     | "Benutzer"  | `user:manage` permission required (owner only under the default role set). Everyone else: hidden.                                                                                                                                                | No                                                       |
+| Daten     | "Daten"     | `data:export` permission required (owner, office under the default role set). Everyone else: hidden.                                                                                                                                             | No                                                       |
+| Audit     | "Aktivität" | `audit:read` permission required (owner, office, worker under the default matrix). Bookkeeper does not hold `audit:read` and does not see the tab. Per-role visible row set narrowed server-side per [api.md §14.2.8](../api.md#1428-audit-log). | No                                                       |
 
 **Worker-scoped views.** For workers, the data presented in Kanban and Calendar is filtered to the projects the worker is assigned to — the same scoping rule that applies to the server-side list operation (see [index.md §4.2](../index.md#42-users) and [api.md §14.3](../api.md#143-authorization-rules)). The views render normally; only the row set is reduced. A project whose detail the worker is not authorized for is not reachable from a scoped Kanban or Calendar.
 

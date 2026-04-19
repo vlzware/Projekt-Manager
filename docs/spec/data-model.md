@@ -241,6 +241,43 @@ Design notes:
 - **`lastDrillOk` semantics.** `lastDrillOk` is `null` before any Tier 2 drill has succeeded OR failed. A null value is not equivalent to "skipped" — skipped runs leave both `lastDrillAt` and `lastDrillOk` unchanged from the previous run, so freshness is derived from `lastDrillAt` rather than coerced to a boolean.
 - **Cross-references.** Freshness thresholds for the owner-only badge are defined under [architecture.md §12.2](architecture.md#122-company-configurable-settings); acceptance criteria in [verification.md §15.22](verification.md#1522-backup-and-recovery).
 
+### 5.10 Audit Log Entity
+
+An append-only record of every domain-entity state change. Drives the user-facing activity view ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed), [ui/management.md §8.13](ui/management.md#813-audit-view)) and the notification publisher. Rationale and the single-write-path contract live in [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+
+```typescript
+type AuditActorKind = 'user' | 'system';
+
+type AuditEntityType = 'project' | 'customer' | 'user' | 'project_worker';
+
+interface AuditLogEntry {
+  id: string; // UUID
+  createdAt: string; // ISO 8601 — set by the server at commit time
+  actorId?: string; // references UserAccount.id — null when actorKind = 'system'
+  actorKind: AuditActorKind; // 'user' for authenticated callers, 'system' for bootstrap and other unattended domain-entity writes
+  actorReason?: string; // required (non-empty) when actorKind = 'system'; null for 'user' entries
+  entityType: AuditEntityType; // the domain entity that changed
+  entityId: string; // the changed row's primary key
+  action: string; // vocabulary defined below — free text for forward compatibility
+  payload: object; // JSON — before/after of changed fields only, not the full row
+  correlationId?: string; // request-scoped id threaded from the route layer, where available
+}
+```
+
+Design notes:
+
+- **Append-only from the application.** The application never updates an `audit_log` row and never deletes one through any API, service, or UI path. The retention cleanup job ([§6.10](#610-audit-log-retention)) is the only path that removes rows and operates as infrastructure, not as a domain mutation — it does not itself produce an `audit_log` row.
+- **Scope is domain entities only.** `project`, `customer`, `user`, and `project_worker` are the audited types. Authentication and session events (login, logout, session reap) are security events and surface through the structured logger, not `audit_log` — per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+- **Actor kind semantics.**
+  - `user` — an authenticated caller performed the mutation. `actorId` references the `UserAccount.id`; `actorReason` is null.
+  - `system` — no authenticated caller is present. `actorId` is null; `actorReason` is required and carries a human-readable cue naming the code path (e.g., `"first-run-bootstrap"`). First-run admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) is the current domain-entity system-actor path. A system entry with an empty or missing `actorReason` is rejected by the database via a CHECK constraint (defense in depth) — else a system write would be invisible in the activity feed.
+- **Action vocabulary.** `action` is free text so new mutation shapes can record without a schema migration. The current vocabulary is `create`, `update`, `delete`, `transition:forward`, `transition:backward`, `purge`, `reactivate`, `deactivate`, `password-reset`, `password-change`. A free-text field is chosen over an enum because the vocabulary is expected to grow with new features (e.g., file uploads introduce `attachment:add` / `attachment:remove`) and an enum would churn the schema; uniqueness and casing are enforced by convention and reviewed at PR time. Each entry in the vocabulary maps to exactly one mutation shape.
+- **Payload shape.** `payload` carries the changed fields only, as `{ before, after }` field-keyed objects — not the full row. For a create, `before` is empty and `after` carries the persisted values for every non-server-managed field. For a delete or purge, `after` is empty. For a state transition, `before` and `after` carry `status` and `statusChangedAt`. Full-row snapshots are deliberately excluded (see [ADR-0021 — Alternatives Considered](../adr/0021-audit-log-and-notifications-single-write-path.md#alternatives-considered)).
+- **Correlation id.** `correlationId` is a nullable, per-request id set at the route layer and threaded through the service call chain. It groups every audit row produced by one request, enabling a future bulk-undo or one-request trace. Null is valid for entries produced outside a request (bootstrap and other unattended domain-entity writes).
+- **Referential integrity.** `actorId` is a nullable foreign key to `UserAccount.id`; when a user is hard-deleted, `actorId` is set to null rather than cascading the audit row (parity with [AC-98](verification.md#1517-data-integrity)). `entityId` is not foreign-keyed — a purge removes the target row while its audit trail remains.
+- **Transactional write.** Every domain-entity mutation and its audit row commit in a single database transaction. The application does not write the state change without the audit row, and it does not write the audit row without the state change. See [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) and [ADR-0021 — Decision](../adr/0021-audit-log-and-notifications-single-write-path.md#decision).
+- **Post-commit notification dispatch.** Subscribers (notification publisher and any future projection) dispatch after the transaction commits, so a throwing subscriber cannot roll back domain state. The `audit_log` row is the event source; publishing is a read-over-audit projection.
+
 ---
 
 ## 6. Persistence Principles
@@ -303,6 +340,14 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
   - `project:purge` (owner-only) allows per-project hard-delete via `DELETE /api/projects/:id/purge`. Purge requires the project already be archived (`deleted = true`); the endpoint rejects with 409 Conflict otherwise. `project_workers` rows cascade via FK. See [AC-155](verification.md#1512-project-management) to [AC-158](verification.md#1512-project-management).
   - The API exposes an archived-project count on the customer GET response so the UI can warn before destructive customer deletion.
   - No restore path exists via the API. Recovery requires database access.
+
+### 6.10 Audit Log Retention
+
+- `audit_log` entries are retained for a rolling window of 90 days **[C]** (see [architecture.md §12.2](architecture.md#122-company-configurable-settings)), aligned with the Layer 2 backup window ([ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) and the cross-surface retention choice recorded in [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+- A scheduled cleanup job removes entries older than the window. Removing entries via this job is the only delete path on the table; every other application path is append-only.
+- Each cleanup run is itself recorded — not in `audit_log` (the scope is domain entities only, per [§5.10](#510-audit-log-entity)), but in the structured operational logger, tagged as a system event. Rationale: keeping retention out of `audit_log` preserves the "append-only from the application" invariant for callers reading the activity feed; retention visibility lives in operational logs alongside other scheduled-job outputs.
+- **Operational-log contract.** Each run emits exactly one structured log line at `info` level with the following fields: `event = 'audit-retention-cleanup'` (fixed discriminator), `window_days` (integer — the configured retention window applied, from the `[C]` catalogue above), `removed_count` (non-negative integer — rows deleted in the run; `0` on a no-op run), `ran_at` (ISO 8601 timestamp of the run). An operator verifies retention by querying the operational log for `event = 'audit-retention-cleanup'`; the Aktivität UI ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed), [ui/management.md §8.13](ui/management.md#813-audit-view)) is _not_ the verification surface — it deliberately omits retention events to keep the domain-entity scope intact. The retention of the operational log line itself follows whatever operational-log retention the deployed environment enforces — this spec does not pin a separate retention for system log lines.
+- Retention applies uniformly to all entity types; there is no per-entity-type override.
 
 ---
 
