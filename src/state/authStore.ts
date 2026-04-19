@@ -17,6 +17,7 @@ import { useCustomerStore } from './customerStore';
 import { useUserStore } from './userStore';
 import { useProjectManagementStore } from './projectManagementStore';
 import { useDataExchangeStore } from './dataExchangeStore';
+import { useAuditStore } from './auditStore';
 
 interface AuthState {
   authUser: AuthUser | null;
@@ -128,6 +129,7 @@ function clearDownstreamState(): void {
     exporting: false,
     exportError: null,
   });
+  useAuditStore.getState().reset();
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({

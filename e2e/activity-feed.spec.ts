@@ -88,33 +88,47 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
   }) => {
     await loginAs(page, users.owner);
 
-    // Open any project's detail panel from Kanban.
+    // Resolve the "same card both times" identity up-front — the first
+    // Kanban card (oldest statusChangedAt in the first column) and the
+    // first Projekte table row (latest createdAt) need not be the same
+    // project. Pin a single card by its testid and reuse it for both
+    // the mutation path and the feed-verification open.
     await page.getByTestId('view-toggle-kanban').click();
     await page.getByTestId('kanban-board').waitFor();
-    await page.locator('[data-testid^="project-card-"]').first().click();
+    const firstCard = page.locator('[data-testid^="project-card-"]').first();
+    const firstCardTestId = (await firstCard.getAttribute('data-testid'))!;
+    await firstCard.click();
     await page.getByTestId('detail-panel').waitFor();
 
     const feed = page.getByTestId('project-activity-feed');
     await expect(feed).toBeVisible();
 
     // Drive two mutations so there are at least two audit rows to
-    // compare timestamps on.
-    await page.getByTestId('detail-close').click();
-    // Walk into the project management view to drive two PATCHes.
-    await page.getByTestId('view-toggle-projekte').click();
-    await page.getByTestId('project-table').locator('tbody tr').first().click();
-    await page.getByTestId('project-notes-input').fill('AC-185 first touch');
-    await page.getByTestId('project-save').click();
-    // Second touch.
-    await page.getByTestId('project-notes-input').fill('AC-185 second touch');
-    await page.getByTestId('project-save').click();
+    // compare timestamps on. The spec wants two rows scoped to the
+    // card's project — so we mutate THIS card's detail panel rather
+    // than a Projekte-view row that may belong to a different project.
+    //
+    // The project-detail panel drives `updateDates` via the date input,
+    // which produces an `update`-action audit row tied to this project.
+    // Two sequential edits yield two audit rows — enough for the
+    // reverse-chrono check below.
+    const dateStart = page.getByTestId('detail-date-start');
+    await dateStart.fill('2026-05-01');
+    await expect.poll(async () => await dateStart.inputValue()).toBe('2026-05-01');
+    await dateStart.fill('2026-05-15');
+    await expect.poll(async () => await dateStart.inputValue()).toBe('2026-05-15');
 
-    // Back to Kanban → open the same card.
-    await page.getByTestId('view-toggle-kanban').click();
-    await page.locator('[data-testid^="project-card-"]').first().click();
+    // Close + reopen the same card so the feed refetches.
+    await page.getByTestId('detail-close').click();
+    await page.getByTestId('kanban-board').waitFor();
+    await page.getByTestId(firstCardTestId).click();
     await page.getByTestId('detail-panel').waitFor();
 
     const rows = feed.locator('[data-testid^="activity-feed-row-"]');
+    // Wait for the async feed fetch to land at least 2 rows — the
+    // audit query is a separate network round-trip after the panel
+    // mount, and a naive synchronous `count()` is racy.
+    await expect.poll(async () => await rows.count(), { timeout: 5000 }).toBeGreaterThanOrEqual(2);
     const rowCount = await rows.count();
     expect(rowCount).toBeGreaterThanOrEqual(2);
 

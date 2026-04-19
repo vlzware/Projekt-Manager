@@ -194,6 +194,7 @@ export const STRINGS = {
     viewProjects: 'Projekte',
     viewUsers: 'Benutzer',
     viewData: 'Daten',
+    viewAudit: 'Aktivität',
     viewMonth: 'Monat',
     viewWeek: 'Woche',
 
@@ -286,6 +287,47 @@ export const STRINGS = {
     sinceNDays: (n: number) => `seit ${n} Tagen`,
     agedBuffer: (count: number, label: string, days: number) =>
       `${count} ${label} seit >${days} Tagen`,
+  },
+
+  /**
+   * Audit / Aktivität surface (spec ui/workflow-views.md §8.4.1,
+   * ui/management.md §8.13). The action-to-label map lives in a
+   * dedicated config (auditActionLabels.ts) — this section carries the
+   * labels that are shared between the activity feed and the global
+   * Aktivität view.
+   */
+  audit: {
+    emptyState: 'Keine Aktivität',
+    detailsShow: 'Details anzeigen',
+    detailsHide: 'Details ausblenden',
+    loadOlder: 'Ältere anzeigen',
+    system: 'System',
+    /** Neutral worker-facing label for non-self-authored user actors. */
+    userNeutral: 'Benutzer',
+    /** Column / filter labels on the global Aktivität view. */
+    colTimestamp: 'Zeitpunkt',
+    colActor: 'Akteur',
+    colEntity: 'Objekt',
+    colAction: 'Aktion',
+    colPayload: 'Details',
+    filterEntityType: 'Objekttyp',
+    filterActor: 'Akteur',
+    filterAction: 'Aktion',
+    filterFrom: 'Von',
+    filterTo: 'Bis',
+    filterDateInverted: 'Das "Bis"-Datum darf nicht vor dem "Von"-Datum liegen.',
+    entityProject: 'Projekt',
+    entityCustomer: 'Kunde',
+    entityUser: 'Benutzer',
+    entityProjectWorker: 'Zuweisung',
+    /** Before/after panel labels in the payload drawer. */
+    drawerBefore: 'Vorher',
+    drawerAfter: 'Nachher',
+    drawerField: 'Feld',
+    heading: 'Aktivität',
+    allActors: 'Alle Akteure',
+    allActions: 'Alle Aktionen',
+    allEntityTypes: 'Alle Objekttypen',
   },
 
   /**

@@ -1,0 +1,73 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+}
+
+.emptyState {
+  padding: 20px 16px;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--color-text-subtle);
+}
+
+.error {
+  padding: 12px 16px;
+  font-size: 0.85rem;
+  color: var(--color-danger-text);
+  background: var(--color-danger-bg);
+  border-radius: 6px;
+}
+
+.loader {
+  padding: 16px;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--color-text-subtle);
+}
+
+.footerActions {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.loadMoreButton {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.loadMoreButton:hover {
+  background: var(--color-surface-muted);
+}
+
+.loadMoreButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Project-detail surface uses a more compact framing. */
+.inlineContainer {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-surface-base);
+}
+
+.sectionLabel {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}

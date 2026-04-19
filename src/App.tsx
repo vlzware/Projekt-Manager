@@ -15,6 +15,7 @@ import { CustomerManagement } from '@/ui/management/CustomerManagement';
 import { ProjectManagement } from '@/ui/management/ProjectManagement';
 import { UserManagement } from '@/ui/management/UserManagement';
 import { DatenView } from '@/ui/management/DatenView';
+import { AuditManagement } from '@/ui/audit/AuditManagement';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
@@ -101,6 +102,7 @@ const VIEW_ELEMENTS: Record<ViewMode, ReactElement> = {
   projekte: <ProjectManagement />,
   benutzer: <UserManagement />,
   daten: <DatenView />,
+  aktivität: <AuditManagement />,
 };
 
 export function App() {

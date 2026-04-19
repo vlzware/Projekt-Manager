@@ -27,6 +27,15 @@ export function formatDateDE(isoDate: string): string {
 }
 
 /**
+ * Format an ISO timestamp to German `DD.MM.YYYY HH:mm` — used by the
+ * audit log / Aktivität view (spec ui/workflow-views.md §8.4.1,
+ * ui/management.md §8.13.1).
+ */
+export function formatDateTimeDE(isoDate: string): string {
+  return format(parseISO(isoDate), 'dd.MM.yyyy HH:mm', { locale: LOCALE.dateFns });
+}
+
+/**
  * Format an ISO date string to short German DD.MM. format.
  */
 export function formatDateShortDE(isoDate: string): string {

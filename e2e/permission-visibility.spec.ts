@@ -321,12 +321,19 @@ test.describe('AC-121: permission-based UI visibility', () => {
 // `src/config/__tests__/routes.test.ts` pins the matrix against the
 // live route table, so drift between the table and this constant
 // surfaces there long before a browser run.
-type NavView = 'kanban' | 'kalender' | 'projekte' | 'kunden' | 'benutzer' | 'daten';
+type NavView =
+  | 'kanban'
+  | 'kalender'
+  | 'projekte'
+  | 'kunden'
+  | 'benutzer'
+  | 'daten'
+  | 'aktivität';
 
 const NAV_MATRIX: Record<Role, readonly NavView[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten'],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten'],
-  worker: ['kanban', 'kalender'],
+  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivität'],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivität'],
+  worker: ['kanban', 'kalender', 'aktivität'],
   bookkeeper: ['projekte', 'kunden'],
 };
 
@@ -337,6 +344,7 @@ const ALL_VIEWS: readonly NavView[] = [
   'kunden',
   'benutzer',
   'daten',
+  'aktivität',
 ];
 
 test.describe('AC-75: per-role nav visibility matrix', () => {
@@ -393,6 +401,8 @@ const FORBIDDEN_PATHS: readonly ForbiddenCase[] = [
   { role: 'bookkeeper', path: '/calendar' },
   { role: 'bookkeeper', path: '/users' },
   { role: 'bookkeeper', path: '/data' },
+  // Bookkeeper lacks `audit:read`; the Aktivität route is forbidden.
+  { role: 'bookkeeper', path: '/audit' },
   { role: 'office', path: '/users' },
 ];
 
