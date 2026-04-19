@@ -22,9 +22,9 @@ We will route every domain-entity mutation through a single transactional `mutat
 
 Shape:
 
-- **`audit_log` table**, append-only: `id`, `created_at`, `actor_id` (nullable FK to `user_accounts`), `actor_kind` (`user` | `system`), `actor_reason` (free text; required when `actor_kind = 'system'`), `entity_type`, `entity_id`, `action`, `payload` (jsonb: before/after of changed fields only, not full row), `correlation_id` (Fastify request id where available).
-- **`mutate()` helper** in the service layer: opens a transaction, executes the mutation, writes the audit row, commits. Every service method that changes state routes through it.
-- **Architecture test**, CI-enforced: static scan fails on raw `INSERT/UPDATE/DELETE` or Drizzle `db.insert/update/delete` targeting audited tables outside the helper. Migrations allowlisted.
+- **`audit_log` table**, append-only: `id`, `created_at`, `actor_id` (nullable FK to `user_accounts`), `actor_kind` (`user` | `system`), `actor_reason` (free text; required when `actor_kind = 'system'`), `entity_type`, `entity_id`, `action`, `payload` (jsonb: before/after of changed fields only, not full row), `correlation_id` (Fastify request id where available). Audited entity types: `project`, `customer`, `user`, `project_worker`. Authentication and session events are security events, not domain audit — they surface in the structured logger, not in `audit_log`.
+- **`mutate()` helper** in the service layer: opens a transaction, executes the mutation, writes the audit row, commits. Every service method that changes state routes through it. The helper returns the committed audit row so subscribers dispatch after commit, never inside the transaction — a throwing subscriber cannot roll back domain state. Correlation id is threaded as a typed argument through the service call chain; services never import Fastify.
+- **Architecture test**, CI-enforced: static scan fails on raw `INSERT/UPDATE/DELETE` or Drizzle `db.insert/update/delete` targeting audited tables outside the helper. Migrations, the `ImportService` restore path, and business seed loaders are allowlisted — bulk restore and fixture hydration do not generate audit rows.
 - **Notification publisher**: in-process dispatch on commit. Subscription rules map `{entity_type, action}` pairs to templates and recipients. Non-mutation events (backup status, cron completion) publish to the same bus, bypassing audit.
 - **User-facing audit view**: read-only endpoint and UI, RBAC-sliced via the same repository predicates as [ADR-0019](0019-worker-data-scoping-repository-layer-predicate.md). Workers see human-readable activity for projects they're assigned to; PM/admin see actor names and a payload drawer; owner sees destructive events (purge, role change) others don't.
 - **Retention**: aligned with the DB-backup window (90 days per [ADR-0020 Amendment 2026-04-19](0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#amendments)). Revisit if the UI expectation is longer.
@@ -60,6 +60,7 @@ Store the complete new (and optionally previous) row rather than a changed-field
 - User-facing activity view falls out of the same table with RBAC layered at the repository level.
 - Architecture test catches bypass at PR time; zero runtime cost.
 - Changed-fields payload keeps the table small compared to full-row snapshots.
+- Domain-entity scope keeps the activity feed high-signal — login and session-reaper traffic does not drown project transitions and photo uploads.
 
 ### Negative
 
@@ -67,6 +68,7 @@ Store the complete new (and optionally previous) row rather than a changed-field
 - In-process publisher is not durable across restarts. Acceptable at current scale (single Fastify process). Outbox pattern is the future migration if durability matters.
 - `mutate()` needs the "before" state for update payloads — adds a read on update paths that didn't have one.
 - Retention couples audit, notification history, and user-facing activity visibility — needs a conscious operator call if UI expectation extends beyond 90 days.
+- Architecture-test allowlist is a trust surface — each bulk-mutation path added to it (restore, seed) must be reviewed in PR for the bypass it creates.
 - **Security audit required** under [CONTRIBUTING.md §Security audit](../../CONTRIBUTING.md#security-audit) — new persistent log of user actions, new cross-cutting helper. Scope: the helper surface and the audit table's access controls.
 
 ## References
