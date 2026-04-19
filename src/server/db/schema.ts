@@ -1,8 +1,8 @@
 /**
  * Drizzle ORM schema — PostgreSQL tables for Projekt-Manager.
  *
- * Five tables: customers, projects, project_workers, users, sessions.
- * See data-model.md for entity definitions.
+ * Six tables: customers, projects, project_workers, users, sessions,
+ * audit_log. See data-model.md for entity definitions.
  */
 
 import { sql } from 'drizzle-orm';
@@ -20,6 +20,18 @@ import {
   check,
   primaryKey,
 } from 'drizzle-orm/pg-core';
+
+// ---------------------------------------------------------------
+// Audit entity types — data-model.md §5.10
+// ---------------------------------------------------------------
+/**
+ * The closed set of domain entities that produce `audit_log` rows.
+ * Declared here so repositories and services can import the type and
+ * so the architecture check (scripts/check-audit-mutations.sh) can
+ * derive its audited-tables list from a single source (AC-179).
+ */
+export const AUDIT_ENTITY_TYPES = ['project', 'customer', 'user', 'project_worker'] as const;
+export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
 // ---------------------------------------------------------------
 // Users (data-model.md §5.3, §5.7)
@@ -184,4 +196,74 @@ export const metaBackupStatus = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [check('meta_backup_status_singleton', sql`${table.singleton} = true`)],
+);
+
+// ---------------------------------------------------------------
+// Audit log (data-model.md §5.10, ADR-0021)
+//
+// Append-only record of every domain-entity state change. Written
+// atomically with the state change by the service-layer `mutate()`
+// helper. The compound CHECK constraint pins the actor_kind /
+// actor_id / actor_reason invariant:
+//
+//   - actor_kind='user'   → actor_id NOT NULL, actor_reason NULL
+//   - actor_kind='system' → actor_id NULL,     actor_reason non-empty
+//
+// The non-empty `actor_reason` is the defense-in-depth backstop for
+// AC-178: without it a bootstrap entry would be invisible in the
+// activity feed.
+// ---------------------------------------------------------------
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // ON DELETE SET NULL mirrors AC-98 for createdBy/updatedBy: hard-deleting
+    // a user must not cascade their audit trail away. entity_id deliberately
+    // has no FK — a `purge` removes the target row while the audit entry
+    // remains (data-model.md §5.10 "Referential integrity").
+    actorId: uuid('actor_id').references(() => users.id, { onDelete: 'set null' }),
+    actorKind: text('actor_kind').notNull(),
+    actorReason: text('actor_reason'),
+    entityType: text('entity_type').notNull(),
+    entityId: uuid('entity_id').notNull(),
+    action: text('action').notNull(),
+    payload: jsonb('payload')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    correlationId: text('correlation_id'),
+  },
+  (table) => [
+    index('audit_log_entity_idx').on(table.entityType, table.entityId, table.createdAt.desc()),
+    index('audit_log_actor_idx').on(table.actorId, table.createdAt.desc()),
+    index('audit_log_created_at_idx').on(table.createdAt.desc()),
+    check('audit_log_actor_kind_valid', sql`${table.actorKind} IN ('user', 'system')`),
+    check(
+      'audit_log_entity_type_valid',
+      sql`${table.entityType} IN ('project', 'customer', 'user', 'project_worker')`,
+    ),
+    // Compound invariant — AC-178 defense in depth. Missing this CHECK
+    // would let a bootstrap write land with actor_reason=NULL, making
+    // the first-admin creation invisible to the activity feed.
+    //
+    // actor_id is deliberately NOT required for user-kind rows: when
+    // the authoring user is hard-deleted, the FK's ON DELETE SET NULL
+    // clause nullifies this column — per data-model.md §5.10
+    // "Referential integrity" (parity with AC-98). Write-time
+    // validation lives in the service layer (`validateContext()` in
+    // mutate.ts); the CHECK here pins only the invariants that must
+    // hold regardless of cascades.
+    check(
+      'audit_log_actor_shape',
+      sql`(
+        (${table.actorKind} = 'user'
+          AND ${table.actorReason} IS NULL)
+        OR
+        (${table.actorKind} = 'system'
+          AND ${table.actorId} IS NULL
+          AND ${table.actorReason} IS NOT NULL
+          AND length(trim(${table.actorReason})) > 0)
+      )`,
+    ),
+  ],
 );

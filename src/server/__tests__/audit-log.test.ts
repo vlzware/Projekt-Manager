@@ -135,7 +135,9 @@ describe('AT-89: Mutation + audit row atomicity (AC-177)', () => {
       const before = await countAuditRows(db);
 
       const createRes = await authPost(ownerToken, '/api/projects', {
-        number: `AT-89-CREATE-${Date.now()}`,
+        // number is varchar(20) — keep the generated string short so a
+        // unique suffix still fits the schema. Uses base36 for density.
+        number: `AT89C-${Date.now().toString(36)}`,
         title: 'AT-89 create project',
         customerId: seededCustomerId,
       });
@@ -966,7 +968,8 @@ describe('AT-94: Throwing post-commit subscriber does not roll back (AC-183)', (
         const auditBefore = await countAuditRows(db);
 
         const createRes = await authPost(ownerToken, '/api/projects', {
-          number: `AT-94-${Date.now()}`,
+          // number is varchar(20); base36 keeps the generated suffix short.
+          number: `AT94-${Date.now().toString(36)}`,
           title: 'AT-94 subscriber crash test',
           customerId: seededCustomerId,
         });

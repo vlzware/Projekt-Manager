@@ -67,6 +67,14 @@ AUDITED_DRIZZLE_EXPORTS=(projects customers users projectWorkers)
 ALLOWLIST=(
   # The single-write-path helper — the legitimate writer.
   "src/server/services/mutate.ts"
+  # Repository write functions accept `MutatingDatabase` (= `TxHandle`,
+  # see `src/server/db/connection.ts`) — a plain `Database` fails
+  # typecheck. The bypass the static scan cannot reliably detect
+  # (receiver-name agnostic `.insert(X)`) is therefore closed at the
+  # type level; this path-based allowlist exists so the scan does not
+  # flag the legitimate `tx.insert(...)` calls inside repos. The
+  # integrity guarantee is the type, not the allowlist.
+  "src/server/repositories/"
   # Migrations: schema-level DDL + seed-data migrations run outside
   # the runtime path and predate the helper.
   "src/server/db/migrations/"
@@ -85,12 +93,6 @@ ALLOWLIST=(
   # Tests in src/server/__tests__/** insert / delete fixtures
   # directly — the AC-179 carve-out for tests.
   "src/server/__tests__/"
-  # First-run bootstrap — runs before the app is live and has its
-  # own allowlist in AC-178 + ADR-0010. It is expected to use
-  # `mutate()` once that helper is available; until then this entry
-  # acknowledges the temporary bypass and the implementer removes it
-  # when bootstrap is retrofitted.
-  "src/server/bootstrap.ts"
 )
 
 is_allowlisted() {

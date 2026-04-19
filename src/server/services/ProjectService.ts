@@ -1,8 +1,9 @@
 /**
  * Project service — business logic orchestration for projects.
  *
- * Sits between routes (HTTP concerns) and repositories (data access).
- * All domain validation and error mapping lives here.
+ * Every domain-entity mutation routes through `mutate()` (ADR-0021).
+ * Service methods capture `payload.before`/`after` for the audit row
+ * inside the same transaction as the state change.
  */
 
 import type { Database } from '../db/connection.js';
@@ -10,8 +11,12 @@ import {
   listProjects as listProjectsRepo,
   getProject as getProjectRepo,
   getProjectRowById,
+  getProjectForMutation,
   insertProject as insertProjectRepo,
-  updateProject as updateProjectRepo,
+  updateProjectFields,
+  diffProjectWorkers,
+  addProjectWorker,
+  removeProjectWorker,
   softDeleteProject as softDeleteProjectRepo,
   hardDeleteProject as hardDeleteProjectRepo,
   transitionForward as transitionForwardRepo,
@@ -26,7 +31,7 @@ import {
   DateValidationError,
 } from '../repositories/project.js';
 import type { ListProjectsOpts, ProjectRow } from '../repositories/project-read.js';
-import { customers } from '../db/schema.js';
+import { customers, projects } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
@@ -38,8 +43,29 @@ import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
 import type { AuthUser } from '../middleware/auth.js';
 import { isOutOfScope } from '../repositories/scope.js';
+import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
+import type { AuditLogRow } from './audit-publisher.js';
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
+
+/**
+ * Subset of project fields considered for the `update` audit payload.
+ * Excludes server-managed timestamps and the immutable identifier — the
+ * spec pins changed fields only.
+ */
+function projectUpdatableDiff(row: {
+  title: string;
+  customerId: string;
+  estimatedValue: string | null;
+  notes: string | null;
+}): Record<string, unknown> {
+  return {
+    title: row.title,
+    customerId: row.customerId,
+    estimatedValue: row.estimatedValue ?? null,
+    notes: row.notes ?? null,
+  };
+}
 
 export class ProjectService {
   constructor(private db: Database) {}
@@ -73,6 +99,7 @@ export class ProjectService {
     },
     userId: string,
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
     const status = (data.status ?? STATE_KEYS[0]) as WorkflowState;
     if (!VALID_STATES.has(status)) {
@@ -80,23 +107,30 @@ export class ProjectService {
     }
 
     if (data.id !== undefined) {
-      return this.createProjectWithClientId({ ...data, id: data.id, status }, userId, log);
+      return this.createProjectWithClientId(
+        { ...data, id: data.id, status },
+        userId,
+        log,
+        correlationId,
+      );
     }
 
     try {
-      const project = await insertProjectRepo(this.db, {
-        number: data.number,
-        title: data.title,
-        status,
-        customerId: data.customerId,
-        plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
-        plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
-        assignedWorkerIds: data.assignedWorkerIds ?? null,
-        estimatedValue: data.estimatedValue != null ? String(data.estimatedValue) : null,
-        notes: data.notes ?? null,
-        createdBy: userId,
-        updatedBy: userId,
-      });
+      const project = await this.runCreateWithAudit(
+        {
+          number: data.number,
+          title: data.title,
+          status,
+          customerId: data.customerId,
+          plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
+          plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
+          assignedWorkerIds: data.assignedWorkerIds ?? [],
+          estimatedValue: data.estimatedValue != null ? String(data.estimatedValue) : null,
+          notes: data.notes ?? null,
+        },
+        userId,
+        correlationId,
+      );
       log.info({ projectId: project.id }, 'project_created');
       return project;
     } catch (err) {
@@ -105,6 +139,105 @@ export class ProjectService {
       if (sqlState === '23503') throw validationError(STRINGS.projects.foreignKeyViolation);
       throw err;
     }
+  }
+
+  /**
+   * Creates the project + optional worker assignments inside a single
+   * transaction, emitting one `create` audit row for the project and
+   * one `create` row per assigned worker. All commits happen atomically;
+   * audit dispatch runs after commit (AC-177, AC-183).
+   */
+  private async runCreateWithAudit(
+    data: {
+      id?: string;
+      number: string;
+      title: string;
+      status: WorkflowState;
+      customerId: string;
+      plannedStart: Date | null;
+      plannedEnd: Date | null;
+      assignedWorkerIds: string[];
+      estimatedValue: string | null;
+      notes: string | null;
+    },
+    userId: string,
+    correlationId?: string | null,
+  ): Promise<ReturnType<typeof toProject>> {
+    const ctx = {
+      actorKind: 'user' as const,
+      actorId: userId,
+      correlationId: correlationId ?? null,
+    };
+    const collected: AuditLogRow[] = [];
+
+    const project = await this.db.transaction(async (tx) => {
+      const { value: inserted, auditRow: createRow } = await mutateInTx(tx, ctx, {
+        entityType: 'project',
+        action: 'create',
+        run: async (innerTx) => {
+          const row = await insertProjectRepo(innerTx, {
+            id: data.id,
+            number: data.number,
+            title: data.title,
+            status: data.status,
+            customerId: data.customerId,
+            plannedStart: data.plannedStart,
+            plannedEnd: data.plannedEnd,
+            estimatedValue: data.estimatedValue,
+            notes: data.notes,
+            createdBy: userId,
+            updatedBy: userId,
+          });
+          return {
+            entityId: row.id,
+            value: row,
+            before: {},
+            after: {
+              number: row.number,
+              title: row.title,
+              status: row.status,
+              customerId: row.customerId,
+              plannedStart: row.plannedStart,
+              plannedEnd: row.plannedEnd,
+              estimatedValue: row.estimatedValue,
+              notes: row.notes,
+            },
+          };
+        },
+      });
+      collected.push(createRow);
+
+      // Each worker assignment is its own audit event — makes worker
+      // reachability queries (AC-180) cheap: a single row references
+      // one project and one user.
+      for (const workerId of data.assignedWorkerIds) {
+        const { auditRow } = await mutateInTx(tx, ctx, {
+          entityType: 'project_worker',
+          action: 'create',
+          run: async (innerTx) => {
+            await addProjectWorker(innerTx, inserted.id, workerId);
+            return {
+              entityId: inserted.id,
+              value: null,
+              before: {},
+              after: { projectId: inserted.id, userId: workerId },
+            };
+          },
+        });
+        collected.push(auditRow);
+      }
+
+      const workers = await fetchWorkersForProject(tx, inserted.id);
+      const customerRows = await tx
+        .select()
+        .from(customers)
+        .where(eq(customers.id, inserted.customerId))
+        .limit(1);
+      return toProject(inserted, customerRows[0] ?? null, workers);
+    });
+
+    await dispatchAuditRows(collected);
+    return project;
   }
 
   private async createProjectWithClientId(
@@ -122,6 +255,7 @@ export class ProjectService {
     },
     userId: string,
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
     const matchInput = {
       number: data.number,
@@ -145,20 +279,22 @@ export class ProjectService {
       },
       insert: async () => {
         try {
-          const inserted = await insertProjectRepo(this.db, {
-            id: data.id,
-            number: data.number,
-            title: data.title,
-            status: data.status,
-            customerId: data.customerId,
-            plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
-            plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
-            assignedWorkerIds: data.assignedWorkerIds ?? null,
-            estimatedValue: data.estimatedValue != null ? String(data.estimatedValue) : null,
-            notes: data.notes ?? null,
-            createdBy: userId,
-            updatedBy: userId,
-          });
+          const inserted = await this.runCreateWithAudit(
+            {
+              id: data.id,
+              number: data.number,
+              title: data.title,
+              status: data.status,
+              customerId: data.customerId,
+              plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
+              plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
+              assignedWorkerIds: data.assignedWorkerIds ?? [],
+              estimatedValue: data.estimatedValue != null ? String(data.estimatedValue) : null,
+              notes: data.notes ?? null,
+            },
+            userId,
+            correlationId,
+          );
           log.info({ projectId: data.id }, 'project_created');
           return inserted;
         } catch (err) {
@@ -222,6 +358,20 @@ export class ProjectService {
     return toProject(row, customerRows[0] ?? null, workers);
   }
 
+  /**
+   * PATCH /api/projects/:id — field update and/or worker reassignment.
+   *
+   * Field updates (title/customerId/estimatedValue/notes) produce a
+   * single `update` audit row carrying the diff.
+   *
+   * Worker reassignment produces one `project_worker` row per actual
+   * add and one per actual remove — ids present in both sides are
+   * idempotent no-ops with no audit event. If the caller supplies
+   * only `assignedWorkerIds` without touching other fields, NO
+   * `update` audit row is emitted for the project itself; only the
+   * `project_worker` audit rows land. This matches the grain pinned
+   * in AT-89 (count(project_worker audit rows) == count of changes).
+   */
   async updateProject(
     id: string,
     data: {
@@ -233,9 +383,126 @@ export class ProjectService {
     },
     userId: string,
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
+    const ctx = {
+      actorKind: 'user' as const,
+      actorId: userId,
+      correlationId: correlationId ?? null,
+    };
+    const collected: AuditLogRow[] = [];
+    const hasFieldUpdate =
+      data.title !== undefined ||
+      data.customerId !== undefined ||
+      data.estimatedValue !== undefined ||
+      data.notes !== undefined;
+
     try {
-      const project = await updateProjectRepo(this.db, id, userId, data);
+      const project = await this.db.transaction(async (tx) => {
+        const priorRow = await getProjectForMutation(tx, id);
+        if (!priorRow) throw new ProjectNotFoundError();
+
+        let currentRow: ProjectRow = priorRow;
+
+        if (hasFieldUpdate) {
+          const fieldUpdate = await mutateInTx(tx, ctx, {
+            entityType: 'project',
+            action: 'update',
+            run: async (innerTx) => {
+              const updated = await updateProjectFields(innerTx, id, userId, {
+                title: data.title,
+                customerId: data.customerId,
+                estimatedValue: data.estimatedValue,
+                notes: data.notes,
+              });
+              if (!updated) throw new ProjectNotFoundError();
+
+              const before: Record<string, unknown> = {};
+              const after: Record<string, unknown> = {};
+              const priorDiff = projectUpdatableDiff({
+                title: priorRow.title,
+                customerId: priorRow.customerId,
+                estimatedValue: priorRow.estimatedValue,
+                notes: priorRow.notes,
+              });
+              const updatedDiff = projectUpdatableDiff({
+                title: updated.title,
+                customerId: updated.customerId,
+                estimatedValue: updated.estimatedValue,
+                notes: updated.notes,
+              });
+              if (data.title !== undefined) {
+                before.title = priorDiff.title;
+                after.title = updatedDiff.title;
+              }
+              if (data.customerId !== undefined) {
+                before.customerId = priorDiff.customerId;
+                after.customerId = updatedDiff.customerId;
+              }
+              if (data.estimatedValue !== undefined) {
+                before.estimatedValue = priorDiff.estimatedValue;
+                after.estimatedValue = updatedDiff.estimatedValue;
+              }
+              if (data.notes !== undefined) {
+                before.notes = priorDiff.notes;
+                after.notes = updatedDiff.notes;
+              }
+
+              return { entityId: id, value: updated, before, after };
+            },
+          });
+          collected.push(fieldUpdate.auditRow);
+          currentRow = fieldUpdate.value;
+        }
+
+        // Worker reassignment — emit one audit row per add/remove.
+        if (data.assignedWorkerIds !== undefined) {
+          const { toAdd, toRemove } = await diffProjectWorkers(tx, id, data.assignedWorkerIds);
+          for (const workerId of toRemove) {
+            const res = await mutateInTx(tx, ctx, {
+              entityType: 'project_worker',
+              action: 'delete',
+              run: async (innerTx) => {
+                await removeProjectWorker(innerTx, id, workerId);
+                return {
+                  entityId: id,
+                  value: null,
+                  before: { projectId: id, userId: workerId },
+                  after: {},
+                };
+              },
+            });
+            collected.push(res.auditRow);
+          }
+          for (const workerId of toAdd) {
+            const res = await mutateInTx(tx, ctx, {
+              entityType: 'project_worker',
+              action: 'create',
+              run: async (innerTx) => {
+                await addProjectWorker(innerTx, id, workerId);
+                return {
+                  entityId: id,
+                  value: null,
+                  before: {},
+                  after: { projectId: id, userId: workerId },
+                };
+              },
+            });
+            collected.push(res.auditRow);
+          }
+        }
+
+        const workers = await fetchWorkersForProject(tx, id);
+        const customerRows = await tx
+          .select()
+          .from(customers)
+          .where(eq(customers.id, currentRow.customerId))
+          .limit(1);
+        return toProject(currentRow, customerRows[0] ?? null, workers);
+      });
+
+      await dispatchAuditRows(collected);
+
       log.info({ projectId: id }, 'project_updated');
       return project;
     } catch (err) {
@@ -244,9 +511,32 @@ export class ProjectService {
     }
   }
 
-  async deleteProject(id: string, userId: string, log: ServiceLogger) {
+  async deleteProject(
+    id: string,
+    userId: string,
+    log: ServiceLogger,
+    correlationId?: string | null,
+  ) {
     try {
-      await softDeleteProjectRepo(this.db, id, userId);
+      await mutate(
+        this.db,
+        { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
+        {
+          entityType: 'project',
+          action: 'delete',
+          run: async (tx) => {
+            const priorRow = await getProjectForMutation(tx, id);
+            if (!priorRow) throw new ProjectNotFoundError();
+            await softDeleteProjectRepo(tx, id, userId);
+            return {
+              entityId: id,
+              value: null,
+              before: { number: priorRow.number, title: priorRow.title },
+              after: { deleted: true },
+            };
+          },
+        },
+      );
       log.info({ projectId: id }, 'project_deleted');
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
@@ -254,17 +544,36 @@ export class ProjectService {
     }
   }
 
-  /**
-   * Hard-delete an archived project (AC-155/156/158). Archive is a
-   * precondition — the repository enforces it and surfaces
-   * `ProjectNotArchivedError` for non-archived rows, which we map to
-   * 409 CONFLICT with the German `purgeRequiresArchive` copy.
-   *
-   * `project_workers` cascade via the FK; no explicit cleanup here.
-   */
-  async purgeProject(id: string, userId: string, log: ServiceLogger) {
+  async purgeProject(
+    id: string,
+    userId: string,
+    log: ServiceLogger,
+    correlationId?: string | null,
+  ) {
     try {
-      await hardDeleteProjectRepo(this.db, id);
+      await mutate(
+        this.db,
+        { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
+        {
+          entityType: 'project',
+          action: 'purge',
+          run: async (tx) => {
+            // Read pre-delete state for the audit payload. The repository
+            // throws ProjectNotFoundError for missing rows and
+            // ProjectNotArchivedError for non-archived rows; we catch both
+            // outside the tx and map to HTTP codes.
+            const priorRows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
+            const priorRow = priorRows[0];
+            await hardDeleteProjectRepo(tx, id);
+            return {
+              entityId: id,
+              value: null,
+              before: priorRow ? { number: priorRow.number, title: priorRow.title } : {},
+              after: {},
+            };
+          },
+        },
+      );
       log.info({ projectId: id, actorUserId: userId }, 'project_purged');
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
@@ -280,10 +589,30 @@ export class ProjectService {
     userId: string,
     expectedStatus: WorkflowState,
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
     let result;
     try {
-      result = await transitionForwardRepo(this.db, projectId, userId, expectedStatus);
+      result = await mutate(
+        this.db,
+        { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
+        {
+          entityType: 'project',
+          action: 'transition:forward',
+          run: async (tx) => {
+            const repoResult = await transitionForwardRepo(tx, projectId, userId, expectedStatus);
+            return {
+              entityId: projectId,
+              value: repoResult,
+              before: { status: repoResult.before },
+              after: {
+                status: repoResult.project.status,
+                statusChangedAt: repoResult.project.statusChangedAt,
+              },
+            };
+          },
+        },
+      );
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
@@ -312,10 +641,30 @@ export class ProjectService {
     userId: string,
     expectedStatus: WorkflowState,
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
     let result;
     try {
-      result = await transitionBackwardRepo(this.db, projectId, userId, expectedStatus);
+      result = await mutate(
+        this.db,
+        { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
+        {
+          entityType: 'project',
+          action: 'transition:backward',
+          run: async (tx) => {
+            const repoResult = await transitionBackwardRepo(tx, projectId, userId, expectedStatus);
+            return {
+              entityId: projectId,
+              value: repoResult,
+              before: { status: repoResult.before },
+              after: {
+                status: repoResult.project.status,
+                statusChangedAt: repoResult.project.statusChangedAt,
+              },
+            };
+          },
+        },
+      );
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof TransitionError) throw validationError(err.message);
@@ -344,10 +693,33 @@ export class ProjectService {
     userId: string,
     dates: { plannedStart?: string | null; plannedEnd?: string | null },
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
-    let updated;
+    let result;
     try {
-      updated = await updateDatesRepo(this.db, projectId, userId, dates);
+      result = await mutate(
+        this.db,
+        { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
+        {
+          entityType: 'project',
+          action: 'update',
+          run: async (tx) => {
+            const r = await updateDatesRepo(tx, projectId, userId, dates);
+            return {
+              entityId: projectId,
+              value: r,
+              before: {
+                plannedStart: r.before.plannedStart,
+                plannedEnd: r.before.plannedEnd,
+              },
+              after: {
+                plannedStart: r.after.plannedStart,
+                plannedEnd: r.after.plannedEnd,
+              },
+            };
+          },
+        },
+      );
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof DateValidationError) throw validationError(err.message);
@@ -366,6 +738,6 @@ export class ProjectService {
       log,
     );
 
-    return updated;
+    return result.project;
   }
 }

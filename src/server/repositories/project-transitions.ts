@@ -3,7 +3,7 @@
  */
 
 import { eq, and } from 'drizzle-orm';
-import type { Database } from '../db/connection.js';
+import type { MutatingDatabase } from '../db/connection.js';
 import { projects, customers } from '../db/schema.js';
 import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
@@ -31,7 +31,7 @@ export interface TransitionResult {
  * second attempt because its `expectedStatus` no longer matches the DB.
  */
 export async function transitionForward(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   userId: string,
   expectedStatus: WorkflowState,
@@ -50,7 +50,7 @@ export async function transitionForward(
  * Same `expectedStatus` contract as `transitionForward`.
  */
 export async function transitionBackward(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   userId: string,
   expectedStatus: WorkflowState,
@@ -70,7 +70,7 @@ export async function transitionBackward(
 }
 
 async function applyTransition(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   userId: string,
   expectedStatus: WorkflowState,

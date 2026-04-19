@@ -106,7 +106,12 @@ export function projectRoutes(db: Database) {
           estimatedValue?: number | null;
           notes?: string | null;
         };
-        const project = await projectService.createProject(body, request.user!.id, request.log);
+        const project = await projectService.createProject(
+          body,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(201).send(project);
       },
     );
@@ -168,6 +173,7 @@ export function projectRoutes(db: Database) {
           request.user!.id,
           expectedStatus,
           request.log,
+          request.id ?? null,
         );
         return reply.code(200).send(project);
       },
@@ -206,6 +212,7 @@ export function projectRoutes(db: Database) {
           request.user!.id,
           expectedStatus,
           request.log,
+          request.id ?? null,
         );
         return reply.code(200).send(project);
       },
@@ -248,7 +255,13 @@ export function projectRoutes(db: Database) {
           plannedEnd?: string | null;
         };
 
-        const project = await projectService.updateDates(id, request.user!.id, body, request.log);
+        const project = await projectService.updateDates(
+          id,
+          request.user!.id,
+          body,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(200).send(project);
       },
     );
@@ -289,7 +302,13 @@ export function projectRoutes(db: Database) {
           estimatedValue?: number | null;
           notes?: string | null;
         };
-        const project = await projectService.updateProject(id, body, request.user!.id, request.log);
+        const project = await projectService.updateProject(
+          id,
+          body,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(200).send(project);
       },
     );
@@ -311,7 +330,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        await projectService.deleteProject(id, request.user!.id, request.log);
+        await projectService.deleteProject(id, request.user!.id, request.log, request.id ?? null);
         return reply.code(200).send({ success: true, deleted: true });
       },
     );
@@ -339,7 +358,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        await projectService.purgeProject(id, request.user!.id, request.log);
+        await projectService.purgeProject(id, request.user!.id, request.log, request.id ?? null);
         return reply.code(204).send();
       },
     );

@@ -10,11 +10,11 @@
 # Scenarios:
 #   1. Allowlisted path — `src/server/services/mutate.ts` contains a
 #      raw mutation. Expected: exit 0 (the path is in ALLOWLIST).
-#   2. Non-allowlisted path — `src/server/repositories/customer.ts`
-#      contains a raw mutation. Expected: exit 1.
-#   3. Run against the current repo — many raw mutations outside
-#      mutate(). Expected: exit 1 (confirms the failing state the
-#      workflow's step 3 wants — mutate() does not exist yet).
+#   2. Non-allowlisted path — a synthetic service file outside the
+#      allowlist contains a raw mutation. Expected: exit 1.
+#   3. Run against the current repo — every audited mutation is now
+#      routed through mutate() and the repositories path is allowlisted
+#      behind the MutatingDatabase type gate. Expected: exit 0.
 #
 # Usage:
 #   bash scripts/check-audit-mutations.test.sh
@@ -82,10 +82,13 @@ echo ""
 echo "Scenario 2: non-allowlisted path with raw mutation → expect exit 1"
 tmp2="$(mktemp -d)"
 trap 'rm -rf "$tmp1" "$tmp2"' EXIT
-mkdir -p "$tmp2/src/server/repositories" "$tmp2/scripts"
+mkdir -p "$tmp2/src/server/rogue" "$tmp2/scripts"
 cp "$CHECK_SCRIPT" "$tmp2/scripts/check-audit-mutations.sh"
 chmod +x "$tmp2/scripts/check-audit-mutations.sh"
-cat > "$tmp2/src/server/repositories/customer.ts" <<'EOF'
+# A non-allowlisted path — `src/server/rogue/` is not in the ALLOWLIST
+# and is not covered by the MutatingDatabase type gate (it's a
+# synthetic file, not importing repositories). The scan must flag it.
+cat > "$tmp2/src/server/rogue/leak.ts" <<'EOF'
 import { db, customers } from '../db.js';
 export async function updateCustomer(id: string) {
   return db.update(customers).set({ name: 'new' }).where(eq(customers.id, id));
@@ -94,19 +97,15 @@ EOF
 assert_exit 1 "non-allowlisted file authors raw mutation" bash "$tmp2/scripts/check-audit-mutations.sh"
 
 # -------------------------------------------------------------
-# Scenario 3 — current repo (pre-implementation), expect fail.
+# Scenario 3 — current repo, post-implementation, expect pass.
 # -------------------------------------------------------------
-# This scenario is the "positive-failure" case called out in step 3
-# of the workflow: mutate() does not exist yet, so the check must
-# find raw mutations across repositories.
-#
-# When implementation lands and every audited mutation is routed
-# through mutate(), this assertion flips to expect 0 — the reviewer
-# updates the expected value in the same PR that removes the
-# raw-mutation sites.
+# Every audited mutation in the production tree routes through
+# `mutate()` (ADR-0021) and the repository writes are type-gated
+# behind `MutatingDatabase` (see `src/server/db/connection.ts`).
+# The scan should therefore find no findings outside the allowlist.
 echo ""
-echo "Scenario 3: current repo (pre-implementation) → expect exit 1"
-assert_exit 1 "current repo fails because mutate() does not exist" bash "$CHECK_SCRIPT"
+echo "Scenario 3: current repo (post-implementation) → expect exit 0"
+assert_exit 0 "current repo passes — every audited mutation routes through mutate()" bash "$CHECK_SCRIPT"
 
 echo ""
 echo "-------------------------------------------------------------"

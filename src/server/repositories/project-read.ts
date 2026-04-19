@@ -3,7 +3,7 @@
  */
 
 import { eq, count, inArray, and, ilike, or, isNull, desc } from 'drizzle-orm';
-import type { Database } from '../db/connection.js';
+import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
 import { projects, projectWorkers, users, customers } from '../db/schema.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
@@ -86,10 +86,12 @@ export function toProject(
 }
 
 /**
- * Fetch assigned workers for a single project.
+ * Fetch assigned workers for a single project. Accepts a transactional
+ * handle so callers inside a tx can read the current assignment set as
+ * part of the same snapshot as the mutation.
  */
 export async function fetchWorkersForProject(
-  db: Database,
+  db: TransactionalDatabase,
   projectId: string,
 ): Promise<{ userId: string; displayName: string }[]> {
   return db
@@ -303,11 +305,19 @@ export async function getProject(
 }
 
 /**
- * Insert a single project.
- * Returns the newly created project in the API-facing shape.
+ * Insert a single project row. Does NOT insert project_workers — the
+ * service layer splits the worker-assignment writes into individual
+ * `project_worker` audit events via `addProjectWorker` so each
+ * assignment produces its own audit row (AC-177 grain).
+ *
+ * Runs against the provided transactional handle so the insert shares
+ * the caller's transaction (ProjectService.runCreateWithAudit).
+ *
+ * Returns the freshly-inserted raw row. The service is responsible for
+ * hydrating the API-facing response shape (see `toProject`).
  */
 export async function insertProject(
-  db: Database,
+  db: MutatingDatabase,
   data: {
     id?: string;
     number: string;
@@ -316,123 +326,122 @@ export async function insertProject(
     customerId: string;
     plannedStart?: Date | null;
     plannedEnd?: Date | null;
-    assignedWorkerIds?: string[] | null;
     estimatedValue?: string | null;
     notes?: string | null;
     createdBy?: string | null;
     updatedBy?: string | null;
   },
-): Promise<ReturnType<typeof toProject>> {
+): Promise<ProjectRow> {
   const now = new Date();
-  const project = await db.transaction(async (tx) => {
-    const rows = await tx
-      .insert(projects)
-      .values({
-        ...(data.id !== undefined ? { id: data.id } : {}),
-        number: data.number,
-        title: data.title,
-        status: data.status,
-        statusChangedAt: now,
-        customerId: data.customerId,
-        plannedStart: data.plannedStart ?? null,
-        plannedEnd: data.plannedEnd ?? null,
-        estimatedValue: data.estimatedValue ?? null,
-        notes: data.notes ?? null,
-        createdAt: now,
-        updatedAt: now,
-        createdBy: data.createdBy ?? null,
-        updatedBy: data.updatedBy ?? null,
-      })
-      .returning();
+  const rows = await db
+    .insert(projects)
+    .values({
+      ...(data.id !== undefined ? { id: data.id } : {}),
+      number: data.number,
+      title: data.title,
+      status: data.status,
+      statusChangedAt: now,
+      customerId: data.customerId,
+      plannedStart: data.plannedStart ?? null,
+      plannedEnd: data.plannedEnd ?? null,
+      estimatedValue: data.estimatedValue ?? null,
+      notes: data.notes ?? null,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: data.createdBy ?? null,
+      updatedBy: data.updatedBy ?? null,
+    })
+    .returning();
 
-    const row = rows[0]!;
-
-    if (data.assignedWorkerIds && data.assignedWorkerIds.length > 0) {
-      await tx.insert(projectWorkers).values(
-        data.assignedWorkerIds.map((userId) => ({
-          projectId: row.id,
-          userId,
-        })),
-      );
-    }
-
-    return row;
-  });
-
-  // Hydrate workers + customer outside the transaction
-  const [workers, customerRows] = await Promise.all([
-    data.assignedWorkerIds?.length
-      ? fetchWorkersForProject(db, project.id)
-      : Promise.resolve([] as { userId: string; displayName: string }[]),
-    db.select().from(customers).where(eq(customers.id, project.customerId)).limit(1),
-  ]);
-
-  return toProject(project, customerRows[0] ?? null, workers);
+  return rows[0]!;
 }
 
 /**
- * Update project fields (PATCH semantics).
- * Does NOT update status or number — those use dedicated operations.
+ * Apply the project-level field update (title, customer, estimatedValue, notes).
+ * Does NOT handle worker reassignment — that is split out into a separate
+ * `replaceProjectWorkers` call so each add/remove can produce its own
+ * audit row (AC-177 "every mutation produces exactly one audit_log row",
+ * applied at the project_worker grain).
+ *
+ * Returns null when the project does not exist or is soft-deleted. The
+ * caller must set at least one of the updatable fields; passing an empty
+ * object is a programmer error.
  */
-export async function updateProject(
-  db: Database,
+export async function updateProjectFields(
+  db: MutatingDatabase,
   id: string,
   userId: string,
   data: {
     title?: string;
     customerId?: string;
-    assignedWorkerIds?: string[];
     estimatedValue?: number | null;
     notes?: string | null;
   },
-): Promise<ReturnType<typeof toProject>> {
-  const row = await db.transaction(async (tx) => {
-    const now = new Date();
+): Promise<ProjectRow | null> {
+  const now = new Date();
+  const setClause: Record<string, unknown> = {
+    updatedAt: now,
+    updatedBy: userId,
+  };
+  if (data.title !== undefined) setClause.title = data.title;
+  if (data.customerId !== undefined) setClause.customerId = data.customerId;
+  if (data.estimatedValue !== undefined) {
+    setClause.estimatedValue = data.estimatedValue !== null ? String(data.estimatedValue) : null;
+  }
+  if (data.notes !== undefined) setClause.notes = data.notes;
 
-    // Build the SET clause dynamically — only include fields that were provided
-    const setClause: Record<string, unknown> = {
-      updatedAt: now,
-      updatedBy: userId,
-    };
-    if (data.title !== undefined) setClause.title = data.title;
-    if (data.customerId !== undefined) setClause.customerId = data.customerId;
-    if (data.estimatedValue !== undefined) {
-      setClause.estimatedValue = data.estimatedValue !== null ? String(data.estimatedValue) : null;
-    }
-    if (data.notes !== undefined) setClause.notes = data.notes;
+  const rows = await db
+    .update(projects)
+    .set(setClause)
+    .where(and(eq(projects.id, id), eq(projects.deleted, false)))
+    .returning();
 
-    const rows = await tx
-      .update(projects)
-      .set(setClause)
-      .where(and(eq(projects.id, id), eq(projects.deleted, false)))
-      .returning();
+  return rows[0] ?? null;
+}
 
-    if (rows.length === 0) throw new ProjectNotFoundError();
-    const project = rows[0]!;
+/**
+ * Compute the diff between the current project_workers set and the
+ * requested assignedWorkerIds. Returns the ids to add and the ids to
+ * remove as disjoint sets. Idempotent — an id present in both sets is
+ * dropped from both.
+ */
+export async function diffProjectWorkers(
+  db: TransactionalDatabase,
+  projectId: string,
+  requested: string[],
+): Promise<{ toAdd: string[]; toRemove: string[]; existing: string[] }> {
+  const current = await db
+    .select({ userId: projectWorkers.userId })
+    .from(projectWorkers)
+    .where(eq(projectWorkers.projectId, projectId));
+  const existing = current.map((r) => r.userId);
+  const existingSet = new Set(existing);
+  const requestedSet = new Set(requested);
+  return {
+    toAdd: requested.filter((id) => !existingSet.has(id)),
+    toRemove: existing.filter((id) => !requestedSet.has(id)),
+    existing,
+  };
+}
 
-    // Handle worker reassignment if provided
-    if (data.assignedWorkerIds !== undefined) {
-      await tx.delete(projectWorkers).where(eq(projectWorkers.projectId, id));
-      if (data.assignedWorkerIds.length > 0) {
-        await tx.insert(projectWorkers).values(
-          data.assignedWorkerIds.map((wId) => ({
-            projectId: id,
-            userId: wId,
-          })),
-        );
-      }
-    }
+/** Add a single project_worker row. */
+export async function addProjectWorker(
+  db: MutatingDatabase,
+  projectId: string,
+  userId: string,
+): Promise<void> {
+  await db.insert(projectWorkers).values({ projectId, userId });
+}
 
-    return project;
-  });
-
-  // Hydrate workers + customer outside the transaction (same pattern as transitions)
-  const [workers, customerRows] = await Promise.all([
-    fetchWorkersForProject(db, id),
-    db.select().from(customers).where(eq(customers.id, row.customerId)).limit(1),
-  ]);
-
-  return toProject(row, customerRows[0] ?? null, workers);
+/** Remove a single project_worker row. */
+export async function removeProjectWorker(
+  db: MutatingDatabase,
+  projectId: string,
+  userId: string,
+): Promise<void> {
+  await db
+    .delete(projectWorkers)
+    .where(and(eq(projectWorkers.projectId, projectId), eq(projectWorkers.userId, userId)));
 }
 
 /**
@@ -442,15 +451,40 @@ export async function updateProject(
  * flag here: a client replaying a create must not get a soft-deleted row
  * back, but the caller needs to disambiguate "id taken" from "id free".
  */
-export async function getProjectRowById(db: Database, id: string): Promise<ProjectRow | null> {
+export async function getProjectRowById(
+  db: TransactionalDatabase,
+  id: string,
+): Promise<ProjectRow | null> {
   const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+/**
+ * Fetch the active (non-archived) project row by id. Services use this
+ * inside a `mutate()` callback to capture `payload.before` within the
+ * same snapshot as the write. Returns null for missing or soft-deleted
+ * rows — callers map to 404.
+ */
+export async function getProjectForMutation(
+  db: TransactionalDatabase,
+  id: string,
+): Promise<ProjectRow | null> {
+  const rows = await db
+    .select()
+    .from(projects)
+    .where(and(eq(projects.id, id), eq(projects.deleted, false)))
+    .limit(1);
   return rows[0] ?? null;
 }
 
 /**
  * Soft-delete a project (set deleted = true).
  */
-export async function softDeleteProject(db: Database, id: string, userId: string): Promise<void> {
+export async function softDeleteProject(
+  db: MutatingDatabase,
+  id: string,
+  userId: string,
+): Promise<void> {
   const rows = await db
     .update(projects)
     .set({ deleted: true, updatedAt: new Date(), updatedBy: userId })
@@ -474,7 +508,7 @@ export async function softDeleteProject(db: Database, id: string, userId: string
  * not-archived cases into the same zero-rows-affected signal, and
  * the service layer must return different HTTP codes for each.
  */
-export async function hardDeleteProject(db: Database, id: string): Promise<void> {
+export async function hardDeleteProject(db: MutatingDatabase, id: string): Promise<void> {
   const existing = await db
     .select({ id: projects.id, deleted: projects.deleted })
     .from(projects)
@@ -484,5 +518,15 @@ export async function hardDeleteProject(db: Database, id: string): Promise<void>
   if (existing.length === 0) throw new ProjectNotFoundError();
   if (!existing[0]!.deleted) throw new ProjectNotArchivedError();
 
+  await db.delete(projects).where(eq(projects.id, id));
+}
+
+/**
+ * Hard-delete a project by id without any archived/existence checks.
+ * Caller is responsible for verifying the row is safe to drop — used
+ * by `CustomerService.deleteCustomer` when atomically purging every
+ * archived project referenced by the customer being deleted.
+ */
+export async function hardDeleteProjectUnchecked(db: MutatingDatabase, id: string): Promise<void> {
   await db.delete(projects).where(eq(projects.id, id));
 }

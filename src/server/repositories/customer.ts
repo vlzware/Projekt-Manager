@@ -3,7 +3,7 @@
  */
 
 import { eq, and, count, ilike, asc, sql } from 'drizzle-orm';
-import type { Database, TransactionalDatabase } from '../db/connection.js';
+import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
 import { customers, projects } from '../db/schema.js';
 import type { AuthUser } from '../middleware/auth.js';
 import {
@@ -137,7 +137,7 @@ export async function getCustomer(
 }
 
 export async function createCustomer(
-  db: Database,
+  db: MutatingDatabase,
   data: {
     id?: string;
     name: string;
@@ -171,13 +171,16 @@ export async function createCustomer(
  * idempotency path in CustomerService.createCustomer — it compares stored
  * fields (notably the raw JSONB address) against the request body.
  */
-export async function getCustomerRow(db: Database, id: string): Promise<CustomerRow | null> {
+export async function getCustomerRow(
+  db: TransactionalDatabase,
+  id: string,
+): Promise<CustomerRow | null> {
   const rows = await db.select().from(customers).where(eq(customers.id, id)).limit(1);
   return rows[0] ?? null;
 }
 
 export async function updateCustomer(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   userId: string,
   data: {
@@ -204,7 +207,7 @@ export async function updateCustomer(
   return toCustomerResponse(rows[0]!);
 }
 
-export async function deleteCustomer(db: TransactionalDatabase, id: string): Promise<boolean> {
+export async function deleteCustomer(db: MutatingDatabase, id: string): Promise<boolean> {
   const rows = await db
     .delete(customers)
     .where(eq(customers.id, id))
