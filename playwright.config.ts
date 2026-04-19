@@ -28,7 +28,7 @@ const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/user.json');
  * that completes before this one starts.
  */
 const MUTATING_TESTS =
-  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange|archive-flows/;
+  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange|archive-flows|activity-feed/;
 const DEMO_TESTS = /demo-.*\.spec\.ts/;
 
 export default defineConfig({
