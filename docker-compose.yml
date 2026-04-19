@@ -125,7 +125,7 @@ services:
     # docs/spec/architecture.md §11.10. Runs a dcron loop that fires
     # run-backup.sh five times on weekdays (09/12/15/18/21 Europe/Berlin)
     # and once on weekends (12:00), with run-drill.sh at a +2 min offset
-    # on each tick. Retention is linear (R2 bucket lock + 30-day
+    # on each tick. Retention is linear (R2 bucket lock + 90-day
     # lifecycle); no in-container rotation step.
     #
     # Pulled from GHCR — mirrors the `app` service's shape (ADR-0011's

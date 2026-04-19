@@ -19,7 +19,7 @@ ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile bac
 3. **(Optional) Rotate the age key pair.** Do this if the private identity is suspected compromised, the operator workstation was lost, or on a slower cadence than the token rotation.
 
    Cost: older R2 objects encrypted to the old recipient become unreadable by the new identity. Options:
-   - **Accept the gap.** Old dumps age out under the 30-day lifecycle. For the 14-day immutability window, any restore must still use the old identity — keep it in the password manager, marked "retired, read-only".
+   - **Accept the gap.** Old dumps age out under the 90-day lifecycle. For the 14-day immutability window, any restore must still use the old identity — keep it in the password manager, marked "retired, read-only".
    - **Re-encrypt the lock window.** For each still-locked old object: download, `age -d -i ~/secrets/age-backup.key.old`, `age -r <new-recipient>`, re-upload under a new timestamped key. Labour-intensive; skip unless the old identity is confirmed compromised.
 
    To rotate: rerun [setup.md §2](setup.md#2-generate-the-age-key-pair) with `~/secrets/age-backup.key.new`, update the password-manager entries, move the old identity to a "retired" vault.

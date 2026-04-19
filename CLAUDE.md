@@ -14,7 +14,7 @@ The methodology is therefore to arrive at confidence in sequential steps. Each a
 
 **Human-made** - ultimate source of truth, can still be questioned and discussed:
 
-- **Kickoff**: [docs/project/kickoff.md](docs/project/kickoff.md) - the guiding light of the project
+- **Kickoff**: [docs/project/kickoff.md](docs/project/kickoff.md) - the guiding light of the project, the ultimate truth
 - **Plan**: [docs/project/plan.md](docs/project/plan.md) - iteration plan, search for `**CURRENT**`
 - **Conventions**: [CONTRIBUTING.md](CONTRIBUTING.md) and category-specific: `review/conventions-*.md`
 
@@ -31,6 +31,10 @@ The methodology is therefore to arrive at confidence in sequential steps. Each a
 - **Scratch space**: `docs/wip/` - just a place for temporary files.
 - **GitHub Issues, Comments**: main point stands, description and proposed solution might be BS, often wrong.
 
+## Question everything
+
+You may notice that even the Kickoff got couple revisions during development. Everything beneath it should be treated as a draft, a temporal solution, until a better option presents itself.
+
 ## Workflow
 
 Follow [CONTRIBUTING.md § Workflow](CONTRIBUTING.md#workflow).
@@ -40,6 +44,12 @@ Follow [CONTRIBUTING.md § Workflow](CONTRIBUTING.md#workflow).
 Data integrity, security and quality defaults are the baseline, **not open questions.** When an established professional practice applies (HTTPS everywhere, input validation, auth on every mutation, CSRF protection, test isolation, ...), the default is to do it. The discussion — when there is one — is about _how_ to implement it cleanly in the current topology, not _whether_ to.
 
 If the environment cannot meet a data integrity, security or quality requirement, the correct behavior is to **refuse to serve, fail the deploy, or block the merge** — not to downgrade the requirement. When the implementation lags behind a safety criterion in the spec or an AC, fix the implementation. Do not rewrite the criterion to match the stub.
+
+## Working with documentation
+
+When working with documentation - including docs, spec, ADRs, GH issues and comments, code comments - aim for concise, focused and clear statements. If the statement can be written shorter, without losing the meaning, go for it. Long prose hurts readability.
+
+Where possible, prefer a simple diagram over a long explanation.
 
 ## Undecided Specifics
 

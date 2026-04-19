@@ -27,7 +27,7 @@ A `backup` compose service that, on every scheduled tick, produces three R2 obje
 
 Every backup is verified immediately after creation (**Tier 1**). Whenever the operator's decryption key is loaded into the VPS tmpfs, every backup is also verified end-to-end from the encrypted R2 artifact (**Tier 2**). A missing key makes Tier 2 skip gracefully; it is not a failure.
 
-**Retention is linear:** R2 bucket lock makes every upload immutable for 14 days; an R2 lifecycle rule deletes objects 30 days after upload. Effective window is 14-30 days of rolling history. No GFS, no rotation script — see [ADR-0020 §Decision](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision) for why.
+**Retention is linear:** R2 bucket lock makes every upload immutable for 14 days; an R2 lifecycle rule deletes objects 90 days after upload. Effective window is 14-90 days of rolling history. No GFS, no rotation script — see [ADR-0020 §Decision](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision) for why.
 
 ## When to use this runbook
 

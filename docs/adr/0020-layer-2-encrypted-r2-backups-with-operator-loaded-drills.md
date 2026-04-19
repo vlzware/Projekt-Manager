@@ -25,9 +25,6 @@ Add a dedicated **`backup` compose service** that runs on a configurable interva
 - **Encryption** uses **age asymmetric**: the public recipient ships in container env; the private identity lives only on the operator workstation. For drills, the operator loads the identity into a tmpfs mount on the VPS via a helper script; it never persists to disk and is lost on reboot.
 - **Storage** uses R2 with bucket locks (14-day retention) plus a lifecycle rule deleting objects 30 days after upload. Effective: immutable for 14 days, deletable for the next 16. R2 object versioning is not used — each run writes a uniquely timestamped filename, no version chain to manage.
 - **Retention is linear.** Bucket lock (14 days) + lifecycle (delete at 30 days) produce a 14–30 day rolling window of encrypted history, provider-enforced. No in-container rotation, no weekly/monthly promotion. Deliberate scope call — see "GFS-style rotation" alternative.
-
-> **SSOT note.** The "14 days / 30 days / 14–30 day window" numbers above are the retention SoT for the project. `DATA.md`, `docs/ops/backup/overview.md`, `docs/ops/backup/setup.md`, `docs/spec/architecture.md §11.10`, and the `docker-compose.yml` backup-service comment each restate these numbers. Any change here must propagate to all five mirrors in the same commit.
-
 - **Verification every backup**, two tiers:
   - **Tier 1 — verify-on-create** (unattended): restore the fresh plaintext dump into an ephemeral Postgres inside the backup container (initdb + postgres binary over a unix socket — not a sibling container), recompute the per-table manifest, compare. Mismatch fails the run — no upload, status reports failure.
   - **Tier 2 — verify-on-cycle** (needs operator key): download the just-uploaded encrypted dump, decrypt with the tmpfs identity, restore into ephemeral Postgres, compare manifest. Key absent = drill skipped with a distinct log line; not a failure, but freshness surfaces through status.
@@ -95,3 +92,9 @@ Classic grandfather-father-son: promote a daily to weekly on Sundays and monthly
 - [ADR-0014](0014-ac-tier-system-critical-vs-design.md) — misleading state is a critical defect class
 - [ADR-0018](0018-data-persistence-and-recovery-layered-strategy.md) — the three-layer persistence model; this ADR is the Layer 2 implementation
 - [CONTRIBUTING.md §Security audit](../../CONTRIBUTING.md#security-audit) — trigger satisfied
+
+## Amendments
+
+### 2026-04-19 — Retention extended from 30 to 90 days
+
+Lifecycle rule changed from "delete 30 days after upload" to "delete 90 days after upload." Effective window: 14 days immutable (unchanged) + 76 days deletable (was 16). Rationale: a 30-day window only catches damage detected within a month; silent data corruption and delayed-detection bugs can take longer to surface. Storage cost impact is negligible at `pg_dump -Fc` compressed sizes. The kickoff line-80 scope anchor ("backup system beyond that is out of scope") still holds — 90 days remains mitigation, not archaeology. GFS-style rotation stays ruled out.

@@ -19,7 +19,7 @@
 # Drill follows the same cadence so every backup is Tier-2 verified
 # when the operator's key is loaded (AC-168 skip path when absent).
 #
-# No rotation entry: retention is linear (14-day bucket lock + 30-day
+# No rotation entry: retention is linear (14-day bucket lock + 90-day
 # lifecycle) — R2 handles the deletes. See ADR-0020 §Decision and
 # docs/ops/backup/overview.md.
 #

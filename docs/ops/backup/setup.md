@@ -43,10 +43,10 @@ R2 does not offer native object versioning or S3 Object Lock Compliance Mode. A 
 ### 1.3 Configure deletion (lifecycle rule)
 
 1. Bucket → **Settings** → **Lifecycle rules** → **Add rule**.
-2. Name: `delete-after-30-days`. Prefix scope: all objects. Action: **Delete objects** 30 days after upload.
+2. Name: `delete-after-90-days`. Prefix scope: all objects. Action: **Delete objects** 90 days after upload.
 3. **Save**.
 
-Effective behaviour: every uploaded object is immutable for its first 14 days and is deleted on day 30. Retention is linear — there are no weekly or monthly prefixes and no promotion logic. See [ADR-0020 §Decision](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision) for the rationale.
+Effective behaviour: every uploaded object is immutable for its first 14 days and is deleted on day 90. Retention is linear — there are no weekly or monthly prefixes and no promotion logic. See [ADR-0020 §Decision](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision) for the rationale.
 
 ### 1.4 Create the API token
 
