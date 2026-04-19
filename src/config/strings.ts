@@ -46,6 +46,7 @@ export const STRINGS = {
     project: 'Projekt',
     customer: 'Kunde',
     user: 'Benutzer',
+    audit: 'Audit-Eintrag',
     resource: 'Ressource',
   },
 

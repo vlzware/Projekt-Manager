@@ -80,6 +80,26 @@ interface AuditLogRow {
   correlation_id: string | null;
 }
 
+/**
+ * The API-facing audit-entry shape (camelCase) — `data-model.md §5.10`.
+ * Used at every `res.json().data as AuditApiEntry[]` cast site. Distinct
+ * from `AuditLogRow` above, which is the raw-DB shape returned by
+ * `db.execute(sql\`SELECT ... FROM audit_log\`)`.
+ */
+interface AuditApiEntry {
+  id: string;
+  createdAt: string;
+  actorId: string | null;
+  actorKind: 'user' | 'system';
+  actorReason: string | null;
+  actorDisplayName: string | null;
+  entityType: 'project' | 'customer' | 'user' | 'project_worker';
+  entityId: string;
+  action: string;
+  payload: unknown | null;
+  correlationId: string | null;
+}
+
 async function fetchAuditRows(db: Database): Promise<AuditLogRow[]> {
   const res = await db.execute(
     sql`SELECT id, created_at, actor_id, actor_kind, actor_reason,
@@ -465,7 +485,12 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
 
     const workerMeRes = await authGet(workerToken, '/api/auth/me');
     expect(workerMeRes.statusCode).toBe(200);
-    workerId = workerMeRes.json().id as string;
+    // GET /api/auth/me envelopes the profile as `{ user: { id, ... } }`
+    // (api.md §14.2.1). The earlier draft did `.json().id` and got
+    // `undefined` back, which made the AC-180 assertion trivially fail
+    // on every worker-visible user row. Drill one level in so workerId
+    // is the caller's real uuid.
+    workerId = workerMeRes.json().user.id as string;
 
     // Mutations that write audit rows covering every entity_type the
     // scoping predicate cares about:
@@ -553,15 +578,15 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
     const res = await authGet(workerToken, '/api/audit?limit=500');
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    const entries = body.data as AuditLogRow[];
+    const entries = body.data as AuditApiEntry[];
 
     // AC-180 self-authorship clause: any `user`-entity row the worker
     // sees must be authored by the worker themselves. The owner's
     // theme-preference PATCH (see beforeAll) produces a user row with
-    // actor_id === owner — it must NOT appear here.
+    // actorId === owner — it must NOT appear here.
     for (const row of entries) {
-      if (row.entity_type === 'user') {
-        expect(row.actor_id).toBe(workerId);
+      if (row.entityType === 'user') {
+        expect(row.actorId).toBe(workerId);
       }
     }
 
@@ -571,7 +596,7 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
     // the negative half above would trivially pass on an empty
     // user-entity slice.
     const selfAuthoredUserRows = entries.filter(
-      (row) => row.entity_type === 'user' && row.actor_id === workerId,
+      (row) => row.entityType === 'user' && row.actorId === workerId,
     );
     expect(selfAuthoredUserRows.length).toBeGreaterThanOrEqual(1);
 
@@ -582,8 +607,8 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
         .data.map((p: { id: string }) => p.id),
     );
     for (const row of entries) {
-      if (row.entity_type === 'project') {
-        expect(assignedIds.has(row.entity_id)).toBe(true);
+      if (row.entityType === 'project') {
+        expect(assignedIds.has(row.entityId)).toBe(true);
       }
     }
 
@@ -595,8 +620,8 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
         .customers.map((c: { id: string }) => c.id),
     );
     for (const row of entries) {
-      if (row.entity_type === 'customer') {
-        expect(reachableCustomerIds.has(row.entity_id)).toBe(true);
+      if (row.entityType === 'customer') {
+        expect(reachableCustomerIds.has(row.entityId)).toBe(true);
       }
     }
 
@@ -611,7 +636,7 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
         .data.map((p: { id: string }) => p.id),
     );
     for (const row of entries) {
-      if (row.entity_type === 'project_worker') {
+      if (row.entityType === 'project_worker') {
         const payload = row.payload as
           | { before?: { projectId?: string }; after?: { projectId?: string } }
           | null
@@ -636,10 +661,10 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
   it('owner receives every audit row (no scope predicate)', async () => {
     const res = await authGet(ownerToken, '/api/audit?limit=500');
     expect(res.statusCode).toBe(200);
-    const entries = res.json().data as AuditLogRow[];
+    const entries = res.json().data as AuditApiEntry[];
 
     // Owner sees `user`-entity rows — at minimum the self-update above.
-    const hasUserEntry = entries.some((row) => row.entity_type === 'user');
+    const hasUserEntry = entries.some((row) => row.entityType === 'user');
     expect(hasUserEntry).toBe(true);
   });
 
@@ -647,8 +672,8 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
   it('office receives every audit row (no scope predicate)', async () => {
     const res = await authGet(officeToken, '/api/audit?limit=500');
     expect(res.statusCode).toBe(200);
-    const entries = res.json().data as AuditLogRow[];
-    const hasUserEntry = entries.some((row) => row.entity_type === 'user');
+    const entries = res.json().data as AuditApiEntry[];
+    const hasUserEntry = entries.some((row) => row.entityType === 'user');
     expect(hasUserEntry).toBe(true);
   });
 });
@@ -699,12 +724,13 @@ describe('AT-92: Worker GET /api/audit/:id 200/403/404 (AC-181)', () => {
         `AT-92 fixture: GET /api/audit expected 200, got ${auditList.statusCode} — audit endpoint likely missing`,
       );
     }
-    const entries = ((auditList.json() as { data?: AuditLogRow[] }).data ?? []) as AuditLogRow[];
+    const entries = ((auditList.json() as { data?: AuditApiEntry[] }).data ??
+      []) as AuditApiEntry[];
     const inScope = entries.find(
-      (row) => row.entity_type === 'project' && row.entity_id === assigned.id,
+      (row) => row.entityType === 'project' && row.entityId === assigned.id,
     );
     const outOfScope = entries.find(
-      (row) => row.entity_type === 'project' && row.entity_id === unassigned.id,
+      (row) => row.entityType === 'project' && row.entityId === unassigned.id,
     );
     if (!inScope || !outOfScope) {
       throw new Error('AT-92 fixture missing — expected audit rows for both projects');
@@ -859,7 +885,7 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
   it('owner list includes purge, user-delete, and user-roles-update rows', async () => {
     const res = await authGet(ownerToken, '/api/audit?limit=1000');
     expect(res.statusCode).toBe(200);
-    const ids = new Set((res.json().data as AuditLogRow[]).map((r) => r.id));
+    const ids = new Set((res.json().data as AuditApiEntry[]).map((r) => r.id));
     expect(ids.has(purgeAuditId)).toBe(true);
     expect(ids.has(userDeleteAuditId)).toBe(true);
     expect(ids.has(userRolesUpdateAuditId)).toBe(true);
@@ -868,7 +894,7 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
   it('office list excludes all three destructive entries (predicate WHERE fragment)', async () => {
     const res = await authGet(officeToken, '/api/audit?limit=1000');
     expect(res.statusCode).toBe(200);
-    const ids = new Set((res.json().data as AuditLogRow[]).map((r) => r.id));
+    const ids = new Set((res.json().data as AuditApiEntry[]).map((r) => r.id));
     expect(ids.has(purgeAuditId)).toBe(false);
     expect(ids.has(userDeleteAuditId)).toBe(false);
     expect(ids.has(userRolesUpdateAuditId)).toBe(false);
@@ -877,7 +903,7 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
   it('worker list excludes the purge row (worker also excluded from user rows via reachability)', async () => {
     const res = await authGet(workerToken, '/api/audit?limit=1000');
     expect(res.statusCode).toBe(200);
-    const ids = new Set((res.json().data as AuditLogRow[]).map((r) => r.id));
+    const ids = new Set((res.json().data as AuditApiEntry[]).map((r) => r.id));
     // Purge carries `entityType='project'` — the reachability predicate
     // alone does NOT exclude every purge (only unreachable ones); the
     // destructive predicate is what excludes them categorically.

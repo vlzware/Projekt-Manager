@@ -167,3 +167,107 @@ export async function isCustomerInScope(
   );
   return result.rows.length > 0;
 }
+
+// ---------------------------------------------------------------------
+// Audit-log scope predicates — ADR-0019 pattern + AC-180/AC-182/AC-187
+// ---------------------------------------------------------------------
+//
+// The audit surface has TWO orthogonal predicates (api.md §14.2.8):
+//
+//   1. auditReachabilityScopeForCaller(user)
+//        Worker reachability: project/customer/project_worker entries
+//        reachable through the caller's assignment graph, plus the
+//        self-authorship carve-out for user-entity rows authored by
+//        the caller themselves (AC-180).
+//
+//   2. auditDestructiveScopeForCaller(user)
+//        Destructive-action visibility: only the owner sees audit
+//        entries for purge / user-delete / user-roles-update (AC-182,
+//        AC-187).
+//
+// The two fragments AND-compose with `audit:read` — permissions stay
+// coarse; scope is orthogonal to capability (ADR-0019 §Decision).
+
+/**
+ * Scope fragment for audit reads — reachability half.
+ *
+ * Owner / office → null (no reachability filter).
+ * Worker → SQL fragment admitting entries that are either:
+ *   - `project` with entity_id in the caller's assigned-project set, OR
+ *   - `customer` with entity_id among customers reached via a non-deleted
+ *     assigned project, OR
+ *   - `project_worker` whose payload references a project in the caller's
+ *     assignment set (either `before.projectId` or `after.projectId`), OR
+ *   - `user` authored by the caller themselves (self-authorship — AC-180).
+ * Bookkeeper: classified as unscoped via ROLE_CLASSIFICATION, but the
+ * audit permission matrix already excludes bookkeeper from `audit:read`
+ * (api.md §14.3), so the bookkeeper branch is never reached. Kept
+ * returning null to match the other unscoped roles — a bookkeeper who
+ * somehow held `audit:read` in a misconfigured deployment would at least
+ * not leak under the reachability half; the destructive predicate still
+ * filters.
+ *
+ * Index alignment: `audit_log_entity_idx` is on `(entity_type, entity_id,
+ * created_at DESC)` — the equality-then-IN access pattern in each arm is
+ * covered. The `project_worker` arm uses `payload->'...'->>'projectId'`,
+ * which is NOT index-covered today; worker-scope lists rely on the
+ * reachability AND destructive predicates combined, so the total scan is
+ * bounded by the worker's project_workers cardinality in practice. If
+ * this becomes a hot path, consider a functional index on the extracted
+ * projectId or materialize it as a column.
+ */
+export function auditReachabilityScopeForCaller(user: AuthUser): SQL | null {
+  if (isUnscoped(user)) return null;
+  return sql`(
+    (audit_log.entity_type = 'project' AND audit_log.entity_id IN (
+      SELECT pw.project_id FROM project_workers pw WHERE pw.user_id = ${user.id}
+    ))
+    OR (audit_log.entity_type = 'customer' AND audit_log.entity_id IN (
+      SELECT DISTINCT p.customer_id
+        FROM projects p
+        INNER JOIN project_workers pw ON pw.project_id = p.id
+       WHERE pw.user_id = ${user.id} AND p.deleted = FALSE
+    ))
+    OR (audit_log.entity_type = 'project_worker' AND (
+      (audit_log.payload->'before'->>'projectId')::uuid IN (
+        SELECT pw.project_id FROM project_workers pw WHERE pw.user_id = ${user.id}
+      )
+      OR (audit_log.payload->'after'->>'projectId')::uuid IN (
+        SELECT pw.project_id FROM project_workers pw WHERE pw.user_id = ${user.id}
+      )
+    ))
+    OR (audit_log.entity_type = 'user' AND audit_log.actor_id = ${user.id})
+  )`;
+}
+
+/**
+ * Scope fragment for audit reads — destructive-action half.
+ *
+ * Owner → null (no destructive filter; owner sees every row).
+ * Every other role (office, worker, bookkeeper) → SQL fragment EXCLUDING:
+ *   - `action = 'purge'` (any entity_type), AND
+ *   - `action = 'delete'` on `entity_type = 'user'`, AND
+ *   - `action = 'update'` on `entity_type = 'user'` where the payload diff
+ *     touches `roles`.
+ *
+ * The `?` operator is Postgres's jsonb key-existence test; it returns true
+ * when the key is present regardless of its value (including null).
+ *
+ * The predicate keys off the action + entity_type + payload shape, not on
+ * permissions — "destructive visibility" is orthogonal to `audit:read`
+ * (ADR-0019 reaffirmed in api.md §14.3 design notes).
+ */
+export function auditDestructiveScopeForCaller(user: AuthUser): SQL | null {
+  // Owner is the sole role that bypasses the destructive filter. Every
+  // other role — including unscoped office and bookkeeper — sees the
+  // destructive narrowing. We check role membership directly rather than
+  // reusing `isUnscoped()` because destructive-visibility is a role-axis
+  // concern, not a reachability one.
+  if (user.roles.some((role) => role === 'owner')) return null;
+  return sql`NOT (
+    audit_log.action = 'purge'
+    OR (audit_log.action = 'delete' AND audit_log.entity_type = 'user')
+    OR (audit_log.action = 'update' AND audit_log.entity_type = 'user'
+        AND (audit_log.payload->'before' ? 'roles' OR audit_log.payload->'after' ? 'roles'))
+  )`;
+}
