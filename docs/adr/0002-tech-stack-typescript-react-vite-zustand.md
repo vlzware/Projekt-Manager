@@ -6,7 +6,7 @@
 
 ## Context
 
-The walking skeleton spec (iteration 0) deliberately left the tech stack open. During iteration 1, five parallel prototypes were built by independent agents in isolated worktrees, each implementing the full 26 acceptance criteria:
+The walking skeleton spec (iteration 0) deliberately left the tech stack open. In iteration 1, five parallel prototypes were built by independent agents in isolated worktrees, each implementing the full 26 acceptance criteria:
 
 | Prototype | Stack                                              | Page weight | Source LOC | Build time |
 | --------- | -------------------------------------------------- | ----------- | ---------- | ---------- |
@@ -16,91 +16,72 @@ The walking skeleton spec (iteration 0) deliberately left the tech stack open. D
 | D         | Vue 3 + Pinia + Custom Calendar + CSS Modules      | 237 kB      | 2,557      | 15.6 min   |
 | E         | PHP 8 + Vanilla JS + Sessions                      | 95 kB       | 2,498      | 14.7 min   |
 
-Page weight measured via browser "Save As" (total resources). Build time is agent wall-clock time for the full spec. All page weights are well within acceptable range — this was not a differentiator.
+Page weight (total resources via browser "Save As") was within acceptable range for all — not a differentiator. Build time is agent wall-clock for the full spec.
 
 Key forces:
 
 - The project optimizes for **AI-assisted development** — LLM code quality and generation speed matter.
 - **Type safety** is load-bearing as the codebase grows beyond a prototype.
 - Deployment cost is not a constraint (free-tier Node.js hosting available).
-- The developer has Angular/TypeScript experience but no framework preference.
+- Developer has Angular/TypeScript experience, no framework preference.
 - ADR-0001 requires all company-specific values to be configurable.
 
 ## Decision
 
 **TypeScript + React 19 + Vite + Zustand + CSS Modules + date-fns**, tested with **Vitest + Playwright**.
 
-This decision was made in three steps:
+Decided in three steps:
 
 ### 1. TypeScript over PHP
 
-PHP produced the lightest page weight (95 kB) and simplest deployment model (shared hosting, no build step). However:
-
-- PHP splits the codebase into two languages (PHP backend + vanilla JS frontend) with no type checking on the frontend.
-- No component testing story for vanilla JS — only E2E tests can catch UI regressions.
-- Free-tier Node.js hosting (Render, Koyeb) eliminates PHP's deployment cost advantage.
-- TypeScript provides end-to-end type safety and a single language across domain logic, state, UI, and tests.
-- LSP integration enables real-time error detection during AI-assisted development.
-
-The project is expected to grow beyond a prototype. Type safety and a unified language outweigh PHP's simplicity advantages.
+PHP produced the lightest output (95 kB) and simplest deployment (shared hosting, no build step). But it splits the codebase into two languages with no frontend type checking, has no component testing story for vanilla JS, and free-tier Node.js hosting (Render, Koyeb) nullifies the deployment-cost edge. TypeScript gives end-to-end type safety, LSP-driven edit-time feedback, and a single language across domain, state, UI, and tests.
 
 ### 2. React over Vue and Svelte
 
-All three TypeScript frameworks produced working prototypes. The differentiators:
+All three TypeScript prototypes worked. Differentiators:
 
-- **LLM code generation quality**: React prototypes completed in 11.7 min each. Vue and Svelte took 15+ min for the same spec. React has the most LLM training data, producing faster and more accurate generation.
-- **Vue 2/3 confusion**: LLM output frequently mixes Vue 2 Options API patterns with Vue 3 Composition API, requiring manual correction. This is a measurable friction in AI-assisted workflows.
-- **Svelte 5 ecosystem maturity**: Youngest of the three. Some libraries still transitioning from Svelte 4 to 5. Least AI training data available.
-- **Ecosystem size**: React's ecosystem means most problems have established, well-documented solutions.
+- **LLM code generation quality**: React prototypes finished in 11.7 min; Vue and Svelte took 15+ min for the same spec.
+- **Vue 2/3 confusion**: LLM output frequently mixes Options and Composition APIs — measurable friction.
+- **Svelte 5 ecosystem**: youngest of the three, libraries still transitioning from v4, least LLM training data.
+- **Ecosystem size**: React has the most established, well-documented solutions.
 
 Vue's Composition API is closest to the developer's Angular experience, but the project optimizes for AI-assisted development over manual coding comfort.
 
 ### 3. Custom components + CSS Modules over FullCalendar + Tailwind
 
-Within React, Prototype A (FullCalendar + shadcn/ui + Tailwind) and Prototype B (custom calendar + CSS Modules) both completed the spec at the same speed (11.7 min).
+Within React, Prototypes A and B both finished in 11.7 min. B was chosen because:
 
-Prototype B was chosen because:
-
-- Custom calendar components give full control over the layout. The spec has specific display requirements that FullCalendar's API would constrain.
-- CSS Modules provide scoped styling without additional dependencies — sufficient for this project's scope.
-- Zustand (~1 kB) provides TypeScript-first state management with a minimal API.
+- Custom calendar components give full control — the spec has specific layout requirements FullCalendar's API would constrain.
+- CSS Modules provide scoped styling with no extra dependency.
+- Zustand (~1 kB) is TypeScript-first with a minimal API.
 
 ## Alternatives Considered
 
-### PHP 8 + Vanilla JS
+_Details in Decision above; one-line rejections here._
 
-Lightest output (95 kB), cheapest deployment, no build tooling. Rejected: no frontend type safety, split language, no component testing for vanilla JS.
-
-### Vue 3 + Pinia
-
-Clean Composition API, closest to Angular DX, official state management. Rejected: Vue 2/3 version confusion degrades LLM output quality, smaller ecosystem than React.
-
-### Svelte 5
-
-Smallest bundle, most elegant reactivity model (runes), high developer satisfaction. Rejected: youngest ecosystem, least LLM training data, library ecosystem still transitioning to v5.
-
-### React + FullCalendar + shadcn/ui + Tailwind
-
-Polished calendar out of the box, rich UI primitives via shadcn. Rejected: FullCalendar's API limits customization of the specific calendar layout the spec requires, additional dependencies without proportional benefit at this project's scale.
+- **PHP 8 + Vanilla JS** — no frontend type safety, split language, no component testing for vanilla JS.
+- **Vue 3 + Pinia** — Vue 2/3 version confusion degrades LLM output; smaller ecosystem.
+- **Svelte 5** — youngest ecosystem, least LLM training data, libraries still on v4→v5.
+- **React + FullCalendar + shadcn/ui + Tailwind** — FullCalendar constrains the required calendar layout; extra deps without proportional benefit at this scale.
 
 ## Consequences
 
 ### Positive
 
-- Type errors caught at edit time — fewer runtime surprises
+- Type errors caught at edit time
 - Fastest AI code generation of all evaluated stacks
 - Largest third-party ecosystem as features grow
-- Single language across the entire codebase
+- Single language across the codebase
 - Prototype B serves as a working reference implementation
 
 ### Negative
 
-- React's hook model has known footguns (stale closures, dependency arrays, effect chains) — requires discipline
-- "Choose your own adventure" ecosystem — more library decisions than Vue or Svelte's batteries-included approach
-- CSS Modules lack the rapid prototyping speed of Tailwind utility classes
+- React hooks have known footguns (stale closures, dependency arrays, effect chains) — requires discipline
+- "Choose your own adventure" ecosystem — more library decisions than Vue or Svelte
+- CSS Modules lack Tailwind's rapid-prototyping speed
 
 ## References
 
 - [ADR-0001: Generalized system with configurable customer specifics](0001-generalized-system-with-configurable-customer-specifics.md)
-- Prototype comparison: detailed in the Context section above; prototyping process described in `docs/project/journal.md` (2026-04-03 entry)
+- Prototype comparison detailed in the Context section above
 - Product spec: `docs/spec/index.md`

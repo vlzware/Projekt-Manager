@@ -6,20 +6,20 @@
 
 ## Context
 
-The project runs Docker in three places: developer workstations, CI (image builds and Compose validation), and the production VPS. Developer and VPS hosts install Docker from the official `download.docker.com/linux/ubuntu` apt repository, which always resolves to the current stable release.
+Docker runs in three places: developer workstations, CI (build + Compose validation), and the production VPS. All three install from the official `download.docker.com/linux/ubuntu` apt repo, which always resolves to current stable.
 
-During fresh VM setup on 2026-04-07, a version drift was discovered: the VPS (provisioned 2026-04-06) was running Docker 29.3.1, while a same-day fresh developer install pulled Docker 29.4.0. Both hosts had Compose plugin v5.1.1 by coincidence, but nothing enforced that. Under the default `unattended-upgrades` and `apt upgrade` behavior, either host can silently bump on its own schedule, and the drift compounds over time.
+On 2026-04-07 a drift surfaced: the VPS (provisioned 2026-04-06) was on Docker 29.3.1 while a same-day fresh dev install pulled 29.4.0. Both had Compose plugin v5.1.1 by coincidence, not by enforcement. `unattended-upgrades` and `apt upgrade` can silently bump either host; drift compounds over time.
 
 Key forces:
 
-- **Local/prod parity is a load-bearing assumption.** ADR-0003 commits us to `docker compose up` producing identical stacks locally and in production. Silent version drift erodes that guarantee — a Compose-file feature or BuildKit syntax that works locally can fail on deploy.
-- **VPS runs Docker in production.** Images are now built in CI and pulled on the VPS (see [ADR-0011](0011-build-images-in-ci-distribute-via-ghcr.md)), but the VPS Docker version still governs runtime behavior and is at risk of silent bumps from `unattended-upgrades`.
-- **CI exercises Docker for validation and image builds.** `ci.yml` includes a `docker` job that validates Compose files and builds the app image, plus a `build-and-push` job that publishes to GHCR.
-- **Solo operator.** There is no platform team to absorb surprise breakage from background upgrades. Determinism is worth more than automatic security patches at this scale.
+- **Local/prod parity is load-bearing.** ADR-0003 commits us to `docker compose up` producing identical stacks locally and in production. Silent version drift erodes that — a Compose-file or BuildKit syntax that works locally can fail on deploy.
+- **VPS runs Docker in production.** Images are built in CI and pulled on the VPS (see [ADR-0011](0011-build-images-in-ci-distribute-via-ghcr.md)), but the VPS Docker version still governs runtime.
+- **CI exercises Docker.** `ci.yml` has a `docker` job (Compose validation + image build) and a `build-and-push` job (GHCR publish).
+- **Solo operator.** No platform team to absorb surprise breakage. Determinism beats automatic patching at this scale.
 
 ## Decision
 
-We will pin Docker Engine, Docker CLI, containerd, BuildKit plugin, and Compose plugin to explicit versions on every host, and place all five packages on apt hold. Version bumps are deliberate, lockstep operations across all environments.
+Pin Docker Engine, CLI, containerd, BuildKit plugin, and Compose plugin to explicit versions on every host; place all five on apt hold. Bumps are deliberate, lockstep across all environments.
 
 **Pinned versions (as of 2026-04-07):**
 
@@ -31,56 +31,45 @@ We will pin Docker Engine, Docker CLI, containerd, BuildKit plugin, and Compose 
 | `docker-buildx-plugin`  | `0.33.0-1~ubuntu.24.04~noble`   |
 | `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble`    |
 
-**Source of truth:** the production VPS is authoritative. Local environments match the VPS, not the other way around — so that developer environments reproduce production behaviour rather than leading it.
+**Source of truth:** the VPS. Local environments match the VPS, not the other way around — so dev reproduces prod rather than leading it.
 
-**Enforcement:** `sudo apt-mark hold` on all five packages on every host. Verified via `apt-mark showhold` after install and on each host audit.
+**Enforcement:** `sudo apt-mark hold` on all five; verify via `apt-mark showhold` on install and on each host audit.
 
 **Upgrade procedure (lockstep):**
 
-1. Review Docker's release notes and CHANGELOG for the target version.
-2. On a non-production host first: `apt-mark unhold` → install the target version explicitly → `apt-mark hold` → run the full stack (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`) and smoke tests.
+1. Review Docker's release notes for the target version.
+2. Non-production host first: `apt-mark unhold` → install target → `apt-mark hold` → run the full stack (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`) + smoke tests.
 3. Repeat on remaining hosts, VPS last.
-4. Update this ADR with the new pinned versions and the date.
+4. Update this ADR with the new pinned versions and date.
 
 ## Alternatives Considered
 
-### Track `latest` (status quo before this decision)
-
-Install with `apt-get install docker-ce` (no version) and let `apt upgrade` pull bumps automatically. Main advantage: security patches land without operator action. Ruled out because it silently breaks the local/prod parity that ADR-0003 depends on, and because the solo operator has no monitoring in place to detect when hosts drift apart.
-
-### Snap-based Docker
-
-`sudo snap install docker` — updates are managed by snapd on its own cadence. Main advantage: no manual pin maintenance. Ruled out because the snap package is not published by Docker Inc., lags upstream releases, has a history of cgroup and socket-path quirks that break Compose v2 healthchecks, and the update cadence is opaque — trading explicit drift for implicit drift.
-
-### Ubuntu's `docker.io` package
-
-`sudo apt-get install docker.io` from the Ubuntu archive. Main advantage: comes from the distribution, eligible for Ubuntu security updates. Ruled out for the same reasons given in `docs/ops/server-setup.md` Phase 4: lags upstream on security patches, does not include the Compose V2 plugin we depend on.
-
-### Pin only Docker Engine, leave plugins floating
-
-Pin `docker-ce` and `docker-ce-cli` but let `containerd.io`, `docker-buildx-plugin`, and `docker-compose-plugin` track latest. Main advantage: less maintenance surface. Ruled out because Compose-file semantics and BuildKit behaviour live in those plugins — exactly the layer this ADR is trying to stabilise.
+- **Track `latest` (status quo).** `apt-get install docker-ce`, auto-upgrades. Security patches land automatically but breaks local/prod parity silently with no drift monitoring.
+- **Snap-based Docker.** `snap install docker`. Not published by Docker Inc., lags upstream, history of cgroup/socket-path quirks breaking Compose v2 healthchecks, opaque update cadence. Trades explicit drift for implicit drift.
+- **Ubuntu's `docker.io`.** Distro package, eligible for Ubuntu security updates. Lags upstream on patches; does not include Compose V2 (see `docs/ops/server-setup.md` Phase 4).
+- **Pin Engine only, leave plugins floating.** Less maintenance, but Compose-file semantics and BuildKit behaviour live in the plugins — exactly the layer this ADR stabilises.
 
 ## Consequences
 
 ### Positive
 
-- `docker compose` behaviour is deterministic across local, VPS, and any future hosts
-- Silent `apt upgrade` drift is eliminated on the package layer
-- Upgrade events become explicit, reviewable changes — easy to correlate with regressions
-- Reproducing production incidents locally is reliable
+- `docker compose` behaviour is deterministic across local, VPS, and future hosts.
+- Silent `apt upgrade` drift is eliminated at the package layer.
+- Upgrades are explicit, reviewable changes — easy to correlate with regressions.
+- Reproducing production incidents locally is reliable.
 
 ### Negative
 
-- Docker security patches do not apply automatically — the operator must track Docker advisories and pull fixes manually
-- Upgrade is a coordinated multi-host procedure; forgetting one host reintroduces drift
-- This ADR itself must be kept current — the pinned version table becomes stale if not updated on every bump
-- Adds a manual step to fresh-host setup (install explicit version + hold, instead of just `apt-get install docker-ce`)
+- Docker security patches require manual operator action; advisories must be tracked.
+- Upgrade is a coordinated multi-host procedure; forgetting a host reintroduces drift.
+- This ADR's pinned-version table must be kept current.
+- Fresh-host setup gains a manual step (install explicit version + hold).
 
 ### Mitigations
 
-- Tracking mechanism for Docker security advisories is an open decision. Until chosen, manually check Docker release notes before any deliberate version bump, and treat that as the interim backstop.
-- `apt-mark showhold` is part of the post-install verification on every host (see `docs/ops/server-setup.md` Phase 4)
-- The upgrade procedure above is also documented in `docs/ops/server-setup.md` for operational reference
+- Security-advisory tracking mechanism is an open decision; interim backstop is manually checking Docker release notes before any bump.
+- `apt-mark showhold` is part of post-install verification (see `docs/ops/server-setup.md` Phase 4).
+- Upgrade procedure above is also in `docs/ops/server-setup.md` for operational reference.
 
 ## References
 

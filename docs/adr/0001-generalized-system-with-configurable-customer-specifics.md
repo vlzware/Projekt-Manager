@@ -6,39 +6,36 @@
 
 ## Context
 
-The spark for this project came from a specific "Handwerker" company, but the anti-patterns observed — no centralized data, ad-hoc tools, reactive workflows — are widespread in the industry. We need to decide whether to build specifically for the pilot company or to build a generalized system.
-
-Additionally, using real company data in the open-source repository would expose private business details.
+The project was sparked by a specific "Handwerker" company, but the observed anti-patterns — no centralized data, ad-hoc tools, reactive workflows — are industry-wide. Using real company data in an open-source repo would also expose private business details.
 
 ## Decision
 
-We will build a generalized system where all customer-specific details are configurable. The pilot company's specifics will live in a separate, closed codebase that integrates with the general system. Where customer details are needed during development, reasonable assumptions will be made instead of using real data.
+Build a generalized system with all customer-specific details configurable. The pilot company's specifics live in a separate, closed codebase that integrates with the general system. During development, reasonable assumptions stand in for real data.
 
 ## Alternatives Considered
 
 ### Build specifically for the pilot company
 
-Simpler and faster initially — no abstraction layer needed, no configuration system. Ruled out because it limits the project to a single customer, exposes private company data in the repository, and the observed problems are common enough that a generalized approach has significantly more value.
+Simpler initially — no abstraction, no configuration. Rejected: limits the project to one customer, leaks private data into the repo, and a generalized approach fits a widespread problem.
 
-### Build for the pilot first, refactor to configurable later
+### Build for the pilot first, generalize later
 
-Defer the generalization cost. Ruled out because retrofitting configurability is harder than building it in from the start — it risks baking in assumptions that are painful to untangle later.
+Defers the abstraction cost. Rejected: retrofitting configurability risks baking in single-customer assumptions that are painful to untangle.
 
 ## Consequences
 
 ### Positive
 
-- The system is applicable to a wide range of similar small companies
-- Private details of the pilot company are protected
-- The open-source repository contains no real customer data
-- Each new customer integration is a configuration exercise, not a rewrite
+- Applicable to a wide range of similar small companies
+- Pilot's private details stay out of the repo
+- Each new customer is a configuration exercise, not a rewrite
 
 ### Negative
 
-- Increased complexity: every design choice must consider configurability
-- In some cases, per-customer needs may require architectural changes, not just configuration
-- Slower initial development compared to a hardcoded single-customer build
-- Assumptions made during development may not match real-world needs — validation with the pilot company remains necessary
+- Every design choice must consider configurability
+- Some per-customer needs may demand architectural changes, not just config
+- Slower initial development than a hardcoded single-customer build
+- Development-time assumptions still need validation with the pilot company
 
 ## References
 
