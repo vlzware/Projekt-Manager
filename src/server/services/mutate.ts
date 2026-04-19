@@ -101,10 +101,12 @@ export interface MutateResult<T> {
  * mutation callback, write the audit row, commit, then dispatch.
  *
  * Concurrency: relies on Postgres default isolation (READ COMMITTED).
- * `before` reflects what the transaction read — subsequent concurrent
- * writes on the same row produce their own serialized audit entry.
- * AC-177 "Each audit row's payload.before reflects the state the
- * mutation saw at its read-time within its own transaction".
+ * `payload.before` reflects the row read inside this transaction before
+ * the write. Concurrent writers produce their own serialized audit rows
+ * (AC-177). A write-after-write race on the same row can leave a stale
+ * `before` in the loser's log entry — acceptable per the audit contract
+ * which pins per-transaction observation, not global serialisability.
+ * Upgrade to REPEATABLE READ if stricter semantics become load-bearing.
  *
  * Return value is whatever the service callback returned in `value`.
  */

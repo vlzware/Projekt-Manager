@@ -23,6 +23,7 @@ import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
 import { startSessionReaper } from './session-reaper.js';
 import { startAuditRetentionScheduler } from './audit-retention-scheduler.js';
+import { setOperationalLogger as setAuditPublisherLogger } from './services/audit-publisher.js';
 import { AUDIT_RETENTION } from '../config/auditRetention.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
@@ -169,6 +170,16 @@ async function start(): Promise<void> {
       info: (ctx, event) => console.log(event, ctx),
       error: (ctx, event) => console.error(event, ctx),
     },
+  });
+
+  // Wire the post-commit audit publisher's failure-surface logger
+  // (AC-183). Without this, a subscriber throw would be silently
+  // swallowed. No subscribers are registered yet — #112 adds them —
+  // but the logger is wired here so the AC-183 contract holds as
+  // soon as one is.
+  setAuditPublisherLogger({
+    info: (payload) => console.log(payload),
+    error: (payload) => console.error(payload),
   });
 
   const app = buildApp({ logger: true, db });
