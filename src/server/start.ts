@@ -22,6 +22,8 @@ import { probeHealth } from './health.js';
 import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
 import { startSessionReaper } from './session-reaper.js';
+import { startAuditRetentionScheduler } from './audit-retention-scheduler.js';
+import { AUDIT_RETENTION } from '../config/auditRetention.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
 
@@ -154,6 +156,21 @@ async function start(): Promise<void> {
     },
   });
 
+  // Schedule audit-log retention cleanup (AC-184). Default cadence is
+  // daily (1440 min) — retention is a cleanup, not a latency-sensitive
+  // sweep, and the DELETE rides the `audit_log_created_at_idx` so cost
+  // stays flat. Window is the [C] default unless
+  // `AUDIT_RETENTION_WINDOW_DAYS` is set.
+  const auditRetention = startAuditRetentionScheduler({
+    db,
+    intervalMinutes: env.AUDIT_RETENTION_INTERVAL_MINUTES,
+    windowDays: env.AUDIT_RETENTION_WINDOW_DAYS ?? AUDIT_RETENTION.windowDays,
+    logger: {
+      info: (ctx, event) => console.log(event, ctx),
+      error: (ctx, event) => console.error(event, ctx),
+    },
+  });
+
   const app = buildApp({ logger: true, db });
 
   // Storage client for the health probe. Instantiated once at startup and
@@ -212,7 +229,7 @@ async function start(): Promise<void> {
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, async () => {
       // Wait for any in-flight sweep so pool.end() isn't called under its feet.
-      await reaper.stop();
+      await Promise.all([reaper.stop(), auditRetention.stop()]);
       await app.close();
       await pool.end();
       process.exit(0);

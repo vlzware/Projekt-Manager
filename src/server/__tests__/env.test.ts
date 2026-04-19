@@ -38,6 +38,8 @@ function makeEnv(overrides: Partial<Env>): Env {
     OPENROUTER_API_KEY: undefined,
     OPENROUTER_MODEL: 'google/gemini-2.5-flash-lite',
     SESSION_CLEANUP_INTERVAL_MINUTES: 60,
+    AUDIT_RETENTION_WINDOW_DAYS: undefined,
+    AUDIT_RETENTION_INTERVAL_MINUTES: 1440,
     // Layer 2 backup env — optional at the app-server level; declared
     // here so the fixture stays in sync with the schema shape.
     R2_ACCESS_KEY_ID: undefined,
