@@ -35,7 +35,15 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import type pg from 'pg';
 
-import { startApp, stopApp, login, authGet, authPost, authPatch } from '../../test/api-helpers.js';
+import {
+  startApp,
+  stopApp,
+  login,
+  authGet,
+  authPost,
+  authPatch,
+  authDelete,
+} from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import { bootstrapAdminIfEmpty } from '../bootstrap.js';
@@ -903,6 +911,111 @@ describe('AT-94: Throwing post-commit subscriber does not roll back (AC-183)', (
       }
     } finally {
       unsubscribe();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
+// AT-96 — entity_label is a point-in-time snapshot (AC-188)
+// ---------------------------------------------------------------------
+//
+// data-model.md §5.10 "Entity label snapshot": `entityLabel` is frozen
+// at the audit row so the activity feed stays readable after the target
+// is renamed or purged. AC-188 pins the invariant; the tests here drive
+// it end-to-end through `mutate()` — rename does not rewrite prior
+// rows, and delete does not null them.
+describe('AT-96: entity_label is frozen at event time (AC-188)', () => {
+  let ownerToken: string;
+  let seededCustomerId: string;
+
+  beforeAll(async () => {
+    await startApp();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    const custList = await authGet(ownerToken, '/api/customers?limit=1');
+    seededCustomerId = (custList.json().customers as { id: string }[])[0]!.id;
+  });
+
+  afterAll(async () => {
+    await stopApp();
+  });
+
+  it('renaming a project leaves the pre-rename audit row entity_label untouched', async () => {
+    const { db, pool } = createDatabase();
+    try {
+      const initialTitle = 'AT-96 initial title';
+      const renamedTitle = 'AT-96 renamed title';
+      const projectNumber = `AT96R-${Date.now().toString(36)}`;
+
+      const createRes = await authPost(ownerToken, '/api/projects', {
+        number: projectNumber,
+        title: initialTitle,
+        customerId: seededCustomerId,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const projectId = createRes.json().id as string;
+
+      const patchRes = await authPatch(ownerToken, `/api/projects/${projectId}`, {
+        title: renamedTitle,
+      });
+      expect(patchRes.statusCode).toBe(200);
+
+      // Two rows: the pre-rename create keeps the original label, the
+      // post-rename update carries the new one. Pre-rename row must not
+      // drift — that would be a back-fill, the exact failure mode
+      // AC-188 forbids.
+      const rows = await db.execute(
+        sql`SELECT action, entity_label FROM audit_log
+            WHERE entity_type = 'project' AND entity_id = ${projectId}
+            ORDER BY created_at ASC, id ASC`,
+      );
+      expect(rows.rows).toHaveLength(2);
+      const [createRow, updateRow] = rows.rows as unknown as Array<{
+        action: string;
+        entity_label: string | null;
+      }>;
+
+      expect(createRow.action).toBe('create');
+      expect(createRow.entity_label).toContain(initialTitle);
+      expect(createRow.entity_label).not.toContain(renamedTitle);
+
+      expect(updateRow.action).toBe('update');
+      expect(updateRow.entity_label).toContain(renamedTitle);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('deleting a customer leaves the pre-delete audit row entity_label intact', async () => {
+    const { db, pool } = createDatabase();
+    try {
+      const customerName = `AT-96 purgeable customer ${Date.now().toString(36)}`;
+
+      const createRes = await authPost(ownerToken, '/api/customers', {
+        name: customerName,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const customerId = createRes.json().id as string;
+
+      const deleteRes = await authDelete(ownerToken, `/api/customers/${customerId}`);
+      expect(deleteRes.statusCode).toBeLessThan(300);
+
+      // The customer row is gone. The prior create audit row still
+      // carries the snapshotted label — the readability guarantee
+      // `entityLabel` exists for.
+      const rows = await db.execute(
+        sql`SELECT action, entity_label FROM audit_log
+            WHERE entity_type = 'customer' AND entity_id = ${customerId}
+            ORDER BY created_at ASC, id ASC`,
+      );
+      expect(rows.rows.length).toBeGreaterThanOrEqual(1);
+      const createRow = rows.rows[0] as unknown as {
+        action: string;
+        entity_label: string | null;
+      };
+      expect(createRow.action).toBe('create');
+      expect(createRow.entity_label).toBe(customerName);
+    } finally {
+      await pool.end();
     }
   });
 });
