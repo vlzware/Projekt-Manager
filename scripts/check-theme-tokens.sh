@@ -102,11 +102,14 @@ raw_matches=$(rg "${HEX_PATTERN}" "${rg_args[@]}" || true)
 set -o pipefail
 
 # --- Filter out obvious false positives -----------------------------------
-# Drop lines that are a pure `//` comment. No URL-fragment filter: a cleverer
-# heuristic can drop whole lines (and hide real leaks alongside a URL). CSS
-# `url(...#fragment)` on a palette-bearing line is rare enough that false
-# positives are acceptable — refactor the URL to a constant or split the
-# line if one ever appears.
+# Drop lines that are pure comments: `//` line comments and ` * ` continuation
+# lines inside JSDoc or CSS block comments. Comments have no runtime theming
+# effect, so a hex-shaped token inside one (commonly a markdown link URL
+# fragment like `docs.md#1522-anchor`) is not a palette leak. No broader
+# URL-fragment filter: a cleverer heuristic can drop whole lines (and hide
+# real leaks alongside a URL). CSS `url(...#fragment)` on a palette-bearing
+# line is rare enough that false positives are acceptable — refactor the URL
+# to a constant or split the line if one ever appears.
 filtered=$(printf '%s\n' "$raw_matches" \
   | awk -F: '
     NF < 3 { next }
@@ -116,6 +119,7 @@ filtered=$(printf '%s\n' "$raw_matches" \
       content = $0
       sub(/^[^:]*:[^:]*:/, "", content)
       if (match(content, /^[[:space:]]*\/\//)) next
+      if (match(content, /^[[:space:]]*\*([[:space:]]|$)/)) next
       print file ":" line ":" content
     }
   ')
