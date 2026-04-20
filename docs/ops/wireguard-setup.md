@@ -14,140 +14,72 @@ See [ADR-0008](../adr/0008-vpn-first-network-access.md).
 
 ## Server setup
 
-1. Install:
-
-   ```bash
-   sudo apt-get install -y wireguard-tools qrencode
-   ```
-
-2. Generate server keypair:
-
-   ```bash
-   sudo mkdir -p /etc/wireguard
-   cd /etc/wireguard
-   sudo sh -c 'umask 077 && wg genkey | tee server.privkey | wg pubkey > server.pubkey'
-   sudo chmod 600 server.privkey
-   ```
-
-3. Create `wg0.conf`:
-
-   ```bash
-   sudo tee /etc/wireguard/wg0.conf > /dev/null <<EOF
-   [Interface]
-   Address    = 10.213.17.1/24
-   ListenPort = 51820
-   PrivateKey = $(sudo cat /etc/wireguard/server.privkey)
-   EOF
-   sudo chmod 600 /etc/wireguard/wg0.conf
-   ```
-
-4. Systemd drop-in (Docker must wait for `wg0` or Caddy's port bind fails on cold boot):
-
-   ```bash
-   sudo mkdir -p /etc/systemd/system/docker.service.d
-   sudo tee /etc/systemd/system/docker.service.d/wait-for-wireguard.conf > /dev/null <<'EOF'
-   [Unit]
-   Requires=wg-quick@wg0.service
-   After=wg-quick@wg0.service
-   EOF
-   sudo systemctl daemon-reload
-   ```
-
-5. Enable and start:
-
-   ```bash
-   sudo systemctl enable --now wg-quick@wg0.service
-   ```
-
-6. Open UDP/51820 in Hetzner Cloud Firewall.
-
-**Verify:**
+One-shot. Run on the VPS as root, after cloning the repo to `/opt/projekt-manager`:
 
 ```bash
-ip -4 addr show wg0                                                          # inet 10.213.17.1/24
-systemctl is-active wg-quick@wg0.service                                     # active
-systemctl list-dependencies docker.service | grep -F wg-quick@wg0.service    # non-empty
-systemctl list-dependencies --reverse wg-quick@wg0.service | grep -F docker  # non-empty
-sudo ss -ulnp | grep -F :51820                                               # listening
+sudo /opt/projekt-manager/scripts/ops/wireguard-server-init.sh
 ```
+
+The script installs `wireguard-tools` + `qrencode`, generates the server keypair under `/etc/wireguard/`, writes `wg0.conf`, installs the systemd drop-in that makes `docker.service` wait for `wg-quick@wg0.service` (Caddy's `10.213.17.1:443` bind fails on cold boot otherwise), enables the unit, and prints a verification block. Re-runs are safe — existing artifacts are preserved.
+
+Still manual AFTER this: **open UDP/51820 in the Hetzner Cloud Firewall.** The VPN is dead on the wire until the datagram can reach the host.
 
 ## Peer onboarding
 
 Per [ADR-0008](../adr/0008-vpn-first-network-access.md): keys generated server-side, config distributed via Signal or in-person.
 
-Repeatable -- run once per peer.
-
-For each peer:
+Repeatable — run once per peer:
 
 ```bash
-PEER_NAME="<user-device>"          # e.g. vladimir-pixel
-PEER_IP="10.213.17.10"             # next /32 from 10.213.17.10+
-SERVER_PUB=$(sudo cat /etc/wireguard/server.pubkey)
-SERVER_ENDPOINT="<server-public-ip>:51820"
+sudo /opt/projekt-manager/scripts/ops/wireguard-add-peer.sh \
+    <peer-name> <peer-ip> <server-endpoint>
 
-sudo mkdir -p /etc/wireguard/peers
-cd /etc/wireguard
-sudo sh -c "umask 077 && wg genkey | tee peers/${PEER_NAME}.privkey | wg pubkey > peers/${PEER_NAME}.pubkey"
-
-# Append peer to wg0.conf
-sudo tee -a /etc/wireguard/wg0.conf > /dev/null <<EOF
-
-# ${PEER_NAME} added $(date -I)
-[Peer]
-PublicKey  = $(sudo cat peers/${PEER_NAME}.pubkey)
-AllowedIPs = ${PEER_IP}/32
-EOF
-
-# Reload without interface restart
-sudo wg syncconf wg0 <(sudo wg-quick strip wg0)
-
-# Generate client config
-sudo tee peers/${PEER_NAME}.conf > /dev/null <<EOF
-[Interface]
-PrivateKey = $(sudo cat peers/${PEER_NAME}.privkey)
-Address    = ${PEER_IP}/32
-
-[Peer]
-PublicKey           = ${SERVER_PUB}
-Endpoint            = ${SERVER_ENDPOINT}
-AllowedIPs          = 10.213.17.0/24
-PersistentKeepalive = 25
-EOF
-
-# QR code for mobile
-sudo qrencode -t ansiutf8 < peers/${PEER_NAME}.conf
+# e.g.
+sudo /opt/projekt-manager/scripts/ops/wireguard-add-peer.sh \
+    vladimir-pixel 10.213.17.10 203.0.113.5:51820
 ```
 
-After user confirms connection:
+| Argument          | Format                           | Notes                                         |
+| ----------------- | -------------------------------- | --------------------------------------------- |
+| `peer-name`       | `[a-z0-9][a-z0-9-]*`             | DNS-safe; used as filename                    |
+| `peer-ip`         | `10.213.17.N` where `N ∈ 2..254` | Must be free; check `sudo wg show wg0`        |
+| `server-endpoint` | `host:port`                      | Public IP / DNS of the VPS, usually `…:51820` |
+
+The script generates a keypair under `/etc/wireguard/peers/`, appends the `[Peer]` block to `wg0.conf`, reloads the kernel config via `wg syncconf`, writes the client `.conf`, and prints a QR code for mobile import. Duplicate `peer-name` or `peer-ip` is rejected up-front. Partial failures are rolled back.
+
+If the QR scrolls off the terminal before the peer scans it, re-render from the `.conf` (valid only until the post-handshake shred below):
 
 ```bash
-# Verify handshake (expect Unix timestamp within last 30s)
-sudo wg show wg0 latest-handshakes | grep -F "$(sudo cat /etc/wireguard/peers/${PEER_NAME}.pubkey)"
-
-# Clean up private key material
-sudo shred -u /etc/wireguard/peers/${PEER_NAME}.conf
-sudo shred -u /etc/wireguard/peers/${PEER_NAME}.privkey
-# Keep .pubkey for audit trail
+sudo qrencode -t ansiutf8 < /etc/wireguard/peers/<name>.conf
 ```
 
-If no handshake within ~5 min: remove the `[Peer]` block from `wg0.conf`, `sudo wg syncconf wg0 <(sudo wg-quick strip wg0)`, regenerate.
+After the peer confirms connectivity over the VPN:
+
+```bash
+# Verify handshake (expect a recent Unix timestamp)
+sudo wg show wg0 latest-handshakes \
+  | grep -F "$(sudo cat /etc/wireguard/peers/<name>.pubkey)"
+
+# Shred ephemeral key material (keep .pubkey for audit trail)
+sudo shred -u /etc/wireguard/peers/<name>.conf
+sudo shred -u /etc/wireguard/peers/<name>.privkey
+```
+
+Once the private key is shredded, the QR cannot be regenerated — that's the point. If the peer later loses their device, rotate instead of recover: run the removal script, then `wireguard-add-peer.sh` with a fresh IP.
+
+## Peer removal / rotation
+
+```bash
+sudo /opt/projekt-manager/scripts/ops/wireguard-remove-peer.sh <peer-name>
+```
+
+Drops the `[Peer]` block from `wg0.conf`, reloads the kernel config, shreds any leftover `.privkey` / `.conf` on disk. The `.pubkey` is retained for the audit trail. Use this for aborted onboardings (no handshake within ~5 min), lost/stolen devices, or access revocation.
 
 ## Troubleshooting
 
-### No handshake after peer import
+### Docker starts before wg0 on cold boot — Caddy bind failure
 
-1. Remove the `[Peer]` block from `/etc/wireguard/wg0.conf`.
-2. Reload:
-   ```bash
-   sudo wg syncconf wg0 <(sudo wg-quick strip wg0)
-   ```
-3. Regenerate keys and repeat the peer onboarding steps above.
-
-### Docker starts before wg0 on cold boot -- Caddy bind failure
-
-Caddy binds to `10.213.17.1:443`. If Docker starts before `wg-quick@wg0`, the `wg0` interface does not exist yet and the bind fails.
-
-The systemd drop-in at `/etc/systemd/system/docker.service.d/wait-for-wireguard.conf` prevents this:
+Caddy binds to `10.213.17.1:443`. If Docker starts before `wg-quick@wg0`, `wg0` does not exist yet and the bind fails. `wireguard-server-init.sh` installs a drop-in at `/etc/systemd/system/docker.service.d/wait-for-wireguard.conf` that prevents this:
 
 ```ini
 [Unit]
@@ -161,4 +93,4 @@ Verify the dependency is active:
 systemctl list-dependencies docker.service | grep -F wg-quick@wg0.service
 ```
 
-If missing, re-create the drop-in (see Server setup step 4) and run `sudo systemctl daemon-reload`.
+If missing, re-run `wireguard-server-init.sh`.
