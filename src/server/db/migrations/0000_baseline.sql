@@ -1,3 +1,28 @@
+CREATE TABLE "audit_log" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"actor_id" uuid,
+	"actor_kind" text NOT NULL,
+	"actor_reason" text,
+	"entity_type" text NOT NULL,
+	"entity_id" uuid NOT NULL,
+	"entity_label" text,
+	"action" text NOT NULL,
+	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"correlation_id" text,
+	CONSTRAINT "audit_log_actor_kind_valid" CHECK ("audit_log"."actor_kind" IN ('user', 'system')),
+	CONSTRAINT "audit_log_entity_type_valid" CHECK ("audit_log"."entity_type" IN ('project', 'customer', 'user', 'project_worker')),
+	CONSTRAINT "audit_log_actor_shape" CHECK ((
+        ("audit_log"."actor_kind" = 'user'
+          AND "audit_log"."actor_reason" IS NULL)
+        OR
+        ("audit_log"."actor_kind" = 'system'
+          AND "audit_log"."actor_id" IS NULL
+          AND "audit_log"."actor_reason" IS NOT NULL
+          AND length(trim("audit_log"."actor_reason")) > 0)
+      ))
+);
+--> statement-breakpoint
 CREATE TABLE "customers" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(255) NOT NULL,
@@ -9,6 +34,17 @@ CREATE TABLE "customers" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"created_by" uuid,
 	"updated_by" uuid
+);
+--> statement-breakpoint
+CREATE TABLE "meta_backup_status" (
+	"singleton" boolean PRIMARY KEY DEFAULT true NOT NULL,
+	"last_backup_at" timestamp with time zone,
+	"last_backup_ok" boolean DEFAULT false NOT NULL,
+	"last_drill_at" timestamp with time zone,
+	"last_drill_ok" boolean,
+	"last_error" text,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "meta_backup_status_singleton" CHECK ("meta_backup_status"."singleton" = true)
 );
 --> statement-breakpoint
 CREATE TABLE "project_workers" (
@@ -66,6 +102,7 @@ CREATE TABLE "users" (
 	CONSTRAINT "users_valid_theme_preference" CHECK ("users"."theme_preference" IN ('light', 'dark', 'system'))
 );
 --> statement-breakpoint
+ALTER TABLE "audit_log" ADD CONSTRAINT "audit_log_actor_id_users_id_fk" FOREIGN KEY ("actor_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "customers" ADD CONSTRAINT "customers_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "customers" ADD CONSTRAINT "customers_updated_by_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "project_workers" ADD CONSTRAINT "project_workers_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -74,9 +111,17 @@ ALTER TABLE "projects" ADD CONSTRAINT "projects_customer_id_customers_id_fk" FOR
 ALTER TABLE "projects" ADD CONSTRAINT "projects_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "projects" ADD CONSTRAINT "projects_updated_by_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "audit_log_entity_idx" ON "audit_log" USING btree ("entity_type","entity_id","created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "audit_log_actor_idx" ON "audit_log" USING btree ("actor_id","created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "audit_log_created_at_idx" ON "audit_log" USING btree ("created_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "idx_project_workers_user_id" ON "project_workers" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "idx_projects_status" ON "projects" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "idx_projects_status_changed_at" ON "projects" USING btree ("status_changed_at");--> statement-breakpoint
 CREATE INDEX "idx_projects_customer_id" ON "projects" USING btree ("customer_id");--> statement-breakpoint
 CREATE INDEX "idx_sessions_expires_at" ON "sessions" USING btree ("expires_at");--> statement-breakpoint
-CREATE INDEX "idx_sessions_user_id" ON "sessions" USING btree ("user_id");
+CREATE INDEX "idx_sessions_user_id" ON "sessions" USING btree ("user_id");--> statement-breakpoint
+-- Pre-seed the single row so the app always upserts on the fixed singleton
+-- key (data-model.md §5.9, ADR-0020). Avoids a first-write vs nth-write
+-- distinction in the repository layer.
+INSERT INTO "meta_backup_status" ("singleton", "last_backup_ok") VALUES (TRUE, FALSE)
+	ON CONFLICT ("singleton") DO NOTHING;

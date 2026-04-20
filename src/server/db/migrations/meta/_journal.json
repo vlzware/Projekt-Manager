@@ -5,29 +5,8 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1776289593585,
-      "tag": "0000_early_greymalkin",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1776446447671,
-      "tag": "0001_backup_status",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1776629699402,
-      "tag": "0002_worried_lockheed",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1776697622881,
-      "tag": "0003_great_omega_red",
+      "when": 1776699200317,
+      "tag": "0000_baseline",
       "breakpoints": true
     }
   ]

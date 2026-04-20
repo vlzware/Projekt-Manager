@@ -2,10 +2,10 @@
  * BackupStatus repository.
  *
  * Wraps read/write access to the single-row `meta_backup_status` table
- * (data-model.md §5.9, ADR-0020). The row is pre-seeded by migration
- * `0001_backup_status.sql` so callers never have to distinguish "first
- * write" from "nth write" — every mutation is an upsert on the fixed
- * `singleton` primary key.
+ * (data-model.md §5.9, ADR-0020). The row is pre-seeded by the baseline
+ * migration so callers never have to distinguish "first write" from
+ * "nth write" — every mutation is an upsert on the fixed `singleton`
+ * primary key.
  *
  * Architecture layering (architecture.md §11.2): repositories touch the
  * DB directly. The backup service orchestrates and never reaches here
@@ -44,17 +44,15 @@ export interface BackupStatusPatch {
 
 /**
  * Read the singleton `meta_backup_status` row. The row is guaranteed to
- * exist after migration 0001; returning `null` would be a programmer
- * error, so we throw instead of papering over it.
+ * exist after the baseline migration; returning `null` would be a
+ * programmer error, so we throw instead of papering over it.
  */
 export async function getBackupStatus(db: TransactionalDatabase): Promise<BackupStatus> {
   const rows = await db.select().from(metaBackupStatus).limit(1);
   const row = rows[0];
   if (!row) {
-    // If this ever fires, migration 0001 did not run on this database.
-    throw new Error(
-      'meta_backup_status row missing — migration 0001_backup_status did not execute',
-    );
+    // If this ever fires, the baseline migration did not run on this database.
+    throw new Error('meta_backup_status row missing — baseline migration did not execute');
   }
   return rowToStatus(row);
 }

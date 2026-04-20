@@ -165,7 +165,7 @@ Design notes:
 
 - **Response contract is an explicit allowlist.** The server returns only the badge-visible fields from [data-model.md §5.9](data-model.md#59-backup-status-entity) (`lastBackupAt`, `lastBackupOk`, `lastDrillAt`, `lastDrillOk`, `lastError`, `updatedAt`). Any future sensitive column on the `meta_backup_status` row does not leak through this surface unless it is explicitly added.
 - **Unreachable source → `{ available: false }`, not silence.** Misleading state is a critical defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)). An unreachable DB yields an explicit response the client renders as "Status unbekannt" ([AC-171](verification.md#1522-backup-and-recovery)) rather than a 404 or a silent empty payload.
-- **No errors on absence of prior runs.** The pre-seed row (migration 0001) is always present. The service reports `lastBackupOk=false` with `lastBackupAt=null` for a DB that has never run a backup; the client derives the `backup-never-run` badge reason from that shape.
+- **No errors on absence of prior runs.** The pre-seed row from the baseline migration is always present. The service reports `lastBackupOk=false` with `lastBackupAt=null` for a DB that has never run a backup; the client derives the `backup-never-run` badge reason from that shape.
 
 #### 14.2.8 Audit Log
 
