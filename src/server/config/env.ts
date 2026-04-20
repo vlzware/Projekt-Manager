@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 
-const envSchema = z.object({
+export const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   // Default to 'production' so the production-safety checks (see
   // assertProductionSafe below) fire when NODE_ENV is unset. The previous
@@ -54,7 +54,14 @@ const envSchema = z.object({
   // `src/config/auditRetention.ts` (90 d) applies. Coerced to integer
   // because a fractional day window makes no sense for a rolling
   // cleanup and the AC-184 log line types `window_days` as integer.
-  AUDIT_RETENTION_WINDOW_DAYS: z.coerce.number().int().positive().optional(),
+  // preprocess: compose forwards this as `${AUDIT_RETENTION_WINDOW_DAYS:-}`,
+  // so an unset var arrives as "" — which `z.coerce.number()` turns into 0
+  // and `.positive()` then rejects. Map "" → undefined so .optional() takes
+  // over and start.ts falls back to the build-time default.
+  AUDIT_RETENTION_WINDOW_DAYS: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
   // How often the audit-retention cleanup runs. One run is a single
   // indexed DELETE against the `audit_log_created_at_idx`; daily (1440
   // min) is the production default because retention is a cleanup, not

@@ -16,7 +16,7 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
-import { assertAppServerEnv, assertProductionSafe } from '../config/env.js';
+import { assertAppServerEnv, assertProductionSafe, envSchema } from '../config/env.js';
 import type { Env } from '../config/env.js';
 
 /** Minimal Env shape with only the fields assertProductionSafe reads. */
@@ -136,6 +136,34 @@ describe('assertAppServerEnv', () => {
 
   it('passes when all three STORAGE_* are set', () => {
     expect(() => assertAppServerEnv(makeEnv({}))).not.toThrow();
+  });
+});
+
+/**
+ * Schema-level regression pin for the `${VAR:-}` compose pattern. Docker
+ * Compose substitutes an empty string for an unset variable referenced
+ * with `:-`, so the container sees `AUDIT_RETENTION_WINDOW_DAYS=""`.
+ * Without the preprocess wrapper, `z.coerce.number()` turns "" into 0
+ * and `.positive()` rejects — crashing the app at startup. CI caught
+ * this after the smoke-test container started failing to boot; this
+ * test freezes the fix.
+ */
+describe('envSchema AUDIT_RETENTION_WINDOW_DAYS empty-string handling', () => {
+  const minimal = { DATABASE_URL: 'postgres://unused' };
+
+  it('coerces "" to undefined so the build-time default applies', () => {
+    const parsed = envSchema.parse({ ...minimal, AUDIT_RETENTION_WINDOW_DAYS: '' });
+    expect(parsed.AUDIT_RETENTION_WINDOW_DAYS).toBeUndefined();
+  });
+
+  it('parses a positive integer string', () => {
+    const parsed = envSchema.parse({ ...minimal, AUDIT_RETENTION_WINDOW_DAYS: '30' });
+    expect(parsed.AUDIT_RETENTION_WINDOW_DAYS).toBe(30);
+  });
+
+  it('still rejects 0 and negatives', () => {
+    expect(() => envSchema.parse({ ...minimal, AUDIT_RETENTION_WINDOW_DAYS: '0' })).toThrow();
+    expect(() => envSchema.parse({ ...minimal, AUDIT_RETENTION_WINDOW_DAYS: '-5' })).toThrow();
   });
 });
 
