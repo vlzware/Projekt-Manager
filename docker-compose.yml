@@ -26,11 +26,20 @@ services:
     mem_limit: 512m
     cpus: 1.0
     environment:
-      DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD}@db:5432/projekt_manager
+      # `:?` gates the operator-supplied secrets at compose parse time —
+      # without them, compose refuses to start the stack rather than
+      # substituting an empty password into the connection string and
+      # letting the container crash-loop against "authentication
+      # failed". Gating at the first occurrence per var is enough:
+      # compose aborts the whole parse on any `:?` failure, so later
+      # references (db/storage/storage-init/backup services) can stay
+      # bare for readability. Pairs with `secrets.manifest.txt` and the
+      # deploy-time pre-flight in `scripts/deploy.sh`.
+      DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/projekt_manager
       STORAGE_ENDPOINT: http://storage:9000
       STORAGE_BUCKET: projekt-manager
-      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER}
-      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
       NODE_ENV: production
       PORT: '3000'
       SEED: ${SEED:-false}
@@ -239,7 +248,14 @@ services:
       - caddy_config:/config
     environment:
       DOMAIN: ${DOMAIN:-localhost}
-      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      # `?` (no colon) — must be DECLARED but may be empty. Local dev
+      # and the HTTP-only overlay leave it empty because Caddy is
+      # profile-gated off there (docker-compose.dev.yml). Production
+      # supplies the value via `secrets.env.age`; `secrets.manifest.txt`
+      # + deploy-time pre-flight catch the missing-key case there.
+      # `:?` (abort on empty) would wrongly fire in local dev where
+      # `.env` has `CLOUDFLARE_API_TOKEN=` intentionally.
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN?CLOUDFLARE_API_TOKEN must be declared}
     depends_on:
       - app
     restart: unless-stopped

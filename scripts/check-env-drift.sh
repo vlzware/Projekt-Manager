@@ -149,11 +149,16 @@ ENV_EXAMPLE="${ENV_EXAMPLE:-.env.production.example}"
 SECRETS_MANIFEST="${SECRETS_MANIFEST:-secrets.manifest.txt}"
 
 # Extract compose interpolation names where the operator MUST supply
-# a value:
-#   ${VAR}       — bare, no default → required
-#   ${VAR:?...}  — gated, compose aborts on unset → required
-# Explicitly exclude `${VAR:-...}` (with default — optional).
-compose_required=$(grep -oE '\$\{[A-Z_][A-Z0-9_]*(:\?[^}]*)?\}' "$COMPOSE" \
+# a value (either as-a-declaration or as-a-non-empty-value):
+#   ${VAR}       — bare, no default → required (empty falls through to
+#                                    the app layer, usually crash-loops).
+#   ${VAR?...}   — gated, compose aborts on UNSET. Empty allowed.
+#   ${VAR:?...}  — gated, compose aborts on UNSET or EMPTY.
+# Explicitly exclude `${VAR:-...}` and `${VAR-...}` (optional defaults).
+# The regex `(:?\?[^}]*)?` matches "optional colon, literal `?`, message"
+# so both gate forms are caught; `:-default` does not match because the
+# literal `?` is absent.
+compose_required=$(grep -oE '\$\{[A-Z_][A-Z0-9_]*(:?\?[^}]*)?\}' "$COMPOSE" \
   | sed -E 's/^\$\{([A-Z_][A-Z0-9_]*).*$/\1/' \
   | grep -vxF 'APP_IMAGE_TAG' \
   | sort -u)
