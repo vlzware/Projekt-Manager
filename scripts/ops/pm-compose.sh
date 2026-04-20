@@ -33,5 +33,6 @@ set -euo pipefail
 REPO_DIR="/opt/projekt-manager"
 cd "$REPO_DIR"
 
-export APP_IMAGE_TAG="sha-$(git rev-parse HEAD)"
+APP_IMAGE_TAG="sha-$(git rev-parse HEAD)"
+export APP_IMAGE_TAG
 exec docker compose -f "$REPO_DIR/docker-compose.yml" "$@"
