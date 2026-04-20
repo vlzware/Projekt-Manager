@@ -6,7 +6,7 @@
 
 ## Context
 
-Iteration 8 introduces two new mutation surfaces: file uploads (#108) and notifications (#112). The kickoff also commits to a configurable notification system ([line 64](../project/kickoff.md)) and an administrator view of user activity (line 67). The current codebase has no unified audit trail — entities carry ad-hoc `createdBy`/`updatedBy` fields, and every service method writes its own state change with no append-only record.
+Iteration 8 introduces two new mutation surfaces: file uploads (#108) and notifications (#112). The kickoff commits to a configurable notification system (see [Kickoff §Done when](../project/kickoff.md#done-when-final-product)). The current codebase has no unified audit trail — entities carry ad-hoc `createdBy`/`updatedBy` fields, and every service method writes its own state change with no append-only record.
 
 Forces:
 
@@ -73,7 +73,7 @@ Store the complete new (and optionally previous) row rather than a changed-field
 
 ## References
 
-- [Kickoff](../project/kickoff.md) — line 64 (configurable notifications), line 67 (admin activity view)
+- [Kickoff §Done when](../project/kickoff.md#done-when-final-product) — configurable notifications
 - [ADR-0017](0017-soft-delete-as-board-archive.md) — soft-delete is _not_ an audit trail; this ADR fills that gap
 - [ADR-0019](0019-worker-data-scoping-repository-layer-predicate.md) — RBAC predicate reused for the audit view
 - [ADR-0020](0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md) — retention window the audit table aligns to

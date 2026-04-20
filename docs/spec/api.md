@@ -190,7 +190,8 @@ Design notes:
   - Get-by-id on a non-existent row → `404 NOT_FOUND`.
   - Filter or pagination parameters failing schema validation → `422 VALIDATION_ERROR`.
   - `from`/`to` inverted (`to < from`) → `422 VALIDATION_ERROR`.
-  - `entityType`, `actorKind`, or `action` filter values outside the documented enum / vocabulary ([data-model.md §5.10](data-model.md#510-audit-log-entity)) → `422 VALIDATION_ERROR`.
+  - `entityType` or `action` filter values outside the documented enum / vocabulary ([data-model.md §5.10](data-model.md#510-audit-log-entity)) → `422 VALIDATION_ERROR`.
+  - Request using an HTTP method other than the documented reads on the audit endpoints → `405 METHOD_NOT_ALLOWED`.
 - **Post-commit publisher contract.** The notification publisher module exposes:
   - `onAuditCommitted(handler)` — registers a handler invoked with the committed audit entry after the domain transaction commits. Handlers are invoked once per commit, in registration order.
   - `setOperationalLogger(logger)` — wires the structured operational logger used to surface handler failures.

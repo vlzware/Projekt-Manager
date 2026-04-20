@@ -188,7 +188,7 @@ Navigation: exposed via the shell navigation matrix ([index.md §8.7.1](index.md
 
 - Columns: timestamp (`createdAt`, German locale `DD.MM.YYYY HH:mm`), actor, entity (type + human-readable label resolved server-side), action (German label derived from the action vocabulary), payload indicator.
 - Actor cell: `displayName` for user-actor entries on owner/office callers. For worker callers, the server returns `actorId` only on rows the worker authored (`actorId == caller.id`); the UI renders the worker's own label on those rows and the neutral German label `"Benutzer"` on every other row, where the API returned a null `actorId` (per [api.md §14.2.8](../api.md#1428-audit-log)). System-actor entries render `"System"` with the `actorReason` as supporting text.
-- Payload indicator: a `Details` affordance that opens a drawer with the `{ before, after }` field diff. Rendered only when the API returns a `payload` for the row. For worker callers the affordance appears on self-authored rows and is absent on every other row — the API returns the full `payload` on the worker's own activity and strips it elsewhere ([api.md §14.2.8](../api.md#1428-audit-log)).
+- Payload indicator: a `Details` affordance opening a drawer with the `{ before, after }` field diff. Rendered only when the API returns a `payload` for the row, per the role-dependent shape in [api.md §14.2.8](../api.md#1428-audit-log).
 - Default sort: `createdAt` descending, with `id` as a stable tiebreaker.
 - Pagination follows the configurable page size **[C]**.
 - Empty result: `"Keine Aktivität"`.
@@ -197,7 +197,7 @@ Navigation: exposed via the shell navigation matrix ([index.md §8.7.1](index.md
 
 A filter bar AND-composing the following criteria, applied via the API:
 
-- Entity type — multi-select over `project`, `customer`, `user`, `project_worker`. Worker callers never see `user` as an option (the server never returns `entityType = 'user'` rows to a worker).
+- Entity type — multi-select over `project`, `customer`, `user`, `project_worker`. For worker callers the `user` slice is narrowed server-side to self-authored rows (see [api.md §14.2.8](../api.md#1428-audit-log)).
 - Entity — optional single-value filter (selectable when an entity type is chosen).
 - Actor — optional single-select over users the caller may already list via `user:read` (owner and office under the default matrix). Worker callers do not have an actor filter — they cannot list users.
 - Date range (`from` / `to`) — `to < from` is a client-side validation error; the form blocks submit.

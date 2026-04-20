@@ -257,7 +257,7 @@ interface AuditLogEntry {
   actorKind: AuditActorKind; // 'user' for authenticated callers, 'system' for bootstrap and other unattended domain-entity writes
   actorReason?: string; // required (non-empty) when actorKind = 'system'; null for 'user' entries
   entityType: AuditEntityType; // the domain entity that changed
-  entityId: string; // the changed row's primary key
+  entityId: string; // identifier of the affected row
   action: string; // vocabulary defined below — free text for forward compatibility
   payload: object; // JSON — before/after of changed fields only, not the full row
   correlationId?: string; // request-scoped id threaded from the route layer, where available

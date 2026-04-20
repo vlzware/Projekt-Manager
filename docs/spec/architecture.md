@@ -209,7 +209,8 @@ The following values are centralized as single-source constants and may vary per
 - Layer 2 backup interval — cadence of the `backup` compose service ([§11.10](#1110-full-state-backup-layer-2))
 - Layer 2 freshness thresholds — age of `lastBackupAt` and `lastDrillAt` at which the owner-facing badge switches to amber and to red ([§11.10](#1110-full-state-backup-layer-2))
 - Audit log retention window — rolling age at which `audit_log` entries are removed by the scheduled cleanup (default 90 days; see [data-model.md §6.10](data-model.md#610-audit-log-retention))
-- Audit-action-to-German-label mapping — the vocabulary of `audit_log.action` ([data-model.md §5.10](data-model.md#510-audit-log-entity)) mapped to the display strings rendered by the activity feed ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed)) and the global Aktivität view ([ui/management.md §8.13](ui/management.md#813-audit-view))
+- Audit activity-feed rendering — the mapping from an audit entry's (`action`, `payload`) ([data-model.md §5.10](data-model.md#510-audit-log-entity)) to the German display string rendered by the activity feed ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed)) and the global Aktivität view ([ui/management.md §8.13](ui/management.md#813-audit-view))
+- List page size — default row count per page for paginated list endpoints (projects, customers, users, audit) and their corresponding management views
 
 ### 12.3 Configuration Requirements
 
