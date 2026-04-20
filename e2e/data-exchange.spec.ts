@@ -1,8 +1,9 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { EXPECTED_RESTORE_PHRASE } from '../src/test/seedAssumptions.js';
+import { STORAGE_STATES } from './storage-states';
 
 /**
  * E2E: unified Daten view (AC-142, AC-143, AC-144, AC-161).
@@ -28,16 +29,12 @@ import { EXPECTED_RESTORE_PHRASE } from '../src/test/seedAssumptions.js';
  * Seed data assumptions inherited from e2e/auth.setup.ts:
  *   - 21 customers, 19 projects, 7 project_workers rows
  *   - User: inhaber (owner) authenticated via shared storageState
- *   - 5/30/min login rate limit handled by the shared-auth pattern
+ *   - Per-role tests use the pre-authenticated storage states saved by
+ *     e2e/auth.setup.ts — no per-test login burning the rate limit.
  */
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
-// Must match e2e/auth.setup.ts. Playwright forbids importing from a test
-// setup file, so the path is duplicated — safe because both files resolve
-// against the same directory.
-const STORAGE_STATE = path.resolve(__dirname, '.auth/user.json');
 
 test.describe.configure({ mode: 'serial' });
 
@@ -50,7 +47,7 @@ test.describe.configure({ mode: 'serial' });
 let preSpecSnapshot: unknown = null;
 
 test.beforeAll(async ({ browser }) => {
-  const context = await browser.newContext({ storageState: STORAGE_STATE });
+  const context = await browser.newContext({ storageState: STORAGE_STATES.owner });
   const res = await context.request.get('/api/export');
   if (res.ok()) {
     preSpecSnapshot = await res.json();
@@ -60,7 +57,7 @@ test.beforeAll(async ({ browser }) => {
 
 test.afterAll(async ({ browser }) => {
   if (!preSpecSnapshot) return;
-  const context = await browser.newContext({ storageState: STORAGE_STATE });
+  const context = await browser.newContext({ storageState: STORAGE_STATES.owner });
   // AC-160: override into a non-empty DB requires the confirmation phrase
   // in the request body. The teardown passes it so the seed-restore runs.
   const snapshot = preSpecSnapshot as Record<string, unknown>;
@@ -70,47 +67,31 @@ test.afterAll(async ({ browser }) => {
   await context.close();
 });
 
-async function loginAs(page: Page, username: string): Promise<void> {
-  await page.goto('/');
-  await page.getByTestId('login-username').fill(username);
-  await page.getByTestId('login-password').fill('changeme');
-  await page.getByTestId('login-submit').click();
-  // Wait for the authenticated layout — `header` mounts on every role's
-  // landing view. The previous wait on `kanban-board` hung for bookkeeper,
-  // whose landing is `/projects` per the central route table.
-  await page.getByTestId('header').waitFor();
-}
-
 // ---------------------------------------------------------------
 // AC-142: Daten tab visibility follows data:export permission
 // ---------------------------------------------------------------
+// owner + office hold data:export → tab visible.
+// worker + bookkeeper do not → tab hidden.
+const DATA_TAB_VISIBLE: Record<'owner' | 'office' | 'worker' | 'bookkeeper', boolean> = {
+  owner: true,
+  office: true,
+  worker: false,
+  bookkeeper: false,
+};
+
 test.describe('AC-142: Daten tab permission visibility', () => {
-  // Each role logs in fresh — override the shared storageState.
-  test.use({ storageState: { cookies: [], origins: [] } });
-
-  // AC-142: owner holds data:export → tab visible
-  test('owner sees the Daten tab', async ({ page }) => {
-    await loginAs(page, 'inhaber');
-    await expect(page.getByTestId('view-toggle-daten')).toHaveCount(1);
-  });
-
-  // AC-142: office holds data:export → tab visible
-  test('office sees the Daten tab', async ({ page }) => {
-    await loginAs(page, 'buero');
-    await expect(page.getByTestId('view-toggle-daten')).toHaveCount(1);
-  });
-
-  // AC-142: worker lacks data:export → tab hidden
-  test('worker does NOT see the Daten tab', async ({ page }) => {
-    await loginAs(page, 'arbeiter1');
-    await expect(page.getByTestId('view-toggle-daten')).toHaveCount(0);
-  });
-
-  // AC-142: bookkeeper lacks data:export → tab hidden
-  test('bookkeeper does NOT see the Daten tab', async ({ page }) => {
-    await loginAs(page, 'buchhalter');
-    await expect(page.getByTestId('view-toggle-daten')).toHaveCount(0);
-  });
+  for (const [role, visible] of Object.entries(DATA_TAB_VISIBLE) as [
+    keyof typeof DATA_TAB_VISIBLE,
+    boolean,
+  ][]) {
+    test.describe(role, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test(`${visible ? 'sees' : 'does NOT see'} the Daten tab`, async ({ page }) => {
+        await page.goto('/');
+        await expect(page.getByTestId('view-toggle-daten')).toHaveCount(visible ? 1 : 0);
+      });
+    });
+  }
 });
 
 // Shared minimal self-consistent envelope for the restore-flow specs.

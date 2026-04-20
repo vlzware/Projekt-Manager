@@ -3,7 +3,7 @@
  */
 
 import { eq, count, asc } from 'drizzle-orm';
-import type { Database, TransactionalDatabase } from '../db/connection.js';
+import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
 import { users } from '../db/schema.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
 
@@ -56,8 +56,9 @@ export async function listUsers(
 }
 
 export async function createUser(
-  db: Database,
+  db: MutatingDatabase,
   data: {
+    id?: string;
     username: string;
     displayName: string;
     passwordHash: string;
@@ -70,6 +71,7 @@ export async function createUser(
   const rows = await db
     .insert(users)
     .values({
+      ...(data.id !== undefined ? { id: data.id } : {}),
       username: data.username,
       displayName: data.displayName,
       passwordHash: data.passwordHash,
@@ -85,7 +87,7 @@ export async function createUser(
 }
 
 export async function updateUser(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   actorId: string,
   data: {
@@ -117,7 +119,7 @@ export async function updateUser(
  * cannot reach the repository. See api.md §14.2.1 design notes.
  */
 export async function updateSelf(
-  db: Database,
+  db: MutatingDatabase,
   userId: string,
   patch: { themePreference?: ThemePreference },
 ): Promise<ReturnType<typeof toUserResponse> | null> {
@@ -135,7 +137,7 @@ export async function updateSelf(
 }
 
 export async function reactivateUser(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   actorId: string,
 ): Promise<ReturnType<typeof toUserResponse> | null> {
@@ -149,21 +151,30 @@ export async function reactivateUser(
   return toUserResponse(rows[0]!);
 }
 
-export async function deleteUser(db: TransactionalDatabase, id: string): Promise<boolean> {
+export async function deleteUser(db: MutatingDatabase, id: string): Promise<boolean> {
   const rows = await db.delete(users).where(eq(users.id, id)).returning({ id: users.id });
   return rows.length > 0;
 }
 
-export async function findByUsername(db: Database, username: string): Promise<UserRow | null> {
+export async function findByUsername(
+  db: TransactionalDatabase,
+  username: string,
+): Promise<UserRow | null> {
   const rows = await db.select().from(users).where(eq(users.username, username)).limit(1);
   return rows[0] ?? null;
 }
 
-export async function findById(db: Database, id: string): Promise<UserRow | null> {
+export async function findById(db: TransactionalDatabase, id: string): Promise<UserRow | null> {
   const rows = await db.select().from(users).where(eq(users.id, id)).limit(1);
   return rows[0] ?? null;
 }
 
+// ADR-0021 carve-out: session events ("Authentication and session events
+// are security events, not domain audit") are outside the audit-log write
+// path. This signature intentionally takes `Database` rather than
+// `MutatingDatabase` so the write does not require a `mutate()` wrapper.
+// Do not widen other write paths to `Database` — the AC-179 type-level
+// guarantee depends on them requiring a transaction handle.
 export async function updateLastLogin(db: Database, id: string): Promise<void> {
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, id));
 }
@@ -176,7 +187,7 @@ export async function updateLastLogin(db: Database, id: string): Promise<void> {
  * data-model.md §5.5. See consolidation review B F-3 / round-2 B M-1.
  */
 export async function deactivateUser(
-  db: TransactionalDatabase,
+  db: MutatingDatabase,
   id: string,
   actorId: string | null,
 ): Promise<ReturnType<typeof toUserResponse> | null> {
@@ -198,7 +209,7 @@ export async function deactivateUser(
  * data-model.md §5.5. See consolidation review B F-3.
  */
 export async function changePassword(
-  db: TransactionalDatabase,
+  db: MutatingDatabase,
   id: string,
   newPasswordHash: string,
   actorId: string | null,

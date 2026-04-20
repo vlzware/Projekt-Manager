@@ -5,6 +5,7 @@ import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
 import { useProjectTransition } from '@/hooks/useProjectTransition';
 import { usePermission } from '@/hooks/usePermission';
 import { useProjectStore } from '@/state/projectStore';
+import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { dateInputValue } from './dateInputValue';
 import styles from './ProjectDetailPanel.module.css';
 
@@ -24,6 +25,12 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
     useProjectTransition(currentProject);
   const canTransition = usePermission('project:transition');
   const canUpdateDates = usePermission('project:dates');
+  // Activity feed is rendered whenever the caller can open the panel — the
+  // nav matrix grants `audit:read` to owner, office, and worker
+  // (ui/workflow-views.md §8.4.1, api.md §14.3). Bookkeeper lacks
+  // `audit:read`, but bookkeeper does not reach the Kanban/Calendar shell
+  // where this panel is opened from, so the gate is defense in depth.
+  const canReadAudit = usePermission('audit:read');
 
   const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -214,6 +221,21 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
               {STRINGS.ui.statusSince} {formatDateDE(currentProject.statusChangedAt)}
             </span>
           </div>
+
+          {/* Activity feed (ui/workflow-views.md §8.4.1). Scoped by
+              entityType=project + entityId. Server-side scope predicates
+              filter per role; client renders the already-redacted rows. */}
+          {canReadAudit && (
+            <div className={styles.section}>
+              <div className={styles.sectionLabel}>{STRINGS.audit.heading}</div>
+              <ActivityFeed
+                filters={{ entityType: 'project', entityId: currentProject.id }}
+                filterKey={`project:${currentProject.id}`}
+                testId="project-activity-feed"
+                inline
+              />
+            </div>
+          )}
         </div>
       </div>
     </>

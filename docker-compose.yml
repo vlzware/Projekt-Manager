@@ -65,6 +65,11 @@ services:
       # — without this line, the Zod schema silently falls back to its
       # default at runtime (the failure mode check-env-drift.sh guards).
       SESSION_CLEANUP_INTERVAL_MINUTES: ${SESSION_CLEANUP_INTERVAL_MINUTES:-60}
+      # Audit-log retention cleanup (ADR-0021). Window defaults to the
+      # [C] constant in src/config/auditRetention.ts (90 days); leave
+      # blank to use that default. Interval default 1440 min (daily).
+      AUDIT_RETENTION_WINDOW_DAYS: ${AUDIT_RETENTION_WINDOW_DAYS:-}
+      AUDIT_RETENTION_INTERVAL_MINUTES: ${AUDIT_RETENTION_INTERVAL_MINUTES:-1440}
     healthcheck:
       test:
         [

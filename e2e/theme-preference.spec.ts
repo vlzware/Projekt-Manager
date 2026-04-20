@@ -269,7 +269,7 @@ test.afterAll(async ({ browser }) => {
   // not receive per-test fixtures — we reuse the saved storageState so
   // the request is authenticated.
   const context = await browser.newContext({
-    storageState: 'e2e/.auth/user.json',
+    storageState: 'e2e/.auth/owner.json',
   });
   const page = await context.newPage();
   try {

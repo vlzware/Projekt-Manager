@@ -192,7 +192,13 @@ export async function createExpiredSession(userId: string): Promise<string> {
  * updatedBy to be null for system/test-fixture actions (data-model.md §5.5).
  */
 export async function deactivateUser(userId: string): Promise<void> {
-  await deactivateUserRepo(db, userId, null);
+  // The repo write requires a tx handle (AC-179 type gate — see
+  // connection.ts MutatingDatabase). Test fixtures may bypass the
+  // service-layer `mutate()` wrapper but still must execute inside a
+  // transaction for type safety.
+  await db.transaction(async (tx) => {
+    await deactivateUserRepo(tx, userId, null);
+  });
 }
 
 /**

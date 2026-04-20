@@ -86,6 +86,14 @@ jobs:
       - name: Env drift check (env.ts ↔ docker-compose.yml)
         run: bash scripts/check-env-drift.sh
 
+      # Static check: every raw INSERT/UPDATE/DELETE on an audited
+      # table (project, customer, user, project_worker) must be
+      # authored inside the service-layer `mutate()` helper or on the
+      # reviewed allowlist (migrations, ImportService, seed loaders,
+      # retention cleanup, __tests__). See AC-179 and ADR-0021.
+      - name: Audit single-write-path check (mutate() bypass)
+        run: bash scripts/check-audit-mutations.sh
+
       # MinIO runs as a step (not a service container) because GitHub service
       # containers do not support overriding `command`, and minio/minio needs
       # `server /data` as its argv. Versions are pinned to match

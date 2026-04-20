@@ -163,6 +163,7 @@ export function authRoutes(db: Database) {
           request.user!.id,
           body,
           request.log,
+          request.id ?? null,
         );
         // Same envelope shape as GET /api/auth/me and login — a typed
         // client consumes one response type across all three endpoints.
@@ -215,12 +216,12 @@ export function authRoutes(db: Database) {
 
         await authService.changePassword(
           request.user!.id,
-          request.user!.username,
           currentPassword,
           newPassword,
           request.cookies.session,
           request.ip,
           request.log,
+          request.id ?? null,
         );
 
         return reply.code(200).send({ success: true });

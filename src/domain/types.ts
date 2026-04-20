@@ -98,4 +98,11 @@ export interface SummaryData {
  * Available view modes. Extend this union and App.tsx when adding new views.
  * See architecture.md §11.5.
  */
-export type ViewMode = 'kanban' | 'kalender' | 'kunden' | 'projekte' | 'benutzer' | 'daten';
+export type ViewMode =
+  | 'kanban'
+  | 'kalender'
+  | 'kunden'
+  | 'projekte'
+  | 'benutzer'
+  | 'daten'
+  | 'aktivitaet';

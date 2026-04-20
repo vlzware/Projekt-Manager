@@ -1,0 +1,135 @@
+/**
+ * Table-row variant of the audit-log row, used by the global Aktivität
+ * view (ui/management.md §8.13.1 — prescriptive column list).
+ *
+ * Renders the same information as `ActivityFeedRow` but split across
+ * `<td>` cells so the columns line up across rows. The drawer content
+ * is rendered INSIDE the last `<td>` (the "Details" column) rather
+ * than as a sibling `<tr>`: the row-scoped E2E locator
+ * `row.getByTestId('activity-feed-drawer-content')` depends on the
+ * content being a descendant of the main row, which rules out the
+ * cleaner sibling-row form. CSS gives the open drawer enough width
+ * via a negative right margin.
+ *
+ * The `data-*` attributes pin the E2E contract (AC-185 / AC-186 /
+ * AC-187); they're identical to `ActivityFeedRow` because the
+ * visibility assertions don't care which layout produced the row.
+ */
+
+import { useState } from 'react';
+import type { AuditEntry } from '@/domain/audit';
+import { formatDateTimeDE } from '@/domain/dateFormat';
+import { STRINGS } from '@/config/strings';
+import { labelForAuditAction } from '@/config/auditActionLabels';
+import { PayloadDrawer } from './PayloadDrawer';
+import styles from './ActivityFeedRow.module.css';
+import tableStyles from './AuditTable.module.css';
+
+interface Props {
+  entry: AuditEntry;
+  /** Caller's own user id — drives `data-self-authored`. */
+  callerId: string | null;
+  /** Worker-only caller → neutral actor label for non-self rows. */
+  isWorkerOnly: boolean;
+}
+
+function entityTypeLabel(entityType: AuditEntry['entityType']): string {
+  switch (entityType) {
+    case 'project':
+      return STRINGS.audit.entityProject;
+    case 'customer':
+      return STRINGS.audit.entityCustomer;
+    case 'user':
+      return STRINGS.audit.entityUser;
+    case 'project_worker':
+      return STRINGS.audit.entityProjectWorker;
+  }
+}
+
+function resolveActorLabel(entry: AuditEntry, callerId: string | null, isWorkerOnly: boolean) {
+  if (entry.actorKind === 'system') {
+    return { label: STRINGS.audit.system, reason: entry.actorReason };
+  }
+  const isSelf = entry.actorId !== null && entry.actorId === callerId;
+  if (isWorkerOnly) {
+    if (isSelf) {
+      return { label: entry.actorDisplayName ?? STRINGS.audit.userNeutral, reason: null };
+    }
+    return { label: STRINGS.audit.userNeutral, reason: null };
+  }
+  return { label: entry.actorDisplayName ?? STRINGS.audit.userNeutral, reason: null };
+}
+
+/**
+ * Structural empty-payload detection. Mirrors `ActivityFeedRow.tsx` —
+ * see its comment for the rationale. Falls back to `true` for
+ * free-shape payloads (no `before` / `after` keys) because
+ * `PayloadDrawer` has a JSON fallback for those.
+ */
+function hasRenderablePayload(payload: unknown): boolean {
+  if (payload == null) return false;
+  if (typeof payload !== 'object') return true;
+  const p = payload as { before?: unknown; after?: unknown };
+  if (!('before' in p) && !('after' in p)) return true;
+  const before = p.before;
+  const after = p.after;
+  const beforeHasKeys =
+    before != null && typeof before === 'object' && Object.keys(before).length > 0;
+  const afterHasKeys = after != null && typeof after === 'object' && Object.keys(after).length > 0;
+  return beforeHasKeys || afterHasKeys;
+}
+
+export function ActivityFeedRowTable({ entry, callerId, isWorkerOnly }: Props) {
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const hasPayload = hasRenderablePayload(entry.payload);
+  const isSelfAuthored = entry.actorId !== null && entry.actorId === callerId;
+  const actor = resolveActorLabel(entry, callerId, isWorkerOnly);
+
+  return (
+    <tr
+      className={tableStyles.row}
+      data-testid={`activity-feed-row-${entry.id}`}
+      data-action={entry.action}
+      data-self-authored={isSelfAuthored ? 'true' : 'false'}
+      data-has-payload={hasPayload ? 'true' : 'false'}
+      data-created-at={entry.createdAt}
+    >
+      <td className={tableStyles.timestamp}>{formatDateTimeDE(entry.createdAt)}</td>
+      <td className={tableStyles.actor}>
+        {actor.label}
+        {actor.reason && <span className={styles.actorReason}> ({actor.reason})</span>}
+      </td>
+      <td className={tableStyles.entity}>
+        <div className={styles.entityLabel}>{entityTypeLabel(entry.entityType)}</div>
+        <div className={tableStyles.entityId}>{entry.entityId}</div>
+      </td>
+      <td className={tableStyles.action}>{labelForAuditAction(entry.action)}</td>
+      <td className={tableStyles.payload}>
+        {hasPayload ? (
+          <>
+            <button
+              type="button"
+              className={styles.drawerToggle}
+              data-testid="activity-feed-drawer-toggle"
+              onClick={() => setDrawerOpen((open) => !open)}
+              aria-expanded={drawerOpen}
+            >
+              {drawerOpen ? STRINGS.audit.detailsHide : STRINGS.audit.detailsShow}
+            </button>
+            {drawerOpen && (
+              <div
+                className={styles.drawerContent}
+                data-testid="activity-feed-drawer-content"
+                role="region"
+              >
+                <PayloadDrawer payload={entry.payload} />
+              </div>
+            )}
+          </>
+        ) : (
+          <span className={styles.drawerValueNull}>—</span>
+        )}
+      </td>
+    </tr>
+  );
+}

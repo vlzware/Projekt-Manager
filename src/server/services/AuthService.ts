@@ -13,6 +13,7 @@ import type { Database } from '../db/connection.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
 
 import {
+  findById,
   findByUsername,
   updateLastLogin,
   changePassword as changePasswordRepo,
@@ -25,6 +26,7 @@ import { STRINGS } from '../../config/strings.js';
 import { invalidCredentials, notFound, validationError } from '../errors.js';
 import { AUTH_CONFIG } from '../config/index.js';
 import type { ServiceLogger } from './Logger.js';
+import { mutate } from './mutate.js';
 
 export class AuthService {
   constructor(private db: Database) {}
@@ -82,14 +84,41 @@ export class AuthService {
    * Self-scope profile update — used by PATCH /api/auth/me (api.md §14.2.1).
    * Only fields the user themselves controls appear in `patch`; identity-
    * bearing fields stay administrative (see `UserService`).
+   *
+   * Emits an `update` audit row on the `user` entity so the worker's
+   * self-authored activity surface (AC-180 self-authorship clause)
+   * sees the event.
    */
   async updateSelfPreferences(
     actingUserId: string,
     patch: { themePreference?: ThemePreference },
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
-    const updated = await updateSelfRepo(this.db, actingUserId, patch);
-    if (!updated) throw notFound(STRINGS.entities.user);
+    const updated = await mutate(
+      this.db,
+      { actorKind: 'user', actorId: actingUserId, correlationId: correlationId ?? null },
+      {
+        entityType: 'user',
+        action: 'update',
+        run: async (tx) => {
+          const prior = await findById(tx, actingUserId);
+          if (!prior) throw notFound(STRINGS.entities.user);
+
+          const row = await updateSelfRepo(tx, actingUserId, patch);
+          if (!row) throw notFound(STRINGS.entities.user);
+
+          const before: Record<string, unknown> = {};
+          const after: Record<string, unknown> = {};
+          if (patch.themePreference !== undefined) {
+            before.themePreference = prior.themePreference;
+            after.themePreference = row.themePreference;
+          }
+
+          return { entityId: actingUserId, value: row, before, after };
+        },
+      },
+    );
     log.info({ userId: actingUserId }, 'user_self_updated');
     return updated;
   }
@@ -103,16 +132,24 @@ export class AuthService {
 
   async changePassword(
     userId: string,
-    username: string,
     currentPassword: string,
     newPassword: string,
     currentToken: string | undefined,
     ip: string,
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
-    const user = await findByUsername(this.db, username);
+    // The caller supplies `userId` only — the username is derived from
+    // the current user record. Passing both parameters was redundant and
+    // opened a trivial mismatch failure mode if a caller handed us a
+    // user id from one session and a username from another.
+    const user = await findById(this.db, userId);
     if (!user) {
-      // Timing side-channel mitigation: burn bcrypt time even when user is missing.
+      // Timing side-channel mitigation: burn bcrypt time even when the
+      // user disappeared between the session check and here (deleted
+      // mid-request). Lookup-by-id via the authenticated session makes
+      // this branch unreachable in practice; the defensive bcrypt call
+      // keeps the timing profile constant regardless.
       await verifyPassword(currentPassword, AUTH_CONFIG.dummyHash);
       throw invalidCredentials();
     }
@@ -137,19 +174,26 @@ export class AuthService {
       }
     }
 
-    // Hash and store — pass user.id as the actor so updatedBy reflects
-    // the self-service password change (data-model.md §5.5 audit
-    // metadata contract). A future admin-reset endpoint would pass the
-    // admin's id instead.
     // Hash before the transaction (CPU-bound, no DB needed)
     const newHash = await hashPassword(newPassword);
 
-    // Atomic: password change + session invalidation in one transaction.
-    // If session cleanup fails, the password change rolls back.
-    await this.db.transaction(async (tx) => {
-      await changePasswordRepo(tx, user.id, newHash, user.id);
-      await deleteSessionsByUserId(tx, user.id, currentToken);
-    });
+    // Atomic: password change + session invalidation + audit row in one
+    // transaction. Action is `password-change` for self-service (differs
+    // from UserService.resetPassword's `password-reset` which is admin-
+    // driven and invalidates ALL sessions). No hash in the payload.
+    await mutate(
+      this.db,
+      { actorKind: 'user', actorId: user.id, correlationId: correlationId ?? null },
+      {
+        entityType: 'user',
+        action: 'password-change',
+        run: async (tx) => {
+          await changePasswordRepo(tx, user.id, newHash, user.id);
+          await deleteSessionsByUserId(tx, user.id, currentToken);
+          return { entityId: user.id, value: null, before: {}, after: {} };
+        },
+      },
+    );
 
     log.info({ userId, ip }, 'password_change');
   }

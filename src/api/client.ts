@@ -191,6 +191,7 @@ import type { Project, Customer, User } from '@/domain/types';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 import type { BackupStatus } from '@/domain/backupBadge';
+import type { AuditEntry, AuditListParams, AuditListResponse } from '@/domain/audit';
 
 interface AuthUser {
   id: string;
@@ -450,6 +451,22 @@ export interface ExtractionResult {
 export const extractApi = {
   extract: (text: string) =>
     apiCall<ExtractionResult>('/api/extract', { method: 'POST', body: { text } }),
+};
+
+/**
+ * Audit read surface (api.md §14.2.8).
+ *
+ * Read-only: `list` and `get` only. The per-role response shaping and
+ * scope filtering happen server-side; the client receives the already-
+ * redacted entries.
+ */
+export const auditApi = {
+  list: (params?: AuditListParams) =>
+    apiCall<AuditListResponse>(
+      '/api/audit' + toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
+
+  get: (id: string) => apiCall<AuditEntry>(`/api/audit/${id}`),
 };
 
 /**

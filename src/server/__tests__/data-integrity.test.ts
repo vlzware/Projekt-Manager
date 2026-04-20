@@ -14,7 +14,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createDatabase } from '../db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../seed.js';
-import { eq, like } from 'drizzle-orm';
+import { eq, like, sql } from 'drizzle-orm';
 import { projects, customers, users } from '../db/schema.js';
 import type { Database } from '../db/connection.js';
 import type pg from 'pg';
@@ -308,6 +308,83 @@ describe('AC-98: Customer audit FK cascade', () => {
     expect(afterRes.json().createdBy).toBeNull();
 
     // Clean up the test customer
+    await authDelete(token, `/api/customers/${customerId}`);
+  });
+});
+
+// ---------------------------------------------------------------
+// AC-98 parity for audit_log.actor_id:
+// data-model.md §5.10 pins ON DELETE SET NULL on `audit_log.actor_id`
+// (parallel to `createdBy`/`updatedBy`). Hard-deleting a user whose id
+// appears in an audit row must nullify `actor_id` rather than cascade
+// the row — the audit trail survives purged actors.
+// ---------------------------------------------------------------
+describe('AC-98 parity: audit_log.actor_id FK cascade on user delete', () => {
+  let token: string;
+
+  beforeAll(async () => {
+    await startApp();
+    token = await login('inhaber', 'changeme');
+  });
+
+  afterAll(async () => {
+    await stopApp();
+  });
+
+  it('deleting a user sets audit_log.actor_id to NULL for rows they authored', async () => {
+    // Bring a throwaway user into the seed and log in as them so they
+    // become the actor on an audit row. The customer create below emits
+    // a `customer:create` audit row; that row's `actor_id` equals the
+    // new user's id.
+    const suffix = Date.now().toString(36);
+    const createUserRes = await authPost(token, '/api/users', {
+      username: `audit_actor_fk_${suffix}`,
+      displayName: 'Audit Actor FK Test',
+      password: 'TestPass123!',
+      roles: ['office'],
+    });
+    expect(createUserRes.statusCode).toBe(201);
+    const tempUserId = createUserRes.json().id as string;
+
+    const tempToken = await login(`audit_actor_fk_${suffix}`, 'TestPass123!');
+    const createCustRes = await authPost(tempToken, '/api/customers', {
+      name: `Audit FK Customer ${suffix}`,
+    });
+    expect(createCustRes.statusCode).toBe(201);
+    const customerId = createCustRes.json().id as string;
+
+    // Locate the audit row authored by the temp user (the customer-create
+    // one). The query filters on `actor_id` directly rather than going
+    // via the audit API because the audit route applies role-based
+    // shaping — we want to see the raw FK value here.
+    const { db, pool } = createDatabase();
+    try {
+      const before = await db.execute(
+        sql`SELECT id, actor_id FROM audit_log
+             WHERE entity_type = 'customer' AND entity_id = ${customerId}
+             ORDER BY created_at DESC LIMIT 1`,
+      );
+      const auditRowBefore = before.rows[0] as { id: string; actor_id: string | null };
+      expect(auditRowBefore.actor_id).toBe(tempUserId);
+
+      // Hard-delete the user via the admin endpoint.
+      const deleteRes = await authDelete(token, `/api/users/${tempUserId}`);
+      expect(deleteRes.statusCode).toBe(204);
+
+      // The audit row must still exist, but `actor_id` must be NULL —
+      // FK ON DELETE SET NULL, not CASCADE. Pins data-model.md §5.10
+      // "Referential integrity" and AC-98 parity.
+      const after = await db.execute(
+        sql`SELECT id, actor_id FROM audit_log WHERE id = ${auditRowBefore.id}`,
+      );
+      expect(after.rows).toHaveLength(1);
+      expect((after.rows[0] as { actor_id: string | null }).actor_id).toBeNull();
+    } finally {
+      await pool.end();
+    }
+
+    // Clean up the test customer — the actor is already gone, so no
+    // further housekeeping is needed for the user record.
     await authDelete(token, `/api/customers/${customerId}`);
   });
 });

@@ -22,6 +22,9 @@ import { probeHealth } from './health.js';
 import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
 import { startSessionReaper } from './session-reaper.js';
+import { startAuditRetentionScheduler } from './audit-retention-scheduler.js';
+import { setOperationalLogger as setAuditPublisherLogger } from './services/audit-publisher.js';
+import { AUDIT_RETENTION } from '../config/auditRetention.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
 
@@ -104,6 +107,16 @@ async function start(): Promise<void> {
   // Run database migrations (idempotent — Drizzle tracks applied migrations)
   await migrate(db, { migrationsFolder });
 
+  // Wire the post-commit audit publisher's failure-surface logger
+  // (AC-183) BEFORE any mutate() call can dispatch. Bootstrap below
+  // calls mutate(), which invokes the publisher; without a logger, a
+  // throwing subscriber would be silently swallowed. No subscribers are
+  // registered yet — #112 adds them — but the logger must already be
+  // wired when the first dispatch happens.
+  setAuditPublisherLogger({
+    error: (payload) => console.error(payload),
+  });
+
   // Seed data — never in production.
   // SEED=true  → seed only if database is empty (safe default for dev)
   // SEED=force → wipe and re-seed (when seed data structure changes)
@@ -151,6 +164,21 @@ async function start(): Promise<void> {
     logger: {
       info: (msg) => console.log(msg),
       error: (err, msg) => console.error(msg, err),
+    },
+  });
+
+  // Schedule audit-log retention cleanup (AC-184). Default cadence is
+  // daily (1440 min) — retention is a cleanup, not a latency-sensitive
+  // sweep, and the DELETE rides the `audit_log_created_at_idx` so cost
+  // stays flat. Window is the [C] default unless
+  // `AUDIT_RETENTION_WINDOW_DAYS` is set.
+  const auditRetention = startAuditRetentionScheduler({
+    db,
+    intervalMinutes: env.AUDIT_RETENTION_INTERVAL_MINUTES,
+    windowDays: env.AUDIT_RETENTION_WINDOW_DAYS ?? AUDIT_RETENTION.windowDays,
+    logger: {
+      info: (ctx, event) => console.log(event, ctx),
+      error: (ctx, event) => console.error(event, ctx),
     },
   });
 
@@ -212,7 +240,7 @@ async function start(): Promise<void> {
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, async () => {
       // Wait for any in-flight sweep so pool.end() isn't called under its feet.
-      await reaper.stop();
+      await Promise.all([reaper.stop(), auditRetention.stop()]);
       await app.close();
       await pool.end();
       process.exit(0);

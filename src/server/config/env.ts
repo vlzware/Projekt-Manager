@@ -49,6 +49,18 @@ const envSchema = z.object({
   // provide implicitly via server restarts; lower values are fine for
   // environments that want tighter revocation latency.
   SESSION_CLEANUP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(60),
+  // Audit-log retention window in days — [C] per architecture.md §12.2
+  // and data-model.md §6.10. When unset, the build-time default in
+  // `src/config/auditRetention.ts` (90 d) applies. Coerced to integer
+  // because a fractional day window makes no sense for a rolling
+  // cleanup and the AC-184 log line types `window_days` as integer.
+  AUDIT_RETENTION_WINDOW_DAYS: z.coerce.number().int().positive().optional(),
+  // How often the audit-retention cleanup runs. One run is a single
+  // indexed DELETE against the `audit_log_created_at_idx`; daily (1440
+  // min) is the production default because retention is a cleanup, not
+  // a latency-sensitive sweep. Overridable per deployment — tests leave
+  // the scheduler untouched and call the service directly.
+  AUDIT_RETENTION_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
   // ---------------------------------------------------------------
   // Layer 2 backup (ADR-0020). Consumed by the `backup-runner` CLI,
   // not by the main app server — but declared here so the schema

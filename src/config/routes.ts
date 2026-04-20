@@ -41,7 +41,14 @@ export interface RouteCaller {
  * A compile-time check in `src/hooks/useRouterNav.ts` guarantees the
  * two unions stay in sync; a drift there fails `tsc --noEmit`.
  */
-export type RouteView = 'kanban' | 'kalender' | 'kunden' | 'projekte' | 'benutzer' | 'daten';
+export type RouteView =
+  | 'kanban'
+  | 'kalender'
+  | 'kunden'
+  | 'projekte'
+  | 'benutzer'
+  | 'daten'
+  | 'aktivitaet';
 
 export interface RouteEntry {
   /** Stable view key. */
@@ -135,6 +142,18 @@ export const ROUTES: readonly RouteEntry[] = [
     path: '/data',
     label: STRINGS.ui.viewData,
     canAccess: (u) => hasPermission(u.roles, 'data:export'),
+    isDefaultFor: () => false,
+  },
+  {
+    // View gated on `audit:read` per ui/index.md §8.7.1 — owner, office,
+    // and worker under the default matrix. Bookkeeper lacks `audit:read`
+    // and does not see the tab. The per-role visible row set is narrowed
+    // server-side (api.md §14.2.8), so this gate is the nav-visibility
+    // concern; data exposure is authoritative on the server.
+    view: 'aktivitaet',
+    path: '/audit',
+    label: STRINGS.ui.viewAudit,
+    canAccess: (u) => hasPermission(u.roles, 'audit:read'),
     isDefaultFor: () => false,
   },
 ] as const;

@@ -1,4 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
+import { STORAGE_STATES } from './storage-states';
 
 /**
  * Structural E2E for the backup-freshness badge surfaces (AC-170 [vis]).
@@ -19,9 +20,10 @@ import { test, expect, type Page } from '@playwright/test';
  * for `[vis]` ACs — screenshot baselines were dropped as brittle friction
  * (see playwright.config.ts comment on `trace: 'retain-on-failure'`).
  *
- * Runs under the shared `chromium` read-only project: login rounds trip
- * for each role test, so `test.use({ storageState: ... })` overrides the
- * shared authenticated state with a fresh context.
+ * Runs under the shared `chromium` read-only project. The unauth test
+ * uses an empty storage state; per-role tests use the pre-authenticated
+ * storage states saved by `e2e/auth.setup.ts` so there is no per-test
+ * login burning through the rate limit.
  *
  * ---------------------------------------------------------------------
  * Test-id inventory (this spec's contract with the UI)
@@ -45,38 +47,19 @@ import { test, expect, type Page } from '@playwright/test';
 
 type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
 
-interface RoleCase {
-  username: string;
-  badgeOnLanding: boolean;
-}
-
 /**
- * Seeded usernames + expected badge visibility on the role's landing
- * view. Owner is the only role whose landing shows the badge — that
- * is the claim AC-170 pins.
+ * Expected badge visibility on each role's landing view. Owner is the
+ * only role whose landing shows the badge — that is the claim AC-170
+ * pins.
  */
-const ROLE_CASES: Record<Role, RoleCase> = {
-  owner: { username: 'inhaber', badgeOnLanding: true },
-  office: { username: 'buero', badgeOnLanding: false },
-  worker: { username: 'arbeiter1', badgeOnLanding: false },
-  bookkeeper: { username: 'buchhalter', badgeOnLanding: false },
+const BADGE_ON_LANDING: Record<Role, boolean> = {
+  owner: true,
+  office: false,
+  worker: false,
+  bookkeeper: false,
 };
 
-async function loginAs(page: Page, username: string): Promise<void> {
-  await page.goto('/');
-  await page.getByTestId('login-username').fill(username);
-  await page.getByTestId('login-password').fill('changeme');
-  await page.getByTestId('login-submit').click();
-  // Wait for the shared authenticated layout — `header` renders on
-  // every role's landing view. Using `header` (not `kanban-board`)
-  // avoids hanging for bookkeeper, whose landing is `/projects`.
-  await page.getByTestId('header').waitFor();
-}
-
-test.describe('AC-170: backup-freshness badge surfaces', () => {
-  // Every test below needs a fresh context — the shared storage state
-  // from auth.setup.ts would otherwise log the page in as owner before
-  // the "anonymous login screen shows badge" assertion can run.
+test.describe('AC-170: backup-freshness badge — unauthenticated', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test('login screen renders the badge for an unauthenticated visitor', async ({ page }) => {
@@ -90,23 +73,30 @@ test.describe('AC-170: backup-freshness badge surfaces', () => {
     // trusted read surface even without an active session.
     await expect(page.getByTestId('backup-badge')).toBeVisible();
   });
+});
 
-  for (const [role, c] of Object.entries(ROLE_CASES) as [Role, RoleCase][]) {
-    test(`authenticated landing — badge ${c.badgeOnLanding ? 'visible' : 'hidden'} for ${role}`, async ({
-      page,
-    }) => {
-      await loginAs(page, c.username);
+test.describe('AC-170: backup-freshness badge — authenticated landing per role', () => {
+  for (const [role, visible] of Object.entries(BADGE_ON_LANDING) as [Role, boolean][]) {
+    test.describe(role, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test(`badge ${visible ? 'visible' : 'hidden'} on landing`, async ({ page }) => {
+        await page.goto('/');
 
-      // Assert-against-the-claim: owner's landing shows the badge;
-      // every other role's landing does not render it at all.
-      // `toHaveCount(0 | 1)` instead of `toBeVisible` / `toBeHidden`
-      // to make "not rendered" (absent from the DOM) explicit — a
-      // CSS-hidden badge would still pass `toBeHidden` and would
-      // violate AC-170's "not rendered" wording.
-      const badge = page.getByTestId('backup-badge');
-      await expect(badge).toHaveCount(c.badgeOnLanding ? 1 : 0);
+        // Assert-against-the-claim: owner's landing shows the badge;
+        // every other role's landing does not render it at all.
+        // `toHaveCount(0 | 1)` instead of `toBeVisible` / `toBeHidden`
+        // to make "not rendered" (absent from the DOM) explicit — a
+        // CSS-hidden badge would still pass `toBeHidden` and would
+        // violate AC-170's "not rendered" wording.
+        const badge = page.getByTestId('backup-badge');
+        await expect(badge).toHaveCount(visible ? 1 : 0);
+      });
     });
   }
+});
+
+test.describe('AC-170: backup-freshness badge — owner non-landing surface', () => {
+  test.use({ storageState: STORAGE_STATES.owner });
 
   test('non-landing authenticated surface does not render the badge for owner', async ({
     page,
@@ -114,7 +104,7 @@ test.describe('AC-170: backup-freshness badge surfaces', () => {
     // Owner sees the badge on the admin landing, but the spec limits
     // that surface to the landing. Navigating to another authenticated
     // route (here: customers) must drop the badge from the render.
-    await loginAs(page, ROLE_CASES.owner.username);
+    await page.goto('/');
 
     // Navigate to Kunden — any non-landing route is valid; Kunden is
     // stable for owner across role-matrix changes.

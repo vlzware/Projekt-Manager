@@ -2,8 +2,8 @@
  * Project repository — state transition operations.
  */
 
-import { eq, and } from 'drizzle-orm';
-import type { Database } from '../db/connection.js';
+import { eq } from 'drizzle-orm';
+import type { MutatingDatabase } from '../db/connection.js';
 import { projects, customers } from '../db/schema.js';
 import { WORKFLOW_ORDER } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
@@ -11,13 +11,24 @@ import { STRINGS } from '../../config/strings.js';
 import { toProject, fetchWorkersForProject, ProjectNotFoundError } from './project-read.js';
 
 /**
- * Result of a transition: both the previous status and the updated project.
- * `before` equals the client's `expectedStatus` — the guard that `before` did
- * not drift from the client's view is enforced by the conditional UPDATE, so
- * returning the asserted value is accurate for audit/event subscribers.
+ * Result of a transition: the previous status, the previous
+ * `statusChangedAt`, and the updated project.
+ *
+ * `before` equals the client's `expectedStatus` — the guard that
+ * `before` did not drift from the client's view is enforced by the
+ * conditional UPDATE, so returning the asserted value is accurate for
+ * audit/event subscribers.
+ *
+ * `beforeStatusChangedAt` is the pre-transition `status_changed_at`
+ * value read atomically with the UPDATE via a `SELECT ... FOR UPDATE`
+ * inside the caller's transaction. The audit-row payload spec pins
+ * `before: { status, statusChangedAt }` (data-model.md §5.10) —
+ * without the prior `statusChangedAt` on the repo result the service
+ * layer cannot populate that field faithfully.
  */
 export interface TransitionResult {
   before: WorkflowState;
+  beforeStatusChangedAt: Date;
   project: ReturnType<typeof toProject>;
 }
 
@@ -31,7 +42,7 @@ export interface TransitionResult {
  * second attempt because its `expectedStatus` no longer matches the DB.
  */
 export async function transitionForward(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   userId: string,
   expectedStatus: WorkflowState,
@@ -50,7 +61,7 @@ export async function transitionForward(
  * Same `expectedStatus` contract as `transitionForward`.
  */
 export async function transitionBackward(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   userId: string,
   expectedStatus: WorkflowState,
@@ -70,13 +81,53 @@ export async function transitionBackward(
 }
 
 async function applyTransition(
-  db: Database,
+  db: MutatingDatabase,
   id: string,
   userId: string,
   expectedStatus: WorkflowState,
   nextStatus: WorkflowState,
 ): Promise<TransitionResult> {
   const now = new Date();
+
+  // Row-lock the target and capture its pre-transition status + timestamp
+  // in one step. The caller is always inside `mutate()`/`mutateInTx()`
+  // (the `MutatingDatabase` type enforces this — see db/connection.ts),
+  // so `FOR UPDATE` is valid and the lock is held until the outer
+  // transaction commits or rolls back. Two concurrent transitions on the
+  // same row serialize on the lock; the loser observes the new status
+  // after the winner commits and falls into the `ConcurrentModificationError`
+  // branch below.
+  //
+  // The earlier implementation used a conditional UPDATE that returned
+  // the new row but could not surface the prior `statusChangedAt` —
+  // the audit payload contract (data-model.md §5.10: "For a state
+  // transition, `before` and `after` carry `status` and
+  // `statusChangedAt`") requires both values.
+  // Use the Drizzle query builder (not raw `execute(sql\`...\`)`) so the
+  // returned row is typed and key names match the Drizzle column map —
+  // `statusChangedAt` (camelCase) rather than `status_changed_at`
+  // (snake_case, which is what node-postgres returns for raw execute()).
+  const priorRows = await db
+    .select({
+      status: projects.status,
+      statusChangedAt: projects.statusChangedAt,
+      deleted: projects.deleted,
+    })
+    .from(projects)
+    .where(eq(projects.id, id))
+    .for('update');
+  const priorRow = priorRows[0];
+
+  if (!priorRow || priorRow.deleted) {
+    throw new ProjectNotFoundError();
+  }
+  if (priorRow.status !== expectedStatus) {
+    // Status drifted under us — client's read is stale. Same error as the
+    // pre-FOR-UPDATE implementation's conditional-UPDATE zero-row branch.
+    throw new ConcurrentModificationError();
+  }
+
+  const beforeStatusChangedAt = priorRow.statusChangedAt;
 
   const updated = await db
     .update(projects)
@@ -86,21 +137,13 @@ async function applyTransition(
       updatedAt: now,
       updatedBy: userId,
     })
-    .where(
-      and(eq(projects.id, id), eq(projects.deleted, false), eq(projects.status, expectedStatus)),
-    )
+    .where(eq(projects.id, id))
     .returning();
 
+  // Zero-row return here would be a bug — the row was locked above and
+  // the transaction hasn't released it yet. Keep the defensive branch so
+  // any future refactor that breaks the invariant surfaces loudly.
   if (updated.length === 0) {
-    // Disambiguate: is the row missing/soft-deleted (404) or just stale (409)?
-    const probe = await db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.id, id), eq(projects.deleted, false)))
-      .limit(1);
-    if (probe.length === 0) {
-      throw new ProjectNotFoundError();
-    }
     throw new ConcurrentModificationError();
   }
 
@@ -111,6 +154,7 @@ async function applyTransition(
   ]);
   return {
     before: expectedStatus,
+    beforeStatusChangedAt,
     project: toProject(row, customerRows[0] ?? null, workers),
   };
 }

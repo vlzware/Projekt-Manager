@@ -17,8 +17,10 @@
 import { sql } from 'drizzle-orm';
 import type { Database } from './db/connection.js';
 import { users } from './db/schema.js';
+import { createUser as createUserRepo } from './repositories/user.js';
 import { hashPassword } from './password.js';
 import { checkPasswordPolicy } from './config/password-policy.js';
+import { mutate } from './services/mutate.js';
 
 export interface BootstrapAdminConfig {
   username: string | undefined;
@@ -42,6 +44,20 @@ export interface BootstrapAdminLogger {
 
 export interface BootstrapAdminResult {
   inserted: boolean;
+}
+
+/**
+ * Sentinel thrown from inside the `mutate()` callback when the
+ * transactional re-check finds that another process has inserted a user
+ * in the race window. The throw rolls back both the would-be `users`
+ * insert and the audit row, then bootstrap catches this specific type
+ * and reports `{ inserted: false }` to the caller.
+ */
+class BootstrapRaceError extends Error {
+  constructor() {
+    super('bootstrap_race');
+    this.name = 'BootstrapRaceError';
+  }
 }
 
 /**
@@ -160,34 +176,76 @@ export async function bootstrapAdminIfEmpty(
   }
 
   // ---------------------------------------------------------------
-  // Step 6: hash and insert inside a transaction with re-check.
+  // Step 6: hash and insert via the single-write-path `mutate()` helper.
+  // Per ADR-0021, every domain-entity write — including the first-run
+  // admin — must emit an atomic audit row. The `system` actor kind with
+  // `first-run-bootstrap` reason makes the bootstrap visible in the
+  // activity feed (AC-178). The DB CHECK constraint rejects an empty
+  // `actor_reason` for safety in depth.
   // ---------------------------------------------------------------
   const displayName = config.displayName?.trim() || username;
   const passwordHash = await hashPassword(password);
 
   let didInsert = false;
   try {
-    await db.transaction(async (tx) => {
-      // Re-check inside the transaction — closes the window between
-      // the initial count and the insert.
-      const [recount] = await tx.select({ count: sql<number>`cast(count(*) as int)` }).from(users);
-      if ((recount?.count ?? 0) > 0) {
-        return;
-      }
-      await tx.insert(users).values({
-        username,
-        displayName,
-        passwordHash,
-        roles: ['owner'],
-        active: true,
-        email: null,
-      });
-      didInsert = true;
-    });
+    await mutate(
+      db,
+      {
+        actorKind: 'system',
+        actorId: null,
+        actorReason: 'first-run-bootstrap',
+        correlationId: null,
+      },
+      {
+        entityType: 'user',
+        action: 'create',
+        run: async (tx) => {
+          // Re-check inside the transaction — closes the window between
+          // the initial count and the insert.
+          const [recount] = await tx
+            .select({ count: sql<number>`cast(count(*) as int)` })
+            .from(users);
+          if ((recount?.count ?? 0) > 0) {
+            // Another process bootstrapped. We still need to return a
+            // MutateResult — the caller will see `didInsert === false`
+            // and an audit row will land for this race. To avoid
+            // inserting a spurious audit row when nothing changed, we
+            // throw a sentinel and catch it outside the helper.
+            throw new BootstrapRaceError();
+          }
+
+          const inserted = await createUserRepo(tx, {
+            username,
+            displayName,
+            passwordHash,
+            roles: ['owner'],
+            email: null,
+            createdBy: null,
+            updatedBy: null,
+          });
+          didInsert = true;
+          return {
+            entityId: inserted.id,
+            value: inserted,
+            before: {},
+            after: {
+              username: inserted.username,
+              displayName: inserted.displayName,
+              roles: inserted.roles,
+              email: inserted.email,
+              active: inserted.active,
+            },
+          };
+        },
+      },
+    );
   } catch (err) {
+    if (err instanceof BootstrapRaceError) {
+      return { inserted: false };
+    }
     // Postgres unique_violation: another process inserted a user with
     // the same username between the transactional re-check and the
-    // INSERT. This is equivalent to AC-B2 — "another process bootstrapped".
+    // INSERT. Equivalent to AC-B2 — "another process bootstrapped".
     // Never re-throw with the password or hash attached.
     const pgCode = (err as { code?: string }).code;
     if (pgCode === '23505') {
@@ -197,8 +255,7 @@ export async function bootstrapAdminIfEmpty(
   }
 
   if (!didInsert) {
-    // The transactional re-check found a pre-existing row; another
-    // process beat us. Equivalent to AC-B2.
+    // Unreachable given the sentinel above, but defensive.
     return { inserted: false };
   }
 

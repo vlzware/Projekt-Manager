@@ -97,7 +97,12 @@ export function customerRoutes(db: Database) {
           address?: { street: string; zip: string; city: string } | null;
           notes?: string | null;
         };
-        const customer = await customerService.createCustomer(body, request.user!.id, request.log);
+        const customer = await customerService.createCustomer(
+          body,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(201).send(customer);
       },
     );
@@ -150,6 +155,7 @@ export function customerRoutes(db: Database) {
           body,
           request.user!.id,
           request.log,
+          request.id ?? null,
         );
         return reply.code(200).send(customer);
       },
@@ -170,7 +176,7 @@ export function customerRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        await customerService.deleteCustomer(id, request.log);
+        await customerService.deleteCustomer(id, request.user!.id, request.log, request.id ?? null);
         return reply.code(204).send();
       },
     );
