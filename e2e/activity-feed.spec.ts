@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { STORAGE_STATES } from './storage-states';
+import { clickView, expectViewReachable } from './nav-helpers';
 
 /**
  * E2E — Activity feed / global Aktivität view.
@@ -57,21 +58,36 @@ async function assertDrawerOpensInline(
 // AC-186 — Aktivität nav presence per role (precondition for everything)
 // ---------------------------------------------------------------
 test.describe('AC-186: Aktivität nav visibility per role', () => {
-  for (const role of ['owner', 'office', 'worker'] as const) {
+  // Owner + office see the Aktivität entry (inside the Verwaltung menu
+  // for both — their secondary bucket has ≥2 items).
+  for (const role of ['owner', 'office'] as const) {
     test.describe(role, () => {
       test.use({ storageState: STORAGE_STATES[role] });
-      test('Aktivität tab is rendered', async ({ page }) => {
+      test('Aktivität tab is reachable from the header', async ({ page }) => {
         await page.goto('/');
-        await expect(page.getByTestId('view-toggle-aktivitaet')).toHaveCount(1);
+        await expectViewReachable(page, 'aktivitaet', true);
       });
     });
   }
+
+  // Worker has `audit:read` but the nav tab is deliberately suppressed
+  // (rows are scoped too narrowly for a daily-view slot). The view is
+  // still reachable via deep-link — server-side scoping is authoritative.
+  test.describe('worker', () => {
+    test.use({ storageState: STORAGE_STATES.worker });
+    test('Aktivität tab is absent from nav; deep-link remains reachable', async ({ page }) => {
+      await page.goto('/');
+      await expectViewReachable(page, 'aktivitaet', false);
+      await page.goto('/audit');
+      await expect(page.getByTestId('audit-list')).toBeVisible();
+    });
+  });
 
   test.describe('bookkeeper', () => {
     test.use({ storageState: STORAGE_STATES.bookkeeper });
     test('Aktivität tab is absent (no audit:read)', async ({ page }) => {
       await page.goto('/');
-      await expect(page.getByTestId('view-toggle-aktivitaet')).toHaveCount(0);
+      await expectViewReachable(page, 'aktivitaet', false);
     });
   });
 });
@@ -177,7 +193,7 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
     // the finding asks for; filter-UI-driven rather than URL-driven
     // because the UI exposes no entityId filter today.
     await page.goto('/');
-    await page.getByTestId('view-toggle-aktivitaet').click();
+    await clickView(page, 'aktivitaet');
     await page.getByTestId('audit-filter-from').fill('2099-01-01');
 
     // The empty-state testid is rendered inside the list container
@@ -206,7 +222,7 @@ test.describe('AC-186: payload drawer visibility per role — owner', () => {
 
   test('owner sees a payload-drawer affordance on every payload-bearing row', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('view-toggle-aktivitaet').click();
+    await clickView(page, 'aktivitaet');
 
     // Find any row — owner is unscoped, so the first rendered row
     // has a payload (updates, creates, and deletes all do).
@@ -224,7 +240,7 @@ test.describe('AC-186: payload drawer visibility per role — office', () => {
 
   test('office sees a payload-drawer affordance on every payload-bearing row', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('view-toggle-aktivitaet').click();
+    await clickView(page, 'aktivitaet');
 
     // Office is unscoped for destructive actions and every user-kind
     // row — the first rendered row is guaranteed to carry a payload,
@@ -282,8 +298,9 @@ test.describe('AC-186: payload drawer visibility per role — worker', () => {
       );
     }
 
-    await page.goto('/');
-    await page.getByTestId('view-toggle-aktivitaet').click();
+    // Worker has no Aktivität tab; the permission still grants the view
+    // via deep-link, which is how the drawer spec exercises the role.
+    await page.goto('/audit');
 
     const rows = page.locator('[data-testid^="activity-feed-row-"]');
     await rows.first().waitFor();
@@ -402,7 +419,7 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
     test.use({ storageState: STORAGE_STATES.owner });
     test('purge entries are visible in the global Aktivität view', async ({ page }) => {
       await page.goto('/');
-      await page.getByTestId('view-toggle-aktivitaet').click();
+      await clickView(page, 'aktivitaet');
       // A row with action=purge must exist (the fixture above drove
       // one). The UI's German label for `purge` is implementation-
       // defined; we filter by a structural `data-action` attribute.
@@ -415,7 +432,7 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
     test.use({ storageState: STORAGE_STATES.office });
     test('purge entries are not visible', async ({ page }) => {
       await page.goto('/');
-      await page.getByTestId('view-toggle-aktivitaet').click();
+      await clickView(page, 'aktivitaet');
       const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
       await expect(purgeRows).toHaveCount(0);
     });
@@ -424,8 +441,9 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
   test.describe('worker', () => {
     test.use({ storageState: STORAGE_STATES.worker });
     test('purge entries are not visible', async ({ page }) => {
-      await page.goto('/');
-      await page.getByTestId('view-toggle-aktivitaet').click();
+      // Worker has no Aktivität nav tab; the permission still grants
+      // read access via deep-link.
+      await page.goto('/audit');
       const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
       await expect(purgeRows).toHaveCount(0);
     });

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { EXPECTED_RESTORE_PHRASE } from '../src/test/seedAssumptions.js';
 import { STORAGE_STATES } from './storage-states';
+import { clickView, expectViewReachable } from './nav-helpers';
 
 /**
  * E2E: unified Daten view (AC-142, AC-143, AC-144, AC-161).
@@ -88,7 +89,7 @@ test.describe('AC-142: Daten tab permission visibility', () => {
       test.use({ storageState: STORAGE_STATES[role] });
       test(`${visible ? 'sees' : 'does NOT see'} the Daten tab`, async ({ page }) => {
         await page.goto('/');
-        await expect(page.getByTestId('view-toggle-daten')).toHaveCount(visible ? 1 : 0);
+        await expectViewReachable(page, 'daten', visible);
       });
     });
   }
@@ -151,7 +152,7 @@ test.describe('AC-143: restore preview renders before commit', () => {
   // preview appears with per-entity counts. The test stops at the preview
   // — commit-gate behavior on non-empty target is pinned by AC-161 below.
   test('dry-run preview renders per-entity counts on upload', async ({ page }) => {
-    await page.getByTestId('view-toggle-daten').click();
+    await clickView(page, 'daten');
     await expect(page.getByTestId('daten-view')).toBeVisible();
 
     const envelope = buildRestoreEnvelope();
@@ -184,7 +185,7 @@ test.describe('AC-161: restore phrase gate on non-empty target', () => {
   // matches the configured phrase. The click dispatches the request and
   // a success panel appears, pinning the end-to-end flow.
   test('phrase input gates commit on non-empty target', async ({ page }) => {
-    await page.getByTestId('view-toggle-daten').click();
+    await clickView(page, 'daten');
     await expect(page.getByTestId('daten-view')).toBeVisible();
 
     const envelope = buildRestoreEnvelope();
@@ -231,7 +232,7 @@ test.describe('AC-144: unified export download', () => {
   // AC-144: single button triggers download; filename contains "export"
   // and a timestamp; content parses as JSON envelope with the required keys.
   test('Herunterladen action downloads a timestamped JSON envelope', async ({ page }) => {
-    await page.getByTestId('view-toggle-daten').click();
+    await clickView(page, 'daten');
     await expect(page.getByTestId('daten-view')).toBeVisible();
 
     // Exactly one export action — not per-entity controls.

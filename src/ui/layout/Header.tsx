@@ -3,7 +3,7 @@ import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useRouterNav } from '@/hooks/useRouterNav';
-import { visibleRoutesForUser, isLandingViewForUser } from '@/config/routes';
+import { visibleRoutesForUser, isLandingViewForUser, type RouteView } from '@/config/routes';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
 import { BACKUP_THRESHOLDS } from '@/config/backupThresholds';
@@ -21,6 +21,13 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: 'system', label: STRINGS.theme.system },
 ];
 
+// Views that live under the "Verwaltung" (administration) secondary menu
+// rather than the primary nav. Administration + audit observability are
+// lower-frequency surfaces for the roles that see them; keeping them out
+// of the primary row keeps the header compact when the summary area is
+// wide.
+const SECONDARY_VIEWS: readonly RouteView[] = ['benutzer', 'daten', 'aktivitaet'];
+
 export function Header() {
   const activeView = useUIStore((s) => s.activeView);
   const authUser = useAuthStore((s) => s.authUser);
@@ -29,11 +36,13 @@ export function Header() {
   const updateThemePreference = useAuthStore((s) => s.updateThemePreference);
   const { navigateTo } = useRouterNav();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [adminMenuOpen, setAdminMenuOpen] = useState(false);
   const [extractOpen, setExtractOpen] = useState(false);
   const [pwChangeOpen, setPwChangeOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const adminMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!dropdownOpen) return;
@@ -45,6 +54,17 @@ export function Header() {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [dropdownOpen]);
+
+  useEffect(() => {
+    if (!adminMenuOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (adminMenuRef.current && !adminMenuRef.current.contains(e.target as Node)) {
+        setAdminMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [adminMenuOpen]);
 
   // The dropdown is right-anchored by default (opens leftward). When the
   // header wraps and the button lands near the left edge of the viewport,
@@ -76,6 +96,26 @@ export function Header() {
   // driven via `usePermission`.
   const visibleRoutes = authUser ? visibleRoutesForUser(authUser) : [];
   const canExtract = usePermission('customer:write');
+
+  // Worker-specific nav exception: Aktivität is a low-signal surface for
+  // workers (row visibility is scoped to self-authored + project-reachable
+  // entries per api.md §14.2.8). The permission remains, so deep-link
+  // navigation to `/audit` still works and server-side scoping is
+  // authoritative — only the nav tab is omitted to keep the header clean.
+  const isWorker = authUser?.roles.includes('worker') ?? false;
+  const navRoutes = isWorker ? visibleRoutes.filter((r) => r.view !== 'aktivitaet') : visibleRoutes;
+  const primaryRoutes = navRoutes.filter((r) => !SECONDARY_VIEWS.includes(r.view));
+  const secondaryRoutes = navRoutes.filter((r) => SECONDARY_VIEWS.includes(r.view));
+  // A single-item dropdown is clutter — when only one secondary route is
+  // available, render it inline alongside the primary tabs. The full
+  // "Verwaltung" menu appears only when it groups two or more entries.
+  const renderSecondaryAsMenu = secondaryRoutes.length >= 2;
+  const inlineRoutes = renderSecondaryAsMenu
+    ? primaryRoutes
+    : [...primaryRoutes, ...secondaryRoutes];
+  const secondaryActive = renderSecondaryAsMenu
+    ? secondaryRoutes.some((r) => r.view === activeView)
+    : false;
 
   // AC-170 + AC-171: the backup-freshness badge renders ONLY on the
   // owner's landing view. Two gates:
@@ -118,18 +158,66 @@ export function Header() {
     <header className={styles.header} data-testid="header">
       <div className={styles.navGroup}>
         <div className={styles.appName}>{BRANDING.appName}</div>
-        <div className={styles.viewToggle}>
-          {visibleRoutes.map((r) => (
-            <button
-              key={r.view}
-              className={`${styles.viewButton} ${activeView === r.view ? styles.viewButtonActive : ''}`}
-              onClick={() => navigateTo(r.path)}
-              data-testid={`view-toggle-${r.view}`}
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
+        {(inlineRoutes.length > 0 || renderSecondaryAsMenu) && (
+          <div className={styles.viewToggle}>
+            {inlineRoutes.map((r) => (
+              <button
+                key={r.view}
+                className={`${styles.viewButton} ${activeView === r.view ? styles.viewButtonActive : ''}`}
+                onClick={() => navigateTo(r.path)}
+                data-testid={`view-toggle-${r.view}`}
+              >
+                {r.label}
+              </button>
+            ))}
+            {renderSecondaryAsMenu && (
+              <div className={styles.adminMenu} ref={adminMenuRef}>
+                <button
+                  className={`${styles.adminTrigger} ${secondaryActive ? styles.adminTriggerActive : ''}`}
+                  onClick={() => setAdminMenuOpen((o) => !o)}
+                  data-testid="nav-admin-trigger"
+                  aria-haspopup="menu"
+                  aria-expanded={adminMenuOpen}
+                  title={STRINGS.ui.navMoreMenu}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                  <span>{STRINGS.ui.navMoreMenu}</span>
+                </button>
+                {adminMenuOpen && (
+                  <div className={styles.adminDropdown} role="menu">
+                    {secondaryRoutes.map((r) => (
+                      <button
+                        key={r.view}
+                        role="menuitem"
+                        className={`${styles.dropdownItem} ${activeView === r.view ? styles.dropdownItemSelected : ''}`}
+                        onClick={() => {
+                          setAdminMenuOpen(false);
+                          navigateTo(r.path);
+                        }}
+                        data-testid={`view-toggle-${r.view}`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {canExtract && (
           <button
             className={styles.extractButton}

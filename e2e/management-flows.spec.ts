@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { clickView } from './nav-helpers';
 
 /**
  * E2E Management flows
@@ -146,7 +147,7 @@ test.describe('Management flows', () => {
   // ---------------------------------------------------------------
   test('step 22: navigate to User view and create a worker user', async ({ page }) => {
     // Navigate to the User Management view
-    await page.getByTestId('view-toggle-benutzer').click();
+    await clickView(page, 'benutzer');
     await expect(page.getByTestId('user-table')).toBeVisible();
 
     // Open create form
@@ -172,7 +173,7 @@ test.describe('Management flows', () => {
   // ---------------------------------------------------------------
   test('step 23: deactivate user and verify login is blocked', async ({ page, browser }) => {
     // Navigate to User Management
-    await page.getByTestId('view-toggle-benutzer').click();
+    await clickView(page, 'benutzer');
     await expect(page.getByTestId('user-table')).toBeVisible();
 
     // Find and deactivate the test user
@@ -219,7 +220,7 @@ test.describe('Management flows', () => {
   // ---------------------------------------------------------------
   test('step 24: reactivate user and verify login works', async ({ page, browser }) => {
     // Navigate to User Management
-    await page.getByTestId('view-toggle-benutzer').click();
+    await clickView(page, 'benutzer');
     await expect(page.getByTestId('user-table')).toBeVisible();
 
     // Find and reactivate the test user

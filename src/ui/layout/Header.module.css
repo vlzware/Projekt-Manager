@@ -24,18 +24,22 @@
   white-space: nowrap;
 }
 
+/* Segmented nav pill. The primary view buttons and the Verwaltung
+   trigger share a single joined pill so all view-switching affordances
+   read as one cluster. Implemented via margin-overlap on per-segment
+   borders (rather than overflow:hidden + border-none) so the admin
+   dropdown can escape the pill without being clipped. */
 .viewToggle {
   display: flex;
-  gap: 0;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid var(--color-border-inverse);
   flex-shrink: 0;
 }
 
-.viewButton {
+.viewButton,
+.adminTrigger {
+  position: relative;
   padding: 6px 16px;
-  border: none;
+  border: 1px solid var(--color-border-inverse);
+  border-radius: 0;
   background: var(--color-surface-inverse-raised);
   color: var(--color-text-on-inverse-subtle);
   cursor: pointer;
@@ -44,41 +48,97 @@
   transition:
     background 0.15s,
     color 0.15s;
+  /* Overlap neighbor's border so the pill shows a single-pixel seam,
+     not a double border. Hover/active raises z-index so the full
+     border renders without being covered. */
+  margin-right: -1px;
 }
 
-.viewButton:hover {
+.viewButton:hover,
+.adminTrigger:hover {
   background: var(--color-surface-inverse-hover);
   color: var(--color-text-on-inverse-muted);
+  z-index: 1;
 }
 
-.viewButtonActive {
+.viewButtonActive,
+.adminTriggerActive {
   background: var(--color-accent);
   color: var(--color-text-on-accent);
+  border-color: var(--color-accent);
+  z-index: 1;
 }
 
-.viewButtonActive:hover {
+.viewButtonActive:hover,
+.adminTriggerActive:hover {
   background: var(--color-accent-hover);
 }
 
+/* End caps: round the first and last segment. Targets the inner
+   .adminTrigger when the admin wrapper sits at a pill edge. */
+.viewToggle > .viewButton:first-child,
+.viewToggle > .adminMenu:first-child .adminTrigger {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.viewToggle > .viewButton:last-child,
+.viewToggle > .adminMenu:last-child .adminTrigger {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.viewToggle > :last-child {
+  margin-right: 0;
+}
+
+.adminMenu {
+  position: relative;
+}
+
+.adminTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.adminDropdown {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: var(--color-surface-inverse);
+  border: 1px solid var(--color-border-inverse);
+  border-radius: 6px;
+  min-width: 160px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(var(--color-overlay-rgb), 0.3);
+}
+
+/* Action button (email extract). Neutral icon-button styling — same
+   size/radius as the nav segments but no joined border, because this
+   is a modal trigger, not a view switch. Keeping it visually lighter
+   than the nav pill preserves the semantic distinction without making
+   it feel "floating." */
 .extractButton {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
-  border: 1px solid var(--color-warning);
+  padding: 6px 8px;
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: rgba(var(--color-warning-rgb), 0.15);
-  color: var(--color-warning-on-inverse-text);
+  background: transparent;
+  color: var(--color-text-on-inverse-subtle);
   cursor: pointer;
   flex-shrink: 0;
   transition:
     background 0.15s,
-    border-color 0.15s;
+    color 0.15s;
 }
 
 .extractButton:hover {
-  background: rgba(var(--color-warning-rgb), 0.3);
-  border-color: var(--color-warning-on-inverse-text);
+  background: var(--color-surface-inverse-hover);
+  color: var(--color-text-on-inverse);
 }
 
 .summaryWrapper {

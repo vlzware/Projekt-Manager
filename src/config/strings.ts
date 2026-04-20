@@ -197,6 +197,7 @@ export const STRINGS = {
     viewAudit: 'Aktivität',
     viewMonth: 'Monat',
     viewWeek: 'Woche',
+    navMoreMenu: 'Verwaltung',
 
     // Management actions
     create: 'Erstellen',

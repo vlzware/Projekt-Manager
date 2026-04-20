@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { STRINGS } from '../src/config/strings';
 import { STORAGE_STATES } from './storage-states';
+import { clickView, expectViewReachable } from './nav-helpers';
 
 /**
  * Permission-based UI visibility (AC-121 [crit]) + per-role nav matrix
@@ -142,12 +143,11 @@ test.describe('AC-121: permission-based UI visibility', () => {
 
       // -- Header navigation and extract button --------------------------
       // Nav visibility is driven by the central route table (§8.7.1).
-      await expect(page.getByTestId('view-toggle-kanban')).toHaveCount(c.canSeeKanban ? 1 : 0);
-      await expect(page.getByTestId('view-toggle-projekte')).toHaveCount(
-        c.canSeeManagement ? 1 : 0,
-      );
-      await expect(page.getByTestId('view-toggle-kunden')).toHaveCount(c.canSeeManagement ? 1 : 0);
-      await expect(page.getByTestId('view-toggle-benutzer')).toHaveCount(c.canReadUsers ? 1 : 0);
+      // `expectViewReachable` handles both inline and admin-menu renderings.
+      await expectViewReachable(page, 'kanban', c.canSeeKanban);
+      await expectViewReachable(page, 'projekte', c.canSeeManagement);
+      await expectViewReachable(page, 'kunden', c.canSeeManagement);
+      await expectViewReachable(page, 'benutzer', c.canReadUsers);
       await expect(page.getByTestId('extract-button')).toHaveCount(c.canExtract ? 1 : 0);
 
       // -- Kanban view: transition controls on cards and detail panel ----
@@ -155,7 +155,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
       // without Kanban access (bookkeeper) cannot navigate there at all;
       // the server-side scoping for transitions is covered by unit tests.
       if (c.canSeeKanban) {
-        await page.getByTestId('view-toggle-kanban').click();
+        await clickView(page, 'kanban');
         await page.getByTestId('kanban-board').waitFor();
         // Wait until at least one card has rendered — the subsequent
         // `forward-button-*` count assertion races the initial fetch
@@ -197,7 +197,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
       // §8.7.1 — worker is excluded). Skip the management assertions
       // entirely for worker since the view is not navigable.
       if (c.canSeeManagement) {
-        await page.getByTestId('view-toggle-projekte').click();
+        await clickView(page, 'projekte');
         await page.getByTestId('project-table').locator('tbody tr').first().waitFor();
 
         await expect(page.getByTestId('project-create-button')).toHaveCount(
@@ -222,7 +222,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
         await page.getByRole('button', { name: 'Abbrechen' }).click();
 
         // -- Kunden management view --------------------------------------
-        await page.getByTestId('view-toggle-kunden').click();
+        await clickView(page, 'kunden');
         await page.getByTestId('customer-table').locator('tbody tr').first().waitFor();
 
         await expect(page.getByTestId('customer-create-button')).toHaveCount(
@@ -243,9 +243,9 @@ test.describe('AC-121: permission-based UI visibility', () => {
       // AC-142: the Daten tab itself is gated on `data:export`. Roles
       // without it must not see the nav toggle at all. Inside the view,
       // the import sub-form is gated on `data:restore` (owner only).
-      await expect(page.getByTestId('view-toggle-daten')).toHaveCount(c.canExportData ? 1 : 0);
+      await expectViewReachable(page, 'daten', c.canExportData);
       if (c.canExportData) {
-        await page.getByTestId('view-toggle-daten').click();
+        await clickView(page, 'daten');
         await page.getByTestId('daten-view').waitFor();
 
         await expect(page.getByTestId('data-export-button')).toHaveCount(1);
@@ -256,7 +256,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
 
       // -- Benutzer management view (only if user:read) ------------------
       if (c.canReadUsers) {
-        await page.getByTestId('view-toggle-benutzer').click();
+        await clickView(page, 'benutzer');
         await page.getByTestId('user-table').locator('tbody tr').first().waitFor();
 
         await expect(page.getByTestId('user-create-button')).toHaveCount(c.canManageUsers ? 1 : 0);
@@ -320,10 +320,15 @@ type NavView =
   | 'daten'
   | 'aktivitaet';
 
+// Worker deliberately excludes `aktivitaet`: the `audit:read` permission
+// is retained so deep-link navigation and server-side scoping still work,
+// but the tab is suppressed in the header because worker-visible rows
+// are scoped too narrowly to justify the nav slot
+// (see Header.tsx + docs/spec/ui/index.md §8.7.1).
 const NAV_MATRIX: Record<Role, readonly NavView[]> = {
   owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivitaet'],
   office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
-  worker: ['kanban', 'kalender', 'aktivitaet'],
+  worker: ['kanban', 'kalender'],
   bookkeeper: ['projekte', 'kunden'],
 };
 
@@ -344,18 +349,16 @@ test.describe('AC-75: per-role nav visibility matrix', () => {
       test('header nav set matches the ui/index.md §8.7.1 matrix exactly', async ({ page }) => {
         await page.goto('/');
 
-        // Every matrix tab must be visible for this role.
+        // Every matrix tab must be reachable for this role — inline or
+        // via the admin menu.
         for (const view of expected) {
-          await expect(page.getByTestId(`view-toggle-${view}`)).toBeVisible();
+          await expectViewReachable(page, view, true);
         }
 
-        // Every non-matrix tab must be absent. toHaveCount(0) rather than
-        // toBeHidden() because the latter passes for elements that exist
-        // but are CSS-hidden; the nav renderer should not emit the tab at
-        // all for unauthorized views (AC-75 "hidden from navigation").
+        // Every non-matrix tab must be absent from both renderings.
         const forbidden = ALL_VIEWS.filter((v) => !expected.includes(v));
         for (const view of forbidden) {
-          await expect(page.getByTestId(`view-toggle-${view}`)).toHaveCount(0);
+          await expectViewReachable(page, view, false);
         }
       });
     });
