@@ -120,9 +120,9 @@ export function describeAuditRow(args: {
   // Project-worker assignment and unassignment. The payload carries the
   // assigned user's displayName when the server has it (see
   // ProjectCrudService worker-assignment audit rows); the generic fallback
-  // keeps the string parseable when the payload is stripped (worker
-  // viewing a non-self-authored row — api.md §14.2.8) or when an older
-  // row predates the displayName field.
+  // keeps the string parseable when the payload is null (e.g. an import
+  // path that didn't supply one) or when an older row predates the
+  // displayName field.
   if (entityType === 'project_worker') {
     const name = extractWorkerDisplayName(payload);
     if (action === 'create') {

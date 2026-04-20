@@ -145,11 +145,12 @@ export const ROUTES: readonly RouteEntry[] = [
     isDefaultFor: () => false,
   },
   {
-    // View gated on `audit:read` per ui/index.md §8.7.1 — owner, office,
-    // and worker under the default matrix. Bookkeeper lacks `audit:read`
-    // and does not see the tab. The per-role visible row set is narrowed
-    // server-side (api.md §14.2.8), so this gate is the nav-visibility
-    // concern; data exposure is authoritative on the server.
+    // View gated on `audit:read` per ui/index.md §8.7.1 — owner and
+    // office under the default matrix. Worker and bookkeeper lack
+    // `audit:read` and do not see the tab. The per-role visible row set
+    // is narrowed server-side (api.md §14.2.8) by the destructive-action
+    // scope, so this gate is the nav-visibility concern; data exposure
+    // is authoritative on the server.
     view: 'aktivitaet',
     path: '/audit',
     label: STRINGS.ui.viewAudit,

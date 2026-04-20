@@ -115,7 +115,7 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
     // short-circuit would collapse repeated .fill() calls). Drive above
     // the server's default page size (50 per api.md §14.1) so the
     // "Ältere anzeigen" pager has a real page boundary to cross.
-    // `notes` is the field `audit-log.test.ts` AT-92/AT-93 uses to drive
+    // `notes` is the field `audit-log.test.ts` AT-93 uses to drive
     // audit rows on PATCH /api/projects/:id; the dates endpoint lives
     // separately at PATCH /api/projects/:id/dates and is out of scope here.
     const mutationCount = 52;

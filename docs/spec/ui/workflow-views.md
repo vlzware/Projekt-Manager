@@ -100,7 +100,7 @@ The detail panel surfaces the project's activity history — a reverse-chronolog
 **Content per row (newest first):**
 
 - A German one-line description derived from `action` and `payload` — e.g. `"Status geändert: Geplant → In Arbeit"`, `"Termine aktualisiert"`, `"Mitarbeiter zugewiesen: Jan Nowak"`. Mapping from `(action, payload)` to string is configured **[C]**.
-- Actor display: `displayName` for `user`-actor entries, resolved server-side for owner and office callers. For worker callers the server returns `actorId` only on rows the worker themselves authored (`actorId == caller.id`) — the UI renders the worker's own label on those rows; on every other worker-visible row `actorId` is null and the UI renders a neutral German label `"Benutzer"` (per [api.md §14.2.8](../api.md#1428-audit-log) — a client-side identity lookup would bypass the API's scope). `system`-actor entries display the German label `"System"` and the `actorReason` as supporting text.
+- Actor display: `displayName` for `user`-actor entries, resolved server-side. When the actor has been hard-deleted (AC-98 sets `actor_id` to null) the UI renders a neutral German label `"Benutzer"`. `system`-actor entries display the German label `"System"` and the `actorReason` as supporting text.
 - Timestamp — `createdAt` in German locale (`DD.MM.YYYY HH:mm`).
 - Payload drawer — a disclosure toggle (`Details anzeigen`) revealing the field-level `{ before, after }` diff. Rendered only when the API returns a `payload` for the entry, per the role-dependent shape in [api.md §14.2.8](../api.md#1428-audit-log) (client-side hiding is defense-in-depth, not the authoritative gate).
 
@@ -108,7 +108,7 @@ The detail panel surfaces the project's activity history — a reverse-chronolog
 
 **Empty-state:** `"Keine Aktivität"` when the scoped result set is empty.
 
-**Permission:** the activity feed is rendered whenever the caller can open the project detail panel — `audit:read` is granted to owner, office, and worker. For workers the drawer is rendered on self-authored rows only (see API contract above); for owner and office the drawer is rendered on any entry carrying a payload.
+**Permission:** the activity feed is rendered whenever the caller can open the project detail panel and holds `audit:read` — owner and office under the default matrix. The drawer is rendered on any entry carrying a payload.
 
 **Destructive-action rows:** entries whose `action` is `purge`, `delete` on `entityType = 'user'`, or `update` on `entityType = 'user'` touching `roles` are admitted only to callers for whom the `auditDestructiveScopeForCaller` predicate ([api.md §14.2.8](../api.md#1428-audit-log)) returns null (owner under the default matrix). Every other role with `audit:read` has the predicate contribute a repository-layer `WHERE` fragment that excludes these rows — they are never returned by the API. Client-side hiding is defense-in-depth, not the authoritative gate.
 

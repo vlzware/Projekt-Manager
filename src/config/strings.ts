@@ -303,7 +303,10 @@ export const STRINGS = {
     detailsHide: 'Details ausblenden',
     loadOlder: 'Ältere anzeigen',
     system: 'System',
-    /** Neutral worker-facing label for non-self-authored user actors. */
+    /** Fallback label when a user-actor row's actorId is null — the
+     *  authoring user has been hard-deleted and AC-98's ON DELETE SET
+     *  NULL nullified the FK (data-model.md §5.10 "Referential
+     *  integrity"). Rendered in place of a resolved displayName. */
     userNeutral: 'Benutzer',
     /** Column / filter labels on the global Aktivität view. */
     colTimestamp: 'Zeitpunkt',

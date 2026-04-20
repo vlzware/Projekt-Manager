@@ -113,10 +113,9 @@ describe('describeAuditRow', () => {
   });
 
   it('renders project_worker create without displayName as the bare label', () => {
-    // Worker-scope API response strips the payload on non-self-authored
-    // rows (api.md §14.2.8) — when the payload is null the description
-    // must still render something meaningful. The bare German label is
-    // that fallback.
+    // Null payload is the defensive branch — an import or legacy row
+    // may omit the displayName. The description must still render
+    // something meaningful; the bare German label is that fallback.
     const out = describeAuditRow({
       action: 'create',
       entityType: 'project_worker',
