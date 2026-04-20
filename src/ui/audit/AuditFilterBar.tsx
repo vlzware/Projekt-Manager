@@ -17,7 +17,7 @@ import styles from './AuditManagement.module.css';
 
 export interface LocalFilters {
   entityType?: AuditEntityType;
-  entityId?: string;
+  entityLabelQuery?: string;
   actorId?: string;
   action?: string;
   from?: string;
@@ -36,10 +36,10 @@ interface Props {
    */
   canReadUsers: boolean;
   /**
-   * aria-invalid source for the entityId input. Mirrored in the caller
-   * as a `<div className={validationError}>` below the bar.
+   * aria-invalid source for the entityLabelQuery input. Mirrored in the
+   * caller as a `<div className={validationError}>` below the bar.
    */
-  entityIdHasError: boolean;
+  entityLabelHasError: boolean;
   /** aria-invalid source for the actor UUID input (free-text variant). */
   actorIdHasError: boolean;
   onChange: (patch: Partial<LocalFilters>) => void;
@@ -51,7 +51,7 @@ export function AuditFilterBar({
   entityTypeOptions,
   users,
   canReadUsers,
-  entityIdHasError,
+  entityLabelHasError,
   actorIdHasError,
   onChange,
   onClear,
@@ -84,18 +84,18 @@ export function AuditFilterBar({
       </div>
 
       <div className={styles.filterField}>
-        <label className={styles.filterLabel} htmlFor="audit-filter-entity-id">
-          {STRINGS.audit.filterEntityId}
+        <label className={styles.filterLabel} htmlFor="audit-filter-entity-label">
+          {STRINGS.audit.filterEntityLabel}
         </label>
         <input
-          id="audit-filter-entity-id"
+          id="audit-filter-entity-label"
           type="text"
           className={styles.filterInput}
-          value={local.entityId ?? ''}
-          onChange={(e) => onChange({ entityId: e.target.value || undefined })}
-          placeholder="UUID"
-          data-testid="audit-filter-entity-id"
-          aria-invalid={entityIdHasError ? 'true' : 'false'}
+          value={local.entityLabelQuery ?? ''}
+          onChange={(e) => onChange({ entityLabelQuery: e.target.value || undefined })}
+          placeholder={STRINGS.audit.filterEntityLabelPlaceholder}
+          data-testid="audit-filter-entity-label"
+          aria-invalid={entityLabelHasError ? 'true' : 'false'}
         />
       </div>
 

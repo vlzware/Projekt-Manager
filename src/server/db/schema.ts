@@ -263,6 +263,12 @@ export const auditLog = pgTable(
     index('audit_log_entity_idx').on(table.entityType, table.entityId, table.createdAt.desc()),
     index('audit_log_actor_idx').on(table.actorId, table.createdAt.desc()),
     index('audit_log_created_at_idx').on(table.createdAt.desc()),
+    // GIN trigram index powers the Aktivität view's substring search on
+    // entity_label (ui/management.md §8.13.2). Without it, `ILIKE '%q%'`
+    // falls back to a seq scan. The pg_trgm extension itself is enabled
+    // by a hand-edit in 0000_baseline.sql — drizzle-kit does not emit
+    // CREATE EXTENSION statements.
+    index('audit_log_entity_label_trgm_idx').using('gin', sql`${table.entityLabel} gin_trgm_ops`),
     check('audit_log_actor_kind_valid', sql`${table.actorKind} IN ('user', 'system')`),
     check(
       'audit_log_entity_type_valid',

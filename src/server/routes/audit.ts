@@ -53,6 +53,11 @@ export function auditRoutes(db: Database) {
               limit: { type: 'integer', minimum: 1, maximum: 1000 },
               entityType: { type: 'string', enum: [...AUDIT_ENTITY_TYPES] },
               entityId: { type: 'string', format: 'uuid' },
+              // Substring search on entity_label (see repo). Min 3 chars
+              // keeps queries trigram-eligible — shorter patterns would
+              // fall back to a seq scan. Max 255 mirrors the longest
+              // labeled source (customers.name varchar(255)).
+              entityLabelQuery: { type: 'string', minLength: 3, maxLength: 255 },
               actorId: { type: 'string', format: 'uuid' },
               from: { type: 'string', format: 'date-time' },
               to: { type: 'string', format: 'date-time' },
@@ -68,6 +73,7 @@ export function auditRoutes(db: Database) {
           limit?: number;
           entityType?: AuditEntityType;
           entityId?: string;
+          entityLabelQuery?: string;
           actorId?: string;
           from?: string;
           to?: string;
@@ -87,6 +93,7 @@ export function auditRoutes(db: Database) {
           limit: query.limit,
           entityType: query.entityType,
           entityId: query.entityId,
+          entityLabelQuery: query.entityLabelQuery,
           actorId: query.actorId,
           from,
           to,

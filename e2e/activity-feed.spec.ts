@@ -181,8 +181,7 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
     // for any caller — the server AND-composes filters with the scope
     // predicate, so even an owner with unscoped reads receives an
     // empty page. This is the concrete "empty by construction" path
-    // the finding asks for; filter-UI-driven rather than URL-driven
-    // because the UI exposes no entityId filter today.
+    // the finding asks for; filter-UI-driven rather than URL-driven.
     await page.goto('/');
     await clickView(page, 'aktivitaet');
     await page.getByTestId('audit-filter-from').fill('2099-01-01');
@@ -324,5 +323,4 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
       await expect(purgeRows).toHaveCount(0);
     });
   });
-
 });

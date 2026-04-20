@@ -198,7 +198,7 @@ Navigation: exposed via the shell navigation matrix ([index.md §8.7.1](index.md
 A filter bar AND-composing the following criteria, applied via the API:
 
 - Entity type — multi-select over `project`, `customer`, `user`, `project_worker`.
-- Entity — optional single-value filter (selectable when an entity type is chosen).
+- Entity name — optional case-insensitive substring match against the frozen `entityLabel` snapshot ([data-model.md §5.10](../data-model.md#510-audit-log-entity)). Minimum three characters so the server's pg_trgm index can serve the query; below-minimum or empty input is ignored. Rows with a null `entityLabel` (import / retention paths) are not matchable by name.
 - Actor — optional single-select over users the caller may already list via `user:read` (owner and office under the default matrix).
 - Date range (`from` / `to`) — `to < from` is a client-side validation error; the form blocks submit.
 - Action — optional multi-select over the action vocabulary.

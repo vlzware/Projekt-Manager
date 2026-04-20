@@ -1,5 +1,5 @@
 {
-  "id": "d9a51353-048a-4cee-b7b6-da1756eedb29",
+  "id": "3717b136-0339-4c3d-98c8-05efdfa18d2f",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -140,6 +140,21 @@
           "isUnique": false,
           "concurrently": false,
           "method": "btree",
+          "with": {}
+        },
+        "audit_log_entity_label_trgm_idx": {
+          "name": "audit_log_entity_label_trgm_idx",
+          "columns": [
+            {
+              "expression": "\"entity_label\" gin_trgm_ops",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "gin",
           "with": {}
         }
       },

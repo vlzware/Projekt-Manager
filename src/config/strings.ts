@@ -107,6 +107,7 @@ export const STRINGS = {
     mustBeUuidArray: (field: string) => `${field} muss ein Array von UUIDs sein.`,
     mustBeNumeric: (field: string) => `${field} muss eine Zahl oder ein numerischer String sein.`,
     mustBeUuid: (field: string) => `${field} muss eine gültige UUID sein.`,
+    minLength: (field: string, min: number) => `${field} muss mindestens ${min} Zeichen lang sein.`,
     maxLength: (field: string, max: number) => `${field} darf maximal ${max} Zeichen lang sein.`,
   },
 
@@ -315,7 +316,8 @@ export const STRINGS = {
     colAction: 'Aktion',
     colPayload: 'Details',
     filterEntityType: 'Objekttyp',
-    filterEntityId: 'Objekt-ID',
+    filterEntityLabel: 'Objektname',
+    filterEntityLabelPlaceholder: 'Name suchen…',
     filterActor: 'Akteur',
     filterAction: 'Aktion',
     filterFrom: 'Von',

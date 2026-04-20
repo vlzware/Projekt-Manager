@@ -52,6 +52,14 @@ function isValidUuid(value: string): boolean {
 }
 
 /**
+ * Minimum length for the entity-label substring filter. Matches the
+ * server's `minLength: 3` bound in `GET /api/audit` (routes/audit.ts),
+ * which in turn keeps the query trigram-index-eligible: shorter patterns
+ * would force a seq scan.
+ */
+const ENTITY_LABEL_MIN_LENGTH = 3;
+
+/**
  * Convert a local `<input type="date">` value (`YYYY-MM-DD`) into an
  * ISO-8601 string representing the start or end of that day in the
  * user's local timezone.
@@ -85,7 +93,7 @@ export function AuditManagement() {
   const fetchUsers = useUserStore((s) => s.fetchUsers);
   const [local, setLocal] = useState<LocalFilters>({});
   const [dateError, setDateError] = useState<string | null>(null);
-  const [entityIdError, setEntityIdError] = useState<string | null>(null);
+  const [entityLabelError, setEntityLabelError] = useState<string | null>(null);
   const [actorIdError, setActorIdError] = useState<string | null>(null);
 
   // Load the user list once for the actor dropdown. Callers without
@@ -102,13 +110,15 @@ export function AuditManagement() {
   }, [canReadAudit, canReadUsers, fetchUsers]);
 
   // Compute the applied filter — only include fields that are (a) set
-  // and (b) pass shape validation. An invalid UUID in entityId or
-  // actorId is surfaced via the validation error and NOT sent to the
-  // server.
+  // and (b) pass shape validation. A too-short entityLabelQuery or an
+  // invalid UUID in actorId is surfaced via the validation error and
+  // NOT sent to the server.
   const appliedFilters = useMemo<AuditListParams>(() => {
     const out: AuditListParams = {};
     if (local.entityType) out.entityType = local.entityType;
-    if (local.entityId && isValidUuid(local.entityId)) out.entityId = local.entityId;
+    if (local.entityLabelQuery && local.entityLabelQuery.length >= ENTITY_LABEL_MIN_LENGTH) {
+      out.entityLabelQuery = local.entityLabelQuery;
+    }
     if (local.actorId && isValidUuid(local.actorId)) out.actorId = local.actorId;
     if (local.action) out.action = local.action;
     if (local.from) out.from = localStartOfDayIso(local.from);
@@ -132,15 +142,17 @@ export function AuditManagement() {
         }
       }
       setDateError(null);
-      // UUID shape validation — run against the next patch only if the
+      // Shape validation — run against the next patch only if the
       // field was actually touched by this update, otherwise keep the
       // existing error/no-error state untouched (avoids clearing a
       // previous error when the user types in a different field).
-      if ('entityId' in patch) {
-        if (next.entityId && !isValidUuid(next.entityId)) {
-          setEntityIdError(STRINGS.validation.mustBeUuid(STRINGS.audit.filterEntityId));
+      if ('entityLabelQuery' in patch) {
+        if (next.entityLabelQuery && next.entityLabelQuery.length < ENTITY_LABEL_MIN_LENGTH) {
+          setEntityLabelError(
+            STRINGS.validation.minLength(STRINGS.audit.filterEntityLabel, ENTITY_LABEL_MIN_LENGTH),
+          );
         } else {
-          setEntityIdError(null);
+          setEntityLabelError(null);
         }
       }
       if ('actorId' in patch) {
@@ -157,7 +169,7 @@ export function AuditManagement() {
   const clearFilters = () => {
     setLocal({});
     setDateError(null);
-    setEntityIdError(null);
+    setEntityLabelError(null);
     setActorIdError(null);
   };
 
@@ -175,14 +187,14 @@ export function AuditManagement() {
         entityTypeOptions={ENTITY_TYPE_OPTIONS}
         users={users}
         canReadUsers={canReadUsers}
-        entityIdHasError={!!entityIdError}
+        entityLabelHasError={!!entityLabelError}
         actorIdHasError={!!actorIdError}
         onChange={updateLocal}
         onClear={clearFilters}
       />
 
       {dateError && <div className={styles.validationError}>{dateError}</div>}
-      {entityIdError && <div className={styles.validationError}>{entityIdError}</div>}
+      {entityLabelError && <div className={styles.validationError}>{entityLabelError}</div>}
       {actorIdError && <div className={styles.validationError}>{actorIdError}</div>}
 
       <ActivityFeed

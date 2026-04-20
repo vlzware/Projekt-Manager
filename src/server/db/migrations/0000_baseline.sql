@@ -1,3 +1,9 @@
+-- Enables the GIN trigram index on audit_log.entity_label below
+-- (ui/management.md §8.13.2 Aktivität substring search). Drizzle-kit
+-- does not emit CREATE EXTENSION statements; added by hand at baseline
+-- regen time, same mechanism as the meta_backup_status pre-seed INSERT.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+--> statement-breakpoint
 CREATE TABLE "audit_log" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -114,6 +120,7 @@ ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY
 CREATE INDEX "audit_log_entity_idx" ON "audit_log" USING btree ("entity_type","entity_id","created_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "audit_log_actor_idx" ON "audit_log" USING btree ("actor_id","created_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "audit_log_created_at_idx" ON "audit_log" USING btree ("created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "audit_log_entity_label_trgm_idx" ON "audit_log" USING gin ("entity_label" gin_trgm_ops);--> statement-breakpoint
 CREATE INDEX "idx_project_workers_user_id" ON "project_workers" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "idx_projects_status" ON "projects" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "idx_projects_status_changed_at" ON "projects" USING btree ("status_changed_at");--> statement-breakpoint

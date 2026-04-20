@@ -17,13 +17,18 @@
  * the same page (api.md §14.1).
  */
 
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, lte, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
 import { auditLog, users } from '../db/schema.js';
 import type { AuditEntityType } from '../db/schema.js';
 import type { AuthUser } from '../middleware/auth.js';
 import { auditDestructiveScopeForCaller, OUT_OF_SCOPE, type ScopedReadResult } from './scope.js';
+
+/** Escape LIKE-pattern metacharacters so user input is treated literally. */
+function escapeLike(value: string): string {
+  return value.replace(/[%_\\]/g, '\\$&');
+}
 
 /**
  * Joined audit row shape returned from the repository, before the
@@ -56,6 +61,14 @@ export interface ListAuditOpts {
   limit?: number;
   entityType?: AuditEntityType;
   entityId?: string;
+  /**
+   * Substring match on `entity_label` (case-insensitive). Used by the
+   * Aktivität filter bar in lieu of a UUID input; project-detail's
+   * contextual feed continues to filter by `entityId`. NULL-labelled
+   * rows are excluded — imports and retention cleanup that omit a label
+   * cannot match a label query.
+   */
+  entityLabelQuery?: string;
   actorId?: string;
   from?: Date;
   to?: Date;
@@ -84,6 +97,9 @@ export async function listAuditEntries(
   }
   if (opts.entityId !== undefined) {
     conditions.push(eq(auditLog.entityId, opts.entityId));
+  }
+  if (opts.entityLabelQuery !== undefined) {
+    conditions.push(ilike(auditLog.entityLabel, `%${escapeLike(opts.entityLabelQuery)}%`));
   }
   if (opts.actorId !== undefined) {
     conditions.push(eq(auditLog.actorId, opts.actorId));

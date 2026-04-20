@@ -77,6 +77,12 @@ export interface AuditListParams {
   limit?: number;
   entityType?: AuditEntityType;
   entityId?: string;
+  /**
+   * Case-insensitive substring match on `entityLabel`. Min 3 chars so
+   * the server's GIN trigram index can serve the query (api.md §14.2.8).
+   * Rows with a null label are excluded.
+   */
+  entityLabelQuery?: string;
   actorId?: string;
   /** ISO-8601 lower bound, inclusive. */
   from?: string;
