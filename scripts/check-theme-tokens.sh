@@ -47,6 +47,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Preflight: ripgrep is required. Without it, `rg || true` below would
+# silently swallow a 127 exit and report a clean scan on every run —
+# turning the audit gate into a no-op.
+if ! command -v rg >/dev/null 2>&1; then
+  echo "error: ripgrep (rg) is required for this check." >&2
+  echo "  Debian/Ubuntu: apt install ripgrep" >&2
+  echo "  macOS:         brew install ripgrep" >&2
+  exit 1
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'

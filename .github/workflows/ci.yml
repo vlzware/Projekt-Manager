@@ -35,6 +35,11 @@ jobs:
 
       - run: npm ci
 
+      # Needed by scripts/check-theme-tokens.sh. ubuntu-latest does not
+      # preinstall ripgrep; without it the check silently no-ops.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Audit dependencies
         run: |
           npm audit --audit-level=moderate && exit 0
