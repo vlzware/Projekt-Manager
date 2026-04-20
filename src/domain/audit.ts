@@ -103,3 +103,14 @@ export function isPayloadDiff(payload: unknown): payload is {
   const p = payload as Record<string, unknown>;
   return 'before' in p || 'after' in p;
 }
+
+/**
+ * Canonical audit label for a project row — `"<number> <title>"`.
+ *
+ * Used by the service layer when writing `audit_log` rows for projects
+ * and for project cascades during customer deletes. A single seam so a
+ * future format change does not have to chase eight string literals.
+ */
+export function projectAuditLabel(row: { number: string; title: string }): string {
+  return `${row.number} ${row.title}`;
+}

@@ -43,6 +43,7 @@ import type { AuthUser } from '../middleware/auth.js';
 import { isOutOfScope } from '../repositories/scope.js';
 import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
+import { projectAuditLabel } from '../../domain/audit.js';
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
 
@@ -188,7 +189,7 @@ export class ProjectCrudService {
           });
           return {
             entityId: row.id,
-            entityLabel: `${row.number} ${row.title}`,
+            entityLabel: projectAuditLabel(row),
             value: row,
             before: {},
             after: {
@@ -453,7 +454,7 @@ export class ProjectCrudService {
 
               return {
                 entityId: id,
-                entityLabel: `${updated.number} ${updated.title}`,
+                entityLabel: projectAuditLabel(updated),
                 value: updated,
                 before,
                 after,
@@ -554,7 +555,7 @@ export class ProjectCrudService {
             await softDeleteProjectRepo(tx, id, userId);
             return {
               entityId: id,
-              entityLabel: `${priorRow.number} ${priorRow.title}`,
+              entityLabel: projectAuditLabel(priorRow),
               value: null,
               before: { number: priorRow.number, title: priorRow.title },
               after: {},
@@ -592,7 +593,7 @@ export class ProjectCrudService {
             await hardDeleteProjectRepo(tx, id);
             return {
               entityId: id,
-              entityLabel: priorRow ? `${priorRow.number} ${priorRow.title}` : null,
+              entityLabel: priorRow ? projectAuditLabel(priorRow) : null,
               value: null,
               before: priorRow ? { number: priorRow.number, title: priorRow.title } : {},
               after: {},

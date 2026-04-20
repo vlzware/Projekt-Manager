@@ -28,6 +28,7 @@ import type { AuthUser } from '../middleware/auth.js';
 import { isOutOfScope } from '../repositories/scope.js';
 import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
+import { projectAuditLabel } from '../../domain/audit.js';
 
 /**
  * Fields captured in the audit payload for customer writes. Kept as a
@@ -284,7 +285,7 @@ export class CustomerService {
             await hardDeleteProjectUnchecked(innerTx, row.id);
             return {
               entityId: row.id,
-              entityLabel: `${row.number} ${row.title}`,
+              entityLabel: projectAuditLabel(row),
               value: null,
               before: { number: row.number, title: row.title, customerId: row.customerId },
               after: {},

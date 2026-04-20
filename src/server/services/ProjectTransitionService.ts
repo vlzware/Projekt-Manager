@@ -24,6 +24,7 @@ import { notFound, validationError, conflict } from '../errors.js';
 import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
 import { mutate } from './mutate.js';
+import { projectAuditLabel } from '../../domain/audit.js';
 
 export class ProjectTransitionService {
   constructor(private db: Database) {}
@@ -47,7 +48,7 @@ export class ProjectTransitionService {
             const repoResult = await transitionForwardRepo(tx, projectId, userId, expectedStatus);
             return {
               entityId: projectId,
-              entityLabel: `${repoResult.project.number} ${repoResult.project.title}`,
+              entityLabel: projectAuditLabel(repoResult.project),
               value: repoResult,
               // data-model.md §5.10: a transition's before/after carry
               // BOTH `status` and `statusChangedAt`. The prior
@@ -108,7 +109,7 @@ export class ProjectTransitionService {
             const repoResult = await transitionBackwardRepo(tx, projectId, userId, expectedStatus);
             return {
               entityId: projectId,
-              entityLabel: `${repoResult.project.number} ${repoResult.project.title}`,
+              entityLabel: projectAuditLabel(repoResult.project),
               value: repoResult,
               // data-model.md §5.10: see `transitionForward` above for
               // the before/after shape rationale.
