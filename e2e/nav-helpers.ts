@@ -1,4 +1,4 @@
-import { expect, type Page, type Locator } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 
 /**
  * Nav-affordance helpers that abstract over the header's primary/
@@ -49,25 +49,6 @@ export async function clickView(page: Page, view: NavViewKey): Promise<void> {
   const adminTrigger = page.getByTestId('nav-admin-trigger');
   await adminTrigger.click();
   await page.getByTestId(`view-toggle-${view}`).click();
-}
-
-/**
- * Returns the locator for a view's nav entry, opening the admin menu
- * first if the entry lives inside it. For `expectViewReachable` /
- * `expectViewNotReachable` helpers. Callers can still call `.count()`
- * on the returned locator when the menu is absent (no trigger) — the
- * locator will resolve to zero as expected.
- */
-export async function resolveViewLocator(page: Page, view: NavViewKey): Promise<Locator> {
-  await waitForHeader(page);
-  const inline = page.getByTestId(`view-toggle-${view}`);
-  if (await inline.count()) return inline;
-  const adminTrigger = page.getByTestId('nav-admin-trigger');
-  if (await adminTrigger.count()) {
-    await adminTrigger.click();
-    return page.getByTestId(`view-toggle-${view}`);
-  }
-  return inline;
 }
 
 /**
