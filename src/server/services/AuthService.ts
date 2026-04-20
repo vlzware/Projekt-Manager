@@ -188,16 +188,21 @@ export class AuthService {
     // driven and invalidates ALL sessions). No hash in the payload.
     await mutate(
       this.db,
-      { actorKind: 'user', actorId: user.id, correlationId: correlationId ?? null },
+      { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
       {
         entityType: 'user',
         action: 'password-change',
         run: async (tx) => {
-          await changePasswordRepo(tx, user.id, newHash, user.id);
-          await deleteSessionsByUserId(tx, user.id, currentToken);
+          // Re-read inside the tx so entityLabel is snapshotted atomically
+          // with the write — avoids capturing a stale displayName if an
+          // admin renames the user between the pre-tx verify and here.
+          const current = await findById(tx, userId);
+          if (!current) throw notFound(STRINGS.entities.user);
+          await changePasswordRepo(tx, userId, newHash, userId);
+          await deleteSessionsByUserId(tx, userId, currentToken);
           return {
-            entityId: user.id,
-            entityLabel: user.displayName,
+            entityId: userId,
+            entityLabel: current.displayName,
             value: null,
             before: {},
             after: {},
