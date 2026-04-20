@@ -1,21 +1,13 @@
 /**
  * Audit retention cleanup — integration test for AT-95 (AC-184).
  *
- * The cleanup job:
+ * Pins the cleanup contract against a real Postgres instance:
  *   - removes `audit_log` rows older than the configured window (90 d [C]);
  *   - emits exactly one structured operational log line at `info` level
  *     with fields `event='audit-retention-cleanup'`, `window_days`,
  *     `removed_count`, `ran_at` (ISO 8601);
  *   - does NOT produce an `audit_log` row (scope is domain entities
  *     only, per `data-model.md §5.10`).
- *
- * Failing-state expectations (step 3 of the workflow):
- *   - `../services/audit-retention.js` does not yet exist, so the
- *     import fails with MODULE_NOT_FOUND. That is the recognizable
- *     failing signal the reviewer looks for in step 4.
- *   - If somebody adds a stub module that exports the wrong shape,
- *     the subsequent assertions (shape of the logged line, delete
- *     count) still drive the test red.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
@@ -27,6 +19,7 @@ import type pg from 'pg';
 
 import { createDatabase } from '../db/connection.js';
 import type { Database } from '../db/connection.js';
+import { runAuditRetentionCleanup } from '../services/audit-retention.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(__dirname, '../db/migrations');
@@ -103,34 +96,11 @@ describe('AT-95: Audit retention cleanup (AC-184)', () => {
 
     expect(await countAuditRows(db)).toBe(4);
 
-    // Import the cleanup surface. Until the module lands this throws
-    // MODULE_NOT_FOUND — the intended failing state. Once the module
-    // exists the import returns and the function-signature assertions
-    // below drive the remaining behavior.
-    // String-literal import path + `/* @vite-ignore */` so the
-    // missing module surfaces as a runtime MODULE_NOT_FOUND (the
-    // intended failing state) rather than a compile-time TS error.
-    // Same pattern used by `seed.test.ts`'s AT-87 pre-implementation
-    // probe.
-    const retentionPath = '../services/audit-retention.js';
-    const retention = await import(/* @vite-ignore */ retentionPath);
-
     const infoSpy = vi.fn();
     const errorSpy = vi.fn();
     const fakeLogger = { info: infoSpy, error: errorSpy };
 
-    const run = (
-      retention as {
-        runAuditRetentionCleanup: (deps: {
-          db: Database;
-          logger: { info: unknown; error: unknown };
-          windowDays: number;
-          now?: Date;
-        }) => Promise<unknown>;
-      }
-    ).runAuditRetentionCleanup;
-
-    await run({ db, logger: fakeLogger, windowDays: 90, now });
+    await runAuditRetentionCleanup({ db, logger: fakeLogger, windowDays: 90, now });
 
     // Post-conditions on the table: two rows remain (inside window);
     // two were deleted (outside window). The cleanup must NOT itself
@@ -148,6 +118,13 @@ describe('AT-95: Audit retention cleanup (AC-184)', () => {
       '00000000-0000-0000-0000-00000000a001',
       '00000000-0000-0000-0000-00000000a002',
     ]);
+
+    // Structured-log contract: the one info call reports the count of
+    // rows actually deleted and the window applied.
+    const [context] = infoSpy.mock.calls[0]!;
+    const ctx = context as Record<string, unknown>;
+    expect(ctx.removed_count).toBe(2);
+    expect(ctx.window_days).toBe(90);
   });
 
   it('emits exactly one info log line with the contract fields (event, window_days, removed_count, ran_at)', async () => {
@@ -159,29 +136,11 @@ describe('AT-95: Audit retention cleanup (AC-184)', () => {
       '00000000-0000-0000-0000-0000000000aa',
     );
 
-    // String-literal import path + `/* @vite-ignore */` so the
-    // missing module surfaces as a runtime MODULE_NOT_FOUND (the
-    // intended failing state) rather than a compile-time TS error.
-    // Same pattern used by `seed.test.ts`'s AT-87 pre-implementation
-    // probe.
-    const retentionPath = '../services/audit-retention.js';
-    const retention = await import(/* @vite-ignore */ retentionPath);
     const infoSpy = vi.fn();
     const errorSpy = vi.fn();
     const fakeLogger = { info: infoSpy, error: errorSpy };
 
-    const run = (
-      retention as {
-        runAuditRetentionCleanup: (deps: {
-          db: Database;
-          logger: { info: unknown; error: unknown };
-          windowDays: number;
-          now?: Date;
-        }) => Promise<unknown>;
-      }
-    ).runAuditRetentionCleanup;
-
-    await run({ db, logger: fakeLogger, windowDays: 90, now });
+    await runAuditRetentionCleanup({ db, logger: fakeLogger, windowDays: 90, now });
 
     // Exactly one info call — the contract says "exactly one structured
     // log line per run".
@@ -213,26 +172,9 @@ describe('AT-95: Audit retention cleanup (AC-184)', () => {
       '00000000-0000-0000-0000-0000000000cc',
     );
 
-    // String-literal import path + `/* @vite-ignore */` so the
-    // missing module surfaces as a runtime MODULE_NOT_FOUND (the
-    // intended failing state) rather than a compile-time TS error.
-    // Same pattern used by `seed.test.ts`'s AT-87 pre-implementation
-    // probe.
-    const retentionPath = '../services/audit-retention.js';
-    const retention = await import(/* @vite-ignore */ retentionPath);
     const infoSpy = vi.fn();
     const fakeLogger = { info: infoSpy, error: vi.fn() };
-    const run = (
-      retention as {
-        runAuditRetentionCleanup: (deps: {
-          db: Database;
-          logger: { info: unknown; error: unknown };
-          windowDays: number;
-          now?: Date;
-        }) => Promise<unknown>;
-      }
-    ).runAuditRetentionCleanup;
-    await run({ db, logger: fakeLogger, windowDays: 90, now });
+    await runAuditRetentionCleanup({ db, logger: fakeLogger, windowDays: 90, now });
 
     // Nothing deleted.
     expect(await countAuditRows(db)).toBe(1);
@@ -255,24 +197,7 @@ describe('AT-95: Audit retention cleanup (AC-184)', () => {
     // one stray.
     expect(await countAuditRows(db)).toBe(1);
 
-    // String-literal import path + `/* @vite-ignore */` so the
-    // missing module surfaces as a runtime MODULE_NOT_FOUND (the
-    // intended failing state) rather than a compile-time TS error.
-    // Same pattern used by `seed.test.ts`'s AT-87 pre-implementation
-    // probe.
-    const retentionPath = '../services/audit-retention.js';
-    const retention = await import(/* @vite-ignore */ retentionPath);
-    const run = (
-      retention as {
-        runAuditRetentionCleanup: (deps: {
-          db: Database;
-          logger: { info: unknown; error: unknown };
-          windowDays: number;
-          now?: Date;
-        }) => Promise<unknown>;
-      }
-    ).runAuditRetentionCleanup;
-    await run({
+    await runAuditRetentionCleanup({
       db,
       logger: { info: vi.fn(), error: vi.fn() },
       windowDays: 90,

@@ -197,4 +197,10 @@ describe('start.ts call-site pin for assertProductionSafe', () => {
     expect(stripped).toMatch(/\bstartSessionReaper\s*\(/);
     expect(stripped).toMatch(/intervalMinutes\s*:\s*env\.SESSION_CLEANUP_INTERVAL_MINUTES\b/);
   });
+
+  it('start.ts wires startAuditRetentionScheduler to the retention env vars', () => {
+    expect(stripped).toMatch(/\bstartAuditRetentionScheduler\s*\(/);
+    expect(stripped).toMatch(/\benv\.AUDIT_RETENTION_INTERVAL_MINUTES\b/);
+    expect(stripped).toMatch(/\benv\.AUDIT_RETENTION_WINDOW_DAYS\b/);
+  });
 });

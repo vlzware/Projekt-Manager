@@ -33,9 +33,9 @@ const caller = (role: RoleName): RouteCaller => ({ roles: [role] });
 // bookkeeper lacks `audit:read` per the permission matrix and does not
 // see the tab.
 const MATRIX: Record<RoleName, readonly string[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivität'],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivität'],
-  worker: ['kanban', 'kalender', 'aktivität'],
+  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivitaet'],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
+  worker: ['kanban', 'kalender', 'aktivitaet'],
   bookkeeper: ['projekte', 'kunden'],
 };
 
@@ -68,6 +68,15 @@ describe('ROUTES — per-role nav matrix (AC-75)', () => {
     const visible = visibleRoutesForUser(caller('worker')).map((r) => r.view);
     expect(visible).not.toContain('daten');
     expect(visible).not.toContain('benutzer');
+  });
+
+  it('never exposes an Aktivität tab to a caller without audit:read', () => {
+    // bookkeeper is the only role without `audit:read` in the permission
+    // matrix, so the Aktivität tab must stay hidden. Pins the
+    // audit-surface half of the AC-75 / AC-149 defense-in-depth chain
+    // alongside the Daten negative above.
+    const visible = visibleRoutesForUser(caller('bookkeeper')).map((r) => r.view);
+    expect(visible).not.toContain('aktivitaet');
   });
 });
 

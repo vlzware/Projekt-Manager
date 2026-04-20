@@ -328,12 +328,12 @@ type NavView =
   | 'kunden'
   | 'benutzer'
   | 'daten'
-  | 'aktivität';
+  | 'aktivitaet';
 
 const NAV_MATRIX: Record<Role, readonly NavView[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivität'],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivität'],
-  worker: ['kanban', 'kalender', 'aktivität'],
+  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivitaet'],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
+  worker: ['kanban', 'kalender', 'aktivitaet'],
   bookkeeper: ['projekte', 'kunden'],
 };
 
@@ -344,7 +344,7 @@ const ALL_VIEWS: readonly NavView[] = [
   'kunden',
   'benutzer',
   'daten',
-  'aktivität',
+  'aktivitaet',
 ];
 
 test.describe('AC-75: per-role nav visibility matrix', () => {

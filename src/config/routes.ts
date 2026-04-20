@@ -48,7 +48,7 @@ export type RouteView =
   | 'projekte'
   | 'benutzer'
   | 'daten'
-  | 'aktivität';
+  | 'aktivitaet';
 
 export interface RouteEntry {
   /** Stable view key. */
@@ -150,7 +150,7 @@ export const ROUTES: readonly RouteEntry[] = [
     // and does not see the tab. The per-role visible row set is narrowed
     // server-side (api.md §14.2.8), so this gate is the nav-visibility
     // concern; data exposure is authoritative on the server.
-    view: 'aktivität',
+    view: 'aktivitaet',
     path: '/audit',
     label: STRINGS.ui.viewAudit,
     canAccess: (u) => hasPermission(u.roles, 'audit:read'),

@@ -105,4 +105,4 @@ export type ViewMode =
   | 'projekte'
   | 'benutzer'
   | 'daten'
-  | 'aktivität';
+  | 'aktivitaet';

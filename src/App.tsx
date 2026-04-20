@@ -102,7 +102,7 @@ const VIEW_ELEMENTS: Record<ViewMode, ReactElement> = {
   projekte: <ProjectManagement />,
   benutzer: <UserManagement />,
   daten: <DatenView />,
-  aktivität: <AuditManagement />,
+  aktivitaet: <AuditManagement />,
 };
 
 export function App() {

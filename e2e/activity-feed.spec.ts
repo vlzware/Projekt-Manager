@@ -20,7 +20,7 @@ import { test, expect, type Page } from '@playwright/test';
  *
  * Expected failing state (step 3 of the workflow):
  *   - The audit tab `Aktivität` does not exist in the nav matrix yet
- *     — `getByTestId('view-toggle-aktivität')` fails to find it.
+ *     — `getByTestId('view-toggle-aktivitaet')` fails to find it.
  *   - Project-detail activity feed markup does not exist yet —
  *     `getByTestId('project-activity-feed')` fails to find it.
  *   - The audit API does not exist, so even if markup stubs were
@@ -49,6 +49,23 @@ async function loginAs(page: Page, username: string): Promise<void> {
   await page.getByTestId('header').waitFor();
 }
 
+/**
+ * AC-186 drawer helper — click the toggle on a payload-bearing row,
+ * assert the inline content expands, and assert the URL did not change
+ * (the drawer is an inline affordance, not a route). Inlined here
+ * rather than promoted to `e2e/helpers/` because every caller lives in
+ * this file.
+ */
+async function assertDrawerOpensInline(
+  page: Page,
+  row: ReturnType<Page['locator']>,
+): Promise<void> {
+  const urlBefore = page.url();
+  await row.getByTestId('activity-feed-drawer-toggle').click();
+  expect(page.url()).toBe(urlBefore);
+  await expect(row.getByTestId('activity-feed-drawer-content')).toBeVisible();
+}
+
 // Seed users — same labels used in permission-visibility.spec.ts so
 // a grep for a role lands one consistent constant table across specs.
 const users = {
@@ -67,13 +84,13 @@ test.describe('AC-186: Aktivität nav visibility per role', () => {
   for (const role of ['owner', 'office', 'worker'] as const) {
     test(`${role} — Aktivität tab is rendered`, async ({ page }) => {
       await loginAs(page, users[role]);
-      await expect(page.getByTestId('view-toggle-aktivität')).toHaveCount(1);
+      await expect(page.getByTestId('view-toggle-aktivitaet')).toHaveCount(1);
     });
   }
 
   test('bookkeeper — Aktivität tab is absent (no audit:read)', async ({ page }) => {
     await loginAs(page, users.bookkeeper);
-    await expect(page.getByTestId('view-toggle-aktivität')).toHaveCount(0);
+    await expect(page.getByTestId('view-toggle-aktivitaet')).toHaveCount(0);
   });
 });
 
@@ -97,26 +114,28 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
     await page.getByTestId('kanban-board').waitFor();
     const firstCard = page.locator('[data-testid^="project-card-"]').first();
     const firstCardTestId = (await firstCard.getAttribute('data-testid'))!;
+    const projectId = firstCardTestId.replace('project-card-', '');
     await firstCard.click();
     await page.getByTestId('detail-panel').waitFor();
 
     const feed = page.getByTestId('project-activity-feed');
     await expect(feed).toBeVisible();
 
-    // Drive two mutations so there are at least two audit rows to
-    // compare timestamps on. The spec wants two rows scoped to the
-    // card's project — so we mutate THIS card's detail panel rather
-    // than a Projekte-view row that may belong to a different project.
-    //
-    // The project-detail panel drives `updateDates` via the date input,
-    // which produces an `update`-action audit row tied to this project.
-    // Two sequential edits yield two audit rows — enough for the
-    // reverse-chrono check below.
-    const dateStart = page.getByTestId('detail-date-start');
-    await dateStart.fill('2026-05-01');
-    await expect.poll(async () => await dateStart.inputValue()).toBe('2026-05-01');
-    await dateStart.fill('2026-05-15');
-    await expect.poll(async () => await dateStart.inputValue()).toBe('2026-05-15');
+    // Drive mutations via the API with distinct field diffs so each
+    // PATCH commits a new audit row (UI input debounce / unchanged-value
+    // short-circuit would collapse repeated .fill() calls). Drive above
+    // the server's default page size (50 per api.md §14.1) so the
+    // "Ältere anzeigen" pager has a real page boundary to cross.
+    // `notes` is the field `audit-log.test.ts` AT-92/AT-93 uses to drive
+    // audit rows on PATCH /api/projects/:id; the dates endpoint lives
+    // separately at PATCH /api/projects/:id/dates and is out of scope here.
+    const mutationCount = 52;
+    for (let i = 0; i < mutationCount; i++) {
+      const res = await page.request.patch(`/api/projects/${projectId}`, {
+        data: { notes: `AC-185 mutation ${i} ${Date.now()}` },
+      });
+      expect(res.ok(), `PATCH ${i} failed with ${res.status()}`).toBe(true);
+    }
 
     // Close + reopen the same card so the feed refetches.
     await page.getByTestId('detail-close').click();
@@ -125,66 +144,80 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
     await page.getByTestId('detail-panel').waitFor();
 
     const rows = feed.locator('[data-testid^="activity-feed-row-"]');
-    // Wait for the async feed fetch to land at least 2 rows — the
-    // audit query is a separate network round-trip after the panel
-    // mount, and a naive synchronous `count()` is racy.
+    // Wait for the async feed fetch to land the first page — the audit
+    // query is a separate network round-trip after the panel mount, and
+    // a naive synchronous `count()` is racy.
     await expect.poll(async () => await rows.count(), { timeout: 5000 }).toBeGreaterThanOrEqual(2);
-    const rowCount = await rows.count();
-    expect(rowCount).toBeGreaterThanOrEqual(2);
 
-    // Newest-first — the two most recent rows both belong to the
-    // project and the first row's timestamp is >= the second's
-    // (the two PATCHes were sequential so strict > would flake).
-    const firstTs = await rows.nth(0).getAttribute('data-created-at');
-    const secondTs = await rows.nth(1).getAttribute('data-created-at');
-    expect(firstTs).not.toBeNull();
-    expect(secondTs).not.toBeNull();
-    expect(Date.parse(firstTs!)).toBeGreaterThanOrEqual(Date.parse(secondTs!));
+    // Reverse-chrono across every rendered row (M5) — collect all
+    // timestamps and assert monotone non-increasing across every
+    // adjacent pair. The server orders DESC on (createdAt, id); equal
+    // timestamps are allowed because fixture writes can land in the
+    // same millisecond.
+    const timestamps = await rows.evaluateAll((els) =>
+      els.map((e) => e.getAttribute('data-created-at')),
+    );
+    for (const ts of timestamps) expect(ts).not.toBeNull();
+    for (let i = 0; i < timestamps.length - 1; i++) {
+      expect(Date.parse(timestamps[i]!)).toBeGreaterThanOrEqual(Date.parse(timestamps[i + 1]!));
+    }
 
-    // Pagination: "Ältere anzeigen" appends without collapsing.
+    // Pagination: "Ältere anzeigen" appends without collapsing (H3).
+    // Snapshot the row testids BEFORE the click, click, wait for the
+    // count to grow, then assert the post-click set is a strict
+    // superset of the pre-click set — a regression that drops N old
+    // rows and appends M > N new rows would otherwise pass.
     const olderButton = feed.getByRole('button', { name: /Ältere anzeigen/i });
-    if (await olderButton.count()) {
-      const before = await rows.count();
-      await olderButton.click();
-      // Wait for the row count to grow. 1.5× before is a sanity
-      // lower bound — implementation may fetch any page size; what
-      // the AC pins is "appends older entries without collapsing".
-      await expect.poll(async () => await rows.count(), { timeout: 5000 }).toBeGreaterThan(before);
+    await expect(olderButton).toBeVisible();
+    const beforeTestIds = await rows.evaluateAll((els) =>
+      els.map((e) => e.getAttribute('data-testid')),
+    );
+    const before = beforeTestIds.length;
+    await olderButton.click();
+    await expect.poll(async () => await rows.count(), { timeout: 5000 }).toBeGreaterThan(before);
+    const afterTestIds = await rows.evaluateAll((els) =>
+      els.map((e) => e.getAttribute('data-testid')),
+    );
+    const afterSet = new Set(afterTestIds);
+    for (const tid of beforeTestIds) {
+      expect(tid).not.toBeNull();
+      expect(afterSet.has(tid), `row testid ${tid} was dropped after paginating`).toBe(true);
     }
   });
 
   // Removed: an earlier test drove "fresh project → Keine Aktivität" for
   // the owner, but a fresh project always carries its `create` audit
   // row for an owner (unscoped), so the empty-state could never fire on
-  // that path. Empty-state coverage is pinned below by the
-  // worker-unreachable case, where the reachability predicate produces
-  // a genuinely empty scoped result. T-REDU removed.
-  test('worker seeing an unreachable project — empty-state renders "Keine Aktivität"', async ({
+  // that path. The assertion below uses a future-dated `from` filter
+  // to produce a genuinely empty result set — independent of caller
+  // scope or fixture state. T-REDU removed.
+  test('empty-state renders "Keine Aktivität" on a filter that matches no rows', async ({
     page,
   }) => {
-    // Worker1 is NOT assigned to every project — the global feed
-    // (for a project they aren't part of, accessed somehow) or an
-    // empty scoped set must render the German empty-state text.
+    // Use the owner because nav visibility for Aktivität is a separate
+    // AC (asserted above). The empty-state check here is about the UI
+    // affordance itself: a filter that matches nothing must render the
+    // testid-scoped empty-state inside the list container.
     //
-    // Simpler concrete path: worker1 has no per-project access to
-    // YYYY-001 (seeded with no worker assignments); on the global
-    // Aktivität view filtered to entityId=YYYY-001, the feed is
-    // empty and the UI must read "Keine Aktivität".
-    await loginAs(page, users.worker);
-    await page.getByTestId('view-toggle-aktivität').click();
+    // A `from` date in the far future is guaranteed to match zero rows
+    // for any caller — the server AND-composes filters with the scope
+    // predicate, so even an owner with unscoped reads receives an
+    // empty page. This is the concrete "empty by construction" path
+    // the finding asks for; filter-UI-driven rather than URL-driven
+    // because the UI exposes no entityId filter today.
+    await loginAs(page, users.owner);
+    await page.getByTestId('view-toggle-aktivitaet').click();
+    await page.getByTestId('audit-filter-from').fill('2099-01-01');
 
-    // The empty-state is a UI affordance — the spec pins the exact
-    // German text in ui/workflow-views.md §8.4.1 and ui/management.md
-    // §8.13.1.
-    const emptyState = page.getByTestId('audit-empty-state');
-    if (await emptyState.count()) {
-      await expect(emptyState).toContainText('Keine Aktivität');
-    } else {
-      // If the implementation chose to hide the empty-state element
-      // instead of emitting it, the list container must at least
-      // render the text.
-      await expect(page.getByText('Keine Aktivität')).toBeVisible();
-    }
+    // The empty-state testid is rendered inside the list container
+    // (ActivityFeed.tsx). Scope the match explicitly to that container
+    // so a stray empty-state elsewhere in the DOM cannot satisfy the
+    // assertion. The exact German copy is pinned by
+    // ui/workflow-views.md §8.4.1 and ui/management.md §8.13.1.
+    const list = page.getByTestId('audit-list');
+    const emptyState = list.getByTestId('audit-empty-state');
+    await expect(emptyState).toBeVisible();
+    await expect(emptyState).toContainText('Keine Aktivität');
   });
 });
 
@@ -202,7 +235,7 @@ test.describe('AC-186: payload drawer visibility per role', () => {
 
   test('owner sees a payload-drawer affordance on every payload-bearing row', async ({ page }) => {
     await loginAs(page, users.owner);
-    await page.getByTestId('view-toggle-aktivität').click();
+    await page.getByTestId('view-toggle-aktivitaet').click();
 
     // Find any row — owner is unscoped, so the first rendered row
     // has a payload (updates, creates, and deletes all do).
@@ -211,35 +244,66 @@ test.describe('AC-186: payload drawer visibility per role', () => {
     await expect(firstRow.getByTestId('activity-feed-drawer-toggle')).toBeVisible();
 
     // Opening expands inline without a route change.
-    const urlBefore = page.url();
-    await firstRow.getByTestId('activity-feed-drawer-toggle').click();
-    expect(page.url()).toBe(urlBefore);
-    await expect(firstRow.getByTestId('activity-feed-drawer-content')).toBeVisible();
+    await assertDrawerOpensInline(page, firstRow);
   });
 
   test('office sees a payload-drawer affordance on every payload-bearing row', async ({ page }) => {
     await loginAs(page, users.office);
-    await page.getByTestId('view-toggle-aktivität').click();
+    await page.getByTestId('view-toggle-aktivitaet').click();
+
+    // Office is unscoped for destructive actions and every user-kind
+    // row — the first rendered row is guaranteed to carry a payload,
+    // so the drawer affordance must be present AND must open inline.
     const firstRow = page.locator('[data-testid^="activity-feed-row-"]').first();
     await firstRow.waitFor();
     await expect(firstRow.getByTestId('activity-feed-drawer-toggle')).toBeVisible();
+    await assertDrawerOpensInline(page, firstRow);
   });
 
-  test('worker sees drawer on self-authored rows and NOT on others', async ({ page }) => {
+  test('worker sees drawer on self-authored rows and NOT on others', async ({ page, browser }) => {
+    // Precondition 1 — non-self-authored row visible to the worker.
+    // Driven through an independent browser context so this fixture
+    // does not pollute the worker's cookie jar. Worker1 is assigned to
+    // YYYY-007 (see audit-log.test.ts AT-91 / AT-93 fixtures); an
+    // owner-authored PATCH on that project produces a reachable audit
+    // row with `actorId !== worker.id` — the negative half of the
+    // AC-186 contract.
+    const ownerContext = await browser.newContext();
+    try {
+      const loginRes = await ownerContext.request.post('/api/auth/login', {
+        data: { username: users.owner, password: 'changeme' },
+      });
+      if (!loginRes.ok()) {
+        throw new Error(
+          `AC-186 worker drawer precondition: owner login returned ${loginRes.status()}`,
+        );
+      }
+      const listRes = await ownerContext.request.get('/api/projects?limit=200');
+      const list = (await listRes.json()).data as { id: string; number: string }[];
+      const year = new Date().getFullYear();
+      const assigned = list.find((p) => p.number === `${year}-007`);
+      if (!assigned) {
+        throw new Error(`AC-186 worker drawer precondition: seed project ${year}-007 missing`);
+      }
+      const ownerPatch = await ownerContext.request.patch(
+        `/api/projects/${assigned.id}`,
+        { data: { notes: `AC-186 worker fixture ${Date.now()}` } },
+      );
+      if (!ownerPatch.ok()) {
+        throw new Error(
+          `AC-186 worker drawer precondition: owner PATCH returned ${ownerPatch.status()}`,
+        );
+      }
+    } finally {
+      await ownerContext.close();
+    }
+
     await loginAs(page, users.worker);
 
-    // Precondition: the worker must have at least one self-authored
-    // audit row, else the "drawer present on self-authored" half of
-    // the AC-186 assertion cannot run. The earlier draft early-
-    // returned on an empty feed — T-TAUT per conventions-tests.md —
-    // so we drive a deliberate self-mutation here.
-    //
-    // The simplest worker-accessible mutation is the theme-preference
-    // update on `/api/auth/me`. It produces an audit row where
-    // `actorId == caller.id` — "self-authored" per api.md §14.2.8.
-    // Worker holds `auth:change-password`, which covers the self-
-    // profile mutation surface; the route is the same one
-    // `e2e/theme-preference.spec.ts` exercises.
+    // Precondition 2 — self-authored row. The simplest worker-accessible
+    // mutation is the theme-preference update on `/api/auth/me`. It
+    // produces an audit row where `actorId == caller.id` —
+    // "self-authored" per api.md §14.2.8.
     const patchRes = await page.request.patch('/api/auth/me', {
       data: { themePreference: 'dark' },
     });
@@ -249,7 +313,7 @@ test.describe('AC-186: payload drawer visibility per role', () => {
       );
     }
 
-    await page.getByTestId('view-toggle-aktivität').click();
+    await page.getByTestId('view-toggle-aktivitaet').click();
 
     const rows = page.locator('[data-testid^="activity-feed-row-"]');
     await rows.first().waitFor();
@@ -260,36 +324,32 @@ test.describe('AC-186: payload drawer visibility per role', () => {
       );
     }
 
-    // Classify the rendered rows by authorship. The UI reflects the
-    // API's payload-stripping via `data-has-payload` on each row:
-    //   - data-has-payload="true"  → API returned a payload
-    //                                → drawer toggle MUST be present.
-    //   - data-has-payload="false" → API stripped the payload
-    //                                → drawer toggle MUST be absent.
-    //
-    // Authorship is reflected via a sibling attribute the UI renders
-    // from the API response (`data-self-authored="true"` on the
-    // worker's own rows). The API contract in api.md §14.2.8 binds
-    // the two together: worker-visible rows carry payload iff the
-    // worker authored them.
-    let selfAuthoredCount = 0;
-    let nonSelfAuthoredCount = 0;
+    // Classify the rendered rows by authorship using the user-
+    // observable signals first: a drawer toggle either renders or it
+    // does not. `data-self-authored` / `data-has-payload` are kept as
+    // a cheap cross-check — they pin the UI's interpretation of the
+    // API contract (api.md §14.2.8: worker-visible rows carry payload
+    // iff the worker authored them) without letting the test degrade
+    // to a DOM-attribute smoke test.
+    let firstSelfAuthoredIndex = -1;
+    let firstNonSelfAuthoredIndex = -1;
     for (let i = 0; i < total; i++) {
       const row = rows.nth(i);
-      const hasPayload = await row.getAttribute('data-has-payload');
       const isSelfAuthored = (await row.getAttribute('data-self-authored')) === 'true';
       const toggleCount = await row.getByTestId('activity-feed-drawer-toggle').count();
+      const hasPayload = await row.getAttribute('data-has-payload');
 
       if (isSelfAuthored) {
-        selfAuthoredCount += 1;
+        if (firstSelfAuthoredIndex === -1) firstSelfAuthoredIndex = i;
         // API contract: full payload returned on self-authored rows.
-        expect(hasPayload).toBe('true');
         expect(toggleCount).toBe(1);
+        expect(hasPayload).toBe('true');
       } else {
-        nonSelfAuthoredCount += 1;
-        // API contract: payload stripped on every other row.
-        expect(hasPayload).toBe('false');
+        if (firstNonSelfAuthoredIndex === -1) firstNonSelfAuthoredIndex = i;
+        // API contract: payload stripped on every other row — the
+        // drawer toggle must be absent entirely, not just hidden.
         expect(toggleCount).toBe(0);
+        expect(hasPayload).toBe('false');
       }
     }
 
@@ -297,12 +357,15 @@ test.describe('AC-186: payload drawer visibility per role', () => {
     // present — positive case alone could pass a bug that emits the
     // drawer on every row; negative alone could pass a bug that omits
     // the drawer entirely.
-    expect(selfAuthoredCount).toBeGreaterThan(0);
-    if (nonSelfAuthoredCount === 0) {
+    expect(firstSelfAuthoredIndex).toBeGreaterThanOrEqual(0);
+    if (firstNonSelfAuthoredIndex === -1) {
       throw new Error(
         'AC-186 worker drawer fixture: no non-self-authored rows in the worker feed. The negative half of the contract ("drawer absent on others") cannot be exercised. Seed an owner/office mutation on an assigned project before this spec runs to produce a non-self-authored row visible to the worker via reachability.',
       );
     }
+
+    // Positive half: the drawer opens inline on a self-authored row.
+    await assertDrawerOpensInline(page, rows.nth(firstSelfAuthoredIndex));
   });
 });
 
@@ -314,49 +377,70 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
 
   // Shared fixture — drive a purge (owner-only) so there is a known
   // destructive row in the feed that every subsequent role check can
-  // look for. Running the setup here keeps the destructive fixture
-  // isolated from other specs (kanban-flows etc.).
+  // look for. Driven via API rather than the UI: a 7-step UI chain is
+  // brittle (button selectors, modal timing, archived-toggle render),
+  // and a mid-chain failure leaves the canary at the end unable to
+  // distinguish "role filter wrong" from "fixture never ran".
   test.beforeAll(async ({ browser }) => {
-    const page = await browser.newPage();
+    const ctx = await browser.newContext();
     try {
-      await loginAs(page, users.owner);
-      await page.getByTestId('view-toggle-kunden').click();
-      await page.getByTestId('customer-create-button').click();
-      const cust = `Destructive-fixture ${Date.now()}`;
-      await page.getByTestId('customer-name-input').fill(cust);
-      await page.getByTestId('customer-submit').click();
+      const loginRes = await ctx.request.post('/api/auth/login', {
+        data: { username: users.owner, password: 'changeme' },
+      });
+      if (!loginRes.ok()) {
+        throw new Error(`AC-187 fixture: owner login returned ${loginRes.status()}`);
+      }
 
-      await page.getByTestId('view-toggle-projekte').click();
-      await page.getByTestId('project-create-button').click();
-      const num = `AC187-${Date.now()}`;
-      await page.getByTestId('project-number-input').fill(num);
-      await page.getByTestId('project-title-input').fill('AC-187 purge fixture');
-      await page.getByTestId('project-customer-select').selectOption({ label: cust });
-      await page.getByTestId('project-submit').click();
+      const custRes = await ctx.request.post('/api/customers', {
+        data: { name: `Destructive-fixture ${Date.now()}` },
+      });
+      if (!custRes.ok()) {
+        throw new Error(`AC-187 fixture: customer POST returned ${custRes.status()}`);
+      }
+      const custId = (await custRes.json()).id as string;
 
-      // Archive then purge.
-      await page
-        .getByTestId('project-table')
-        .locator('tbody tr', { hasText: num })
-        .getByTestId('project-archive-button')
-        .click();
-      await page.getByRole('button', { name: /Bestätigen|OK/i }).click();
+      const projRes = await ctx.request.post('/api/projects', {
+        data: {
+          number: `AC187-${Date.now()}`,
+          title: 'AC-187 purge fixture',
+          customerId: custId,
+        },
+      });
+      if (!projRes.ok()) {
+        throw new Error(`AC-187 fixture: project POST returned ${projRes.status()}`);
+      }
+      const projId = (await projRes.json()).id as string;
 
-      await page.getByTestId('archived-toggle').click();
-      await page
-        .getByTestId('project-table')
-        .locator('tbody tr', { hasText: num })
-        .getByTestId('project-purge-button')
-        .click();
-      await page.getByRole('button', { name: /Bestätigen|OK/i }).click();
+      // Archive (soft-delete) — precondition for purge per projects.ts:343.
+      const archiveRes = await ctx.request.delete(`/api/projects/${projId}`);
+      if (!archiveRes.ok()) {
+        throw new Error(`AC-187 fixture: archive DELETE returned ${archiveRes.status()}`);
+      }
+
+      const purgeRes = await ctx.request.delete(`/api/projects/${projId}/purge`);
+      if (!purgeRes.ok()) {
+        throw new Error(`AC-187 fixture: purge DELETE returned ${purgeRes.status()}`);
+      }
+
+      // Canary (M7): verify a purge audit row actually landed for THIS
+      // project id — a green fixture with a broken audit write would
+      // silently pass every subsequent `toHaveCount(0)` role assertion.
+      const auditRes = await ctx.request.get(`/api/audit?action=purge&entityId=${projId}`);
+      if (!auditRes.ok()) {
+        throw new Error(`AC-187 fixture: audit GET returned ${auditRes.status()}`);
+      }
+      const audit = (await auditRes.json()) as { data: unknown[] };
+      if (!audit.data || audit.data.length === 0) {
+        throw new Error(`AC-187 fixture: no purge audit row emitted for project ${projId}`);
+      }
     } finally {
-      await page.close();
+      await ctx.close();
     }
   });
 
   test('owner — purge entries are visible in the global Aktivität view', async ({ page }) => {
     await loginAs(page, users.owner);
-    await page.getByTestId('view-toggle-aktivität').click();
+    await page.getByTestId('view-toggle-aktivitaet').click();
 
     // A row with action=purge must exist (the fixture above drove
     // one). The UI's German label for `purge` is implementation-
@@ -367,14 +451,14 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
 
   test('office — purge entries are not visible', async ({ page }) => {
     await loginAs(page, users.office);
-    await page.getByTestId('view-toggle-aktivität').click();
+    await page.getByTestId('view-toggle-aktivitaet').click();
     const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
     await expect(purgeRows).toHaveCount(0);
   });
 
   test('worker — purge entries are not visible', async ({ page }) => {
     await loginAs(page, users.worker);
-    await page.getByTestId('view-toggle-aktivität').click();
+    await page.getByTestId('view-toggle-aktivitaet').click();
     const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
     await expect(purgeRows).toHaveCount(0);
   });

@@ -261,7 +261,12 @@ describe('AT-89: Mutation + audit row atomicity (AC-177)', () => {
   });
 
   // AT-89 — delete on `project_worker`
-  it('delete on project_worker produces exactly one audit_log row (action=delete)', async () => {
+  it('delete on project_worker produces one audit_log row per dropped assignment (action=delete)', async () => {
+    // Snapshot taken before the mutation so the lookup below can filter
+    // by `created_at >= before`. Without this filter a sibling test (or
+    // a future reorder) could leave a matching row and the lookup would
+    // land on it silently.
+    const before = new Date();
     const { db, pool } = createDatabase();
     try {
       // Seed: any project with a worker assignment. The seeded worker1
@@ -283,7 +288,7 @@ describe('AT-89: Mutation + audit row atomicity (AC-177)', () => {
       const assignedCount = (assignedBefore.rows[0] as { c: number }).c;
       expect(assignedCount).toBeGreaterThan(0);
 
-      const before = await countAuditRows(db);
+      const auditBefore = await countAuditRows(db);
 
       // Update-assignments PATCH: drop the worker list to [] so the
       // service deletes existing project_worker rows. Route shape is
@@ -295,14 +300,17 @@ describe('AT-89: Mutation + audit row atomicity (AC-177)', () => {
       });
       expect(patchRes.statusCode).toBe(200);
 
-      const after = await countAuditRows(db);
+      const auditAfter = await countAuditRows(db);
       // Exactly `assignedCount` delete rows — one per dropped assignment,
       // per AC-177's "every mutation produces exactly one audit_log row".
-      expect(after - before).toBe(assignedCount);
+      expect(auditAfter - auditBefore).toBe(assignedCount);
 
       const rows = await db.execute(
         sql`SELECT * FROM audit_log
             WHERE entity_type = 'project_worker' AND action = 'delete'
+              AND created_at >= ${before}
+              AND (payload->'before'->>'projectId' = ${projectId}
+                   OR payload->'after'->>'projectId' = ${projectId})
             ORDER BY created_at DESC LIMIT 1`,
       );
       expect(rows.rows.length).toBeGreaterThan(0);
@@ -474,6 +482,16 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
   let officeToken: string;
   let workerToken: string;
   let workerId: string;
+  // Reachability sets derived from raw SQL (not via authGet) so the
+  // oracle does not share the ADR-0019 scoping predicate with the SUT
+  // — a uniform bug in the predicate must not silently pass.
+  let workerAssignedProjectIds: Set<string>;
+  let workerReachableCustomerIds: Set<string>;
+  // Audit-row id for the owner's self-PATCH (entityType='user',
+  // actorId=ownerId). Used as a positive control in the owner/office
+  // unscoped blocks: asserting presence rules out a buggy predicate
+  // that returns only one seeded row.
+  let ownerAuthoredUserRowId: string;
 
   beforeAll(async () => {
     await startApp();
@@ -561,10 +579,64 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
       username: string;
     }[];
     const worker2 = workerList.find((u) => u.username === SEED_USERS.worker2.username);
+    expect(worker2).toBeDefined();
     if (worker2) {
       await authPatch(ownerToken, `/api/projects/${unassigned!.id}`, {
         assignedWorkerIds: [worker2.id],
       });
+    }
+
+    // Derive the worker's reachability sets from raw SQL rather than the
+    // scoped endpoints. authGet('/api/projects'), authGet('/api/customers')
+    // run the same ADR-0019 predicate under test; using them as the oracle
+    // would let a uniform predicate bug pass silently. Owner-side lookups
+    // of the acting ids are unscoped and safe to derive via raw SQL.
+    const { db: fixtureDb, pool: fixturePool } = createDatabase();
+    try {
+      const assignedRows = await fixtureDb.execute(
+        sql`SELECT project_id FROM project_workers WHERE user_id = ${workerId}`,
+      );
+      workerAssignedProjectIds = new Set(
+        (assignedRows.rows as { project_id: string }[]).map((r) => r.project_id),
+      );
+
+      // Subquery on `project_workers` rather than passing the JS Set as a
+      // `= ANY(...)` parameter — drizzle's sql template inlines a JS array
+      // as a parenthesized tuple, which Postgres rejects with
+      // "op ANY/ALL (array) requires array on right side".
+      const customerRows = await fixtureDb.execute(
+        sql`SELECT DISTINCT customer_id FROM projects
+            WHERE id IN (SELECT project_id FROM project_workers WHERE user_id = ${workerId})`,
+      );
+      workerReachableCustomerIds = new Set(
+        (customerRows.rows as { customer_id: string }[]).map((r) => r.customer_id),
+      );
+
+      // Capture the audit-row id for the owner's self-PATCH: the most
+      // recent entity_type='user' row authored by the owner. Unscoped
+      // (raw SQL) — we're asking "what did the DB record?", not "what
+      // does the predicate return?".
+      const ownerLookup = await fixtureDb.execute(
+        sql`SELECT id FROM users WHERE username = ${SEED_USERS.owner.username} LIMIT 1`,
+      );
+      const ownerRow = ownerLookup.rows[0] as { id: string } | undefined;
+      if (!ownerRow) {
+        throw new Error('AT-91 fixture: owner user missing from seed');
+      }
+      const ownerAuditLookup = await fixtureDb.execute(
+        sql`SELECT id FROM audit_log
+            WHERE entity_type = 'user' AND actor_id = ${ownerRow.id}
+            ORDER BY created_at DESC LIMIT 1`,
+      );
+      const ownerAuditRow = ownerAuditLookup.rows[0] as { id: string } | undefined;
+      if (!ownerAuditRow) {
+        throw new Error(
+          'AT-91 fixture: no owner-authored user audit row — owner self-PATCH did not emit one',
+        );
+      }
+      ownerAuthoredUserRowId = ownerAuditRow.id;
+    } finally {
+      await fixturePool.end();
     }
   });
 
@@ -600,28 +672,32 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
     );
     expect(selfAuthoredUserRows.length).toBeGreaterThanOrEqual(1);
 
+    // api.md §14.2.8 boundary-stripping: on every non-self-authored row
+    // visible to a worker, both `actorId` and `payload` must be null at
+    // the API boundary. Self-authored rows (actorId === workerId) keep
+    // full detail; everything else is stripped.
+    for (const row of entries) {
+      if (row.actorId !== workerId) {
+        expect(row.actorId).toBeNull();
+        expect(row.payload).toBeNull();
+      }
+    }
+
     // Every `project` entry the worker sees is for an assigned project.
-    const assignedIds = new Set(
-      (await authGet(workerToken, '/api/projects?limit=200'))
-        .json()
-        .data.map((p: { id: string }) => p.id),
-    );
+    // Oracle is derived from raw SQL in beforeAll (workerAssignedProjectIds)
+    // to avoid sharing the ADR-0019 scoping predicate with the SUT.
     for (const row of entries) {
       if (row.entityType === 'project') {
-        expect(assignedIds.has(row.entityId)).toBe(true);
+        expect(workerAssignedProjectIds.has(row.entityId)).toBe(true);
       }
     }
 
     // Every `customer` entry is for a customer reachable via an
-    // assigned non-deleted project.
-    const reachableCustomerIds = new Set(
-      (await authGet(workerToken, '/api/customers?limit=200'))
-        .json()
-        .customers.map((c: { id: string }) => c.id),
-    );
+    // assigned project. Oracle is derived from raw SQL in beforeAll
+    // (workerReachableCustomerIds).
     for (const row of entries) {
       if (row.entityType === 'customer') {
-        expect(reachableCustomerIds.has(row.entityId)).toBe(true);
+        expect(workerReachableCustomerIds.has(row.entityId)).toBe(true);
       }
     }
 
@@ -630,29 +706,27 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
     // §5.10 carries before/after with projectId/userId; the
     // reachability predicate pins the projectId to the caller's
     // assignment set (AC-180).
-    const assignedProjectIds = new Set(
-      (await authGet(workerToken, '/api/projects?limit=200'))
-        .json()
-        .data.map((p: { id: string }) => p.id),
-    );
+    //
+    // Worker boundary-stripping (api.md §14.2.8): for non-self-authored
+    // rows the API returns payload=null, so we can only assert a
+    // projectId match on self-authored project_worker rows. The scope
+    // guarantee for the stripped rows is "this row exists in the
+    // worker's feed only because its payload projectId was in the
+    // assignment set at read time" — implicit via the stripped-row
+    // count being non-negative rather than verifiable here.
     for (const row of entries) {
-      if (row.entityType === 'project_worker') {
+      if (row.entityType === 'project_worker' && row.actorId === workerId) {
         const payload = row.payload as
           | { before?: { projectId?: string }; after?: { projectId?: string } }
           | null
           | undefined;
         const projectId = payload?.after?.projectId ?? payload?.before?.projectId;
-        // Spec pins that the payload references a project — implementation
-        // decides the concrete key name. If neither before nor after
-        // carries a projectId, the reachability predicate could not have
-        // admitted the row (AC-180). Fail loudly rather than silently
-        // skipping — a silent skip would turn a regression into a pass.
         if (projectId === undefined) {
           throw new Error(
             `AT-91: project_worker audit row ${row.id} has no projectId in payload — reachability predicate cannot have admitted it (got payload ${JSON.stringify(row.payload)})`,
           );
         }
-        expect(assignedProjectIds.has(projectId)).toBe(true);
+        expect(workerAssignedProjectIds.has(projectId)).toBe(true);
       }
     }
   });
@@ -666,6 +740,12 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
     // Owner sees `user`-entity rows — at minimum the self-update above.
     const hasUserEntry = entries.some((row) => row.entityType === 'user');
     expect(hasUserEntry).toBe(true);
+
+    // Positive control: the owner-authored user row must be present.
+    // `some(entityType==='user')` alone would pass on a buggy predicate
+    // returning only one unrelated seeded row.
+    const ids = new Set(entries.map((row) => row.id));
+    expect(ids.has(ownerAuthoredUserRowId)).toBe(true);
   });
 
   // AT-91 — office: unscoped
@@ -675,6 +755,14 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
     const entries = res.json().data as AuditApiEntry[];
     const hasUserEntry = entries.some((row) => row.entityType === 'user');
     expect(hasUserEntry).toBe(true);
+
+    // Positive control: the owner-authored user row must be present for
+    // office too — office reachability is null (unscoped), and the
+    // destructive predicate excludes roles-diff updates only (api.md
+    // §14.2.8). A theme-preference update touches no roles, so it's
+    // admitted.
+    const ids = new Set(entries.map((row) => row.id));
+    expect(ids.has(ownerAuthoredUserRowId)).toBe(true);
   });
 });
 
@@ -801,6 +889,21 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
   let userDeleteAuditId: string;
   /** An audit row matching `action='update'` on `entityType='user'` touching roles. */
   let userRolesUpdateAuditId: string;
+  /**
+   * Negative-control row: `action='update'` on `entityType='user'` whose
+   * diff is email-only (no `roles`). Owner and office MUST see it — it
+   * is not destructive. The purpose is to prove the destructive
+   * predicate keys specifically off the `roles` diff rather than any
+   * broader "user entity update" catch-all.
+   */
+  let userEmailUpdateAuditId: string;
+  /**
+   * An in-scope non-destructive audit row visible to worker1 —
+   * positive control for the worker list block. Without it, an endpoint
+   * returning `[]` to workers would pass the `!ids.has(purgeAuditId)`
+   * assertion trivially.
+   */
+  let workerVisibleNonDestructiveId: string;
 
   beforeAll(async () => {
     await startApp();
@@ -873,6 +976,71 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
         RETURNING id
       `);
       userRolesUpdateAuditId = (rolesUpdateInsert.rows[0] as { id: string }).id;
+
+      // ---- Negative control — user-email-update (no `roles` diff) ----
+      // Proves the destructive predicate keys specifically off the
+      // `roles` diff: a user-entity update whose diff omits `roles` is
+      // NOT destructive. Owner and office must both see it (office is
+      // unscoped on reachability per api.md §14.2.8; the destructive
+      // predicate admits this row because the diff does not touch roles).
+      const emailUpdateEntityId = '00000000-0000-0000-0000-0000000a7934';
+      const emailUpdateInsert = await fixtureDb.execute(sql`
+        INSERT INTO audit_log
+          (actor_id, actor_kind, actor_reason, entity_type, entity_id,
+           action, payload, correlation_id)
+        VALUES (${ownerId}, 'user', NULL, 'user', ${emailUpdateEntityId},
+                'update',
+                '{"before":{"email":"old@example.com"},"after":{"email":"new@example.com"}}'::jsonb,
+                NULL)
+        RETURNING id
+      `);
+      userEmailUpdateAuditId = (emailUpdateInsert.rows[0] as { id: string }).id;
+
+      // ---- Worker positive-control — in-scope non-destructive row ----
+      // Drive an `update` mutation against a worker-assigned project so
+      // the worker's reachability predicate admits the resulting audit
+      // row. Without this, the worker block would only have a negative
+      // assertion (purge absence) and an endpoint returning `[]` would
+      // pass silently. YYYY-007 is assigned to worker1 (see
+      // role-scoping.test.ts fixtures).
+      const workerProjects = (await authGet(ownerToken, '/api/projects?limit=200')).json().data as {
+        id: string;
+        number: string;
+      }[];
+      const workerAssignedProject = workerProjects.find((p) => p.number === `${year}-007`);
+      if (!workerAssignedProject) {
+        throw new Error('AT-93 fixture: expected YYYY-007 in seed for worker positive control');
+      }
+      const auditBefore = await fixtureDb.execute(
+        sql`SELECT COUNT(*)::int AS c FROM audit_log
+            WHERE entity_type = 'project' AND action = 'update'
+              AND entity_id = ${workerAssignedProject.id}`,
+      );
+      const beforeCount = (auditBefore.rows[0] as { c: number }).c;
+      const patchRes = await authPatch(ownerToken, `/api/projects/${workerAssignedProject.id}`, {
+        notes: `AT-93 worker positive control ${Date.now()}`,
+      });
+      if (patchRes.statusCode !== 200) {
+        throw new Error(
+          `AT-93 fixture: expected 200 from worker-visible update, got ${patchRes.statusCode}`,
+        );
+      }
+      const auditAfter = await fixtureDb.execute(
+        sql`SELECT id FROM audit_log
+            WHERE entity_type = 'project' AND action = 'update'
+              AND entity_id = ${workerAssignedProject.id}
+            ORDER BY created_at DESC LIMIT 1`,
+      );
+      if (auditAfter.rows.length === 0) {
+        throw new Error('AT-93 fixture: worker-visible update produced no audit row');
+      }
+      const auditAfterCount = await fixtureDb.execute(
+        sql`SELECT COUNT(*)::int AS c FROM audit_log
+            WHERE entity_type = 'project' AND action = 'update'
+              AND entity_id = ${workerAssignedProject.id}`,
+      );
+      expect((auditAfterCount.rows[0] as { c: number }).c).toBe(beforeCount + 1);
+      workerVisibleNonDestructiveId = (auditAfter.rows[0] as { id: string }).id;
     } finally {
       await fixturePool.end();
     }
@@ -889,6 +1057,10 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
     expect(ids.has(purgeAuditId)).toBe(true);
     expect(ids.has(userDeleteAuditId)).toBe(true);
     expect(ids.has(userRolesUpdateAuditId)).toBe(true);
+    // Negative control: the non-destructive email-update row must be
+    // present. Owner sees everything; this pins that AND the predicate
+    // is keying off the `roles` diff rather than any broader catch-all.
+    expect(ids.has(userEmailUpdateAuditId)).toBe(true);
   });
 
   it('office list excludes all three destructive entries (predicate WHERE fragment)', async () => {
@@ -898,12 +1070,22 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
     expect(ids.has(purgeAuditId)).toBe(false);
     expect(ids.has(userDeleteAuditId)).toBe(false);
     expect(ids.has(userRolesUpdateAuditId)).toBe(false);
+    // Negative control: the email-update row has no `roles` diff and is
+    // therefore NOT destructive. Office reachability is null (unscoped
+    // per api.md §14.2.8), so the row must be admitted — proving the
+    // destructive predicate keys off `roles` specifically, not any
+    // user-entity update.
+    expect(ids.has(userEmailUpdateAuditId)).toBe(true);
   });
 
   it('worker list excludes the purge row (worker also excluded from user rows via reachability)', async () => {
     const res = await authGet(workerToken, '/api/audit?limit=1000');
     expect(res.statusCode).toBe(200);
     const ids = new Set((res.json().data as AuditApiEntry[]).map((r) => r.id));
+    // Positive control: a reachable non-destructive row must be present
+    // in the worker's feed. Without this, an endpoint returning `[]`
+    // would pass the purge-absence assertion trivially.
+    expect(ids.has(workerVisibleNonDestructiveId)).toBe(true);
     // Purge carries `entityType='project'` — the reachability predicate
     // alone does NOT exclude every purge (only unreachable ones); the
     // destructive predicate is what excludes them categorically.
@@ -1021,20 +1203,25 @@ describe('AT-94: Throwing post-commit subscriber does not roll back (AC-183)', (
         // Two common logger conventions exist:
         //   a) `logger.error({ event, audit_entry_id, error_message })`
         //   b) `logger.error('message', { event, audit_entry_id, error_message })`
-        // We accept either by scanning every argument of the first
-        // call for a plain-object that carries the required fields.
-        // This keeps the test independent of the implementer's exact
-        // logger signature — the contract is the field-set, not the
-        // positional shape.
+        // We scan all `errorSpy` calls for the first whose object-arg
+        // carries the expected `event` — using `calls[0]` would blame
+        // this test for an unrelated earlier `.error(...)` call landing
+        // first. The contract is the field-set, not the call ordinal.
         expect(errorSpy).toHaveBeenCalled();
-        const firstCall = errorSpy.mock.calls[0]!;
-        const payload = firstCall.find(
-          (arg): arg is Record<string, unknown> =>
-            typeof arg === 'object' && arg !== null && !Array.isArray(arg),
-        );
+        let payload: Record<string, unknown> | undefined;
+        for (const call of errorSpy.mock.calls) {
+          const objectArg = (call as unknown[]).find(
+            (arg): arg is Record<string, unknown> =>
+              typeof arg === 'object' && arg !== null && !Array.isArray(arg),
+          );
+          if (objectArg && objectArg.event === 'audit-publisher-handler-error') {
+            payload = objectArg;
+            break;
+          }
+        }
         if (!payload) {
           throw new Error(
-            `AT-94: logger.error was called without an object argument — got ${JSON.stringify(firstCall)}`,
+            `AT-94: no logger.error call with event='audit-publisher-handler-error' found — got calls ${JSON.stringify(errorSpy.mock.calls)}`,
           );
         }
         expect(payload.event).toBe('audit-publisher-handler-error');
