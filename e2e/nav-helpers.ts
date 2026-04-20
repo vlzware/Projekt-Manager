@@ -25,11 +25,22 @@ export type NavViewKey =
   | 'aktivitaet';
 
 /**
+ * Wait until the header has finished rendering. Counts taken before
+ * this point race the initial paint and return 0 for segments that
+ * will appear a tick later — which then misroutes
+ * `clickView` / `expectViewReachable` into the admin-menu branch.
+ */
+async function waitForHeader(page: Page): Promise<void> {
+  await page.getByTestId('header').waitFor({ state: 'visible' });
+}
+
+/**
  * Click a view nav entry. If the header has a "Verwaltung" admin menu
  * and the target view lives inside it, the menu is opened first. Otherwise
  * the inline tab is clicked directly.
  */
 export async function clickView(page: Page, view: NavViewKey): Promise<void> {
+  await waitForHeader(page);
   const inline = page.getByTestId(`view-toggle-${view}`);
   if (await inline.count()) {
     await inline.click();
@@ -48,6 +59,7 @@ export async function clickView(page: Page, view: NavViewKey): Promise<void> {
  * locator will resolve to zero as expected.
  */
 export async function resolveViewLocator(page: Page, view: NavViewKey): Promise<Locator> {
+  await waitForHeader(page);
   const inline = page.getByTestId(`view-toggle-${view}`);
   if (await inline.count()) return inline;
   const adminTrigger = page.getByTestId('nav-admin-trigger');
@@ -69,6 +81,7 @@ export async function expectViewReachable(
   view: NavViewKey,
   reachable: boolean,
 ): Promise<void> {
+  await waitForHeader(page);
   if (!reachable) {
     // Not reachable: not inline. If the admin menu exists, open it and
     // confirm the entry is absent from inside too.

@@ -47,6 +47,7 @@ export class ProjectTransitionService {
             const repoResult = await transitionForwardRepo(tx, projectId, userId, expectedStatus);
             return {
               entityId: projectId,
+              entityLabel: `${repoResult.project.number} ${repoResult.project.title}`,
               value: repoResult,
               // data-model.md §5.10: a transition's before/after carry
               // BOTH `status` and `statusChangedAt`. The prior
@@ -107,6 +108,7 @@ export class ProjectTransitionService {
             const repoResult = await transitionBackwardRepo(tx, projectId, userId, expectedStatus);
             return {
               entityId: projectId,
+              entityLabel: `${repoResult.project.number} ${repoResult.project.title}`,
               value: repoResult,
               // data-model.md §5.10: see `transitionForward` above for
               // the before/after shape rationale.

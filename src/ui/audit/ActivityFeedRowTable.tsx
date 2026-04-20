@@ -87,7 +87,7 @@ export function ActivityFeedRowTable({ entry }: Props) {
       </td>
       <td className={tableStyles.entity}>
         <div className={styles.entityLabel}>{entityTypeLabel(entry.entityType)}</div>
-        <div className={tableStyles.entityId}>{entry.entityId}</div>
+        <div className={tableStyles.entityId}>{entry.entityLabel ?? entry.entityId}</div>
       </td>
       <td className={tableStyles.action}>{labelForAuditAction(entry.action)}</td>
       <td className={tableStyles.payload}>

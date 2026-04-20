@@ -246,6 +246,13 @@ export const auditLog = pgTable(
     actorReason: text('actor_reason'),
     entityType: text('entity_type').notNull(),
     entityId: uuid('entity_id').notNull(),
+    // Human-readable label for the entity at the time of the event
+    // (e.g. "Firma Weber GmbH", "Innenraumgestaltung Weber"). Captured
+    // at write time so the activity feed remains readable even after
+    // the target row is renamed or purged. Nullable for paths that
+    // cannot supply a label (import, retention cleanup); the client
+    // falls back to the UUID.
+    entityLabel: text('entity_label'),
     action: text('action').notNull(),
     payload: jsonb('payload')
       .notNull()

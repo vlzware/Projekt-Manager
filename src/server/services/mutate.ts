@@ -102,6 +102,15 @@ export interface MutateResult<T> {
   value: T;
   before?: unknown;
   after?: unknown;
+  /**
+   * Human-readable label for the entity at event-time (e.g. a project's
+   * "Innenraumgestaltung Weber", a customer's "Firma Weber GmbH"). Frozen
+   * with the audit row so the activity feed stays meaningful after the
+   * target is renamed or purged. Services return it from `run` — they
+   * hold the entity data already. `null` is acceptable for paths where no
+   * natural label exists; the UI falls back to the entityId.
+   */
+  entityLabel?: string | null;
 }
 
 /**
@@ -175,6 +184,7 @@ export async function mutateInTx<T>(
       actorReason: ctx.actorKind === 'system' ? (ctx.actorReason ?? null) : null,
       entityType: spec.entityType,
       entityId: domainResult.entityId,
+      entityLabel: domainResult.entityLabel ?? null,
       action: spec.action,
       // Drizzle's `jsonb()` column serializes the JS value automatically
       // via the pg driver. The earlier `sql\`${JSON.stringify(...)}::jsonb\``
@@ -199,6 +209,7 @@ export async function mutateInTx<T>(
     actorReason: inserted.actorReason,
     entityType: inserted.entityType as AuditEntityType,
     entityId: inserted.entityId,
+    entityLabel: inserted.entityLabel,
     action: inserted.action,
     payload: inserted.payload,
     correlationId: inserted.correlationId,

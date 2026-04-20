@@ -101,6 +101,7 @@ export class CustomerService {
           });
           return {
             entityId: inserted.id,
+            entityLabel: inserted.name,
             value: inserted,
             before: {},
             after: customerDiffFields({
@@ -154,6 +155,7 @@ export class CustomerService {
               });
               return {
                 entityId: row.id,
+                entityLabel: row.name,
                 value: row,
                 before: {},
                 after: customerDiffFields({
@@ -208,6 +210,7 @@ export class CustomerService {
           const changed = diffCustomerChange(priorRow, data);
           return {
             entityId: id,
+            entityLabel: updated.name,
             value: updated,
             before: changed.before,
             after: changed.after,
@@ -281,6 +284,7 @@ export class CustomerService {
             await hardDeleteProjectUnchecked(innerTx, row.id);
             return {
               entityId: row.id,
+              entityLabel: `${row.number} ${row.title}`,
               value: null,
               before: { number: row.number, title: row.title, customerId: row.customerId },
               after: {},
@@ -327,6 +331,7 @@ export class CustomerService {
 
           return {
             entityId: id,
+            entityLabel: priorRow.name,
             value: null,
             before: customerDiffFields({
               name: priorRow.name,

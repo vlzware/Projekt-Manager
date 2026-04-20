@@ -30,24 +30,23 @@ export type AuditActorKind = 'user' | 'system';
 export interface AuditEntry {
   id: string;
   createdAt: string;
-  /**
-   * Actor identity.
-   *   - owner/office callers: the actor's user id (or null for `system`).
-   *   - worker callers: only set when `actorId === caller.id`; null on
-   *     every other row (api.md §14.2.8 "Actor name in response").
-   */
+  /** The actor's user id (or null for `system`-kind rows). */
   actorId: string | null;
   actorKind: AuditActorKind;
   /** Free-text reason carried on system-actor rows. */
   actorReason: string | null;
-  /**
-   * Display name of the user actor. Populated server-side for owner
-   * and office callers on `actorKind === 'user'` rows. Null for worker
-   * callers (workers lack `user:read`). Null for system-actor rows.
-   */
+  /** Display name of the user actor. Null on system rows. */
   actorDisplayName: string | null;
   entityType: AuditEntityType;
   entityId: string;
+  /**
+   * Human-readable label for the entity at event time (e.g. a
+   * project's "2026-002 Innenraumgestaltung Weber", a customer's
+   * "Firma Weber GmbH"). Frozen at write time — stays meaningful
+   * after the target is renamed or purged. Null on legacy rows or
+   * paths that couldn't supply one; the UI falls back to `entityId`.
+   */
+  entityLabel: string | null;
   /**
    * Action vocabulary — free-text by design (data-model.md §5.10). The
    * shipping set is pinned by `auditActionLabels.ts` for UI rendering;
@@ -55,13 +54,9 @@ export interface AuditEntry {
    */
   action: string;
   /**
-   * The field-level diff payload (jsonb on the server).
-   *   - owner/office callers: populated on any row the server persists
-   *     a payload for.
-   *   - worker callers: populated only on self-authored rows; stripped
-   *     to null elsewhere (api.md §14.2.8 "Payload drawer").
-   * `unknown` is deliberate — the payload's shape depends on the
-   * action and entity type and is rendered by a shape-tolerant drawer.
+   * The field-level diff payload (jsonb on the server). `unknown`
+   * is deliberate — the payload shape varies by action and entity
+   * type and is rendered by a shape-tolerant drawer.
    */
   payload: unknown | null;
   correlationId: string | null;

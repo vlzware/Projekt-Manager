@@ -188,6 +188,7 @@ export class ProjectCrudService {
           });
           return {
             entityId: row.id,
+            entityLabel: `${row.number} ${row.title}`,
             value: row,
             before: {},
             after: {
@@ -219,6 +220,7 @@ export class ProjectCrudService {
             const displayName = await getUserDisplayName(innerTx, workerId);
             return {
               entityId: inserted.id,
+              entityLabel: displayName ?? null,
               value: null,
               before: {},
               after: { projectId: inserted.id, userId: workerId, displayName },
@@ -449,7 +451,13 @@ export class ProjectCrudService {
                 after.notes = updatedDiff.notes;
               }
 
-              return { entityId: id, value: updated, before, after };
+              return {
+                entityId: id,
+                entityLabel: `${updated.number} ${updated.title}`,
+                value: updated,
+                before,
+                after,
+              };
             },
           });
           collected.push(fieldUpdate.auditRow);
@@ -471,6 +479,7 @@ export class ProjectCrudService {
                 await removeProjectWorker(innerTx, id, workerId);
                 return {
                   entityId: id,
+                  entityLabel: displayName ?? null,
                   value: null,
                   before: { projectId: id, userId: workerId, displayName },
                   after: {},
@@ -488,6 +497,7 @@ export class ProjectCrudService {
                 const displayName = await getUserDisplayName(innerTx, workerId);
                 return {
                   entityId: id,
+                  entityLabel: displayName ?? null,
                   value: null,
                   before: {},
                   after: { projectId: id, userId: workerId, displayName },
@@ -544,6 +554,7 @@ export class ProjectCrudService {
             await softDeleteProjectRepo(tx, id, userId);
             return {
               entityId: id,
+              entityLabel: `${priorRow.number} ${priorRow.title}`,
               value: null,
               before: { number: priorRow.number, title: priorRow.title },
               after: {},
@@ -581,6 +592,7 @@ export class ProjectCrudService {
             await hardDeleteProjectRepo(tx, id);
             return {
               entityId: id,
+              entityLabel: priorRow ? `${priorRow.number} ${priorRow.title}` : null,
               value: null,
               before: priorRow ? { number: priorRow.number, title: priorRow.title } : {},
               after: {},

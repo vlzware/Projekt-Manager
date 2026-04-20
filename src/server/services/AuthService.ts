@@ -114,7 +114,13 @@ export class AuthService {
             after.themePreference = row.themePreference;
           }
 
-          return { entityId: actingUserId, value: row, before, after };
+          return {
+            entityId: actingUserId,
+            entityLabel: row.displayName,
+            value: row,
+            before,
+            after,
+          };
         },
       },
     );
@@ -189,7 +195,13 @@ export class AuthService {
         run: async (tx) => {
           await changePasswordRepo(tx, user.id, newHash, user.id);
           await deleteSessionsByUserId(tx, user.id, currentToken);
-          return { entityId: user.id, value: null, before: {}, after: {} };
+          return {
+            entityId: user.id,
+            entityLabel: user.displayName,
+            value: null,
+            before: {},
+            after: {},
+          };
         },
       },
     );

@@ -65,6 +65,8 @@ export interface AuditEntry {
   actorDisplayName: string | null;
   entityType: 'project' | 'customer' | 'user' | 'project_worker';
   entityId: string;
+  /** Snapshot of the entity's human-readable label at write time. */
+  entityLabel: string | null;
   action: string;
   payload: unknown | null;
   correlationId: string | null;
@@ -106,6 +108,7 @@ function shapeEntry(row: AuditRow): AuditEntry {
     actorDisplayName: row.actorKind === 'user' ? row.actorDisplayName : null,
     entityType: row.entityType,
     entityId: row.entityId,
+    entityLabel: row.entityLabel,
     action: row.action,
     payload: row.payload,
     correlationId: row.correlationId,

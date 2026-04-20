@@ -75,6 +75,7 @@ interface AuditLogRow {
   actor_reason: string | null;
   entity_type: 'project' | 'customer' | 'user' | 'project_worker';
   entity_id: string;
+  entity_label: string | null;
   action: string;
   payload: unknown;
   correlation_id: string | null;
@@ -95,6 +96,7 @@ interface AuditApiEntry {
   actorDisplayName: string | null;
   entityType: 'project' | 'customer' | 'user' | 'project_worker';
   entityId: string;
+  entityLabel: string | null;
   action: string;
   payload: unknown | null;
   correlationId: string | null;
@@ -181,6 +183,10 @@ describe('AT-89: Mutation + audit row atomicity (AC-177)', () => {
       // and a populated `after`. Exact field contents are not pinned by
       // the AC (avoid T-BLOA); what matters is the shape.
       expect(row.payload).toMatchObject({ after: expect.any(Object) });
+      // entity_label snapshot — captured at write time from the
+      // service-returned project row. Must include the title the
+      // caller supplied so the feed stays readable after a rename.
+      expect(row.entity_label).toContain('AT-89 create project');
     } finally {
       await pool.end();
     }

@@ -42,6 +42,7 @@ export class ProjectDatesService {
             const r = await updateDatesRepo(tx, projectId, userId, dates);
             return {
               entityId: projectId,
+              entityLabel: `${r.project.number} ${r.project.title}`,
               value: r,
               before: {
                 plannedStart: r.before.plannedStart,

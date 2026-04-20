@@ -226,6 +226,7 @@ export async function bootstrapAdminIfEmpty(
           didInsert = true;
           return {
             entityId: inserted.id,
+            entityLabel: inserted.displayName,
             value: inserted,
             before: {},
             after: {

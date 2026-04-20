@@ -90,6 +90,7 @@ export class UserService {
             });
             return {
               entityId: row.id,
+              entityLabel: row.displayName,
               value: row,
               before: {},
               // passwordHash is deliberately excluded — audit rows are
@@ -156,7 +157,13 @@ export class UserService {
             after.email = updated.email ?? null;
           }
 
-          return { entityId: id, value: updated, before, after };
+          return {
+            entityId: id,
+            entityLabel: updated.displayName,
+            value: updated,
+            before,
+            after,
+          };
         },
       },
     );
@@ -193,6 +200,7 @@ export class UserService {
 
           return {
             entityId: id,
+            entityLabel: result.displayName,
             value: result,
             before: { active: prior.active },
             after: { active: result.active },
@@ -226,6 +234,7 @@ export class UserService {
 
           return {
             entityId: id,
+            entityLabel: updated.displayName,
             value: updated,
             before: { active: prior.active },
             after: { active: updated.active },
@@ -260,6 +269,7 @@ export class UserService {
 
           return {
             entityId: id,
+            entityLabel: prior.displayName,
             value: null,
             before: {
               username: prior.username,
@@ -309,9 +319,17 @@ export class UserService {
         entityType: 'user',
         action: 'password-reset',
         run: async (tx) => {
+          const prior = await findById(tx, id);
+          if (!prior) throw notFound(STRINGS.entities.user);
           await changePasswordRepo(tx, id, newHash, actorId);
           await deleteSessionsByUserId(tx, id);
-          return { entityId: id, value: null, before: {}, after: {} };
+          return {
+            entityId: id,
+            entityLabel: prior.displayName,
+            value: null,
+            before: {},
+            after: {},
+          };
         },
       },
     );

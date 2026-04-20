@@ -42,6 +42,8 @@ export interface AuditRow {
   actorReason: string | null;
   entityType: AuditEntityType;
   entityId: string;
+  /** Snapshot of the entity's human-readable label at write time. */
+  entityLabel: string | null;
   action: string;
   payload: unknown;
   correlationId: string | null;
@@ -113,6 +115,7 @@ export async function listAuditEntries(
       actorReason: auditLog.actorReason,
       entityType: auditLog.entityType,
       entityId: auditLog.entityId,
+      entityLabel: auditLog.entityLabel,
       action: auditLog.action,
       payload: auditLog.payload,
       correlationId: auditLog.correlationId,
@@ -174,6 +177,7 @@ export async function getAuditEntry(
       actorReason: auditLog.actorReason,
       entityType: auditLog.entityType,
       entityId: auditLog.entityId,
+      entityLabel: auditLog.entityLabel,
       action: auditLog.action,
       payload: auditLog.payload,
       correlationId: auditLog.correlationId,
@@ -212,6 +216,7 @@ function toAuditRow(row: {
   actorReason: string | null;
   entityType: string;
   entityId: string;
+  entityLabel: string | null;
   action: string;
   payload: unknown;
   correlationId: string | null;
@@ -225,6 +230,7 @@ function toAuditRow(row: {
     actorReason: row.actorReason,
     entityType: row.entityType as AuditEntityType,
     entityId: row.entityId,
+    entityLabel: row.entityLabel,
     action: row.action,
     payload: row.payload,
     correlationId: row.correlationId,

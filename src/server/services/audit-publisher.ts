@@ -40,6 +40,8 @@ export interface AuditLogRow {
   actorReason: string | null;
   entityType: AuditEntityType;
   entityId: string;
+  /** Human-readable label snapshot (data-model.md §5.10). */
+  entityLabel: string | null;
   action: string;
   payload: unknown;
   correlationId: string | null;
