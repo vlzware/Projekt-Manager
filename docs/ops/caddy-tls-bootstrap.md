@@ -24,7 +24,7 @@ Add a `ca` line inside the `tls` block:
 ### 2. Recreate Caddy
 
 ```bash
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml up -d --force-recreate caddy
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate caddy
 ```
 
 **Must use `--force-recreate`** -- Caddyfile is bind-mounted, not part of the compose config hash, so `up -d` alone sees "nothing changed."
@@ -33,7 +33,7 @@ sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml up -d -
 
 ```bash
 # Watch logs for success
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml logs caddy --since 1m -f
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh logs caddy --since 1m -f
 # Look for: "certificate obtained successfully","issuer":"acme-staging-v02..."
 
 # Test TLS from a WireGuard client (-k required for staging certs)
@@ -57,14 +57,14 @@ tls {
 ### 5. Recreate Caddy again
 
 ```bash
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml up -d --force-recreate caddy
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate caddy
 ```
 
 ### 6. Verify production cert
 
 ```bash
 # Watch logs -- success line should show acme-v02 (no "staging")
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml logs caddy --since 1m -f
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh logs caddy --since 1m -f
 
 # Test WITHOUT -k (production cert validates against standard CA bundle)
 curl -v --resolve "<domain>:443:10.213.17.1" "https://<domain>/api/health"
@@ -84,10 +84,10 @@ curl -v --resolve "<domain>:443:10.213.17.1" "https://<domain>/api/health"
 If a cert is broken or compromised:
 
 ```bash
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml exec caddy \
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh exec caddy \
   rm -rf /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/<domain>
 
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml up -d --force-recreate caddy
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate caddy
 ```
 
 **Beware rate limits** -- 5 failed validations per identifier per account per hour.

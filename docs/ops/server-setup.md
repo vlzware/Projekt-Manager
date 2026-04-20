@@ -283,8 +283,8 @@ Read-only Deploy Key scoped to this repo (outbound only).
 **Verify:**
 
 ```bash
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh ps
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
   exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
 ```
 
@@ -299,7 +299,7 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 2. Verify empty users table:
 
    ```bash
-   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
      exec -T db psql -U pm -d projekt_manager -c 'SELECT count(*) FROM users;'
    # expect: 0
    ```
@@ -317,13 +317,13 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 4. Restart app:
 
    ```bash
-   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml up -d --force-recreate app
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate app
    ```
 
 5. Confirm bootstrap:
 
    ```bash
-   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
      logs app --tail=30 | grep -F 'Bootstrap admin user'
    ```
 
@@ -351,8 +351,8 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 8. Restart app, confirm no bootstrap warning:
 
    ```bash
-   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml up -d --force-recreate app
-   sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate app
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
      logs app --tail=30 | grep -F 'Bootstrap admin user' || echo 'ok -- no bootstrap'
    ```
 
@@ -384,21 +384,20 @@ The bootstrap env vars are injected inline (shell-only), not written to `.env`. 
    set -a
    eval "$(sudo -u deploy age -d secrets.env.age)"   # prompts for passphrase once
    set +a
-   export APP_IMAGE_TAG="sha-$(sudo -u deploy git -C . rev-parse HEAD)"
    export BOOTSTRAP_ADMIN_USERNAME="admin"
    BOOTSTRAP_ADMIN_PASSWORD="$(openssl rand -base64 24)"
    echo "$BOOTSTRAP_ADMIN_PASSWORD"   # save to password manager NOW
    export BOOTSTRAP_ADMIN_PASSWORD
    export BOOTSTRAP_ADMIN_DISPLAY_NAME="Admin"
-   sudo -u deploy --preserve-env docker compose up -d
+   sudo -u deploy --preserve-env /opt/projekt-manager/scripts/ops/pm-compose.sh up -d
    ```
 
-   Omit `--profile backup` (as shown) when you want the backup cron to stay idle — the previous backup container remains `Exited` and is untouched. Add `--profile backup` to start it alongside.
+   `--preserve-env` is required so the inline `BOOTSTRAP_ADMIN_*` and decrypted-secret vars reach the compose process (pm-compose.sh pins APP_IMAGE_TAG itself from HEAD). Omit `--profile backup` (as shown) when you want the backup cron to stay idle — the previous backup container remains `Exited` and is untouched. Add `--profile backup` to start it alongside.
 
 4. Confirm bootstrap ran:
 
    ```bash
-   sudo -u deploy docker compose logs app --tail=30 | grep -F 'Bootstrap admin user'
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh logs app --tail=30 | grep -F 'Bootstrap admin user'
    ```
 
 5. Log in from a WireGuard client as `admin` with the generated password, then rotate via the UI (user menu → change password) or the `/api/auth/change-password` flow in Phase 8.1 step 6.
@@ -407,8 +406,8 @@ The bootstrap env vars are injected inline (shell-only), not written to `.env`. 
 
    ```bash
    unset BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD BOOTSTRAP_ADMIN_DISPLAY_NAME
-   sudo -u deploy --preserve-env docker compose up -d --force-recreate app
-   sudo -u deploy docker compose logs app --tail=30 | grep -F 'Bootstrap admin user' || echo 'ok -- no bootstrap'
+   sudo -u deploy --preserve-env /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate app
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh logs app --tail=30 | grep -F 'Bootstrap admin user' || echo 'ok -- no bootstrap'
    ```
 
    Alternative: run `scripts/deploy.sh <ref>` — it sources `secrets.env.age` without bootstrap vars and recreates the app as part of the normal deploy flow.

@@ -152,12 +152,13 @@ ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts
 
 `scripts/deploy.sh` decrypts `secrets.env.age`, exports all keys into the compose env, pulls the pinned image, `docker compose up -d` (which includes the `backup` service), and polls `/api/health` ([manual-deploy.md](../manual-deploy.md)).
 
-> Any manual `docker compose` invocation outside `scripts/deploy.sh` must set `APP_IMAGE_TAG=<sha-or-tag>` — `app` and `backup` are both gated by `${APP_IMAGE_TAG:?...}` and refuse to start otherwise. `scripts/deploy.sh` already exports it.
+> Any manual `docker compose` invocation outside `scripts/deploy.sh` must set `APP_IMAGE_TAG=<sha-or-tag>` — `app` and `backup` are both gated by `${APP_IMAGE_TAG:?...}` and refuse to start otherwise. Use `scripts/ops/pm-compose.sh` (pins `APP_IMAGE_TAG` to HEAD); `scripts/deploy.sh` pins it to the target SHA itself.
 
 After the deploy settles, verify the backup service is healthy. Every `docker compose` call that targets the `backup` service must carry `--profile backup`, because the service is profile-gated (`docker-compose.yml` services.backup.profiles). Without the flag, `run --rm backup` hard-fails and `ps`/`logs`/`stop`/`start` behave inconsistently across compose versions:
 
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml logs --tail=50 backup"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
+  --profile backup logs --tail=50 backup"
 ```
 
 First-run expectations, in order (next scheduled tick — see [overview.md § Cadence](overview.md#cadence)):

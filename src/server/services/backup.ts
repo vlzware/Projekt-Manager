@@ -206,10 +206,26 @@ export async function runBackup(opts: RunBackupOptions): Promise<BackupRunResult
   let sourceManifest: Manifest;
   let dump: Uint8Array;
   try {
-    sourceManifest = await opts.db.transaction(async (tx) => computeManifest(tx), {
-      isolationLevel: 'repeatable read',
-      accessMode: 'read only',
-    });
+    sourceManifest = await opts.db.transaction(
+      async (tx) => {
+        // Pin the transaction's session TimeZone to UTC. The manifest
+        // checksum is `md5(row(t.*)::text)`, which serializes
+        // `timestamptz` values through the session's TimeZone setting
+        // — if the live `db` container's default ever drifts from UTC
+        // (or if this function is ever invoked from a process whose
+        // libpq client picked up a non-UTC default), the source
+        // manifest would silently diverge from the ephemeral verify
+        // side (which is pinned to UTC in `ephemeralPg.ts`). `SET
+        // LOCAL` scopes the change to this transaction so we never
+        // leak a TimeZone mutation back to the pooled connection.
+        await tx.execute(sql`SET LOCAL TIME ZONE 'UTC'`);
+        return computeManifest(tx);
+      },
+      {
+        isolationLevel: 'repeatable read',
+        accessMode: 'read only',
+      },
+    );
     const dumpSource = opts.dumpSource ?? (() => defaultDumpSource(sourceManifest));
     dump = await dumpSource();
   } catch (err) {

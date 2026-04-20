@@ -10,8 +10,11 @@ You are about to burn the current credentials; older encrypted backups in R2 rem
 
 **Before step 1 — quiesce the scheduler.** Stop the backup service so it does not accumulate `AccessDenied` errors against the dead token while the next steps are in flight. The badge will fall stale until the redeploy completes; that is expected.
 
+`pm-compose.sh` pins `APP_IMAGE_TAG` to HEAD so the gated `app` + `backup` services interpolate ([setup.md §4](setup.md#4-first-deploy)):
+
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml stop backup"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
+  --profile backup stop backup"
 ```
 
 1. **Burn the R2 token.** Cloudflare dashboard → R2 API Tokens → select the current token → **Delete**. Confirm. Every client using this token fails on its next call — the scheduler is already stopped, so the VPS side stays quiet.
@@ -29,7 +32,8 @@ ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile bac
 6. **Restart the scheduler.** Bring the backup service back up so the next interval tick fires. No-op if the redeploy in step 5 already recreated and started the `backup` container; otherwise this flips it from the pre-step-1 stopped state:
 
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml start backup"
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
+     --profile backup start backup"
    ```
 
 7. **Sanity-check.** Immediately run the monthly drill per [drills.md § Monthly drill](drills.md#monthly-operator-workstation-drill) against the next completed backup. A rotation that passes the drill is successfully done; a rotation whose drill fails is a rollback candidate — restore the previous `secrets.env.age` from the password manager and investigate before retrying.

@@ -128,9 +128,10 @@ Two paths exist; this runbook supports **(a) only**. Path (b) — targeted table
 **(a) Rebuild the VPS DB volume (maintenance window, downtime).** You are about to destroy the current `pgdata` volume and replace it with the restored state. This is irreversible on the live volume.
 
 1. Announce the maintenance window.
-2. On the VPS, stop every DB client — `app`, `caddy`, and `backup`. Leaving `backup` up would keep a live connection to `projekt_manager`, which makes the DROP DATABASE in step 4 fail with "database is being accessed by other users":
+2. On the VPS, stop every DB client — `app`, `caddy`, and `backup`. Leaving `backup` up would keep a live connection to `projekt_manager`, which makes the DROP DATABASE in step 4 fail with "database is being accessed by other users". `pm-compose.sh` pins `APP_IMAGE_TAG` so the gated `app` + `backup` services interpolate ([setup.md §4](setup.md#4-first-deploy)):
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml stop app caddy backup"
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
+     --profile backup stop app caddy backup"
    ```
 3. Copy the decrypted dump to the VPS:
    ```bash
@@ -139,9 +140,9 @@ Two paths exist; this runbook supports **(a) only**. Path (b) — targeted table
    ```
 4. Drop and recreate the DB, then restore. `DROP DATABASE … WITH (FORCE)` (Postgres 13+) terminates any stray connection Postgres itself holds — defensive even after step 2, since an internal autovacuum or orphaned session can still hold a connection for a beat:
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
      exec -T db psql -U pm -d postgres -c 'DROP DATABASE projekt_manager WITH (FORCE); CREATE DATABASE projekt_manager;'"
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
      exec -T db pg_restore --clean --if-exists --no-owner --no-privileges -U pm -d projekt_manager < /tmp/${TS}.dump"
    ```
 5. Shred the plaintext dump from the VPS:

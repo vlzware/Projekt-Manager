@@ -115,3 +115,111 @@ fi
 echo "OK: $ENV_TS ↔ $COMPOSE services.{app,backup}.environment in sync"
 echo "  schema vars checked: $(echo "$schema_to_check" | wc -l)"
 echo "  excluded: $(echo "$schema_vars" | grep -cE "$EXCLUDE_PATTERN" || echo 0)"
+
+# ==========================================================================
+# Pass 2: compose `${VAR}` interpolations ↔ (.env.production.example ∪
+# secrets.manifest.txt)
+#
+# The base compose file refers to operator-supplied values via
+# `${VAR}` (bare — becomes the empty string when unset, app typically
+# fails at runtime) or `${VAR:?…}` (compose aborts file parse). Either
+# form means the operator MUST supply the value — so the key has to
+# be documented in exactly one of:
+#
+#   .env.production.example  — non-secret site config (operator edits
+#                               in plaintext, copy-paste workflow).
+#   secrets.manifest.txt     — secrets sourced from `secrets.env.age`
+#                               (age-encrypted).
+#
+# A key documented in BOTH is a config ambiguity (is the operator
+# supposed to put it in .env or in secrets.env.age?) — we fail that
+# too.
+#
+# APP_IMAGE_TAG is the one permitted bare / `:?` reference that is
+# NOT operator-supplied: scripts/deploy.sh exports it from the target
+# SHA. Exclude it here.
+#
+# `${VAR:-default}` references are OPTIONAL (compose supplies the
+# default); they are not required to appear in either file and are
+# skipped here. Documentation of optionals in .env.production.example
+# is a style choice the drift check does not enforce.
+# ==========================================================================
+
+ENV_EXAMPLE="${ENV_EXAMPLE:-.env.production.example}"
+SECRETS_MANIFEST="${SECRETS_MANIFEST:-secrets.manifest.txt}"
+
+# Extract compose interpolation names where the operator MUST supply
+# a value:
+#   ${VAR}       — bare, no default → required
+#   ${VAR:?...}  — gated, compose aborts on unset → required
+# Explicitly exclude `${VAR:-...}` (with default — optional).
+compose_required=$(grep -oE '\$\{[A-Z_][A-Z0-9_]*(:\?[^}]*)?\}' "$COMPOSE" \
+  | sed -E 's/^\$\{([A-Z_][A-Z0-9_]*).*$/\1/' \
+  | grep -vxF 'APP_IMAGE_TAG' \
+  | sort -u)
+
+if [ -z "$compose_required" ]; then
+  echo "ERROR: no operator-required \${VAR} references found in $COMPOSE — grep pattern broken?" >&2
+  exit 2
+fi
+
+# Extract non-comment KEY names from .env.production.example. A
+# commented example line (`# FOO=`) is treated as OPTIONAL and NOT
+# a declaration — operators are not expected to set it.
+example_keys=""
+if [ -f "$ENV_EXAMPLE" ]; then
+  example_keys=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$ENV_EXAMPLE" | sed 's/=.*$//' | sort -u)
+else
+  echo "ERROR: $ENV_EXAMPLE not found — the drift check needs it as the canonical non-secret env template." >&2
+  exit 2
+fi
+
+# Extract keys from secrets.manifest.txt. One KEY per line, shell-style
+# comments (`# …`) and blank lines ignored. Values are never stored in
+# this file — it is a keyset manifest, not a template.
+manifest_keys=""
+if [ -f "$SECRETS_MANIFEST" ]; then
+  manifest_keys=$(grep -E '^[A-Z_][A-Z0-9_]*$' "$SECRETS_MANIFEST" | sort -u)
+else
+  echo "ERROR: $SECRETS_MANIFEST not found — every deployment's secrets.env.age keyset is driven off this file." >&2
+  exit 2
+fi
+
+if [ -z "$manifest_keys" ]; then
+  echo "ERROR: $SECRETS_MANIFEST has no keys — did the format change? Expected one KEY per line." >&2
+  exit 2
+fi
+
+# Overlap check: a key in BOTH files is an ambiguity.
+overlap=$(comm -12 <(echo "$example_keys") <(echo "$manifest_keys") || true)
+if [ -n "$overlap" ]; then
+  echo "ERROR: keys present in BOTH $ENV_EXAMPLE and $SECRETS_MANIFEST — a key must live in exactly one place:" >&2
+  echo "$overlap" | sed 's/^/  - /' >&2
+  echo "" >&2
+  echo "Decide which surface owns the key (plaintext .env vs encrypted secrets.env.age)" >&2
+  echo "and remove the duplicate from the other file." >&2
+  exit 1
+fi
+
+# Coverage check: every operator-required compose interpolation must
+# be in exactly one of the documentation surfaces.
+documented=$(cat <(echo "$example_keys") <(echo "$manifest_keys") | sort -u)
+missing_doc=$(comm -23 <(echo "$compose_required") <(echo "$documented") || true)
+if [ -n "$missing_doc" ]; then
+  echo "ERROR: $COMPOSE references operator-supplied vars that are documented nowhere:" >&2
+  echo "$missing_doc" | sed 's/^/  - /' >&2
+  echo "" >&2
+  echo "Add each var to exactly one of:" >&2
+  echo "  - $ENV_EXAMPLE    (non-secret site config — plaintext, operator copies to .env)" >&2
+  echo "  - $SECRETS_MANIFEST (secret — value lives encrypted in secrets.env.age)" >&2
+  echo "" >&2
+  echo "If the var is actually optional in compose (has a \${VAR:-default}), ignore" >&2
+  echo "this error — but double-check the compose line: a bare \${VAR} falls back to" >&2
+  echo "the empty string silently, which is almost never the intended default." >&2
+  exit 1
+fi
+
+echo "OK: $COMPOSE operator-required vars ↔ ($ENV_EXAMPLE ∪ $SECRETS_MANIFEST) in sync"
+echo "  compose-required: $(echo "$compose_required" | wc -l)"
+echo "  .env.example keys: $(echo "$example_keys" | wc -l)"
+echo "  secrets.manifest.txt keys: $(echo "$manifest_keys" | wc -l)"

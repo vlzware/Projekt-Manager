@@ -52,15 +52,17 @@ The GHCR image must still exist. If pruned, use forward-rollback: `git revert` o
 
 ## Verify a deploy
 
+`scripts/ops/pm-compose.sh` pins `APP_IMAGE_TAG` to the current HEAD so the gated `app` + `backup` services interpolate — every manual `docker compose` call outside `scripts/deploy.sh` needs this (see the wrapper's header).
+
 ```bash
 # Running commit
 sudo -u deploy git -C /opt/projekt-manager rev-parse --short HEAD
 
 # Container status
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh ps
 
 # Direct health check (bypasses Caddy)
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
   exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
 
 # From WireGuard client (end-to-end with TLS)
@@ -155,17 +157,18 @@ sudo usermod -s /usr/sbin/nologin deploy
 sudo rm -f /home/deploy/.ssh/authorized_keys
 
 # 7. Prove locked-down flow works
-sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose down'
+sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh down
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 ```
 
 ## Failure modes
 
-| Symptom                                | Cause                                               | Fix                                                                  |
-| -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------- |
-| `git checkout` fails                   | Uncommitted changes in working tree                 | `git status`, reset or stash                                         |
-| `git checkout landed at X, expected Y` | Post-checkout SHA assertion                         | Inspect `git status`, clean up                                       |
-| `age: failed to read identity`         | Wrong passphrase                                    | Retry; verify against password manager after 3 attempts              |
-| `docker pull` unauthorized             | GHCR PAT expired                                    | `docker login ghcr.io` as `deploy` with fresh PAT                    |
-| Smoke test timeout (60s)               | App container failed or `/api/health` returning 503 | Check `docker compose logs app db storage`                           |
-| `no such container` on exec            | `docker compose up -d` did not start `app`          | Check `docker compose ps`; verify `APP_IMAGE_TAG` matches a GHCR tag |
+| Symptom                                | Cause                                               | Fix                                                                                   |
+| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `git checkout` fails                   | Uncommitted changes in working tree                 | `git status`, reset or stash                                                          |
+| `git checkout landed at X, expected Y` | Post-checkout SHA assertion                         | Inspect `git status`, clean up                                                        |
+| `age: failed to read identity`         | Wrong passphrase                                    | Retry; verify against password manager after 3 attempts                               |
+| `docker pull` unauthorized             | GHCR PAT expired                                    | `docker login ghcr.io` as `deploy` with fresh PAT                                     |
+| Smoke test timeout (60s)               | App container failed or `/api/health` returning 503 | `pm-compose.sh logs app db storage`                                                   |
+| `no such container` on exec            | `docker compose up -d` did not start `app`          | `pm-compose.sh ps`; confirm the resolved tag exists in GHCR (wrapper pins it to HEAD) |
+| `APP_IMAGE_TAG must be set`            | Manual `docker compose` invoked without the wrapper | Use `scripts/ops/pm-compose.sh` — it pins `APP_IMAGE_TAG` from the current `HEAD`.    |

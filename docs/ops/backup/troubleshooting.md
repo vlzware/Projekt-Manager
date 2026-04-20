@@ -17,11 +17,12 @@ Symptoms that appear during or right after [setup.md §4](setup.md#4-first-deplo
 
 ## First-line diagnostics (5 minutes)
 
+`pm-compose.sh` pins `APP_IMAGE_TAG` so the gated `app` + `backup` services interpolate ([setup.md §4](setup.md#4-first-deploy)).
+
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml ps backup"
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml logs backup --tail=200"
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
-  exec -T db psql -U pm -d projekt_manager -c 'SELECT * FROM meta_backup_status;'"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh --profile backup ps backup"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh --profile backup logs backup --tail=200"
+ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh exec -T db psql -U pm -d projekt_manager -c 'SELECT * FROM meta_backup_status;'"
 ```
 
 `lastError` is a short machine cue from the backup script — the log tail carries the detail.
@@ -30,12 +31,13 @@ ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose -f /opt/proje
 
 1. Stop the scheduled runs so you can iterate:
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml stop backup"
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
+     --profile backup stop backup"
    ```
 2. Run a one-shot manually and read the full output. `run --rm` spins up a fresh container, so `--profile backup` is mandatory — without it compose filters the service out and the command fails with "no such service":
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml \
-     run --rm backup /usr/local/bin/run-backup.sh"
+   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
+     --profile backup run --rm backup /usr/local/bin/run-backup.sh"
    ```
 3. Common buckets:
    - R2 credential drift — re-run [setup.md §3](setup.md#3-push-r2-credentials--recipient-to-the-vps).

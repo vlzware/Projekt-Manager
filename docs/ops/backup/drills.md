@@ -16,12 +16,12 @@ Tier 2 needs the private identity on the VPS. `load-drill-key.sh` writes it to a
 You are about to write private key material into RAM on the VPS; this is cleared on reboot or on container recreation, and can be overwritten by rerunning the script.
 
 1. Have `~/secrets/age-backup.key` open on the operator workstation. Copy its full contents (including the comment lines and the `AGE-SECRET-KEY-1...` body) to the clipboard.
-2. On the VPS:
+2. On the VPS. `pm-compose.sh` pins `APP_IMAGE_TAG` to the current HEAD so `app` + `backup` interpolate (see `scripts/ops/pm-compose.sh` header):
 
    ```bash
    ssh <admin-username>@<vps-hostname>
-   sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml \
-     exec backup load-drill-key
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
+     --profile backup exec backup load-drill-key
    ```
 
 3. The script prompts with `read -s` ("Paste age identity, end with Ctrl-D:"). Paste the clipboard contents, press Enter, then Ctrl-D. The script:
@@ -32,8 +32,8 @@ You are about to write private key material into RAM on the VPS; this is cleared
 4. Verify the key is loaded without exposing it:
 
    ```bash
-   sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml \
-     exec backup test -s /run/drill-key/identity && echo "drill key loaded"
+   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
+     --profile backup exec backup test -s /run/drill-key/identity && echo "drill key loaded"
    ```
 
    The next cron tick picks it up: `meta_backup_status.lastDrillAt` advances, `lastDrillOk = true`, the badge flips green.

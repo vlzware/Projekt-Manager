@@ -84,6 +84,70 @@ set -a
 source <(age -d "$SECRETS_FILE")
 set +a
 
+# --- Pre-flight: env/secrets parity check --------------------------------
+# Catch operator-side drift: a new key was added to
+# `.env.production.example` or `secrets.manifest.txt` since the last
+# time the operator synced, but the deployed `.env` / `secrets.env.age`
+# was never updated to match. Without this check the deploy proceeds,
+# compose interpolates the missing var as an empty string (bare `${X}`
+# has no default), and the app either crash-loops on Zod validation or
+# — worse — silently runs misconfigured. Abort BEFORE touching the
+# running stack: no pull, no restart, no traffic shift until the
+# operator has synced.
+#
+# Two files, two sources of truth, one assertion each:
+#   - `.env.production.example` keys ⊆ `/opt/projekt-manager/.env`
+#   - `secrets.manifest.txt` keys  ⊆ (env vars exported above)
+#
+# The secrets check reads from the current process env (populated by
+# the `source <(age -d …)` above) rather than re-parsing the encrypted
+# file, so we don't prompt for the passphrase twice.
+
+env_example_keys=""
+if [ -f "$REPO_DIR/.env.production.example" ]; then
+  env_example_keys=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$REPO_DIR/.env.production.example" \
+    | sed 's/=.*$//' | sort -u)
+fi
+
+env_actual_keys=""
+if [ -f "$REPO_DIR/.env" ]; then
+  env_actual_keys=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$REPO_DIR/.env" | sed 's/=.*$//' | sort -u)
+fi
+
+if [ -n "$env_example_keys" ]; then
+  missing_env=$(comm -23 <(echo "$env_example_keys") <(echo "$env_actual_keys") || true)
+  if [ -n "$missing_env" ]; then
+    echo "ERROR: $REPO_DIR/.env is missing keys declared in .env.production.example:" >&2
+    echo "$missing_env" | sed 's/^/  - /' >&2
+    echo "" >&2
+    echo "Sync the keys (preserving existing values) before deploying. See" >&2
+    echo "docs/ops/manual-deploy.md for the edit-in-place workflow." >&2
+    exit 1
+  fi
+fi
+
+missing_secrets=""
+if [ -f "$REPO_DIR/secrets.manifest.txt" ]; then
+  while IFS= read -r key; do
+    # `${!key+x}` is bash indirection: expands to 'x' when $key names a
+    # set variable (even set to empty), empty otherwise. We accept empty
+    # values — the manifest only asserts declaration; Zod still rejects
+    # malformed values at container start.
+    if [ -z "${!key+x}" ]; then
+      missing_secrets="${missing_secrets}${key}"$'\n'
+    fi
+  done < <(grep -E '^[A-Z_][A-Z0-9_]*$' "$REPO_DIR/secrets.manifest.txt")
+fi
+
+if [ -n "$missing_secrets" ]; then
+  echo "ERROR: secrets.env.age is missing keys declared in secrets.manifest.txt:" >&2
+  printf '%s' "$missing_secrets" | sed '/^$/d; s/^/  - /' >&2
+  echo "" >&2
+  echo "Rotate secrets.env.age to include the missing keys before deploying" >&2
+  echo "(docs/ops/manual-deploy.md § Rotate a secret)." >&2
+  exit 1
+fi
+
 # Pin the exact SHA-tagged image so this deploy is reproducible and a
 # rollback is just re-running with an older SHA. `docker compose pull`
 # only pulls services that declare an `image:` — `db`, `storage`, and
