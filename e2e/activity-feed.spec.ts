@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { STORAGE_STATES } from './storage-states';
 
 /**
  * E2E — Activity feed / global Aktivität view.
@@ -18,36 +19,22 @@ import { test, expect, type Page } from '@playwright/test';
  *     UI so a reviewer can watch the visibility split in UI mode
  *     (ADR-0014 [vis] contract).
  *
- * Expected failing state (step 3 of the workflow):
- *   - The audit tab `Aktivität` does not exist in the nav matrix yet
- *     — `getByTestId('view-toggle-aktivitaet')` fails to find it.
- *   - Project-detail activity feed markup does not exist yet —
- *     `getByTestId('project-activity-feed')` fails to find it.
- *   - The audit API does not exist, so even if markup stubs were
- *     present, the feed would be empty / 404.
- *
  * Role walk: owner, office, worker. Bookkeeper is intentionally not
  * in `audit:read` (api.md §14.3) — the nav tab must be absent for
  * bookkeeper, asserted as a separate case.
  *
+ * Auth: each describe uses the pre-authenticated storage state for its
+ * target role (see e2e/auth.setup.ts). No per-test login — that path
+ * burns through the dev-mode login rate limit at suite scale.
+ *
  * Why `chromium-mutating`: the spec drives mutations (create project,
- * update it) so the activity feed has something to render. Running
- * under the mutating project serializes it after read-only specs
- * (playwright.config.ts) so the DB mutations don't race kanban-flows'
- * aggregate-count assertions.
+ * update it, purge it) so the activity feed has something to render.
+ * Running under the mutating project serializes it after read-only
+ * specs (playwright.config.ts) so the DB mutations don't race
+ * kanban-flows' aggregate-count assertions.
  */
 
 test.describe.configure({ mode: 'serial' });
-
-/** Per-role login under a fresh storage state — copied from
- * `e2e/permission-visibility.spec.ts` for pattern consistency. */
-async function loginAs(page: Page, username: string): Promise<void> {
-  await page.goto('/');
-  await page.getByTestId('login-username').fill(username);
-  await page.getByTestId('login-password').fill('changeme');
-  await page.getByTestId('login-submit').click();
-  await page.getByTestId('header').waitFor();
-}
 
 /**
  * AC-186 drawer helper — click the toggle on a payload-bearing row,
@@ -66,31 +53,26 @@ async function assertDrawerOpensInline(
   await expect(row.getByTestId('activity-feed-drawer-content')).toBeVisible();
 }
 
-// Seed users — same labels used in permission-visibility.spec.ts so
-// a grep for a role lands one consistent constant table across specs.
-const users = {
-  owner: 'inhaber',
-  office: 'buero',
-  worker: 'arbeiter1',
-  bookkeeper: 'buchhalter',
-} as const;
-
 // ---------------------------------------------------------------
 // AC-186 — Aktivität nav presence per role (precondition for everything)
 // ---------------------------------------------------------------
 test.describe('AC-186: Aktivität nav visibility per role', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
-
   for (const role of ['owner', 'office', 'worker'] as const) {
-    test(`${role} — Aktivität tab is rendered`, async ({ page }) => {
-      await loginAs(page, users[role]);
-      await expect(page.getByTestId('view-toggle-aktivitaet')).toHaveCount(1);
+    test.describe(role, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test('Aktivität tab is rendered', async ({ page }) => {
+        await page.goto('/');
+        await expect(page.getByTestId('view-toggle-aktivitaet')).toHaveCount(1);
+      });
     });
   }
 
-  test('bookkeeper — Aktivität tab is absent (no audit:read)', async ({ page }) => {
-    await loginAs(page, users.bookkeeper);
-    await expect(page.getByTestId('view-toggle-aktivitaet')).toHaveCount(0);
+  test.describe('bookkeeper', () => {
+    test.use({ storageState: STORAGE_STATES.bookkeeper });
+    test('Aktivität tab is absent (no audit:read)', async ({ page }) => {
+      await page.goto('/');
+      await expect(page.getByTestId('view-toggle-aktivitaet')).toHaveCount(0);
+    });
   });
 });
 
@@ -98,12 +80,12 @@ test.describe('AC-186: Aktivität nav visibility per role', () => {
 // AC-185 — Project-detail activity feed
 // ---------------------------------------------------------------
 test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty state)', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
+  test.use({ storageState: STORAGE_STATES.owner });
 
   test('owner — newest-first, "Ältere anzeigen" appends older entries without collapsing current set', async ({
     page,
   }) => {
-    await loginAs(page, users.owner);
+    await page.goto('/');
 
     // Resolve the "same card both times" identity up-front — the first
     // Kanban card (oldest statusChangedAt in the first column) and the
@@ -185,27 +167,16 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
     }
   });
 
-  // Removed: an earlier test drove "fresh project → Keine Aktivität" for
-  // the owner, but a fresh project always carries its `create` audit
-  // row for an owner (unscoped), so the empty-state could never fire on
-  // that path. The assertion below uses a future-dated `from` filter
-  // to produce a genuinely empty result set — independent of caller
-  // scope or fixture state. T-REDU removed.
   test('empty-state renders "Keine Aktivität" on a filter that matches no rows', async ({
     page,
   }) => {
-    // Use the owner because nav visibility for Aktivität is a separate
-    // AC (asserted above). The empty-state check here is about the UI
-    // affordance itself: a filter that matches nothing must render the
-    // testid-scoped empty-state inside the list container.
-    //
     // A `from` date in the far future is guaranteed to match zero rows
     // for any caller — the server AND-composes filters with the scope
     // predicate, so even an owner with unscoped reads receives an
     // empty page. This is the concrete "empty by construction" path
     // the finding asks for; filter-UI-driven rather than URL-driven
     // because the UI exposes no entityId filter today.
-    await loginAs(page, users.owner);
+    await page.goto('/');
     await page.getByTestId('view-toggle-aktivitaet').click();
     await page.getByTestId('audit-filter-from').fill('2099-01-01');
 
@@ -230,11 +201,11 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
 //   - worker callers: drawer rendered only on rows where the worker is
 //     the actor (self-authored). On every other row the API strips the
 //     payload, so the drawer affordance is absent.
-test.describe('AC-186: payload drawer visibility per role', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
+test.describe('AC-186: payload drawer visibility per role — owner', () => {
+  test.use({ storageState: STORAGE_STATES.owner });
 
   test('owner sees a payload-drawer affordance on every payload-bearing row', async ({ page }) => {
-    await loginAs(page, users.owner);
+    await page.goto('/');
     await page.getByTestId('view-toggle-aktivitaet').click();
 
     // Find any row — owner is unscoped, so the first rendered row
@@ -246,9 +217,13 @@ test.describe('AC-186: payload drawer visibility per role', () => {
     // Opening expands inline without a route change.
     await assertDrawerOpensInline(page, firstRow);
   });
+});
+
+test.describe('AC-186: payload drawer visibility per role — office', () => {
+  test.use({ storageState: STORAGE_STATES.office });
 
   test('office sees a payload-drawer affordance on every payload-bearing row', async ({ page }) => {
-    await loginAs(page, users.office);
+    await page.goto('/');
     await page.getByTestId('view-toggle-aktivitaet').click();
 
     // Office is unscoped for destructive actions and every user-kind
@@ -259,25 +234,21 @@ test.describe('AC-186: payload drawer visibility per role', () => {
     await expect(firstRow.getByTestId('activity-feed-drawer-toggle')).toBeVisible();
     await assertDrawerOpensInline(page, firstRow);
   });
+});
+
+test.describe('AC-186: payload drawer visibility per role — worker', () => {
+  test.use({ storageState: STORAGE_STATES.worker });
 
   test('worker sees drawer on self-authored rows and NOT on others', async ({ page, browser }) => {
     // Precondition 1 — non-self-authored row visible to the worker.
-    // Driven through an independent browser context so this fixture
-    // does not pollute the worker's cookie jar. Worker1 is assigned to
-    // YYYY-007 (see audit-log.test.ts AT-91 / AT-93 fixtures); an
-    // owner-authored PATCH on that project produces a reachable audit
-    // row with `actorId !== worker.id` — the negative half of the
-    // AC-186 contract.
-    const ownerContext = await browser.newContext();
+    // Driven through an owner-authenticated request context (no fresh
+    // login — the owner storage state is already on disk from
+    // auth.setup.ts). Worker1 is assigned to YYYY-007 (see
+    // audit-log.test.ts AT-91 / AT-93 fixtures); an owner-authored
+    // PATCH on that project produces a reachable audit row with
+    // `actorId !== worker.id` — the negative half of the AC-186 contract.
+    const ownerContext = await browser.newContext({ storageState: STORAGE_STATES.owner });
     try {
-      const loginRes = await ownerContext.request.post('/api/auth/login', {
-        data: { username: users.owner, password: 'changeme' },
-      });
-      if (!loginRes.ok()) {
-        throw new Error(
-          `AC-186 worker drawer precondition: owner login returned ${loginRes.status()}`,
-        );
-      }
       const listRes = await ownerContext.request.get('/api/projects?limit=200');
       const list = (await listRes.json()).data as { id: string; number: string }[];
       const year = new Date().getFullYear();
@@ -298,8 +269,6 @@ test.describe('AC-186: payload drawer visibility per role', () => {
       await ownerContext.close();
     }
 
-    await loginAs(page, users.worker);
-
     // Precondition 2 — self-authored row. The simplest worker-accessible
     // mutation is the theme-preference update on `/api/auth/me`. It
     // produces an audit row where `actorId == caller.id` —
@@ -313,6 +282,7 @@ test.describe('AC-186: payload drawer visibility per role', () => {
       );
     }
 
+    await page.goto('/');
     await page.getByTestId('view-toggle-aktivitaet').click();
 
     const rows = page.locator('[data-testid^="activity-feed-row-"]');
@@ -372,25 +342,15 @@ test.describe('AC-186: payload drawer visibility per role', () => {
 // ---------------------------------------------------------------
 // AC-187 — Destructive-action row visibility differs by role
 // ---------------------------------------------------------------
+// Shared fixture drives a purge (owner-only) so there is a known
+// destructive row every per-role test can look for. Driven via API
+// rather than the UI — a 7-step UI chain is brittle and a mid-chain
+// failure leaves the canary unable to distinguish "role filter wrong"
+// from "fixture never ran".
 test.describe('AC-187: destructive entries — owner sees them, others do not', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
-
-  // Shared fixture — drive a purge (owner-only) so there is a known
-  // destructive row in the feed that every subsequent role check can
-  // look for. Driven via API rather than the UI: a 7-step UI chain is
-  // brittle (button selectors, modal timing, archived-toggle render),
-  // and a mid-chain failure leaves the canary at the end unable to
-  // distinguish "role filter wrong" from "fixture never ran".
   test.beforeAll(async ({ browser }) => {
-    const ctx = await browser.newContext();
+    const ctx = await browser.newContext({ storageState: STORAGE_STATES.owner });
     try {
-      const loginRes = await ctx.request.post('/api/auth/login', {
-        data: { username: users.owner, password: 'changeme' },
-      });
-      if (!loginRes.ok()) {
-        throw new Error(`AC-187 fixture: owner login returned ${loginRes.status()}`);
-      }
-
       const custRes = await ctx.request.post('/api/customers', {
         data: { name: `Destructive-fixture ${Date.now()}` },
       });
@@ -438,28 +398,36 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
     }
   });
 
-  test('owner — purge entries are visible in the global Aktivität view', async ({ page }) => {
-    await loginAs(page, users.owner);
-    await page.getByTestId('view-toggle-aktivitaet').click();
-
-    // A row with action=purge must exist (the fixture above drove
-    // one). The UI's German label for `purge` is implementation-
-    // defined; we filter by a structural `data-action` attribute.
-    const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
-    await expect(purgeRows).not.toHaveCount(0);
+  test.describe('owner', () => {
+    test.use({ storageState: STORAGE_STATES.owner });
+    test('purge entries are visible in the global Aktivität view', async ({ page }) => {
+      await page.goto('/');
+      await page.getByTestId('view-toggle-aktivitaet').click();
+      // A row with action=purge must exist (the fixture above drove
+      // one). The UI's German label for `purge` is implementation-
+      // defined; we filter by a structural `data-action` attribute.
+      const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
+      await expect(purgeRows).not.toHaveCount(0);
+    });
   });
 
-  test('office — purge entries are not visible', async ({ page }) => {
-    await loginAs(page, users.office);
-    await page.getByTestId('view-toggle-aktivitaet').click();
-    const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
-    await expect(purgeRows).toHaveCount(0);
+  test.describe('office', () => {
+    test.use({ storageState: STORAGE_STATES.office });
+    test('purge entries are not visible', async ({ page }) => {
+      await page.goto('/');
+      await page.getByTestId('view-toggle-aktivitaet').click();
+      const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
+      await expect(purgeRows).toHaveCount(0);
+    });
   });
 
-  test('worker — purge entries are not visible', async ({ page }) => {
-    await loginAs(page, users.worker);
-    await page.getByTestId('view-toggle-aktivitaet').click();
-    const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
-    await expect(purgeRows).toHaveCount(0);
+  test.describe('worker', () => {
+    test.use({ storageState: STORAGE_STATES.worker });
+    test('purge entries are not visible', async ({ page }) => {
+      await page.goto('/');
+      await page.getByTestId('view-toggle-aktivitaet').click();
+      const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
+      await expect(purgeRows).toHaveCount(0);
+    });
   });
 });

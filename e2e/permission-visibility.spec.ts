@@ -1,5 +1,6 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { STRINGS } from '../src/config/strings';
+import { STORAGE_STATES } from './storage-states';
 
 /**
  * Permission-based UI visibility (AC-121 [crit]) + per-role nav matrix
@@ -11,10 +12,10 @@ import { STRINGS } from '../src/config/strings';
  * authoritative, but rendering an affordance that always 403s is
  * misleading state (ADR-0014 Tier-1).
  *
- * Each role logs in fresh (storageState override) so the suite exercises
- * each role's derived `usePermission(...)` result in a real render,
- * not against a mock. Login round-trips stay well within the dev server
- * rate-limit (LOGIN_RATE_LIMIT_MAX=30 — see playwright.config.ts).
+ * Each role consumes a pre-authenticated storage state saved by
+ * `e2e/auth.setup.ts` — no per-test login, so the suite does not burn
+ * through the dev-mode login rate limit (30/min per IP,
+ * `src/server/config/index.ts`).
  *
  * Asserts with toHaveCount / toBeVisible / toHaveURL — NOT screenshots —
  * because AC-121 / AC-149 are critical-ish behavior, and the nav-matrix
@@ -132,24 +133,12 @@ const roleCases: Record<Role, RoleCase> = {
   },
 };
 
-async function loginAs(page: Page, username: string): Promise<void> {
-  await page.goto('/');
-  await page.getByTestId('login-username').fill(username);
-  await page.getByTestId('login-password').fill('changeme');
-  await page.getByTestId('login-submit').click();
-  // Wait for the authenticated layout — `header` mounts on every role's
-  // landing view. The previous wait on `kanban-board` hung for bookkeeper,
-  // whose landing is `/projects` per the central route table.
-  await page.getByTestId('header').waitFor();
-}
-
 test.describe('AC-121: permission-based UI visibility', () => {
-  // Each test logs in fresh — override the shared authenticated storage state.
-  test.use({ storageState: { cookies: [], origins: [] } });
-
   for (const [role, c] of Object.entries(roleCases) as [Role, RoleCase][]) {
-    test(`${role} — action controls match ROLE_PERMISSIONS`, async ({ page }) => {
-      await loginAs(page, c.username);
+    test.describe(role, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test('action controls match ROLE_PERMISSIONS', async ({ page }) => {
+        await page.goto('/');
 
       // -- Header navigation and extract button --------------------------
       // Nav visibility is driven by the central route table (§8.7.1).
@@ -294,6 +283,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
         );
         await expect(page.getByTestId('user-delete-button')).toHaveCount(c.canDeleteUsers ? 1 : 0);
       }
+      });
     });
   }
 });
@@ -348,25 +338,26 @@ const ALL_VIEWS: readonly NavView[] = [
 ];
 
 test.describe('AC-75: per-role nav visibility matrix', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
-
   for (const [role, expected] of Object.entries(NAV_MATRIX) as [Role, readonly NavView[]][]) {
-    test(`${role} — header nav set matches the ui/index.md §8.7.1 matrix exactly`, async ({ page }) => {
-      await loginAs(page, roleCases[role].username);
+    test.describe(role, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test('header nav set matches the ui/index.md §8.7.1 matrix exactly', async ({ page }) => {
+        await page.goto('/');
 
-      // Every matrix tab must be visible for this role.
-      for (const view of expected) {
-        await expect(page.getByTestId(`view-toggle-${view}`)).toBeVisible();
-      }
+        // Every matrix tab must be visible for this role.
+        for (const view of expected) {
+          await expect(page.getByTestId(`view-toggle-${view}`)).toBeVisible();
+        }
 
-      // Every non-matrix tab must be absent. toHaveCount(0) rather than
-      // toBeHidden() because the latter passes for elements that exist
-      // but are CSS-hidden; the nav renderer should not emit the tab at
-      // all for unauthorized views (AC-75 "hidden from navigation").
-      const forbidden = ALL_VIEWS.filter((v) => !expected.includes(v));
-      for (const view of forbidden) {
-        await expect(page.getByTestId(`view-toggle-${view}`)).toHaveCount(0);
-      }
+        // Every non-matrix tab must be absent. toHaveCount(0) rather than
+        // toBeHidden() because the latter passes for elements that exist
+        // but are CSS-hidden; the nav renderer should not emit the tab at
+        // all for unauthorized views (AC-75 "hidden from navigation").
+        const forbidden = ALL_VIEWS.filter((v) => !expected.includes(v));
+        for (const view of forbidden) {
+          await expect(page.getByTestId(`view-toggle-${view}`)).toHaveCount(0);
+        }
+      });
     });
   }
 });
@@ -419,37 +410,35 @@ const VIEW_TESTIDS: readonly string[] = [
 ];
 
 test.describe('AC-149: forbidden URL probe → NotPermittedView, URL unchanged', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
-
   for (const { role, path } of FORBIDDEN_PATHS) {
-    test(`${role} navigating directly to ${path} sees not-permitted surface and URL stays`, async ({
-      page,
-    }) => {
-      // Log in first — the auth guard renders the login form for
-      // unauthenticated callers, which would mask the route-guard path.
-      await loginAs(page, roleCases[role].username);
+    test.describe(`${role} → ${path}`, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test(`navigating directly to ${path} sees not-permitted surface and URL stays`, async ({
+        page,
+      }) => {
+        // Storage state authenticates the caller (see auth.setup.ts);
+        // navigating directly to the forbidden path simulates a user
+        // typing a URL or following a bookmark to an off-matrix view.
+        await page.goto(path);
 
-      // Direct URL entry — simulates a user typing the path or
-      // following a bookmark to an off-matrix view.
-      await page.goto(path);
+        // The not-permitted surface renders with the German copy sourced
+        // from STRINGS (no hardcoded strings in the spec).
+        const surface = page.getByTestId('not-permitted-view');
+        await expect(surface).toBeVisible();
+        await expect(surface).toContainText(STRINGS.ui.notPermittedHeading);
+        await expect(surface).toContainText(STRINGS.ui.notPermittedBody);
 
-      // The not-permitted surface renders with the German copy sourced
-      // from STRINGS (no hardcoded strings in the spec).
-      const surface = page.getByTestId('not-permitted-view');
-      await expect(surface).toBeVisible();
-      await expect(surface).toContainText(STRINGS.ui.notPermittedHeading);
-      await expect(surface).toContainText(STRINGS.ui.notPermittedBody);
+        // AC-149 clause: "URL in the address bar remains unchanged".
+        // Playwright's auto-waiting toHaveURL handles the navigation
+        // settling; no raw waitForTimeout required.
+        await expect(page).toHaveURL(new RegExp(`${path}$`));
 
-      // AC-149 clause: "URL in the address bar remains unchanged".
-      // Playwright's auto-waiting toHaveURL handles the navigation
-      // settling; no raw waitForTimeout required.
-      await expect(page).toHaveURL(new RegExp(`${path}$`));
-
-      // No landing view mounts alongside the guard. Any of these
-      // testids appearing would indicate the guard leaked content.
-      for (const testid of VIEW_TESTIDS) {
-        await expect(page.getByTestId(testid)).toHaveCount(0);
-      }
+        // No landing view mounts alongside the guard. Any of these
+        // testids appearing would indicate the guard leaked content.
+        for (const testid of VIEW_TESTIDS) {
+          await expect(page.getByTestId(testid)).toHaveCount(0);
+        }
+      });
     });
   }
 });
