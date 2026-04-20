@@ -19,7 +19,6 @@
  */
 
 import { useEffect, useMemo } from 'react';
-import { useAuthStore } from '@/state/authStore';
 import { createAuditStore } from '@/state/auditStore';
 import type { AuditListParams } from '@/domain/audit';
 import { STRINGS } from '@/config/strings';
@@ -68,7 +67,6 @@ export function ActivityFeed({ filters, filterKey, testId, inline, layout = 'lis
   // on a prop change. Filter changes flow through `fetchList` below.
   const useStore = useMemo(() => createAuditStore(), []);
 
-  const authUser = useAuthStore((s) => s.authUser);
   const entries = useStore((s) => s.entries);
   const total = useStore((s) => s.total);
   const loading = useStore((s) => s.loading);
@@ -88,13 +86,6 @@ export function ActivityFeed({ filters, filterKey, testId, inline, layout = 'lis
     // a new object literal on each render would refetch every paint.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKey, fetchList]);
-
-  const callerId = authUser?.id ?? null;
-  const isWorkerOnly = authUser
-    ? authUser.roles.includes('worker') &&
-      !authUser.roles.includes('owner') &&
-      !authUser.roles.includes('office')
-    : false;
 
   const hasMore = entries.length < total;
   const showLoader = loading && entries.length === 0;
@@ -134,12 +125,7 @@ export function ActivityFeed({ filters, filterKey, testId, inline, layout = 'lis
               </tr>
             )}
             {entries.map((entry) => (
-              <ActivityFeedRowTable
-                key={entry.id}
-                entry={entry}
-                callerId={callerId}
-                isWorkerOnly={isWorkerOnly}
-              />
+              <ActivityFeedRowTable key={entry.id} entry={entry} />
             ))}
           </tbody>
         </table>
@@ -171,12 +157,7 @@ export function ActivityFeed({ filters, filterKey, testId, inline, layout = 'lis
         </div>
       )}
       {entries.map((entry) => (
-        <ActivityFeedRow
-          key={entry.id}
-          entry={entry}
-          callerId={callerId}
-          isWorkerOnly={isWorkerOnly}
-        />
+        <ActivityFeedRow key={entry.id} entry={entry} />
       ))}
       {hasMore && (
         <div className={styles.footerActions}>

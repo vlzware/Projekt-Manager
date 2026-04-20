@@ -205,11 +205,10 @@ export class ProjectCrudService {
       });
       collected.push(createRow);
 
-      // Each worker assignment is its own audit event — makes worker
-      // reachability queries (AC-180) cheap: a single row references
-      // one project and one user. The payload includes the worker's
-      // displayName so the activity feed can render "Mitarbeiter
-      // zugewiesen: Jan Nowak" (ui/workflow-views.md §8.4.1) without a
+      // Each worker assignment is its own audit event — the per-row
+      // grain keeps the activity feed rendering "Mitarbeiter zugewiesen:
+      // Jan Nowak" (ui/workflow-views.md §8.4.1) cheap. The payload
+      // includes the worker's displayName so the feed doesn't need a
       // second round-trip.
       for (const workerId of data.assignedWorkerIds) {
         const { auditRow } = await mutateInTx(tx, ctx, {

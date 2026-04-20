@@ -330,8 +330,8 @@ describe('AT-89: Mutation + audit row atomicity (AC-177)', () => {
       const row = rows.rows[0] as unknown as AuditLogRow;
       expect(row.actor_kind).toBe('user');
       // `project_worker` rows carry payload referencing the project the
-      // worker was attached to — used by the worker-scope predicate
-      // (AC-180).
+      // worker was attached to — the UI activity feed renders worker
+      // assignment changes from it.
       expect(row.payload).toBeTruthy();
     } finally {
       await pool.end();
@@ -481,154 +481,41 @@ describe('AT-90: Bootstrap emits system-actor audit row + CHECK constraint (AC-1
 });
 
 // ---------------------------------------------------------------------
-// AT-91 — Worker-scoped list endpoint (AC-180)
+// AT-91 — Audit-list access matrix
 // ---------------------------------------------------------------------
 //
-// Seed already populates the assignment graph (worker1 → YYYY-007,
-// 008, 009, 011 per role-scoping.test.ts). We layer audit rows on top
-// of the seed so the list response has something non-empty to scope.
-//
-// Owner and office are unscoped and receive every row — a positive
-// regression against the same audit-scope predicate.
-describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
+// Owner + office hold `audit:read`; both are unscoped for reachability.
+// Worker + bookkeeper lack the permission and are denied at the
+// permission middleware before reaching the repository.
+describe('AT-91: Audit-list access matrix', () => {
   let ownerToken: string;
   let officeToken: string;
   let workerToken: string;
-  let workerId: string;
-  // Reachability sets derived from raw SQL (not via authGet) so the
-  // oracle does not share the ADR-0019 scoping predicate with the SUT
-  // — a uniform bug in the predicate must not silently pass.
-  let workerAssignedProjectIds: Set<string>;
-  let workerReachableCustomerIds: Set<string>;
-  // Audit-row id for the owner's self-PATCH (entityType='user',
-  // actorId=ownerId). Used as a positive control in the owner/office
-  // unscoped blocks: asserting presence rules out a buggy predicate
-  // that returns only one seeded row.
+  let bookkeeperToken: string;
+  /** Positive control id — a user-entity audit row from the owner's
+   *  self-PATCH, proves the owner/office blocks aren't asserting on an
+   *  empty slice. */
   let ownerAuthoredUserRowId: string;
 
   beforeAll(async () => {
     await startApp();
-    [ownerToken, officeToken, workerToken] = await Promise.all([
+    [ownerToken, officeToken, workerToken, bookkeeperToken] = await Promise.all([
       login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD),
       login(SEED_USERS.office.username, SEED_DEFAULT_PASSWORD),
       login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD),
+      login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD),
     ]);
 
-    const workerMeRes = await authGet(workerToken, '/api/auth/me');
-    expect(workerMeRes.statusCode).toBe(200);
-    // GET /api/auth/me envelopes the profile as `{ user: { id, ... } }`
-    // (api.md §14.2.1). The earlier draft did `.json().id` and got
-    // `undefined` back, which made the AC-180 assertion trivially fail
-    // on every worker-visible user row. Drill one level in so workerId
-    // is the caller's real uuid.
-    workerId = workerMeRes.json().user.id as string;
-
-    // Mutations that write audit rows covering every entity_type the
-    // scoping predicate cares about:
-    //   - project (assigned + unassigned)
-    //   - customer (reachable + unreachable via worker1's assignments)
-    //   - project_worker (assigned project)
-    //   - user (two rows: one authored by the owner — not self-authored
-    //     for the worker, thus hidden; one authored by the worker —
-    //     self-authored under AC-180's self-authorship clause, thus
-    //     visible in the worker's own feed)
-
-    // Update on an assigned project → audit row for `project` entity_type,
-    // reachable via worker1's assignment.
-    const projects = (await authGet(ownerToken, '/api/projects?limit=200')).json().data as {
-      id: string;
-      number: string;
-      customerId: string;
-    }[];
-    const assigned = projects.find((p) => p.number === `${year}-007`);
-    const unassigned = projects.find((p) => p.number === `${year}-001`);
-    expect(assigned).toBeDefined();
-    expect(unassigned).toBeDefined();
-
-    await authPatch(ownerToken, `/api/projects/${assigned!.id}`, {
-      notes: 'AT-91 update assigned',
-    });
-    await authPatch(ownerToken, `/api/projects/${unassigned!.id}`, {
-      notes: 'AT-91 update unassigned',
-    });
-
-    // Update on the assigned project's customer → audit row for
-    // `customer` entity_type, reachable via the worker's assignment.
-    await authPatch(ownerToken, `/api/customers/${assigned!.customerId}`, {
-      notes: 'AT-91 update reachable customer',
-    });
-    // Update on an unreachable customer (the unassigned project's).
-    await authPatch(ownerToken, `/api/customers/${unassigned!.customerId}`, {
-      notes: 'AT-91 update unreachable customer',
-    });
-
-    // Owner-authored user-entity row → worker must NOT see it
-    // (AC-180: self-authorship clause requires actor_id == caller.id).
-    // Route is PATCH /api/auth/me (see src/server/routes/auth.ts);
-    // asserting the 200 so a route rename surfaces here rather than
-    // silently dropping the row and turning AC-180's negative half
-    // into a tautology.
+    // Drive at least one user-entity audit row so the owner/office
+    // positive-control assertions have something to find. PATCH
+    // /api/auth/me writes an entityType='user' row with actor_id=owner.
     const ownerSelfPatch = await authPatch(ownerToken, `/api/auth/me`, {
       themePreference: 'dark',
     });
     expect(ownerSelfPatch.statusCode).toBe(200);
 
-    // Worker-authored user-entity row → worker MUST see it
-    // (AC-180: self-authorship clause admits entityType='user' rows
-    // where actor_id == caller.id). Same route as above, different
-    // caller.
-    const workerSelfPatch = await authPatch(workerToken, `/api/auth/me`, {
-      themePreference: 'dark',
-    });
-    expect(workerSelfPatch.statusCode).toBe(200);
-
-    // Drive a project_worker assignment change on an unassigned
-    // project. The resulting audit row for entityType='project_worker'
-    // references a project the worker is NOT assigned to (the target
-    // project), so the reachability predicate must exclude it from
-    // the worker's view.
-    const workerList = (await authGet(ownerToken, '/api/users?limit=200')).json().users as {
-      id: string;
-      username: string;
-    }[];
-    const worker2 = workerList.find((u) => u.username === SEED_USERS.worker2.username);
-    expect(worker2).toBeDefined();
-    if (worker2) {
-      await authPatch(ownerToken, `/api/projects/${unassigned!.id}`, {
-        assignedWorkerIds: [worker2.id],
-      });
-    }
-
-    // Derive the worker's reachability sets from raw SQL rather than the
-    // scoped endpoints. authGet('/api/projects'), authGet('/api/customers')
-    // run the same ADR-0019 predicate under test; using them as the oracle
-    // would let a uniform predicate bug pass silently. Owner-side lookups
-    // of the acting ids are unscoped and safe to derive via raw SQL.
     const { db: fixtureDb, pool: fixturePool } = createDatabase();
     try {
-      const assignedRows = await fixtureDb.execute(
-        sql`SELECT project_id FROM project_workers WHERE user_id = ${workerId}`,
-      );
-      workerAssignedProjectIds = new Set(
-        (assignedRows.rows as { project_id: string }[]).map((r) => r.project_id),
-      );
-
-      // Subquery on `project_workers` rather than passing the JS Set as a
-      // `= ANY(...)` parameter — drizzle's sql template inlines a JS array
-      // as a parenthesized tuple, which Postgres rejects with
-      // "op ANY/ALL (array) requires array on right side".
-      const customerRows = await fixtureDb.execute(
-        sql`SELECT DISTINCT customer_id FROM projects
-            WHERE id IN (SELECT project_id FROM project_workers WHERE user_id = ${workerId})`,
-      );
-      workerReachableCustomerIds = new Set(
-        (customerRows.rows as { customer_id: string }[]).map((r) => r.customer_id),
-      );
-
-      // Capture the audit-row id for the owner's self-PATCH: the most
-      // recent entity_type='user' row authored by the owner. Unscoped
-      // (raw SQL) — we're asking "what did the DB record?", not "what
-      // does the predicate return?".
       const ownerLookup = await fixtureDb.execute(
         sql`SELECT id FROM users WHERE username = ${SEED_USERS.owner.username} LIMIT 1`,
       );
@@ -657,209 +544,42 @@ describe('AT-91: Worker-scoped GET /api/audit list (AC-180)', () => {
     await stopApp();
   });
 
-  // AT-91 — worker scope: list admits only reachable rows plus
-  // self-authored user rows
-  it('worker receives only rows reachable via assignments plus self-authored user rows', async () => {
-    const res = await authGet(workerToken, '/api/audit?limit=500');
-    expect(res.statusCode).toBe(200);
-    const body = res.json();
-    const entries = body.data as AuditApiEntry[];
-
-    // AC-180 self-authorship clause: any `user`-entity row the worker
-    // sees must be authored by the worker themselves. The owner's
-    // theme-preference PATCH (see beforeAll) produces a user row with
-    // actorId === owner — it must NOT appear here.
-    for (const row of entries) {
-      if (row.entityType === 'user') {
-        expect(row.actorId).toBe(workerId);
-      }
-    }
-
-    // Positive half of the self-authorship clause: the worker's own
-    // PATCH /api/auth/me (see beforeAll) produced a user-entity row
-    // the worker MUST see in their own feed. Without this assertion
-    // the negative half above would trivially pass on an empty
-    // user-entity slice.
-    const selfAuthoredUserRows = entries.filter(
-      (row) => row.entityType === 'user' && row.actorId === workerId,
-    );
-    expect(selfAuthoredUserRows.length).toBeGreaterThanOrEqual(1);
-
-    // api.md §14.2.8 boundary-stripping: on every non-self-authored row
-    // visible to a worker, both `actorId` and `payload` must be null at
-    // the API boundary. Self-authored rows (actorId === workerId) keep
-    // full detail; everything else is stripped.
-    for (const row of entries) {
-      if (row.actorId !== workerId) {
-        expect(row.actorId).toBeNull();
-        expect(row.payload).toBeNull();
-      }
-    }
-
-    // Every `project` entry the worker sees is for an assigned project.
-    // Oracle is derived from raw SQL in beforeAll (workerAssignedProjectIds)
-    // to avoid sharing the ADR-0019 scoping predicate with the SUT.
-    for (const row of entries) {
-      if (row.entityType === 'project') {
-        expect(workerAssignedProjectIds.has(row.entityId)).toBe(true);
-      }
-    }
-
-    // Every `customer` entry is for a customer reachable via an
-    // assigned project. Oracle is derived from raw SQL in beforeAll
-    // (workerReachableCustomerIds).
-    for (const row of entries) {
-      if (row.entityType === 'customer') {
-        expect(workerReachableCustomerIds.has(row.entityId)).toBe(true);
-      }
-    }
-
-    // Every `project_worker` entry's payload references a project
-    // the worker is assigned to. Payload shape per data-model.md
-    // §5.10 carries before/after with projectId/userId; the
-    // reachability predicate pins the projectId to the caller's
-    // assignment set (AC-180).
-    //
-    // Worker boundary-stripping (api.md §14.2.8): for non-self-authored
-    // rows the API returns payload=null, so we can only assert a
-    // projectId match on self-authored project_worker rows. The scope
-    // guarantee for the stripped rows is "this row exists in the
-    // worker's feed only because its payload projectId was in the
-    // assignment set at read time" — implicit via the stripped-row
-    // count being non-negative rather than verifiable here.
-    for (const row of entries) {
-      if (row.entityType === 'project_worker' && row.actorId === workerId) {
-        const payload = row.payload as
-          | { before?: { projectId?: string }; after?: { projectId?: string } }
-          | null
-          | undefined;
-        const projectId = payload?.after?.projectId ?? payload?.before?.projectId;
-        if (projectId === undefined) {
-          throw new Error(
-            `AT-91: project_worker audit row ${row.id} has no projectId in payload — reachability predicate cannot have admitted it (got payload ${JSON.stringify(row.payload)})`,
-          );
-        }
-        expect(workerAssignedProjectIds.has(projectId)).toBe(true);
-      }
-    }
-  });
-
-  // AT-91 — owner: unscoped
-  it('owner receives every audit row (no scope predicate)', async () => {
+  it('owner receives every audit row (no reachability filter)', async () => {
     const res = await authGet(ownerToken, '/api/audit?limit=500');
     expect(res.statusCode).toBe(200);
     const entries = res.json().data as AuditApiEntry[];
 
-    // Owner sees `user`-entity rows — at minimum the self-update above.
     const hasUserEntry = entries.some((row) => row.entityType === 'user');
     expect(hasUserEntry).toBe(true);
 
-    // Positive control: the owner-authored user row must be present.
-    // `some(entityType==='user')` alone would pass on a buggy predicate
-    // returning only one unrelated seeded row.
     const ids = new Set(entries.map((row) => row.id));
     expect(ids.has(ownerAuthoredUserRowId)).toBe(true);
   });
 
-  // AT-91 — office: unscoped
-  it('office receives every audit row (no scope predicate)', async () => {
+  it('office receives non-destructive audit rows (no reachability filter)', async () => {
     const res = await authGet(officeToken, '/api/audit?limit=500');
     expect(res.statusCode).toBe(200);
     const entries = res.json().data as AuditApiEntry[];
     const hasUserEntry = entries.some((row) => row.entityType === 'user');
     expect(hasUserEntry).toBe(true);
 
-    // Positive control: the owner-authored user row must be present for
-    // office too — office reachability is null (unscoped), and the
-    // destructive predicate excludes roles-diff updates only (api.md
-    // §14.2.8). A theme-preference update touches no roles, so it's
-    // admitted.
+    // Positive control: the owner-authored user row (a theme-preference
+    // update — no `roles` diff) is non-destructive, so the destructive
+    // predicate admits it for office.
     const ids = new Set(entries.map((row) => row.id));
     expect(ids.has(ownerAuthoredUserRowId)).toBe(true);
   });
-});
 
-// ---------------------------------------------------------------------
-// AT-92 — Worker GET /api/audit/:id three-way result (AC-181)
-// ---------------------------------------------------------------------
-//
-// Mirrors the AC-147 pattern pinned in `role-scoping.test.ts` for
-// projects. The three outcomes (200 / 403 / 404) must be distinguishable
-// at the caller boundary — collapsing 403 into 404 leaks existence via
-// absence and is explicitly forbidden by the spec.
-describe('AT-92: Worker GET /api/audit/:id 200/403/404 (AC-181)', () => {
-  let ownerToken: string;
-  let workerToken: string;
-  let inScopeAuditId: string;
-  let outOfScopeAuditId: string;
-
-  beforeAll(async () => {
-    await startApp();
-    [ownerToken, workerToken] = await Promise.all([
-      login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD),
-      login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD),
-    ]);
-
-    const projects = (await authGet(ownerToken, '/api/projects?limit=200')).json().data as {
-      id: string;
-      number: string;
-    }[];
-    const assigned = projects.find((p) => p.number === `${year}-007`)!;
-    const unassigned = projects.find((p) => p.number === `${year}-001`)!;
-
-    // Drive one update on each so there's a fresh audit row on both sides.
-    await authPatch(ownerToken, `/api/projects/${assigned.id}`, {
-      notes: `AT-92 in-scope ${Date.now()}`,
-    });
-    await authPatch(ownerToken, `/api/projects/${unassigned.id}`, {
-      notes: `AT-92 out-of-scope ${Date.now()}`,
-    });
-
-    // Owner list is unscoped, so it contains both; find the latest for
-    // each project. Pre-impl the endpoint 404s — convert that into an
-    // explicit failure with a recognizable message instead of letting
-    // `undefined.find(...)` crash with a TypeError in beforeAll.
-    const auditList = await authGet(ownerToken, '/api/audit?limit=500');
-    if (auditList.statusCode !== 200) {
-      throw new Error(
-        `AT-92 fixture: GET /api/audit expected 200, got ${auditList.statusCode} — audit endpoint likely missing`,
-      );
-    }
-    const entries = ((auditList.json() as { data?: AuditApiEntry[] }).data ??
-      []) as AuditApiEntry[];
-    const inScope = entries.find(
-      (row) => row.entityType === 'project' && row.entityId === assigned.id,
-    );
-    const outOfScope = entries.find(
-      (row) => row.entityType === 'project' && row.entityId === unassigned.id,
-    );
-    if (!inScope || !outOfScope) {
-      throw new Error('AT-92 fixture missing — expected audit rows for both projects');
-    }
-    inScopeAuditId = inScope.id;
-    outOfScopeAuditId = outOfScope.id;
-  });
-
-  afterAll(async () => {
-    await stopApp();
-  });
-
-  it('worker receives 200 for an in-scope audit entry', async () => {
-    const res = await authGet(workerToken, `/api/audit/${inScopeAuditId}`);
-    expect(res.statusCode).toBe(200);
-    expect(res.json().id).toBe(inScopeAuditId);
-  });
-
-  it('worker receives 403 NOT_PERMITTED for an existing out-of-scope entry', async () => {
-    const res = await authGet(workerToken, `/api/audit/${outOfScopeAuditId}`);
+  it('worker is denied — lacks audit:read', async () => {
+    const res = await authGet(workerToken, '/api/audit?limit=1');
     expect(res.statusCode).toBe(403);
     expect(res.json().code).toBe('NOT_PERMITTED');
   });
 
-  it('worker receives 404 NOT_FOUND for a non-existent id', async () => {
-    const res = await authGet(workerToken, '/api/audit/00000000-0000-0000-0000-000000000000');
-    expect(res.statusCode).toBe(404);
-    expect(res.json().code).toBe('NOT_FOUND');
+  it('bookkeeper is denied — lacks audit:read', async () => {
+    const res = await authGet(bookkeeperToken, '/api/audit?limit=1');
+    expect(res.statusCode).toBe(403);
+    expect(res.json().code).toBe('NOT_PERMITTED');
   });
 });
 
@@ -895,8 +615,7 @@ describe('AT-92: Worker GET /api/audit/:id 200/403/404 (AC-181)', () => {
 describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
   let ownerToken: string;
   let officeToken: string;
-  let workerToken: string;
-  /** An audit row matching `action='purge'` — owner-visible, others hidden. */
+  /** An audit row matching `action='purge'` — owner-visible, office hidden. */
   let purgeAuditId: string;
   /** An audit row matching `action='delete'` on `entityType='user'`. */
   let userDeleteAuditId: string;
@@ -910,20 +629,12 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
    * broader "user entity update" catch-all.
    */
   let userEmailUpdateAuditId: string;
-  /**
-   * An in-scope non-destructive audit row visible to worker1 —
-   * positive control for the worker list block. Without it, an endpoint
-   * returning `[]` to workers would pass the `!ids.has(purgeAuditId)`
-   * assertion trivially.
-   */
-  let workerVisibleNonDestructiveId: string;
 
   beforeAll(async () => {
     await startApp();
-    [ownerToken, officeToken, workerToken] = await Promise.all([
+    [ownerToken, officeToken] = await Promise.all([
       login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD),
       login(SEED_USERS.office.username, SEED_DEFAULT_PASSWORD),
-      login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD),
     ]);
 
     // Use a fresh DB/pool handle for the raw inserts so it is torn down
@@ -1008,52 +719,6 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
         RETURNING id
       `);
       userEmailUpdateAuditId = (emailUpdateInsert.rows[0] as { id: string }).id;
-
-      // ---- Worker positive-control — in-scope non-destructive row ----
-      // Drive an `update` mutation against a worker-assigned project so
-      // the worker's reachability predicate admits the resulting audit
-      // row. Without this, the worker block would only have a negative
-      // assertion (purge absence) and an endpoint returning `[]` would
-      // pass silently. YYYY-007 is assigned to worker1 (see
-      // role-scoping.test.ts fixtures).
-      const workerProjects = (await authGet(ownerToken, '/api/projects?limit=200')).json().data as {
-        id: string;
-        number: string;
-      }[];
-      const workerAssignedProject = workerProjects.find((p) => p.number === `${year}-007`);
-      if (!workerAssignedProject) {
-        throw new Error('AT-93 fixture: expected YYYY-007 in seed for worker positive control');
-      }
-      const auditBefore = await fixtureDb.execute(
-        sql`SELECT COUNT(*)::int AS c FROM audit_log
-            WHERE entity_type = 'project' AND action = 'update'
-              AND entity_id = ${workerAssignedProject.id}`,
-      );
-      const beforeCount = (auditBefore.rows[0] as { c: number }).c;
-      const patchRes = await authPatch(ownerToken, `/api/projects/${workerAssignedProject.id}`, {
-        notes: `AT-93 worker positive control ${Date.now()}`,
-      });
-      if (patchRes.statusCode !== 200) {
-        throw new Error(
-          `AT-93 fixture: expected 200 from worker-visible update, got ${patchRes.statusCode}`,
-        );
-      }
-      const auditAfter = await fixtureDb.execute(
-        sql`SELECT id FROM audit_log
-            WHERE entity_type = 'project' AND action = 'update'
-              AND entity_id = ${workerAssignedProject.id}
-            ORDER BY created_at DESC LIMIT 1`,
-      );
-      if (auditAfter.rows.length === 0) {
-        throw new Error('AT-93 fixture: worker-visible update produced no audit row');
-      }
-      const auditAfterCount = await fixtureDb.execute(
-        sql`SELECT COUNT(*)::int AS c FROM audit_log
-            WHERE entity_type = 'project' AND action = 'update'
-              AND entity_id = ${workerAssignedProject.id}`,
-      );
-      expect((auditAfterCount.rows[0] as { c: number }).c).toBe(beforeCount + 1);
-      workerVisibleNonDestructiveId = (auditAfter.rows[0] as { id: string }).id;
     } finally {
       await fixturePool.end();
     }
@@ -1089,21 +754,6 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
     // destructive predicate keys off `roles` specifically, not any
     // user-entity update.
     expect(ids.has(userEmailUpdateAuditId)).toBe(true);
-  });
-
-  it('worker list excludes the purge row (worker also excluded from user rows via reachability)', async () => {
-    const res = await authGet(workerToken, '/api/audit?limit=1000');
-    expect(res.statusCode).toBe(200);
-    const ids = new Set((res.json().data as AuditApiEntry[]).map((r) => r.id));
-    // Positive control: a reachable non-destructive row must be present
-    // in the worker's feed. Without this, an endpoint returning `[]`
-    // would pass the purge-absence assertion trivially.
-    expect(ids.has(workerVisibleNonDestructiveId)).toBe(true);
-    // Purge carries `entityType='project'` — the reachability predicate
-    // alone does NOT exclude every purge (only unreachable ones); the
-    // destructive predicate is what excludes them categorically.
-    // This is the assertion AC-182/AC-187 pins.
-    expect(ids.has(purgeAuditId)).toBe(false);
   });
 
   it('office get-by-id on a purge row returns 403 NOT_PERMITTED', async () => {

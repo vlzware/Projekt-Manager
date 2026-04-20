@@ -11,9 +11,8 @@
  * cleaner sibling-row form. CSS gives the open drawer enough width
  * via a negative right margin.
  *
- * The `data-*` attributes pin the E2E contract (AC-185 / AC-186 /
- * AC-187); they're identical to `ActivityFeedRow` because the
- * visibility assertions don't care which layout produced the row.
+ * E2E data-* contract (AC-185 / AC-187): `data-action`,
+ * `data-has-payload`, `data-created-at`.
  */
 
 import { useState } from 'react';
@@ -27,10 +26,6 @@ import tableStyles from './AuditTable.module.css';
 
 interface Props {
   entry: AuditEntry;
-  /** Caller's own user id — drives `data-self-authored`. */
-  callerId: string | null;
-  /** Worker-only caller → neutral actor label for non-self rows. */
-  isWorkerOnly: boolean;
 }
 
 function entityTypeLabel(entityType: AuditEntry['entityType']): string {
@@ -46,16 +41,9 @@ function entityTypeLabel(entityType: AuditEntry['entityType']): string {
   }
 }
 
-function resolveActorLabel(entry: AuditEntry, callerId: string | null, isWorkerOnly: boolean) {
+function resolveActorLabel(entry: AuditEntry) {
   if (entry.actorKind === 'system') {
     return { label: STRINGS.audit.system, reason: entry.actorReason };
-  }
-  const isSelf = entry.actorId !== null && entry.actorId === callerId;
-  if (isWorkerOnly) {
-    if (isSelf) {
-      return { label: entry.actorDisplayName ?? STRINGS.audit.userNeutral, reason: null };
-    }
-    return { label: STRINGS.audit.userNeutral, reason: null };
   }
   return { label: entry.actorDisplayName ?? STRINGS.audit.userNeutral, reason: null };
 }
@@ -79,18 +67,16 @@ function hasRenderablePayload(payload: unknown): boolean {
   return beforeHasKeys || afterHasKeys;
 }
 
-export function ActivityFeedRowTable({ entry, callerId, isWorkerOnly }: Props) {
+export function ActivityFeedRowTable({ entry }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const hasPayload = hasRenderablePayload(entry.payload);
-  const isSelfAuthored = entry.actorId !== null && entry.actorId === callerId;
-  const actor = resolveActorLabel(entry, callerId, isWorkerOnly);
+  const actor = resolveActorLabel(entry);
 
   return (
     <tr
       className={tableStyles.row}
       data-testid={`activity-feed-row-${entry.id}`}
       data-action={entry.action}
-      data-self-authored={isSelfAuthored ? 'true' : 'false'}
       data-has-payload={hasPayload ? 'true' : 'false'}
       data-created-at={entry.createdAt}
     >

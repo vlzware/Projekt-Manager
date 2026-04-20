@@ -29,13 +29,13 @@ const caller = (role: RoleName): RouteCaller => ({ roles: [role] });
 
 // Mirror of `docs/spec/ui/index.md §8.7.1`. Kept independent of the table
 // source so a regression in either has to be reconciled by hand.
-// Aktivität (audit:read) is visible to owner / office / worker;
-// bookkeeper lacks `audit:read` per the permission matrix and does not
+// Aktivität (audit:read) is visible to owner / office only under the
+// current matrix; worker and bookkeeper lack `audit:read` and do not
 // see the tab.
 const MATRIX: Record<RoleName, readonly string[]> = {
   owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivitaet'],
   office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
-  worker: ['kanban', 'kalender', 'aktivitaet'],
+  worker: ['kanban', 'kalender'],
   bookkeeper: ['projekte', 'kunden'],
 };
 

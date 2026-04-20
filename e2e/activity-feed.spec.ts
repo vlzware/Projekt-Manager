@@ -9,20 +9,18 @@ import { clickView, expectViewReachable } from './nav-helpers';
  *   - AC-185 [vis] — project detail panel activity feed: reverse-chrono
  *     ordering, paginated via "Ältere anzeigen", empty state "Keine
  *     Aktivität".
- *   - AC-186 [vis] — payload drawer visibility per role: rendered for
- *     owner/office on any payload-bearing entry; rendered for the
- *     worker only on self-authored entries; absent on others' rows
- *     for workers.
+ *   - AC-186 [vis] — payload drawer renders on any entry carrying a
+ *     non-null payload. Owner and office both receive full payloads.
  *   - AC-187 [crit] — destructive-action entries (purge, user-delete,
  *     roles-update): owner sees them in the global Aktivität view,
- *     office and worker do not. The API boundary is pinned by AT-93
+ *     office does not. The API boundary is pinned by AT-93
  *     (src/server/__tests__/audit-log.test.ts); this spec walks the
  *     UI so a reviewer can watch the visibility split in UI mode
  *     (ADR-0014 [vis] contract).
  *
- * Role walk: owner, office, worker. Bookkeeper is intentionally not
- * in `audit:read` (api.md §14.3) — the nav tab must be absent for
- * bookkeeper, asserted as a separate case.
+ * Role walk: owner, office. Worker and bookkeeper lack `audit:read`
+ * (api.md §14.3) — both the nav tab and the deep-link path are
+ * denied, asserted as separate cases.
  *
  * Auth: each describe uses the pre-authenticated storage state for its
  * target role (see e2e/auth.setup.ts). No per-test login — that path
@@ -70,26 +68,19 @@ test.describe('AC-186: Aktivität nav visibility per role', () => {
     });
   }
 
-  // Worker has `audit:read` but the nav tab is deliberately suppressed
-  // (rows are scoped too narrowly for a daily-view slot). The view is
-  // still reachable via deep-link — server-side scoping is authoritative.
-  test.describe('worker', () => {
-    test.use({ storageState: STORAGE_STATES.worker });
-    test('Aktivität tab is absent from nav; deep-link remains reachable', async ({ page }) => {
-      await page.goto('/');
-      await expectViewReachable(page, 'aktivitaet', false);
-      await page.goto('/audit');
-      await expect(page.getByTestId('audit-list')).toBeVisible();
+  // Worker and bookkeeper lack `audit:read`. Nav tab absent from
+  // header; deep-link to /audit hits the not-permitted surface.
+  for (const role of ['worker', 'bookkeeper'] as const) {
+    test.describe(role, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test('Aktivität tab absent from nav; /audit is not-permitted', async ({ page }) => {
+        await page.goto('/');
+        await expectViewReachable(page, 'aktivitaet', false);
+        await page.goto('/audit');
+        await expect(page.getByTestId('not-permitted-view')).toBeVisible();
+      });
     });
-  });
-
-  test.describe('bookkeeper', () => {
-    test.use({ storageState: STORAGE_STATES.bookkeeper });
-    test('Aktivität tab is absent (no audit:read)', async ({ page }) => {
-      await page.goto('/');
-      await expectViewReachable(page, 'aktivitaet', false);
-    });
-  });
+  }
 });
 
 // ---------------------------------------------------------------
@@ -252,110 +243,6 @@ test.describe('AC-186: payload drawer visibility per role — office', () => {
   });
 });
 
-test.describe('AC-186: payload drawer visibility per role — worker', () => {
-  test.use({ storageState: STORAGE_STATES.worker });
-
-  test('worker sees drawer on self-authored rows and NOT on others', async ({ page, browser }) => {
-    // Precondition 1 — non-self-authored row visible to the worker.
-    // Driven through an owner-authenticated request context (no fresh
-    // login — the owner storage state is already on disk from
-    // auth.setup.ts). Worker1 is assigned to YYYY-007 (see
-    // audit-log.test.ts AT-91 / AT-93 fixtures); an owner-authored
-    // PATCH on that project produces a reachable audit row with
-    // `actorId !== worker.id` — the negative half of the AC-186 contract.
-    const ownerContext = await browser.newContext({ storageState: STORAGE_STATES.owner });
-    try {
-      const listRes = await ownerContext.request.get('/api/projects?limit=200');
-      const list = (await listRes.json()).data as { id: string; number: string }[];
-      const year = new Date().getFullYear();
-      const assigned = list.find((p) => p.number === `${year}-007`);
-      if (!assigned) {
-        throw new Error(`AC-186 worker drawer precondition: seed project ${year}-007 missing`);
-      }
-      const ownerPatch = await ownerContext.request.patch(
-        `/api/projects/${assigned.id}`,
-        { data: { notes: `AC-186 worker fixture ${Date.now()}` } },
-      );
-      if (!ownerPatch.ok()) {
-        throw new Error(
-          `AC-186 worker drawer precondition: owner PATCH returned ${ownerPatch.status()}`,
-        );
-      }
-    } finally {
-      await ownerContext.close();
-    }
-
-    // Precondition 2 — self-authored row. The simplest worker-accessible
-    // mutation is the theme-preference update on `/api/auth/me`. It
-    // produces an audit row where `actorId == caller.id` —
-    // "self-authored" per api.md §14.2.8.
-    const patchRes = await page.request.patch('/api/auth/me', {
-      data: { themePreference: 'dark' },
-    });
-    if (!patchRes.ok()) {
-      throw new Error(
-        `AC-186 worker drawer precondition: PATCH /api/auth/me returned ${patchRes.status()} — worker cannot author an audit row through the self-profile route. Fixture is blocked until the route grants workers self-mutation access.`,
-      );
-    }
-
-    // Worker has no Aktivität tab; the permission still grants the view
-    // via deep-link, which is how the drawer spec exercises the role.
-    await page.goto('/audit');
-
-    const rows = page.locator('[data-testid^="activity-feed-row-"]');
-    await rows.first().waitFor();
-    const total = await rows.count();
-    if (total === 0) {
-      throw new Error(
-        'AC-186 worker drawer precondition: worker feed is empty after a self-authored mutation. Either the PATCH did not commit, the audit row was not admitted for the actor under the scope predicate, or the feed failed to hydrate.',
-      );
-    }
-
-    // Classify the rendered rows by authorship using the user-
-    // observable signals first: a drawer toggle either renders or it
-    // does not. `data-self-authored` / `data-has-payload` are kept as
-    // a cheap cross-check — they pin the UI's interpretation of the
-    // API contract (api.md §14.2.8: worker-visible rows carry payload
-    // iff the worker authored them) without letting the test degrade
-    // to a DOM-attribute smoke test.
-    let firstSelfAuthoredIndex = -1;
-    let firstNonSelfAuthoredIndex = -1;
-    for (let i = 0; i < total; i++) {
-      const row = rows.nth(i);
-      const isSelfAuthored = (await row.getAttribute('data-self-authored')) === 'true';
-      const toggleCount = await row.getByTestId('activity-feed-drawer-toggle').count();
-      const hasPayload = await row.getAttribute('data-has-payload');
-
-      if (isSelfAuthored) {
-        if (firstSelfAuthoredIndex === -1) firstSelfAuthoredIndex = i;
-        // API contract: full payload returned on self-authored rows.
-        expect(toggleCount).toBe(1);
-        expect(hasPayload).toBe('true');
-      } else {
-        if (firstNonSelfAuthoredIndex === -1) firstNonSelfAuthoredIndex = i;
-        // API contract: payload stripped on every other row — the
-        // drawer toggle must be absent entirely, not just hidden.
-        expect(toggleCount).toBe(0);
-        expect(hasPayload).toBe('false');
-      }
-    }
-
-    // Both halves of the contract require both row classes to be
-    // present — positive case alone could pass a bug that emits the
-    // drawer on every row; negative alone could pass a bug that omits
-    // the drawer entirely.
-    expect(firstSelfAuthoredIndex).toBeGreaterThanOrEqual(0);
-    if (firstNonSelfAuthoredIndex === -1) {
-      throw new Error(
-        'AC-186 worker drawer fixture: no non-self-authored rows in the worker feed. The negative half of the contract ("drawer absent on others") cannot be exercised. Seed an owner/office mutation on an assigned project before this spec runs to produce a non-self-authored row visible to the worker via reachability.',
-      );
-    }
-
-    // Positive half: the drawer opens inline on a self-authored row.
-    await assertDrawerOpensInline(page, rows.nth(firstSelfAuthoredIndex));
-  });
-});
-
 // ---------------------------------------------------------------
 // AC-187 — Destructive-action row visibility differs by role
 // ---------------------------------------------------------------
@@ -438,14 +325,4 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
     });
   });
 
-  test.describe('worker', () => {
-    test.use({ storageState: STORAGE_STATES.worker });
-    test('purge entries are not visible', async ({ page }) => {
-      // Worker has no Aktivität nav tab; the permission still grants
-      // read access via deep-link.
-      await page.goto('/audit');
-      const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
-      await expect(purgeRows).toHaveCount(0);
-    });
-  });
 });

@@ -85,9 +85,8 @@ export class AuthService {
    * Only fields the user themselves controls appear in `patch`; identity-
    * bearing fields stay administrative (see `UserService`).
    *
-   * Emits an `update` audit row on the `user` entity so the worker's
-   * self-authored activity surface (AC-180 self-authorship clause)
-   * sees the event.
+   * Emits an `update` audit row on the `user` entity so the
+   * administrative audit surface records the preference change.
    */
   async updateSelfPreferences(
     actingUserId: string,

@@ -25,11 +25,10 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
     useProjectTransition(currentProject);
   const canTransition = usePermission('project:transition');
   const canUpdateDates = usePermission('project:dates');
-  // Activity feed is rendered whenever the caller can open the panel — the
-  // nav matrix grants `audit:read` to owner, office, and worker
-  // (ui/workflow-views.md §8.4.1, api.md §14.3). Bookkeeper lacks
-  // `audit:read`, but bookkeeper does not reach the Kanban/Calendar shell
-  // where this panel is opened from, so the gate is defense in depth.
+  // Activity feed — owner and office hold `audit:read` under the current
+  // matrix. Worker and bookkeeper do not: worker can still open the
+  // panel from the Kanban/Calendar shell but the feed section is
+  // suppressed; bookkeeper never reaches this shell.
   const canReadAudit = usePermission('audit:read');
 
   const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {

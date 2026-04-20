@@ -169,89 +169,32 @@ export async function isCustomerInScope(
 }
 
 // ---------------------------------------------------------------------
-// Audit-log scope predicates — ADR-0019 pattern + AC-180/AC-182/AC-187
+// Audit-log scope predicate — destructive-action visibility (ADR-0019)
 // ---------------------------------------------------------------------
 //
-// The audit surface has TWO orthogonal predicates (api.md §14.2.8):
+// The audit surface carries ONE scope predicate:
 //
-//   1. auditReachabilityScopeForCaller(user)
-//        Worker reachability: project/customer/project_worker entries
-//        reachable through the caller's assignment graph, plus the
-//        self-authorship carve-out for user-entity rows authored by
-//        the caller themselves (AC-180).
+//   auditDestructiveScopeForCaller(user)
+//     Owner sees every audit entry. Office (the only other role that
+//     holds `audit:read` under the current matrix) does NOT see
+//     purges / user-deletes / user-role-mutations — those are owner-
+//     only per AC-182 / AC-187.
 //
-//   2. auditDestructiveScopeForCaller(user)
-//        Destructive-action visibility: only the owner sees audit
-//        entries for purge / user-delete / user-roles-update (AC-182,
-//        AC-187).
+// The reachability predicate that used to carve out worker-visible
+// rows was removed when workers lost `audit:read`. Audit is an
+// administrative surface now; office + owner hold access, both
+// unscoped for reachability.
 //
-// The two fragments AND-compose with `audit:read` — permissions stay
-// coarse; scope is orthogonal to capability (ADR-0019 §Decision).
-
-/**
- * Scope fragment for audit reads — reachability half.
- *
- * Owner / office → null (no reachability filter).
- * Worker → SQL fragment admitting entries that are either:
- *   - `project` with entity_id in the caller's assigned-project set, OR
- *   - `customer` with entity_id among customers reached via a non-deleted
- *     assigned project, OR
- *   - `project_worker` whose payload references a project in the caller's
- *     assignment set (either `before.projectId` or `after.projectId`), OR
- *   - `user` authored by the caller themselves (self-authorship — AC-180).
- * Bookkeeper: classified as unscoped via ROLE_CLASSIFICATION, but the
- * audit permission matrix already excludes bookkeeper from `audit:read`
- * (api.md §14.3), so the bookkeeper branch is never reached. Kept
- * returning null to match the other unscoped roles — a bookkeeper who
- * somehow held `audit:read` in a misconfigured deployment would at least
- * not leak under the reachability half; the destructive predicate still
- * filters.
- *
- * Index alignment: `audit_log_entity_idx` is on `(entity_type, entity_id,
- * created_at DESC)` — the equality-then-IN access pattern in each arm is
- * covered. The `project_worker` arm uses `payload->'...'->>'projectId'`,
- * which is NOT index-covered today; worker-scope lists rely on the
- * reachability AND destructive predicates combined, so the total scan is
- * bounded by the worker's project_workers cardinality in practice. If
- * this becomes a hot path, consider a functional index on the extracted
- * projectId or materialize it as a column.
- *
- * Text-vs-uuid: we compare the jsonb-extracted projectId as text rather
- * than casting to uuid. An earlier `::uuid` cast raised SQLSTATE 22P02
- * on any legacy / hand-seeded payload whose projectId was not a valid
- * uuid — a defensive data-quality hazard that should not crash the
- * worker-scope query. project_workers.project_id is cast to text on
- * the comparison side; it is a schema-level uuid so the cast is safe.
- */
-export function auditReachabilityScopeForCaller(user: AuthUser): SQL | null {
-  if (isUnscoped(user)) return null;
-  return sql`(
-    (audit_log.entity_type = 'project' AND audit_log.entity_id IN (
-      SELECT pw.project_id FROM project_workers pw WHERE pw.user_id = ${user.id}
-    ))
-    OR (audit_log.entity_type = 'customer' AND audit_log.entity_id IN (
-      SELECT DISTINCT p.customer_id
-        FROM projects p
-        INNER JOIN project_workers pw ON pw.project_id = p.id
-       WHERE pw.user_id = ${user.id} AND p.deleted = FALSE
-    ))
-    OR (audit_log.entity_type = 'project_worker' AND (
-      audit_log.payload->'before'->>'projectId' IN (
-        SELECT pw.project_id::text FROM project_workers pw WHERE pw.user_id = ${user.id}
-      )
-      OR audit_log.payload->'after'->>'projectId' IN (
-        SELECT pw.project_id::text FROM project_workers pw WHERE pw.user_id = ${user.id}
-      )
-    ))
-    OR (audit_log.entity_type = 'user' AND audit_log.actor_id = ${user.id})
-  )`;
-}
+// The fragment AND-composes with `audit:read` — permissions stay
+// coarse; destructive visibility is orthogonal to capability
+// (ADR-0019 §Decision).
 
 /**
  * Scope fragment for audit reads — destructive-action half.
  *
  * Owner → null (no destructive filter; owner sees every row).
- * Every other role (office, worker, bookkeeper) → SQL fragment EXCLUDING:
+ * Every other role that somehow reaches this function (office under
+ * the current matrix) → SQL fragment EXCLUDING:
  *   - `action = 'purge'` (any entity_type), AND
  *   - `action = 'delete'` on `entity_type = 'user'`, AND
  *   - `action = 'update'` on `entity_type = 'user'` where the payload diff

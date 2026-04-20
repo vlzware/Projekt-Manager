@@ -24,7 +24,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { usePermission } from '@/hooks/usePermission';
-import { useAuthStore } from '@/state/authStore';
 import { useUserStore } from '@/state/userStore';
 import { STRINGS } from '@/config/strings';
 import type { AuditEntityType, AuditListParams } from '@/domain/audit';
@@ -32,7 +31,7 @@ import { ActivityFeed } from './ActivityFeed';
 import { AuditFilterBar, type LocalFilters } from './AuditFilterBar';
 import styles from './AuditManagement.module.css';
 
-const ALL_ENTITY_TYPES: { value: AuditEntityType; label: string }[] = [
+const ENTITY_TYPE_OPTIONS: { value: AuditEntityType; label: string }[] = [
   { value: 'project', label: STRINGS.audit.entityProject },
   { value: 'customer', label: STRINGS.audit.entityCustomer },
   { value: 'user', label: STRINGS.audit.entityUser },
@@ -50,19 +49,6 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 function isValidUuid(value: string): boolean {
   return UUID_SHAPE.test(value);
-}
-
-/**
- * Derive the filter set visible to a worker caller. Workers must not
- * see `entityType = 'user'` as an option — the server never returns
- * user-entity rows to workers anyway (scope predicate, api.md §14.3),
- * but hiding the choice matches the spec's nav-visibility ruling.
- */
-function entityTypeOptionsForCaller(
-  isWorker: boolean,
-): { value: AuditEntityType; label: string }[] {
-  if (isWorker) return ALL_ENTITY_TYPES.filter((o) => o.value !== 'user');
-  return ALL_ENTITY_TYPES;
 }
 
 /**
@@ -95,21 +81,12 @@ function localEndOfDayIso(dateInput: string): string {
 export function AuditManagement() {
   const canReadAudit = usePermission('audit:read');
   const canReadUsers = usePermission('user:read');
-  const authUser = useAuthStore((s) => s.authUser);
   const users = useUserStore((s) => s.users);
   const fetchUsers = useUserStore((s) => s.fetchUsers);
   const [local, setLocal] = useState<LocalFilters>({});
   const [dateError, setDateError] = useState<string | null>(null);
   const [entityIdError, setEntityIdError] = useState<string | null>(null);
   const [actorIdError, setActorIdError] = useState<string | null>(null);
-
-  const isWorkerOnly = authUser
-    ? authUser.roles.includes('worker') &&
-      !authUser.roles.includes('owner') &&
-      !authUser.roles.includes('office')
-    : false;
-
-  const entityTypeOptions = useMemo(() => entityTypeOptionsForCaller(isWorkerOnly), [isWorkerOnly]);
 
   // Load the user list once for the actor dropdown. Callers without
   // `user:read` skip this — the actor filter falls back to a free-text
@@ -195,7 +172,7 @@ export function AuditManagement() {
 
       <AuditFilterBar
         local={local}
-        entityTypeOptions={entityTypeOptions}
+        entityTypeOptions={ENTITY_TYPE_OPTIONS}
         users={users}
         canReadUsers={canReadUsers}
         entityIdHasError={!!entityIdError}

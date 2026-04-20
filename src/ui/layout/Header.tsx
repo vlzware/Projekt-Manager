@@ -97,15 +97,8 @@ export function Header() {
   const visibleRoutes = authUser ? visibleRoutesForUser(authUser) : [];
   const canExtract = usePermission('customer:write');
 
-  // Worker-specific nav exception: Aktivität is a low-signal surface for
-  // workers (row visibility is scoped to self-authored + project-reachable
-  // entries per api.md §14.2.8). The permission remains, so deep-link
-  // navigation to `/audit` still works and server-side scoping is
-  // authoritative — only the nav tab is omitted to keep the header clean.
-  const isWorker = authUser?.roles.includes('worker') ?? false;
-  const navRoutes = isWorker ? visibleRoutes.filter((r) => r.view !== 'aktivitaet') : visibleRoutes;
-  const primaryRoutes = navRoutes.filter((r) => !SECONDARY_VIEWS.includes(r.view));
-  const secondaryRoutes = navRoutes.filter((r) => SECONDARY_VIEWS.includes(r.view));
+  const primaryRoutes = visibleRoutes.filter((r) => !SECONDARY_VIEWS.includes(r.view));
+  const secondaryRoutes = visibleRoutes.filter((r) => SECONDARY_VIEWS.includes(r.view));
   // A single-item dropdown is clutter — when only one secondary route is
   // available, render it inline alongside the primary tabs. The full
   // "Verwaltung" menu appears only when it groups two or more entries.

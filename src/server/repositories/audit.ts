@@ -6,9 +6,11 @@
  * the service-layer `mutate()` helper.
  *
  * Scope composition follows the ADR-0019 pattern: the repository
- * applies two orthogonal `WHERE` fragments — reachability and
- * destructive-action — ANDed with filters into the list query, and
- * the same two fragments decide in-scope vs out-of-scope for get-by-id.
+ * applies one `WHERE` fragment — destructive-action narrowing — ANDed
+ * with filters into the list query, and the same fragment decides
+ * in-scope vs out-of-scope for get-by-id. An earlier revision carried
+ * a second fragment (worker reachability); it was dropped when
+ * workers lost `audit:read`.
  *
  * Deterministic ordering: `created_at DESC, id DESC` — the stable
  * tiebreaker ensures a second fetch with the same filters returns
@@ -21,12 +23,7 @@ import type { Database } from '../db/connection.js';
 import { auditLog, users } from '../db/schema.js';
 import type { AuditEntityType } from '../db/schema.js';
 import type { AuthUser } from '../middleware/auth.js';
-import {
-  auditReachabilityScopeForCaller,
-  auditDestructiveScopeForCaller,
-  OUT_OF_SCOPE,
-  type ScopedReadResult,
-} from './scope.js';
+import { auditDestructiveScopeForCaller, OUT_OF_SCOPE, type ScopedReadResult } from './scope.js';
 
 /**
  * Joined audit row shape returned from the repository, before the
@@ -69,8 +66,9 @@ export { AUDIT_ENTITY_TYPES } from '../db/schema.js';
 /**
  * List audit entries visible to the caller.
  *
- * Filters AND-compose; `auditReachabilityScopeForCaller` and
- * `auditDestructiveScopeForCaller` AND into the same `WHERE`.
+ * Filters AND-compose; `auditDestructiveScopeForCaller` narrows
+ * office visibility (purges / user deletes / role changes are owner-
+ * only). Owner gets a null predicate (unfiltered).
  */
 export async function listAuditEntries(
   db: Database,
@@ -97,9 +95,6 @@ export async function listAuditEntries(
   if (opts.action !== undefined) {
     conditions.push(eq(auditLog.action, opts.action));
   }
-
-  const reachability = auditReachabilityScopeForCaller(caller);
-  if (reachability) conditions.push(reachability);
 
   const destructive = auditDestructiveScopeForCaller(caller);
   if (destructive) conditions.push(destructive);
@@ -192,25 +187,16 @@ export async function getAuditEntry(
   const rows = await baseQuery;
   if (rows.length === 0) return null;
 
-  // Scope check: the row exists; run the same two predicates that the
-  // list query applies. If either rejects the row, the caller is
-  // out-of-scope — mapped to 403 NOT_PERMITTED by the service layer.
-  const reachability = auditReachabilityScopeForCaller(caller);
+  // Scope check: the row exists; re-run the destructive predicate to
+  // catch office-visibility narrowing (purges / user-deletes etc.).
+  // Owner gets null (unfiltered). A tiny lookup query is cheaper than
+  // evaluating the jsonb predicates in application code.
   const destructive = auditDestructiveScopeForCaller(caller);
-
-  // A null predicate means "no filter" (owner-only for destructive,
-  // unscoped roles for reachability). We re-run the fragments against
-  // the known-existing row id — the DB does the matching and returns 1
-  // or 0 rows. A tiny lookup query is cheaper than attempting to
-  // evaluate the jsonb/subquery predicates in application code.
-  if (reachability !== null || destructive !== null) {
-    const checkConditions: SQL[] = [eq(auditLog.id, id)];
-    if (reachability) checkConditions.push(reachability);
-    if (destructive) checkConditions.push(destructive);
+  if (destructive !== null) {
     const check = await db
       .select({ id: auditLog.id })
       .from(auditLog)
-      .where(and(...checkConditions))
+      .where(and(eq(auditLog.id, id), destructive))
       .limit(1);
     if (check.length === 0) return OUT_OF_SCOPE;
   }

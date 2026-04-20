@@ -23,13 +23,13 @@ export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
 // data:restore gates the unified import — owner-only because a restore
 // replaces all business data in a single transaction (api.md §14.3).
 //
-// audit:read gates the audit surface (api.md §14.2.8). The permission is
-// deliberately coarse; visibility is narrowed by orthogonal scope predicates
-// at the repository layer (auditReachabilityScopeForCaller and
-// auditDestructiveScopeForCaller — see scope.ts and api.md §14.3 design
-// notes). Bookkeeper holds no audit:read as of the post-refinement matrix;
-// workers hold it, their visibility is scoped by the reachability
-// predicate.
+// audit:read gates the audit surface (api.md §14.2.8). Owner and office
+// hold it; worker and bookkeeper do not. The destructive-action predicate
+// in scope.ts narrows office-visible rows further (purges, user deletes,
+// roles mutations are owner-only). The reachability predicate for workers
+// was dropped when workers lost audit:read — the audit surface is
+// administrative, not worker-facing, and a scoped-worker view never got
+// meaningful daily use.
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   owner: [
     'project:read',
@@ -64,7 +64,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'audit:read',
     'auth:change-password',
   ],
-  worker: ['project:read', 'customer:read', 'audit:read', 'auth:change-password'],
+  worker: ['project:read', 'customer:read', 'auth:change-password'],
   bookkeeper: ['project:read', 'customer:read', 'auth:change-password'],
 };
 

@@ -3,24 +3,19 @@
  *
  * Renders:
  *   - One-line German description (via `describeAuditRow`).
- *   - Actor cell — displayName, `"System" + actorReason` for system
- *     rows, or the neutral `"Benutzer"` for a worker caller's view of
- *     a non-self-authored row (api.md §14.2.8, ui/workflow-views.md
- *     §8.4.1). The server has already stripped sensitive fields per
- *     role; this component renders what it receives.
+ *   - Actor cell — displayName on user-actor rows; `"System" +
+ *     actorReason` on system-actor rows.
  *   - German timestamp (`DD.MM.YYYY HH:mm`).
  *   - Disclosure drawer with the `{ before, after }` diff — rendered
  *     only when the API returned a non-null `payload`.
  *
- * Two `data-*` attributes drive the E2E contract (AC-185 / AC-186):
- *   - `data-self-authored` — `"true"` when `actorId === callerId`,
- *     `"false"` otherwise. The caller id comes from the auth store.
- *   - `data-has-payload`   — `"true"` iff the API returned a non-null
- *     payload; mirrors the server's role-based stripping.
- *   - `data-action`        — the raw action string, used by the
- *     purge-visibility assertion in AC-187.
- *   - `data-created-at`    — the ISO timestamp, used by AC-185's
- *     newest-first check.
+ * E2E contract (AC-185 / AC-187):
+ *   - `data-has-payload` — `"true"` iff the API returned a non-null
+ *     payload.
+ *   - `data-action`      — the raw action string (purge-visibility
+ *     assertion in AC-187).
+ *   - `data-created-at`  — the ISO timestamp for the newest-first
+ *     check in AC-185.
  */
 
 import { useState } from 'react';
@@ -33,18 +28,6 @@ import styles from './ActivityFeedRow.module.css';
 
 interface Props {
   entry: AuditEntry;
-  /**
-   * The caller's own user id — used to set `data-self-authored`. Null
-   * when the store is not hydrated (should not happen inside the
-   * authenticated shell; kept defensive).
-   */
-  callerId: string | null;
-  /**
-   * True when the caller is a worker without owner/office. Drives the
-   * neutral actor label for non-self-authored rows. When false (owner
-   * / office), `actorDisplayName` is shown unconditionally.
-   */
-  isWorkerOnly: boolean;
 }
 
 function entityTypeLabel(entityType: AuditEntry['entityType']): string {
@@ -60,7 +43,7 @@ function entityTypeLabel(entityType: AuditEntry['entityType']): string {
   }
 }
 
-function resolveActorLabel(entry: AuditEntry, callerId: string | null, isWorkerOnly: boolean) {
+function resolveActorLabel(entry: AuditEntry) {
   if (entry.actorKind === 'system') {
     return {
       kind: 'system' as const,
@@ -68,23 +51,6 @@ function resolveActorLabel(entry: AuditEntry, callerId: string | null, isWorkerO
       reason: entry.actorReason,
     };
   }
-  // actor is a user
-  const isSelf = entry.actorId !== null && entry.actorId === callerId;
-  if (isWorkerOnly) {
-    // Worker callers: own rows render their own display name (if server
-    // supplied one; otherwise fall through to neutral). Non-self rows
-    // carry `actorId = null` per api.md §14.2.8 — render the neutral
-    // "Benutzer" label.
-    if (isSelf) {
-      return {
-        kind: 'user' as const,
-        label: entry.actorDisplayName ?? STRINGS.audit.userNeutral,
-        reason: null,
-      };
-    }
-    return { kind: 'user' as const, label: STRINGS.audit.userNeutral, reason: null };
-  }
-  // Owner / office — the server supplies displayName on user-actor rows.
   return {
     kind: 'user' as const,
     label: entry.actorDisplayName ?? STRINGS.audit.userNeutral,
@@ -117,7 +83,7 @@ function hasRenderablePayload(payload: unknown): boolean {
   return beforeHasKeys || afterHasKeys;
 }
 
-export function ActivityFeedRow({ entry, callerId, isWorkerOnly }: Props) {
+export function ActivityFeedRow({ entry }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const description = describeAuditRow({
     action: entry.action,
@@ -125,15 +91,13 @@ export function ActivityFeedRow({ entry, callerId, isWorkerOnly }: Props) {
     entityType: entry.entityType,
   });
   const hasPayload = hasRenderablePayload(entry.payload);
-  const isSelfAuthored = entry.actorId !== null && entry.actorId === callerId;
-  const actor = resolveActorLabel(entry, callerId, isWorkerOnly);
+  const actor = resolveActorLabel(entry);
 
   return (
     <div
       className={styles.row}
       data-testid={`activity-feed-row-${entry.id}`}
       data-action={entry.action}
-      data-self-authored={isSelfAuthored ? 'true' : 'false'}
       data-has-payload={hasPayload ? 'true' : 'false'}
       data-created-at={entry.createdAt}
     >
