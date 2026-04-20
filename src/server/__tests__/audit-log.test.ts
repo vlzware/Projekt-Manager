@@ -255,6 +255,19 @@ describe('AT-89: Mutation + audit row atomicity (AC-177)', () => {
       // a deliberate schema break).
       expect(row.action).toBe('transition:forward');
       expect(row.actor_kind).toBe('user');
+      // data-model.md §5.10: "For a state transition, `before` and
+      // `after` carry `status` and `statusChangedAt`." Pin both sides —
+      // the payload drawer and the activity-feed renderer both rely on
+      // the prior `statusChangedAt` being present (workflow-views.md
+      // §8.4.1 "Termine aktualisiert" / duration rendering).
+      const payload = row.payload as {
+        before?: { status?: string; statusChangedAt?: string };
+        after?: { status?: string; statusChangedAt?: string };
+      };
+      expect(payload.before?.status).toBe('beauftragt');
+      expect(typeof payload.before?.statusChangedAt).toBe('string');
+      expect(payload.after?.status).toBeDefined();
+      expect(typeof payload.after?.statusChangedAt).toBe('string');
     } finally {
       await pool.end();
     }

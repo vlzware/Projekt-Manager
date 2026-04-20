@@ -20,7 +20,7 @@ export interface UpdateDatesResult {
  * Validates: end >= start, no end-only without start.
  *
  * Accepts a transactional handle — the caller (the `mutate()` wrapper
- * in ProjectService.updateDates) owns the transaction so the read of
+ * in ProjectDatesService.updateDates) owns the transaction so the read of
  * the current row and the write happen under the same snapshot.
  */
 export async function updateDates(

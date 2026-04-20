@@ -21,6 +21,7 @@ export {
   diffProjectWorkers,
   addProjectWorker,
   removeProjectWorker,
+  getUserDisplayName,
   softDeleteProject,
   hardDeleteProject,
   hardDeleteProjectUnchecked,

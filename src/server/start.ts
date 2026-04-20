@@ -107,6 +107,16 @@ async function start(): Promise<void> {
   // Run database migrations (idempotent — Drizzle tracks applied migrations)
   await migrate(db, { migrationsFolder });
 
+  // Wire the post-commit audit publisher's failure-surface logger
+  // (AC-183) BEFORE any mutate() call can dispatch. Bootstrap below
+  // calls mutate(), which invokes the publisher; without a logger, a
+  // throwing subscriber would be silently swallowed. No subscribers are
+  // registered yet — #112 adds them — but the logger must already be
+  // wired when the first dispatch happens.
+  setAuditPublisherLogger({
+    error: (payload) => console.error(payload),
+  });
+
   // Seed data — never in production.
   // SEED=true  → seed only if database is empty (safe default for dev)
   // SEED=force → wipe and re-seed (when seed data structure changes)
@@ -170,16 +180,6 @@ async function start(): Promise<void> {
       info: (ctx, event) => console.log(event, ctx),
       error: (ctx, event) => console.error(event, ctx),
     },
-  });
-
-  // Wire the post-commit audit publisher's failure-surface logger
-  // (AC-183). Without this, a subscriber throw would be silently
-  // swallowed. No subscribers are registered yet — #112 adds them —
-  // but the logger is wired here so the AC-183 contract holds as
-  // soon as one is.
-  setAuditPublisherLogger({
-    info: (payload) => console.log(payload),
-    error: (payload) => console.error(payload),
   });
 
   const app = buildApp({ logger: true, db });

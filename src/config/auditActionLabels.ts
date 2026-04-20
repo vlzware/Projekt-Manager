@@ -17,17 +17,21 @@
  */
 
 /**
- * The server-side action vocabulary. Kept here (not imported from the
- * server module) because the config layer cannot depend on server code
- * (eslint layering rule, architecture.md §11.2). A new action on the
- * server side lands without breaking the UI — the resolver falls back
- * to the raw action string, and a PR reviewer catches the drift when
- * the UI-facing label is empty.
+ * The server-side action vocabulary — the single source of truth for
+ * the audit action set (data-model.md §5.10). Imported by server code
+ * (`AuditService`, `mutate()`, route schemas) AND the UI resolver below.
+ *
+ * Layering: the config layer is importable from both server and UI code
+ * (architecture.md §11.2). Keeping the vocabulary here avoids the
+ * server↔UI duplication that an earlier draft had — a new action adds
+ * one line here and propagates to the filter schema, the type union,
+ * and the UI label via the same import.
  */
 export const AUDIT_ACTION_KEYS = [
   'create',
   'update',
   'delete',
+  'archive',
   'transition:forward',
   'transition:backward',
   'purge',
@@ -40,6 +44,13 @@ export const AUDIT_ACTION_KEYS = [
 export type AuditActionKey = (typeof AUDIT_ACTION_KEYS)[number];
 
 /**
+ * The domain-wide `AuditAction` type. Re-exported under the conventional
+ * name so service-layer code (`MutateSpec.action`) can tighten its type
+ * without reaching into the UI-flavored `AuditActionKey` alias.
+ */
+export type AuditAction = AuditActionKey;
+
+/**
  * Primary action-to-label mapping. Rendered as the one-line description
  * of an audit row when no richer payload-aware derivation applies.
  *
@@ -50,6 +61,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditActionKey, string> = {
   create: 'Erstellt',
   update: 'Aktualisiert',
   delete: 'Gelöscht',
+  archive: 'Archiviert',
   'transition:forward': 'Status weiter',
   'transition:backward': 'Status zurück',
   purge: 'Endgültig gelöscht',

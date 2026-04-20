@@ -33,6 +33,25 @@ import {
 export const AUDIT_ENTITY_TYPES = ['project', 'customer', 'user', 'project_worker'] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
+/**
+ * Maps each `AuditEntityType` to its physical table representation: the
+ * SQL table name (used by raw-SQL scanners) and the Drizzle export name
+ * (used by builder-call scanners). The architecture check at
+ * `scripts/check-audit-mutations.sh` reads this map via
+ * `scripts/print-audited-tables.ts` — AC-179 requires the audited-table
+ * set to be derived from `AuditEntityType`, not hand-maintained.
+ *
+ * `Record<AuditEntityType, …>` + `satisfies` forces a tsc error when a
+ * new `AuditEntityType` value lands without a corresponding mapping:
+ * that is the build-time seam AC-179 Part 2 pins.
+ */
+export const AUDIT_ENTITY_TO_TABLE = {
+  project: { sqlName: 'projects', drizzleExport: 'projects' },
+  customer: { sqlName: 'customers', drizzleExport: 'customers' },
+  user: { sqlName: 'users', drizzleExport: 'users' },
+  project_worker: { sqlName: 'project_workers', drizzleExport: 'projectWorkers' },
+} as const satisfies Record<AuditEntityType, { sqlName: string; drizzleExport: string }>;
+
 // ---------------------------------------------------------------
 // Users (data-model.md §5.3, §5.7)
 // ---------------------------------------------------------------

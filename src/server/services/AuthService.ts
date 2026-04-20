@@ -132,7 +132,6 @@ export class AuthService {
 
   async changePassword(
     userId: string,
-    username: string,
     currentPassword: string,
     newPassword: string,
     currentToken: string | undefined,
@@ -140,9 +139,17 @@ export class AuthService {
     log: ServiceLogger,
     correlationId?: string | null,
   ) {
-    const user = await findByUsername(this.db, username);
+    // The caller supplies `userId` only — the username is derived from
+    // the current user record. Passing both parameters was redundant and
+    // opened a trivial mismatch failure mode if a caller handed us a
+    // user id from one session and a username from another.
+    const user = await findById(this.db, userId);
     if (!user) {
-      // Timing side-channel mitigation: burn bcrypt time even when user is missing.
+      // Timing side-channel mitigation: burn bcrypt time even when the
+      // user disappeared between the session check and here (deleted
+      // mid-request). Lookup-by-id via the authenticated session makes
+      // this branch unreachable in practice; the defensive bcrypt call
+      // keeps the timing profile constant regardless.
       await verifyPassword(currentPassword, AUTH_CONFIG.dummyHash);
       throw invalidCredentials();
     }

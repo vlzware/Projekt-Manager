@@ -215,6 +215,13 @@ export async function isCustomerInScope(
  * bounded by the worker's project_workers cardinality in practice. If
  * this becomes a hot path, consider a functional index on the extracted
  * projectId or materialize it as a column.
+ *
+ * Text-vs-uuid: we compare the jsonb-extracted projectId as text rather
+ * than casting to uuid. An earlier `::uuid` cast raised SQLSTATE 22P02
+ * on any legacy / hand-seeded payload whose projectId was not a valid
+ * uuid — a defensive data-quality hazard that should not crash the
+ * worker-scope query. project_workers.project_id is cast to text on
+ * the comparison side; it is a schema-level uuid so the cast is safe.
  */
 export function auditReachabilityScopeForCaller(user: AuthUser): SQL | null {
   if (isUnscoped(user)) return null;
@@ -229,11 +236,11 @@ export function auditReachabilityScopeForCaller(user: AuthUser): SQL | null {
        WHERE pw.user_id = ${user.id} AND p.deleted = FALSE
     ))
     OR (audit_log.entity_type = 'project_worker' AND (
-      (audit_log.payload->'before'->>'projectId')::uuid IN (
-        SELECT pw.project_id FROM project_workers pw WHERE pw.user_id = ${user.id}
+      audit_log.payload->'before'->>'projectId' IN (
+        SELECT pw.project_id::text FROM project_workers pw WHERE pw.user_id = ${user.id}
       )
-      OR (audit_log.payload->'after'->>'projectId')::uuid IN (
-        SELECT pw.project_id FROM project_workers pw WHERE pw.user_id = ${user.id}
+      OR audit_log.payload->'after'->>'projectId' IN (
+        SELECT pw.project_id::text FROM project_workers pw WHERE pw.user_id = ${user.id}
       )
     ))
     OR (audit_log.entity_type = 'user' AND audit_log.actor_id = ${user.id})

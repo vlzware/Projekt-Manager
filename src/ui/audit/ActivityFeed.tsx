@@ -1,26 +1,32 @@
 /**
- * Shared activity-feed list — used by both the project-detail panel
- * and the global Aktivität view.
+ * Shared activity-feed container — used by both the project-detail
+ * panel (stacked list per ui/workflow-views.md §8.4.1) and the global
+ * Aktivität view (table per ui/management.md §8.13.1).
  *
  * Responsibilities:
- *  - Trigger a fetch with the passed-in filter on mount.
- *  - Render the empty state when the scoped result set is empty.
- *  - Render one row per entry (reverse-chrono; the server already
- *    orders newest-first).
+ *  - Instantiate a per-mount audit store (see `createAuditStore()`).
+ *  - Trigger a fetch with the passed-in filter on mount and on filterKey change.
+ *  - Render the empty state ("Keine Aktivität") when the result set is empty.
+ *  - Render rows in the requested layout.
  *  - Offer an "Ältere anzeigen" action when more rows remain.
  *
- * The store is the single source of truth for entries/total/loading.
- * Parent components pass a `filterKey` so the feed refetches when
- * the caller context changes (e.g. opening a different project).
+ * **Each mount owns its own store.** `createAuditStore()` is called once
+ * via `useMemo` at mount time, so the global Aktivität view and an
+ * overlay-mounted project-detail feed never collide through a shared
+ * Zustand singleton. Each surface's `fetchList` / `appendNextPage`
+ * updates only its own `entries` / `total`. See
+ * `src/state/auditStore.ts` for the factory rationale.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useAuthStore } from '@/state/authStore';
-import { useAuditStore } from '@/state/auditStore';
+import { createAuditStore } from '@/state/auditStore';
 import type { AuditListParams } from '@/domain/audit';
 import { STRINGS } from '@/config/strings';
 import { ActivityFeedRow } from './ActivityFeedRow';
+import { ActivityFeedRowTable } from './ActivityFeedRowTable';
 import styles from './ActivityFeed.module.css';
+import tableStyles from './AuditTable.module.css';
 
 interface Props {
   /**
@@ -39,27 +45,43 @@ interface Props {
   /** Test-id for the outer container — different between contexts. */
   testId: string;
   /**
-   * Inline-style container? Used by the project-detail panel which
-   * renders the feed inside a larger sidebar. The global view uses the
-   * default framing.
+   * Inline-style container (applies to `list` layout only). Used by the
+   * project-detail panel which renders the feed inside a larger sidebar.
    */
   inline?: boolean;
+  /**
+   * Row layout. `list` is the stacked form used by the project-detail
+   * panel (ui/workflow-views.md §8.4.1 describes a one-line-per-entry
+   * list). `table` is the column form used by the global Aktivität view
+   * (ui/management.md §8.13.1 names columns: timestamp, actor, entity,
+   * action, payload).
+   */
+  layout?: 'list' | 'table';
 }
 
-export function ActivityFeed({ filters, filterKey, testId, inline }: Props) {
+/** Column count of the table layout — drives `colSpan` on empty/loader rows. */
+const TABLE_COLUMN_COUNT = 5;
+
+export function ActivityFeed({ filters, filterKey, testId, inline, layout = 'list' }: Props) {
+  // One store instance per mount. The empty dependency array is
+  // intentional — we never want a remount-equivalent swap of the store
+  // on a prop change. Filter changes flow through `fetchList` below.
+  const useStore = useMemo(() => createAuditStore(), []);
+
   const authUser = useAuthStore((s) => s.authUser);
-  const entries = useAuditStore((s) => s.entries);
-  const total = useAuditStore((s) => s.total);
-  const loading = useAuditStore((s) => s.loading);
-  const loadingMore = useAuditStore((s) => s.loadingMore);
-  const error = useAuditStore((s) => s.error);
-  const fetchList = useAuditStore((s) => s.fetchList);
-  const appendNextPage = useAuditStore((s) => s.appendNextPage);
+  const entries = useStore((s) => s.entries);
+  const total = useStore((s) => s.total);
+  const loading = useStore((s) => s.loading);
+  const loadingMore = useStore((s) => s.loadingMore);
+  const error = useStore((s) => s.error);
+  const fetchList = useStore((s) => s.fetchList);
+  const appendNextPage = useStore((s) => s.appendNextPage);
 
   useEffect(() => {
-    // Refetch whenever the filter context changes. The store's monotonic
-    // counter discards stale responses, so a rapid sequence (open A, open
-    // B) commits B's data.
+    // Refetch whenever the filter context changes. Each instance has
+    // its own monotonic counter, so a rapid sequence on this surface
+    // (open A, open B) commits B's data; the other surface is
+    // unaffected.
     void fetchList(filters);
     // filters is intentionally NOT in the deps array — callers pass a
     // stable `filterKey` that captures the relevant identity; otherwise
@@ -74,14 +96,76 @@ export function ActivityFeed({ filters, filterKey, testId, inline }: Props) {
       !authUser.roles.includes('office')
     : false;
 
-  const containerClass = inline ? styles.inlineContainer : styles.container;
   const hasMore = entries.length < total;
+  const showLoader = loading && entries.length === 0;
+  const showEmpty = !loading && entries.length === 0 && !error;
 
+  if (layout === 'table') {
+    return (
+      <div className={tableStyles.tableWrapper} data-testid={testId}>
+        {error && <div className={tableStyles.errorCell}>{error}</div>}
+        <table className={tableStyles.table}>
+          <thead>
+            <tr>
+              <th>{STRINGS.audit.colTimestamp}</th>
+              <th>{STRINGS.audit.colActor}</th>
+              <th>{STRINGS.audit.colEntity}</th>
+              <th>{STRINGS.audit.colAction}</th>
+              <th>{STRINGS.audit.colPayload}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {showLoader && (
+              <tr>
+                <td colSpan={TABLE_COLUMN_COUNT} className={tableStyles.loaderCell}>
+                  {STRINGS.ui.loading}
+                </td>
+              </tr>
+            )}
+            {showEmpty && (
+              <tr>
+                <td
+                  colSpan={TABLE_COLUMN_COUNT}
+                  className={tableStyles.emptyCell}
+                  data-testid="audit-empty-state"
+                >
+                  {STRINGS.audit.emptyState}
+                </td>
+              </tr>
+            )}
+            {entries.map((entry) => (
+              <ActivityFeedRowTable
+                key={entry.id}
+                entry={entry}
+                callerId={callerId}
+                isWorkerOnly={isWorkerOnly}
+              />
+            ))}
+          </tbody>
+        </table>
+        {hasMore && (
+          <div className={tableStyles.footerActions}>
+            <button
+              type="button"
+              className={styles.loadMoreButton}
+              onClick={() => void appendNextPage()}
+              disabled={loadingMore}
+            >
+              {STRINGS.audit.loadOlder}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Default stacked-list layout (project-detail surface).
+  const containerClass = inline ? styles.inlineContainer : styles.container;
   return (
     <div className={containerClass} data-testid={testId}>
       {error && <div className={styles.error}>{error}</div>}
-      {loading && entries.length === 0 && <div className={styles.loader}>{STRINGS.ui.loading}</div>}
-      {!loading && entries.length === 0 && !error && (
+      {showLoader && <div className={styles.loader}>{STRINGS.ui.loading}</div>}
+      {showEmpty && (
         <div className={styles.emptyState} data-testid="audit-empty-state">
           {STRINGS.audit.emptyState}
         </div>

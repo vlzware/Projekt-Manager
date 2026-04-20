@@ -59,6 +59,13 @@ export interface AuditRetentionCleanupResult {
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
+ * AC-184 pins this exact event discriminator — operators grep the
+ * operational log for it. Exported so the scheduler (and tests) can
+ * reference the same literal without drift.
+ */
+export const EVENT_RETENTION_CLEANUP = 'audit-retention-cleanup';
+
+/**
  * Execute one retention sweep. Returns the applied cutoff, the number
  * of deleted rows, and the emitted `ran_at` so the scheduler (or a
  * test) can assert against it without re-reading the log line.
@@ -99,12 +106,12 @@ export async function runAuditRetentionCleanup(
   // operational-log field, not an API wire field.
   deps.logger.info(
     {
-      event: 'audit-retention-cleanup',
+      event: EVENT_RETENTION_CLEANUP,
       window_days: deps.windowDays,
       removed_count: removedCount,
       ran_at: ranAt,
     },
-    'audit-retention-cleanup',
+    EVENT_RETENTION_CLEANUP,
   );
 
   return { removedCount, cutoff, ranAt };

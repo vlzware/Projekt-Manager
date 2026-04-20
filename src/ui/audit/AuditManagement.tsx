@@ -11,25 +11,26 @@
  * whose roles were revoked mid-session still renders the
  * NotPermittedView from the guard, but a component-level check keeps
  * the store fetch from firing against the API.
+ *
+ * Actor-filter visibility: the dropdown form requires `user:read` so
+ * actor display names can be rendered (owner / office under the default
+ * matrix). Callers without `user:read` see a UUID text input —
+ * practical only for callers with an out-of-band id, but present for
+ * completeness. Workers lack `user:read` and, per the nav matrix, the
+ * actor-filter is effectively useless for them; the UI still shows
+ * the input rather than removing it, so the filter bar's shape is
+ * invariant across roles.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { usePermission } from '@/hooks/usePermission';
 import { useAuthStore } from '@/state/authStore';
-import { useAuditStore } from '@/state/auditStore';
+import { useUserStore } from '@/state/userStore';
 import { STRINGS } from '@/config/strings';
-import { AUDIT_ACTION_KEYS, AUDIT_ACTION_LABELS } from '@/config/auditActionLabels';
-import type { AuditEntityType } from '@/domain/audit';
+import type { AuditEntityType, AuditListParams } from '@/domain/audit';
 import { ActivityFeed } from './ActivityFeed';
+import { AuditFilterBar, type LocalFilters } from './AuditFilterBar';
 import styles from './AuditManagement.module.css';
-
-interface LocalFilters {
-  entityType?: AuditEntityType;
-  actorId?: string;
-  action?: string;
-  from?: string;
-  to?: string;
-}
 
 const ALL_ENTITY_TYPES: { value: AuditEntityType; label: string }[] = [
   { value: 'project', label: STRINGS.audit.entityProject },
@@ -37,6 +38,19 @@ const ALL_ENTITY_TYPES: { value: AuditEntityType; label: string }[] = [
   { value: 'user', label: STRINGS.audit.entityUser },
   { value: 'project_worker', label: STRINGS.audit.entityProjectWorker },
 ];
+
+/**
+ * RFC 4122 UUID-like shape check. Matches the canonical 8-4-4-4-12 hex
+ * form; case-insensitive. Strict enough to catch typos before the
+ * round-trip; loose enough that it doesn't re-enforce version/variant
+ * bits that the server already validates at the `format: 'uuid'` JSON
+ * schema layer. The server is authoritative — this is UX feedback.
+ */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidUuid(value: string): boolean {
+  return UUID_SHAPE.test(value);
+}
 
 /**
  * Derive the filter set visible to a worker caller. Workers must not
@@ -51,13 +65,43 @@ function entityTypeOptionsForCaller(
   return ALL_ENTITY_TYPES;
 }
 
+/**
+ * Convert a local `<input type="date">` value (`YYYY-MM-DD`) into an
+ * ISO-8601 string representing the start or end of that day in the
+ * user's local timezone.
+ *
+ * Why not `new Date('2026-04-20').toISOString()`? That constructor
+ * treats the bare date as UTC midnight. For a user in Europe/Berlin,
+ * the `from` filter would lose two hours of the intended day and the
+ * `to` filter would only cover the first two hours — the user asks
+ * "show me today's activity" and the server answers "sure, but only
+ * the last 22 hours of yesterday." Appending `T00:00:00` (no `Z`)
+ * makes the parser treat the value as local time; `Date.prototype.
+ * toISOString()` then normalizes to UTC for the wire.
+ */
+function localStartOfDayIso(dateInput: string): string {
+  return new Date(`${dateInput}T00:00:00`).toISOString();
+}
+
+function localEndOfDayIso(dateInput: string): string {
+  // `.999` milliseconds so the upper bound is inclusive to the last
+  // millisecond of the user's local day. The server treats the `to`
+  // bound as `<=`; an equivalent formulation is "start of next day,
+  // exclusive", which would need cross-month arithmetic client-side
+  // and is no more correct than this form.
+  return new Date(`${dateInput}T23:59:59.999`).toISOString();
+}
+
 export function AuditManagement() {
   const canReadAudit = usePermission('audit:read');
+  const canReadUsers = usePermission('user:read');
   const authUser = useAuthStore((s) => s.authUser);
-  const entries = useAuditStore((s) => s.entries);
-  const total = useAuditStore((s) => s.total);
+  const users = useUserStore((s) => s.users);
+  const fetchUsers = useUserStore((s) => s.fetchUsers);
   const [local, setLocal] = useState<LocalFilters>({});
   const [dateError, setDateError] = useState<string | null>(null);
+  const [entityIdError, setEntityIdError] = useState<string | null>(null);
+  const [actorIdError, setActorIdError] = useState<string | null>(null);
 
   const isWorkerOnly = authUser
     ? authUser.roles.includes('worker') &&
@@ -67,23 +111,31 @@ export function AuditManagement() {
 
   const entityTypeOptions = useMemo(() => entityTypeOptionsForCaller(isWorkerOnly), [isWorkerOnly]);
 
-  // The filterKey is a stable string derived from the applied filters
-  // — it captures the identity the feed should refetch on without
-  // needing to pass the filters object through `useEffect` deps.
-  const appliedFilters = useMemo(() => {
-    // Build the wire filter — only include fields the user has set.
-    const out: {
-      entityType?: AuditEntityType;
-      actorId?: string;
-      action?: string;
-      from?: string;
-      to?: string;
-    } = {};
+  // Load the user list once for the actor dropdown. Callers without
+  // `user:read` skip this — the actor filter falls back to a free-text
+  // UUID input for them.
+  useEffect(() => {
+    if (!canReadAudit || !canReadUsers) return;
+    if (users.length === 0) {
+      void fetchUsers();
+    }
+    // users.length is intentionally NOT in the deps — a server list of
+    // zero users would loop. "List already attempted" is acceptable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canReadAudit, canReadUsers, fetchUsers]);
+
+  // Compute the applied filter — only include fields that are (a) set
+  // and (b) pass shape validation. An invalid UUID in entityId or
+  // actorId is surfaced via the validation error and NOT sent to the
+  // server.
+  const appliedFilters = useMemo<AuditListParams>(() => {
+    const out: AuditListParams = {};
     if (local.entityType) out.entityType = local.entityType;
-    if (local.actorId) out.actorId = local.actorId;
+    if (local.entityId && isValidUuid(local.entityId)) out.entityId = local.entityId;
+    if (local.actorId && isValidUuid(local.actorId)) out.actorId = local.actorId;
     if (local.action) out.action = local.action;
-    if (local.from) out.from = new Date(local.from).toISOString();
-    if (local.to) out.to = new Date(local.to).toISOString();
+    if (local.from) out.from = localStartOfDayIso(local.from);
+    if (local.to) out.to = localEndOfDayIso(local.to);
     return out;
   }, [local]);
 
@@ -92,9 +144,8 @@ export function AuditManagement() {
   const updateLocal = (patch: Partial<LocalFilters>) => {
     setLocal((prev) => {
       const next = { ...prev, ...patch };
-      // Client-side validation of date range (api.md §14.2.8 inverts
-      // on the server too, but a client check blocks the submit
-      // before the round-trip — conventional UX).
+      // Date-range validation (api.md §14.2.8 inverts on the server
+      // too, but a client check blocks the submit before the round-trip).
       if (next.from && next.to) {
         const fromTs = Date.parse(next.from);
         const toTs = Date.parse(next.to);
@@ -104,6 +155,24 @@ export function AuditManagement() {
         }
       }
       setDateError(null);
+      // UUID shape validation — run against the next patch only if the
+      // field was actually touched by this update, otherwise keep the
+      // existing error/no-error state untouched (avoids clearing a
+      // previous error when the user types in a different field).
+      if ('entityId' in patch) {
+        if (next.entityId && !isValidUuid(next.entityId)) {
+          setEntityIdError(STRINGS.validation.mustBeUuid(STRINGS.audit.filterEntityId));
+        } else {
+          setEntityIdError(null);
+        }
+      }
+      if ('actorId' in patch) {
+        if (next.actorId && !isValidUuid(next.actorId)) {
+          setActorIdError(STRINGS.validation.mustBeUuid(STRINGS.audit.filterActor));
+        } else {
+          setActorIdError(null);
+        }
+      }
       return next;
     });
   };
@@ -111,6 +180,8 @@ export function AuditManagement() {
   const clearFilters = () => {
     setLocal({});
     setDateError(null);
+    setEntityIdError(null);
+    setActorIdError(null);
   };
 
   if (!canReadAudit) {
@@ -122,97 +193,27 @@ export function AuditManagement() {
     <div className={styles.container}>
       <h2 className={styles.heading}>{STRINGS.audit.heading}</h2>
 
-      <div className={styles.filterBar}>
-        <div className={styles.filterField}>
-          <label className={styles.filterLabel} htmlFor="audit-filter-entity-type">
-            {STRINGS.audit.filterEntityType}
-          </label>
-          <select
-            id="audit-filter-entity-type"
-            className={styles.filterSelect}
-            value={local.entityType ?? ''}
-            onChange={(e) =>
-              updateLocal({
-                entityType: (e.target.value || undefined) as AuditEntityType | undefined,
-              })
-            }
-            data-testid="audit-filter-entity-type"
-          >
-            <option value="">{STRINGS.audit.allEntityTypes}</option>
-            {entityTypeOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className={styles.filterField}>
-          <label className={styles.filterLabel} htmlFor="audit-filter-action">
-            {STRINGS.audit.filterAction}
-          </label>
-          <select
-            id="audit-filter-action"
-            className={styles.filterSelect}
-            value={local.action ?? ''}
-            onChange={(e) => updateLocal({ action: e.target.value || undefined })}
-            data-testid="audit-filter-action"
-          >
-            <option value="">{STRINGS.audit.allActions}</option>
-            {AUDIT_ACTION_KEYS.map((key) => (
-              <option key={key} value={key}>
-                {AUDIT_ACTION_LABELS[key]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className={styles.filterField}>
-          <label className={styles.filterLabel} htmlFor="audit-filter-from">
-            {STRINGS.audit.filterFrom}
-          </label>
-          <input
-            id="audit-filter-from"
-            type="date"
-            className={styles.filterInput}
-            value={local.from ?? ''}
-            onChange={(e) => updateLocal({ from: e.target.value || undefined })}
-            data-testid="audit-filter-from"
-          />
-        </div>
-
-        <div className={styles.filterField}>
-          <label className={styles.filterLabel} htmlFor="audit-filter-to">
-            {STRINGS.audit.filterTo}
-          </label>
-          <input
-            id="audit-filter-to"
-            type="date"
-            className={styles.filterInput}
-            value={local.to ?? ''}
-            onChange={(e) => updateLocal({ to: e.target.value || undefined })}
-            data-testid="audit-filter-to"
-          />
-        </div>
-
-        <div className={styles.filterActions}>
-          <button
-            type="button"
-            className={styles.clearButton}
-            onClick={clearFilters}
-            data-testid="audit-clear-filters"
-          >
-            {STRINGS.ui.clearFilter}
-          </button>
-        </div>
-      </div>
+      <AuditFilterBar
+        local={local}
+        entityTypeOptions={entityTypeOptions}
+        users={users}
+        canReadUsers={canReadUsers}
+        entityIdHasError={!!entityIdError}
+        actorIdHasError={!!actorIdError}
+        onChange={updateLocal}
+        onClear={clearFilters}
+      />
 
       {dateError && <div className={styles.validationError}>{dateError}</div>}
+      {entityIdError && <div className={styles.validationError}>{entityIdError}</div>}
+      {actorIdError && <div className={styles.validationError}>{actorIdError}</div>}
 
-      <ActivityFeed filters={appliedFilters} filterKey={filterKey} testId="audit-list" />
-      {/* Reference entries + total to satisfy the "list exposes counts" contract
-          for any future test that inspects it. */}
-      <div hidden data-testid="audit-total" data-count={total} data-rendered={entries.length} />
+      <ActivityFeed
+        filters={appliedFilters}
+        filterKey={filterKey}
+        testId="audit-list"
+        layout="table"
+      />
     </div>
   );
 }

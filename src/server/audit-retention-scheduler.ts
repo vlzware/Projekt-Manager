@@ -15,9 +15,13 @@
  *
  * Sustained-failure handling parallels the reaper: after three
  * consecutive sweep failures emit a single
- * `audit_retention_sustained_failure` and back off exponentially
+ * `audit-retention-sustained-failure` and back off exponentially
  * (capped at 24 ticks). A successful run emits
- * `audit_retention_recovered` and resets state.
+ * `audit-retention-recovered` and resets state.
+ *
+ * Single-process invariant (ADR-0021). Multi-replica deployments
+ * would emit N log lines per run — revisit when that topology is
+ * considered.
  *
  * The retention service itself is the sole deleter of `audit_log`
  * rows — see `src/server/services/audit-retention.ts` and the
@@ -29,6 +33,17 @@
 import type { Database } from './db/connection.js';
 import { runAuditRetentionCleanup } from './services/audit-retention.js';
 import type { ServiceLogger } from './services/Logger.js';
+
+/**
+ * Operational-log event names emitted by the scheduler. Kebab-case to
+ * stay consistent with the audit subsystem's AC-pinned events
+ * `audit-retention-cleanup` (AC-184) and `audit-publisher-handler-error`
+ * (AC-183). Not AC-pinned themselves — rename with care regardless,
+ * operators grep the log for these strings.
+ */
+export const EVENT_SWEEP_FAILED = 'audit-retention-sweep-failed';
+export const EVENT_SUSTAINED_FAILURE = 'audit-retention-sustained-failure';
+export const EVENT_RECOVERED = 'audit-retention-recovered';
 
 export interface StartAuditRetentionSchedulerOptions {
   db: Database;
@@ -89,7 +104,7 @@ async function sweep(opts: StartAuditRetentionSchedulerOptions, state: SweepStat
       windowDays: opts.windowDays,
     });
     if (state.consecutiveFailures >= SUSTAINED_FAILURE_CEILING) {
-      opts.logger.info({ event: 'audit_retention_recovered' }, 'audit_retention_recovered');
+      opts.logger.info({ event: EVENT_RECOVERED }, EVENT_RECOVERED);
     }
     state.consecutiveFailures = 0;
     state.ticksToSkip = 0;
@@ -97,18 +112,18 @@ async function sweep(opts: StartAuditRetentionSchedulerOptions, state: SweepStat
     state.consecutiveFailures += 1;
     opts.logger.error(
       {
-        event: 'audit_retention_sweep_failed',
+        event: EVENT_SWEEP_FAILED,
         error_message: err instanceof Error ? err.message : String(err),
       },
-      'audit_retention_sweep_failed',
+      EVENT_SWEEP_FAILED,
     );
     if (state.consecutiveFailures === SUSTAINED_FAILURE_CEILING) {
       opts.logger.error(
         {
-          event: 'audit_retention_sustained_failure',
+          event: EVENT_SUSTAINED_FAILURE,
           error_message: err instanceof Error ? err.message : String(err),
         },
-        'audit_retention_sustained_failure',
+        EVENT_SUSTAINED_FAILURE,
       );
     }
     if (state.consecutiveFailures >= SUSTAINED_FAILURE_CEILING) {

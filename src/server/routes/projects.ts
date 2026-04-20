@@ -3,19 +3,26 @@
  * All routes require authentication.
  *
  * Routes are thin HTTP adapters: request parsing, response formatting,
- * Fastify-specific concerns. Business logic lives in ProjectService.
+ * Fastify-specific concerns. Business logic lives in the three project
+ * services (see `src/server/services/project.ts`).
  */
 
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
-import { ProjectService } from '../services/ProjectService.js';
+import {
+  ProjectCrudService,
+  ProjectTransitionService,
+  ProjectDatesService,
+} from '../services/project.js';
 import { STATE_KEYS, type WorkflowState } from '../../config/stateConfig.js';
 
 export function projectRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
-    const projectService = new ProjectService(db);
+    const crudService = new ProjectCrudService(db);
+    const transitionService = new ProjectTransitionService(db);
+    const datesService = new ProjectDatesService(db);
 
     // Apply auth to all routes in this plugin
     app.addHook('preHandler', authenticate);
@@ -52,7 +59,7 @@ export function projectRoutes(db: Database) {
           customerId?: string;
           includeArchived?: string;
         };
-        const result = await projectService.listProjects(request.user!, {
+        const result = await crudService.listProjects(request.user!, {
           offset: query.offset,
           limit: query.limit,
           status: query.status,
@@ -106,7 +113,7 @@ export function projectRoutes(db: Database) {
           estimatedValue?: number | null;
           notes?: string | null;
         };
-        const project = await projectService.createProject(
+        const project = await crudService.createProject(
           body,
           request.user!.id,
           request.log,
@@ -135,7 +142,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.getProject(request.user!, id);
+        const project = await crudService.getProject(request.user!, id);
         return reply.code(200).send(project);
       },
     );
@@ -168,7 +175,7 @@ export function projectRoutes(db: Database) {
       async (request, reply) => {
         const { id } = request.params as { id: string };
         const { expectedStatus } = request.body as { expectedStatus: WorkflowState };
-        const project = await projectService.transitionForward(
+        const project = await transitionService.transitionForward(
           id,
           request.user!.id,
           expectedStatus,
@@ -207,7 +214,7 @@ export function projectRoutes(db: Database) {
       async (request, reply) => {
         const { id } = request.params as { id: string };
         const { expectedStatus } = request.body as { expectedStatus: WorkflowState };
-        const project = await projectService.transitionBackward(
+        const project = await transitionService.transitionBackward(
           id,
           request.user!.id,
           expectedStatus,
@@ -255,7 +262,7 @@ export function projectRoutes(db: Database) {
           plannedEnd?: string | null;
         };
 
-        const project = await projectService.updateDates(
+        const project = await datesService.updateDates(
           id,
           request.user!.id,
           body,
@@ -302,7 +309,7 @@ export function projectRoutes(db: Database) {
           estimatedValue?: number | null;
           notes?: string | null;
         };
-        const project = await projectService.updateProject(
+        const project = await crudService.updateProject(
           id,
           body,
           request.user!.id,
@@ -330,7 +337,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        await projectService.deleteProject(id, request.user!.id, request.log, request.id ?? null);
+        await crudService.deleteProject(id, request.user!.id, request.log, request.id ?? null);
         return reply.code(200).send({ success: true, deleted: true });
       },
     );
@@ -358,7 +365,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        await projectService.purgeProject(id, request.user!.id, request.log, request.id ?? null);
+        await crudService.purgeProject(id, request.user!.id, request.log, request.id ?? null);
         return reply.code(204).send();
       },
     );

@@ -92,6 +92,31 @@ function resolveActorLabel(entry: AuditEntry, callerId: string | null, isWorkerO
   };
 }
 
+/**
+ * Structural empty-payload detection. The drawer should NOT render for
+ * rows whose payload is structurally empty — e.g. the `{ before: {},
+ * after: {} }` sentinel an agent writes for password-change audit
+ * events where the `{ before, after }` fields themselves are redacted.
+ * A `payload !== null` check would still render an empty drawer, which
+ * is worse than hiding the toggle.
+ *
+ * Free-shape payloads (no `before` / `after` at all) fall through to
+ * `true` — `PayloadDrawer` has a JSON fallback for those, and hiding
+ * them would lose information.
+ */
+function hasRenderablePayload(payload: unknown): boolean {
+  if (payload == null) return false;
+  if (typeof payload !== 'object') return true;
+  const p = payload as { before?: unknown; after?: unknown };
+  if (!('before' in p) && !('after' in p)) return true;
+  const before = p.before;
+  const after = p.after;
+  const beforeHasKeys =
+    before != null && typeof before === 'object' && Object.keys(before).length > 0;
+  const afterHasKeys = after != null && typeof after === 'object' && Object.keys(after).length > 0;
+  return beforeHasKeys || afterHasKeys;
+}
+
 export function ActivityFeedRow({ entry, callerId, isWorkerOnly }: Props) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const description = describeAuditRow({
@@ -99,7 +124,7 @@ export function ActivityFeedRow({ entry, callerId, isWorkerOnly }: Props) {
     payload: entry.payload,
     entityType: entry.entityType,
   });
-  const hasPayload = entry.payload !== null;
+  const hasPayload = hasRenderablePayload(entry.payload);
   const isSelfAuthored = entry.actorId !== null && entry.actorId === callerId;
   const actor = resolveActorLabel(entry, callerId, isWorkerOnly);
 

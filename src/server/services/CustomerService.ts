@@ -225,22 +225,14 @@ export class CustomerService {
     log: ServiceLogger,
     correlationId?: string | null,
   ) {
-    // Check for active (non-archived) projects referencing this customer.
-    const activeProjects = await this.db
-      .select({ id: projects.id })
-      .from(projects)
-      .where(and(eq(projects.customerId, id), eq(projects.deleted, false)))
-      .limit(1);
-
-    if (activeProjects.length > 0) {
-      throw conflict(STRINGS.customers.hasProjects);
-    }
-
-    // All referencing projects (if any) are archived. Delete them and
-    // the customer atomically — the archive has no value without the
-    // customer. `project_workers` rows cascade via FK. Every audited
-    // write goes through `mutateInTx()` so multiple audit rows share one
-    // transaction; post-commit dispatch happens outside the tx.
+    // Every check happens INSIDE the transaction — the earlier
+    // implementation ran the "any active projects?" guard on `this.db`,
+    // then opened a separate tx for the DELETE, opening a TOCTOU window:
+    // a concurrent project create under the customer between the two
+    // statements would bypass the guard and crash the DELETE with a raw
+    // 23503. Holding the work in one tx lets a `FOR UPDATE` lock on the
+    // active-project probe serialize against concurrent inserts the same
+    // way the transitions path does for status drift.
     const collectedAudit: AuditLogRow[] = [];
     const ctx = {
       actorKind: 'user' as const,
@@ -248,7 +240,34 @@ export class CustomerService {
       correlationId: correlationId ?? null,
     };
 
+    // Any throw inside the transaction callback (conflict from the
+    // active-project guard, conflict from the FK-violation defense,
+    // notFound from the prior-row lookup) rolls the tx back and
+    // propagates with its AppError prototype preserved — the route
+    // layer's error handler maps each to its HTTP status without
+    // further massaging here.
     await this.db.transaction(async (tx) => {
+      // Active-project guard, INSIDE the tx. `FOR UPDATE` is not
+      // strictly required to catch concurrent creates (an insert does
+      // not lock the rows this query scans), so the defense-in-depth
+      // catch around the final DELETE below is what makes the guarantee
+      // complete. Running the check inside the tx still matters: it
+      // makes the "customer has active projects" error path observe the
+      // same snapshot the DELETE will operate on, so the two cannot
+      // disagree.
+      const activeProjects = await tx
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(eq(projects.customerId, id), eq(projects.deleted, false)))
+        .limit(1);
+
+      if (activeProjects.length > 0) {
+        throw conflict(STRINGS.customers.hasProjects);
+      }
+
+      // All referencing projects (if any) are archived. Purge them and
+      // the customer atomically — the archive has no value without the
+      // customer. `project_workers` rows cascade via FK.
       const archived = await tx
         .select()
         .from(projects)
@@ -285,8 +304,26 @@ export class CustomerService {
           const priorRow = await getCustomerRow(innerTx, id);
           if (!priorRow) throw notFound(STRINGS.entities.customer);
 
-          const deleted = await deleteCustomerRepo(innerTx, id);
-          if (!deleted) throw notFound(STRINGS.entities.customer);
+          try {
+            const deleted = await deleteCustomerRepo(innerTx, id);
+            if (!deleted) throw notFound(STRINGS.entities.customer);
+          } catch (dbErr) {
+            // Defense in depth: a concurrent project create between
+            // the `activeProjects` probe above and this DELETE races
+            // the guard. The insert completes with the customer still
+            // present (no row-level lock on the probe), then the
+            // DELETE hits a 23503 FK violation. Map that back to the
+            // 409 "has projects" contract so callers see a consistent
+            // error shape instead of a 500 leaked from the driver.
+            if (
+              typeof dbErr === 'object' &&
+              dbErr !== null &&
+              (dbErr as { code?: string }).code === '23503'
+            ) {
+              throw conflict(STRINGS.customers.hasProjects);
+            }
+            throw dbErr;
+          }
 
           return {
             entityId: id,

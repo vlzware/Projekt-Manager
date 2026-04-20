@@ -36,11 +36,11 @@
  * invariant regardless.
  */
 
-import { sql } from 'drizzle-orm';
 import type { Database, MutatingDatabase } from '../db/connection.js';
 import type { AuditEntityType } from '../db/schema.js';
 import { auditLog } from '../db/schema.js';
 import { dispatch, type AuditLogRow } from './audit-publisher.js';
+import type { AuditAction } from '../../config/auditActionLabels.js';
 
 /**
  * The actor context for a mutation.
@@ -69,7 +69,15 @@ export interface MutateContext {
  */
 export interface MutateSpec<T> {
   entityType: AuditEntityType;
-  action: string;
+  /**
+   * One of the pinned action keys from `auditActionLabels.ts` — the DB
+   * column is free-text by design (data-model.md §5.10) but the write
+   * path is closed over the shipping vocabulary. A new action lands by
+   * extending `AUDIT_ACTION_KEYS`; a caller passing an unpinned string
+   * fails at compile time rather than quietly producing an unlabelled
+   * entry in the feed.
+   */
+  action: AuditAction;
   /**
    * The callback receives the transactional handle so all repository
    * reads and writes inside `run` are part of the same transaction as
@@ -111,7 +119,10 @@ export interface MutateResult<T> {
  * Return value is whatever the service callback returned in `value`.
  */
 export async function mutate<T>(db: Database, ctx: MutateContext, spec: MutateSpec<T>): Promise<T> {
-  validateContext(ctx);
+  // `validateContext` runs inside `mutateInTx` — no need to duplicate it
+  // here. The earlier outer call was defensive but also a lie: it implied
+  // that the context was pre-validated before the transaction, when in
+  // fact it was re-checked on every path.
 
   // Both the domain work and the audit insert run inside the same
   // transaction. A throw anywhere below rolls back both; that is the
@@ -165,7 +176,12 @@ export async function mutateInTx<T>(
       entityType: spec.entityType,
       entityId: domainResult.entityId,
       action: spec.action,
-      payload: sql`${JSON.stringify(payload)}::jsonb`,
+      // Drizzle's `jsonb()` column serializes the JS value automatically
+      // via the pg driver. The earlier `sql\`${JSON.stringify(...)}::jsonb\``
+      // wrapper duplicated that work and produced a different path into
+      // the driver (parameterized literal vs SQL fragment), which masked
+      // a latent issue with embedded single quotes in payload strings.
+      payload,
       correlationId: ctx.correlationId ?? null,
     })
     .returning();

@@ -216,7 +216,6 @@ export function authRoutes(db: Database) {
 
         await authService.changePassword(
           request.user!.id,
-          request.user!.username,
           currentPassword,
           newPassword,
           request.cookies.session,

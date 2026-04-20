@@ -17,7 +17,6 @@ import { useCustomerStore } from './customerStore';
 import { useUserStore } from './userStore';
 import { useProjectManagementStore } from './projectManagementStore';
 import { useDataExchangeStore } from './dataExchangeStore';
-import { useAuditStore } from './auditStore';
 
 interface AuthState {
   authUser: AuthUser | null;
@@ -129,7 +128,12 @@ function clearDownstreamState(): void {
     exporting: false,
     exportError: null,
   });
-  useAuditStore.getState().reset();
+  // No audit-store reset: the factory-based `createAuditStore()` yields
+  // per-component instances (see `src/state/auditStore.ts`), so audit
+  // state dies with the `ActivityFeed` / `AuditManagement` components
+  // on logout-triggered unmount. Touching a singleton here would re-
+  // introduce the shared-state coupling the factory split was built
+  // to eliminate.
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({

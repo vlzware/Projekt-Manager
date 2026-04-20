@@ -49,14 +49,20 @@ export interface AuditLogRow {
 export type AuditHandler = (row: AuditLogRow) => void | Promise<void>;
 
 /**
- * Structured logger used to surface subscriber failures. The `error`
- * method is required; `info` is optional so deployment environments
- * that only wire an error channel still satisfy the contract.
+ * Structured logger used to surface subscriber failures. Only the
+ * `error` channel is used — handler-error is the sole log line the
+ * publisher emits, so there is no `info` surface to wire.
  */
 export interface OperationalLogger {
-  info?: (payload: object) => void;
   error: (payload: object) => void;
 }
+
+/**
+ * AC-183 pins this exact event discriminator on the handler-error log
+ * line. Exported so tests can reference the same literal without
+ * drift.
+ */
+export const EVENT_HANDLER_ERROR = 'audit-publisher-handler-error';
 
 // Module-level registry. A Set preserves insertion order in ES2015+,
 // which is the registration-order guarantee api.md §14.2.8 pins.
@@ -90,14 +96,20 @@ export function setOperationalLogger(l: OperationalLogger): void {
  * registered handler and catches any thrown error so one bad subscriber
  * cannot prevent the next from running. Each failure surfaces through
  * the operational logger with the AC-183 field set exactly.
+ *
+ * Snapshots the handler set at dispatch entry so a subscriber that
+ * registers during its own dispatch does not receive the current row
+ * as well (would double-fire). Unsubscription mid-dispatch is also
+ * safe: the removed handler still runs once for this row, which is
+ * the existing behavior and matches the registration-order guarantee.
  */
 export async function dispatch(row: AuditLogRow): Promise<void> {
-  for (const handler of handlers) {
+  for (const handler of [...handlers]) {
     try {
       await handler(row);
     } catch (err) {
       logger?.error({
-        event: 'audit-publisher-handler-error',
+        event: EVENT_HANDLER_ERROR,
         audit_entry_id: row.id,
         error_message: err instanceof Error ? err.message : String(err),
       });

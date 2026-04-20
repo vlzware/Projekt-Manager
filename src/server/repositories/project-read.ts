@@ -311,7 +311,7 @@ export async function getProject(
  * assignment produces its own audit row (AC-177 grain).
  *
  * Runs against the provided transactional handle so the insert shares
- * the caller's transaction (ProjectService.runCreateWithAudit).
+ * the caller's transaction (ProjectCrudService.runCreateWithAudit).
  *
  * Returns the freshly-inserted raw row. The service is responsible for
  * hydrating the API-facing response shape (see `toProject`).
@@ -445,8 +445,27 @@ export async function removeProjectWorker(
 }
 
 /**
+ * Fetch a worker's display name inside a transaction. Used by the
+ * service layer to enrich `project_worker` audit payloads so the UI can
+ * render "Mitarbeiter zugewiesen: Jan Nowak" (ui/workflow-views.md
+ * §8.4.1) without a second round-trip at render time. Returns null for a
+ * missing user — the caller falls back to the generic label.
+ */
+export async function getUserDisplayName(
+  db: TransactionalDatabase,
+  userId: string,
+): Promise<string | null> {
+  const rows = await db
+    .select({ displayName: users.displayName })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return rows[0]?.displayName ?? null;
+}
+
+/**
  * Fetch the raw DB row by id (including soft-deleted). Used by the
- * idempotency path in ProjectService.createProject — it compares the stored
+ * idempotency path in ProjectCrudService.createProject — it compares the stored
  * project against the request body. We intentionally ignore the `deleted`
  * flag here: a client replaying a create must not get a soft-deleted row
  * back, but the caller needs to disambiguate "id taken" from "id free".

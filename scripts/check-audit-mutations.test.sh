@@ -2,10 +2,11 @@
 #
 # Scenario tests for scripts/check-audit-mutations.sh (AC-179).
 #
-# The production check-audit-mutations.sh is hardcoded to scan the repo
-# path `src/server`. For these tests we temporarily stage a fixture
-# source tree inside a fresh git-clean temp directory, copy the script
-# in, and run it there — each scenario asserts the expected exit code.
+# Each scenario stages a fixture source tree in a fresh temp directory
+# and runs the real check script against it via `AUDIT_PROJECT_ROOT`.
+# The check's TS helper (scripts/print-audited-tables.ts) still imports
+# the real `src/server/db/schema.ts`, so audited-table derivation is
+# exercised end-to-end — the fixture only supplies the code under scan.
 #
 # Scenarios:
 #   1. Allowlisted path — `src/server/services/mutate.ts` contains a
@@ -15,6 +16,19 @@
 #   3. Run against the current repo — every audited mutation is now
 #      routed through mutate() and the repositories path is allowlisted
 #      behind the MutatingDatabase type gate. Expected: exit 0.
+#   4. M1 regression — lowercase `sql\`insert into projects …\``
+#      previously bypassed the case-sensitive keyword match.
+#      Expected: exit 1.
+#   5. M2 regression — `client.query("DELETE FROM users …")`
+#      previously bypassed the hardcoded `pool.query(…)` receiver.
+#      Expected: exit 1.
+#   6. M3 regression — compound `sql\`BEGIN; UPDATE projects …; COMMIT\``
+#      previously bypassed the tight "keyword immediately after backtick"
+#      anchor. Expected: exit 1.
+#   7. M4 regression — a file at
+#      `src/server/routes/src/server/repositories/weird.ts` previously
+#      got a false allowlist hit because `src/server/repositories/` was
+#      matched as a substring anywhere in the path. Expected: exit 1.
 #
 # Usage:
 #   bash scripts/check-audit-mutations.test.sh
@@ -30,6 +44,26 @@ if [ ! -x "$CHECK_SCRIPT" ]; then
   echo "ERROR: $CHECK_SCRIPT not executable. chmod +x and try again." >&2
   exit 2
 fi
+
+# Single top-level trap manages every tmp dir — adding a scenario
+# means appending one path to $TMP_DIRS, not nesting another trap.
+# (Review finding A-F7: nested trap chain leaked tmps on earlier runs.)
+TMP_DIRS=()
+# shellcheck disable=SC2317 # invoked via `trap cleanup EXIT` below
+cleanup() {
+  local d
+  for d in "${TMP_DIRS[@]:-}"; do
+    [ -n "${d:-}" ] && [ -d "$d" ] && rm -rf "$d"
+  done
+}
+trap cleanup EXIT
+
+mktmp() {
+  local d
+  d="$(mktemp -d)"
+  TMP_DIRS+=("$d")
+  echo "$d"
+}
 
 pass=0
 fail=0
@@ -59,42 +93,35 @@ assert_exit() {
 # Scenario 1 — allowlisted path, raw mutation, expect pass.
 # -------------------------------------------------------------
 echo "Scenario 1: allowlisted path with raw mutation → expect exit 0"
-tmp1="$(mktemp -d)"
-trap 'rm -rf "$tmp1"' EXIT
-mkdir -p "$tmp1/src/server/services" "$tmp1/scripts"
-# Copy the check script (it runs `cd "$(dirname "$0")/.."` so place
-# it in tmp1/scripts/).
-cp "$CHECK_SCRIPT" "$tmp1/scripts/check-audit-mutations.sh"
-chmod +x "$tmp1/scripts/check-audit-mutations.sh"
-# A file in the allowlist authors a raw mutation.
-cat > "$tmp1/src/server/services/mutate.ts" <<'EOF'
+tmp="$(mktmp)"
+mkdir -p "$tmp/src/server/services"
+cat > "$tmp/src/server/services/mutate.ts" <<'EOF'
 import { db, projects } from '../db.js';
 export async function doWrite() {
   await db.insert(projects).values({ title: 'x' });
 }
 EOF
-assert_exit 0 "allowlisted file authors raw mutation" bash "$tmp1/scripts/check-audit-mutations.sh"
+assert_exit 0 "allowlisted file authors raw mutation" \
+  env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
 
 # -------------------------------------------------------------
 # Scenario 2 — non-allowlisted path, raw mutation, expect fail.
 # -------------------------------------------------------------
 echo ""
 echo "Scenario 2: non-allowlisted path with raw mutation → expect exit 1"
-tmp2="$(mktemp -d)"
-trap 'rm -rf "$tmp1" "$tmp2"' EXIT
-mkdir -p "$tmp2/src/server/rogue" "$tmp2/scripts"
-cp "$CHECK_SCRIPT" "$tmp2/scripts/check-audit-mutations.sh"
-chmod +x "$tmp2/scripts/check-audit-mutations.sh"
+tmp="$(mktmp)"
+mkdir -p "$tmp/src/server/rogue"
 # A non-allowlisted path — `src/server/rogue/` is not in the ALLOWLIST
 # and is not covered by the MutatingDatabase type gate (it's a
 # synthetic file, not importing repositories). The scan must flag it.
-cat > "$tmp2/src/server/rogue/leak.ts" <<'EOF'
+cat > "$tmp/src/server/rogue/leak.ts" <<'EOF'
 import { db, customers } from '../db.js';
 export async function updateCustomer(id: string) {
   return db.update(customers).set({ name: 'new' }).where(eq(customers.id, id));
 }
 EOF
-assert_exit 1 "non-allowlisted file authors raw mutation" bash "$tmp2/scripts/check-audit-mutations.sh"
+assert_exit 1 "non-allowlisted file authors raw mutation" \
+  env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
 
 # -------------------------------------------------------------
 # Scenario 3 — current repo, post-implementation, expect pass.
@@ -105,7 +132,72 @@ assert_exit 1 "non-allowlisted file authors raw mutation" bash "$tmp2/scripts/ch
 # The scan should therefore find no findings outside the allowlist.
 echo ""
 echo "Scenario 3: current repo (post-implementation) → expect exit 0"
-assert_exit 0 "current repo passes — every audited mutation routes through mutate()" bash "$CHECK_SCRIPT"
+assert_exit 0 "current repo passes — every audited mutation routes through mutate()" \
+  bash "$CHECK_SCRIPT"
+
+# -------------------------------------------------------------
+# Scenario 4 — M1 regression: lowercase SQL keyword in sql template.
+# -------------------------------------------------------------
+echo ""
+echo "Scenario 4: M1 regression — lowercase sql\`insert into projects\` → expect exit 1"
+tmp="$(mktmp)"
+mkdir -p "$tmp/src/server/rogue"
+cat > "$tmp/src/server/rogue/lowercase.ts" <<'EOF'
+import { db } from '../db.js';
+export async function doLowercase() {
+  await db.execute(sql`insert into projects (title) values ('x')`);
+}
+EOF
+assert_exit 1 "lowercase SQL keyword is flagged (M1)" \
+  env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
+
+# -------------------------------------------------------------
+# Scenario 5 — M2 regression: client.query receiver.
+# -------------------------------------------------------------
+echo ""
+echo "Scenario 5: M2 regression — client.query(\"DELETE FROM users …\") → expect exit 1"
+tmp="$(mktmp)"
+mkdir -p "$tmp/src/server/rogue"
+cat > "$tmp/src/server/rogue/clientquery.ts" <<'EOF'
+import { client } from '../db.js';
+export async function deleteUser(id: string) {
+  await client.query("DELETE FROM users WHERE id = $1", [id]);
+}
+EOF
+assert_exit 1 "client.query mutation is flagged (M2)" \
+  env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
+
+# -------------------------------------------------------------
+# Scenario 6 — M3 regression: compound tx in sql template.
+# -------------------------------------------------------------
+echo ""
+echo "Scenario 6: M3 regression — sql\`BEGIN; UPDATE projects …; COMMIT\` → expect exit 1"
+tmp="$(mktmp)"
+mkdir -p "$tmp/src/server/rogue"
+cat > "$tmp/src/server/rogue/compound.ts" <<'EOF'
+import { db } from '../db.js';
+export async function compoundTx(id: string) {
+  await db.execute(sql`BEGIN; UPDATE projects SET deleted=true WHERE id = ${id}; COMMIT`);
+}
+EOF
+assert_exit 1 "compound tx with UPDATE mid-template is flagged (M3)" \
+  env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
+
+# -------------------------------------------------------------
+# Scenario 7 — M4 regression: substring-bypass path.
+# -------------------------------------------------------------
+echo ""
+echo "Scenario 7: M4 regression — nested path src/server/routes/src/server/repositories/weird.ts → expect exit 1"
+tmp="$(mktmp)"
+mkdir -p "$tmp/src/server/routes/src/server/repositories"
+cat > "$tmp/src/server/routes/src/server/repositories/weird.ts" <<'EOF'
+import { db, projects } from '../db.js';
+export async function evilWrite() {
+  await db.insert(projects).values({ title: 'bypass' });
+}
+EOF
+assert_exit 1 "substring-bypass path is not allowlisted (M4)" \
+  env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
 
 echo ""
 echo "-------------------------------------------------------------"

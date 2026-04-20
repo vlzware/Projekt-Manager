@@ -311,6 +311,7 @@ export const STRINGS = {
     colAction: 'Aktion',
     colPayload: 'Details',
     filterEntityType: 'Objekttyp',
+    filterEntityId: 'Objekt-ID',
     filterActor: 'Akteur',
     filterAction: 'Aktion',
     filterFrom: 'Von',

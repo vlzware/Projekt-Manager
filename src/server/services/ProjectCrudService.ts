@@ -1,9 +1,13 @@
 /**
- * Project service — business logic orchestration for projects.
+ * Project CRUD service — business logic for list/get/create/update/
+ * archive/purge + worker-assignment side effects.
  *
  * Every domain-entity mutation routes through `mutate()` (ADR-0021).
  * Service methods capture `payload.before`/`after` for the audit row
  * inside the same transaction as the state change.
+ *
+ * Transitions live in ProjectTransitionService; planned-date updates
+ * live in ProjectDatesService.
  */
 
 import type { Database } from '../db/connection.js';
@@ -19,16 +23,11 @@ import {
   removeProjectWorker,
   softDeleteProject as softDeleteProjectRepo,
   hardDeleteProject as hardDeleteProjectRepo,
-  transitionForward as transitionForwardRepo,
-  transitionBackward as transitionBackwardRepo,
-  updateDates as updateDatesRepo,
   fetchWorkersForProject,
+  getUserDisplayName,
   toProject,
   ProjectNotFoundError,
   ProjectNotArchivedError,
-  TransitionError,
-  ConcurrentModificationError,
-  DateValidationError,
 } from '../repositories/project.js';
 import type { ListProjectsOpts, ProjectRow } from '../repositories/project-read.js';
 import { customers, projects } from '../db/schema.js';
@@ -39,7 +38,6 @@ import { STRINGS } from '../../config/strings.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
 import { notFound, notPermitted, validationError, conflict, extractSqlState } from '../errors.js';
 import { projectMatches, createIdempotent } from './idempotency.js';
-import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
 import type { AuthUser } from '../middleware/auth.js';
 import { isOutOfScope } from '../repositories/scope.js';
@@ -67,7 +65,7 @@ function projectUpdatableDiff(row: {
   };
 }
 
-export class ProjectService {
+export class ProjectCrudService {
   constructor(private db: Database) {}
 
   async listProjects(caller: AuthUser, opts: ListProjectsOpts) {
@@ -209,18 +207,22 @@ export class ProjectService {
 
       // Each worker assignment is its own audit event — makes worker
       // reachability queries (AC-180) cheap: a single row references
-      // one project and one user.
+      // one project and one user. The payload includes the worker's
+      // displayName so the activity feed can render "Mitarbeiter
+      // zugewiesen: Jan Nowak" (ui/workflow-views.md §8.4.1) without a
+      // second round-trip.
       for (const workerId of data.assignedWorkerIds) {
         const { auditRow } = await mutateInTx(tx, ctx, {
           entityType: 'project_worker',
           action: 'create',
           run: async (innerTx) => {
             await addProjectWorker(innerTx, inserted.id, workerId);
+            const displayName = await getUserDisplayName(innerTx, workerId);
             return {
               entityId: inserted.id,
               value: null,
               before: {},
-              after: { projectId: inserted.id, userId: workerId },
+              after: { projectId: inserted.id, userId: workerId, displayName },
             };
           },
         });
@@ -455,7 +457,10 @@ export class ProjectService {
           currentRow = fieldUpdate.value;
         }
 
-        // Worker reassignment — emit one audit row per add/remove.
+        // Worker reassignment — emit one audit row per add/remove. Each
+        // row carries the worker's displayName so the activity feed can
+        // render the user-facing message without a second lookup (see
+        // `ui/workflow-views.md §8.4.1` and `describeAuditRow`).
         if (data.assignedWorkerIds !== undefined) {
           const { toAdd, toRemove } = await diffProjectWorkers(tx, id, data.assignedWorkerIds);
           for (const workerId of toRemove) {
@@ -463,11 +468,12 @@ export class ProjectService {
               entityType: 'project_worker',
               action: 'delete',
               run: async (innerTx) => {
+                const displayName = await getUserDisplayName(innerTx, workerId);
                 await removeProjectWorker(innerTx, id, workerId);
                 return {
                   entityId: id,
                   value: null,
-                  before: { projectId: id, userId: workerId },
+                  before: { projectId: id, userId: workerId, displayName },
                   after: {},
                 };
               },
@@ -480,11 +486,12 @@ export class ProjectService {
               action: 'create',
               run: async (innerTx) => {
                 await addProjectWorker(innerTx, id, workerId);
+                const displayName = await getUserDisplayName(innerTx, workerId);
                 return {
                   entityId: id,
                   value: null,
                   before: {},
-                  after: { projectId: id, userId: workerId },
+                  after: { projectId: id, userId: workerId, displayName },
                 };
               },
             });
@@ -523,7 +530,15 @@ export class ProjectService {
         { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
         {
           entityType: 'project',
-          action: 'delete',
+          // Soft-delete is the board-archive flow — ADR-0017 pins it as
+          // a non-destructive operation (the row is recoverable). The
+          // `archive` action keeps it distinct from hard-delete (`purge`)
+          // and from the generic `delete` used on project_workers and
+          // user entities. Payload is the spec-shaped `{ before: {...},
+          // after: {} }` (data-model.md §5.10: "for a delete or purge,
+          // `after` is empty") — the action key carries the semantic
+          // distinction, not a `{ deleted: true }` flag in the payload.
+          action: 'archive',
           run: async (tx) => {
             const priorRow = await getProjectForMutation(tx, id);
             if (!priorRow) throw new ProjectNotFoundError();
@@ -532,12 +547,12 @@ export class ProjectService {
               entityId: id,
               value: null,
               before: { number: priorRow.number, title: priorRow.title },
-              after: { deleted: true },
+              after: {},
             };
           },
         },
       );
-      log.info({ projectId: id }, 'project_deleted');
+      log.info({ projectId: id }, 'project_archived');
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       throw err;
@@ -582,162 +597,5 @@ export class ProjectService {
       }
       throw err;
     }
-  }
-
-  async transitionForward(
-    projectId: string,
-    userId: string,
-    expectedStatus: WorkflowState,
-    log: ServiceLogger,
-    correlationId?: string | null,
-  ) {
-    let result;
-    try {
-      result = await mutate(
-        this.db,
-        { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
-        {
-          entityType: 'project',
-          action: 'transition:forward',
-          run: async (tx) => {
-            const repoResult = await transitionForwardRepo(tx, projectId, userId, expectedStatus);
-            return {
-              entityId: projectId,
-              value: repoResult,
-              before: { status: repoResult.before },
-              after: {
-                status: repoResult.project.status,
-                statusChangedAt: repoResult.project.statusChangedAt,
-              },
-            };
-          },
-        },
-      );
-    } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
-      if (err instanceof TransitionError) throw validationError(err.message);
-      if (err instanceof ConcurrentModificationError) throw conflict(err.message);
-      throw err;
-    }
-
-    await emit(
-      'project.transitioned',
-      {
-        projectId,
-        fromStatus: result.before,
-        toStatus: result.project.status,
-        direction: 'forward',
-        actorUserId: userId,
-        occurredAt: new Date(),
-      },
-      log,
-    );
-
-    return result.project;
-  }
-
-  async transitionBackward(
-    projectId: string,
-    userId: string,
-    expectedStatus: WorkflowState,
-    log: ServiceLogger,
-    correlationId?: string | null,
-  ) {
-    let result;
-    try {
-      result = await mutate(
-        this.db,
-        { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
-        {
-          entityType: 'project',
-          action: 'transition:backward',
-          run: async (tx) => {
-            const repoResult = await transitionBackwardRepo(tx, projectId, userId, expectedStatus);
-            return {
-              entityId: projectId,
-              value: repoResult,
-              before: { status: repoResult.before },
-              after: {
-                status: repoResult.project.status,
-                statusChangedAt: repoResult.project.statusChangedAt,
-              },
-            };
-          },
-        },
-      );
-    } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
-      if (err instanceof TransitionError) throw validationError(err.message);
-      if (err instanceof ConcurrentModificationError) throw conflict(err.message);
-      throw err;
-    }
-
-    await emit(
-      'project.transitioned',
-      {
-        projectId,
-        fromStatus: result.before,
-        toStatus: result.project.status,
-        direction: 'backward',
-        actorUserId: userId,
-        occurredAt: new Date(),
-      },
-      log,
-    );
-
-    return result.project;
-  }
-
-  async updateDates(
-    projectId: string,
-    userId: string,
-    dates: { plannedStart?: string | null; plannedEnd?: string | null },
-    log: ServiceLogger,
-    correlationId?: string | null,
-  ) {
-    let result;
-    try {
-      result = await mutate(
-        this.db,
-        { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
-        {
-          entityType: 'project',
-          action: 'update',
-          run: async (tx) => {
-            const r = await updateDatesRepo(tx, projectId, userId, dates);
-            return {
-              entityId: projectId,
-              value: r,
-              before: {
-                plannedStart: r.before.plannedStart,
-                plannedEnd: r.before.plannedEnd,
-              },
-              after: {
-                plannedStart: r.after.plannedStart,
-                plannedEnd: r.after.plannedEnd,
-              },
-            };
-          },
-        },
-      );
-    } catch (err) {
-      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
-      if (err instanceof DateValidationError) throw validationError(err.message);
-      throw err;
-    }
-
-    await emit(
-      'project.dates_changed',
-      {
-        projectId,
-        actorUserId: userId,
-        occurredAt: new Date(),
-        plannedStart: dates.plannedStart,
-        plannedEnd: dates.plannedEnd,
-      },
-      log,
-    );
-
-    return result.project;
   }
 }

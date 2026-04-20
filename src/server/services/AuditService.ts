@@ -25,6 +25,7 @@ import {
 } from '../repositories/audit.js';
 import { isOutOfScope } from '../repositories/scope.js';
 import { AUDIT_ENTITY_TYPES } from '../db/schema.js';
+import { AUDIT_ACTION_KEYS, type AuditAction } from '../../config/auditActionLabels.js';
 
 // Re-exported from the service module so route-layer schema validation
 // can pin the enum without bypassing the services→repositories/db
@@ -34,26 +35,16 @@ export { AUDIT_ENTITY_TYPES };
 export type { AuditEntityType } from '../db/schema.js';
 
 /**
- * The action vocabulary pinned by data-model.md §5.10. Kept here (not
- * in `db/schema.ts`) because the action column is free-text by design
- * — the vocabulary is a presentation-layer/filter contract, not a
- * database-schema invariant. A new action value ships first as a
- * service-layer write; adding it to this list pins the filter-side
- * vocabulary so a client cannot filter on an undocumented action.
+ * The action vocabulary pinned by data-model.md §5.10. The canonical
+ * definition lives in `src/config/auditActionLabels.ts` — the config
+ * layer is the only module both the server and the UI may import from
+ * (architecture.md §11.2), and collocating the vocabulary with its
+ * German labels prevents the two sides from drifting. We re-export
+ * under the legacy `AUDIT_ACTIONS` name so downstream callers (route
+ * schemas, tests) keep compiling while the single-source move lands.
  */
-export const AUDIT_ACTIONS = [
-  'create',
-  'update',
-  'delete',
-  'transition:forward',
-  'transition:backward',
-  'purge',
-  'reactivate',
-  'deactivate',
-  'password-reset',
-  'password-change',
-] as const;
-export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+export const AUDIT_ACTIONS = AUDIT_ACTION_KEYS;
+export type { AuditAction };
 
 /**
  * The API-facing audit entry shape per `data-model.md §5.10`.
