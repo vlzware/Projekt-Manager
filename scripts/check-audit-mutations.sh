@@ -127,6 +127,11 @@ ALLOWLIST=(
   "src/server/seed/business.ts"
   # User seed loader — direct-DB path, parallel to business.ts.
   "src/server/seed/users.ts"
+  # Notification rule seed loader — v1 rule hydration is administrative
+  # config, not an authored rule edit. ADR-0023 ships the initial set
+  # via seed; routing it through mutate() would add six noise rows to
+  # the activity feed on every fresh install.
+  "src/server/seed/notificationRules.ts"
   # Audit retention — the only legitimate deleter of audit_log rows.
   # (audit_log is not in the audited-table set, but this job is the
   # archetypal allowlist case for parity with the helper.)

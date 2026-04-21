@@ -20,6 +20,12 @@ import { dataExchangeRoutes } from './routes/data-exchange.js';
 import { extractRoutes } from './routes/extract.js';
 import { backupRoutes } from './routes/backup.js';
 import { auditRoutes } from './routes/audit.js';
+import { notificationRuleRoutes } from './routes/notification-rules.js';
+import { pushSubscriptionRoutes } from './routes/push-subscriptions.js';
+import { pushPublicRoutes } from './routes/push.js';
+import { registerNotificationPublisher } from './services/notification-publisher.js';
+import { noopPushDispatcher, type PushDispatcher } from './services/PushDispatcher.js';
+import { WebPushDispatcher } from './services/WebPushDispatcher.js';
 import { getEnv } from './config/env.js';
 import { AppError, rateLimited, serverError, validationError } from './errors.js';
 import { STRINGS } from '../config/strings.js';
@@ -29,6 +35,35 @@ export interface AppOptions {
   db?: Database;
   /** Set false to disable rate limiting (useful in tests). Defaults to true. */
   rateLimit?: boolean;
+}
+
+/**
+ * Pick the push dispatcher at boot. Real `WebPushDispatcher` wins only
+ * when the full VAPID triple is configured; any missing value falls
+ * back to `noopPushDispatcher`. The fallback warn is a single-line
+ * startup message so an operator can spot a misconfigured deploy
+ * without silently breaking push delivery.
+ *
+ * Exported for tests that want to exercise the selection logic
+ * without wiring a full Fastify instance.
+ */
+export function selectPushDispatcher(logger?: {
+  warn: (msg: string) => void;
+  info?: (msg: string) => void;
+}): PushDispatcher {
+  const env = getEnv();
+  const publicKey = env.VAPID_PUBLIC_KEY;
+  const privateKey = env.VAPID_PRIVATE_KEY;
+  const subject = env.VAPID_SUBJECT;
+  if (publicKey && privateKey && subject) {
+    logger?.info?.(`Push dispatcher: WebPushDispatcher active (VAPID subject=${subject}).`);
+    return new WebPushDispatcher({ publicKey, privateKey, subject });
+  }
+  logger?.warn(
+    'Push dispatcher: VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT missing — ' +
+      'falling back to no-op dispatcher. Web Push delivery is disabled.',
+  );
+  return noopPushDispatcher;
 }
 
 export function buildApp(opts: AppOptions = {}): FastifyInstance {
@@ -155,6 +190,23 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     app.register(extractRoutes(opts.db));
     app.register(backupRoutes(opts.db));
     app.register(auditRoutes(opts.db));
+    app.register(notificationRuleRoutes(opts.db));
+    app.register(pushSubscriptionRoutes(opts.db));
+    // The VAPID public-key endpoint is unauthenticated (the public key
+    // is public by design). Keeping it in its own plugin isolates it
+    // from the authenticated push-subscriptions plugin's preHandler
+    // hook — see routes/push.ts header for the encapsulation note.
+    app.register(pushPublicRoutes());
+
+    // Wire the notification publisher to the audit bus. Dispatcher
+    // selection: real `WebPushDispatcher` when all three VAPID env
+    // vars are present, else `noopPushDispatcher` with a one-line
+    // startup warn. This composition happens AFTER the audit-
+    // publisher logger is set in start.ts, so a throwing subscriber
+    // surfaces through that logger rather than being swallowed (AC-
+    // 183). Tests register the noop silently (logger disabled).
+    const dispatcher = selectPushDispatcher(app.log);
+    registerNotificationPublisher({ db: opts.db, dispatcher });
   }
 
   return app;

@@ -15,6 +15,7 @@ export type Permission =
   | 'data:export'
   | 'data:restore'
   | 'audit:read'
+  | 'notifications:manage'
   | 'auth:change-password';
 
 export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
@@ -48,6 +49,10 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'data:export',
     'data:restore',
     'audit:read',
+    // notifications:manage aligns with user:manage as an admin-only gate
+    // (api.md §14.3, ADR-0023). Rule edits change who-sees-what platform-
+    // wide, so the least-privilege baseline is owner only.
+    'notifications:manage',
     'auth:change-password',
   ],
   office: [

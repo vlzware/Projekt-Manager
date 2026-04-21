@@ -84,6 +84,13 @@ export function getRateLimit() {
 
     /** Password change endpoint. */
     passwordChange: { max: 5, timeWindow: '1 minute' as const },
+
+    /**
+     * Push subscription mutations (POST / DELETE). Enough headroom for
+     * normal browser behaviour (re-subscribe on rotation, a handful of
+     * devices) without allowing bulk enumeration.
+     */
+    subscriptionMutate: { max: 20, timeWindow: '1 minute' as const },
   };
 }
 

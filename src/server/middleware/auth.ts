@@ -21,6 +21,7 @@ export interface AuthUser {
   roles: string[];
   email: string | null;
   themePreference: ThemePreference;
+  pushMuted: boolean;
 }
 
 declare module 'fastify' {
@@ -69,6 +70,7 @@ export function createAuthMiddleware(db: Database) {
       roles: result.user.roles,
       email: result.user.email,
       themePreference: result.user.themePreference,
+      pushMuted: result.user.pushMuted,
     };
   };
 }

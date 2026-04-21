@@ -34,9 +34,8 @@ describe('Project Operations — List', () => {
 
       const body = res.json();
       expect(Array.isArray(body.data)).toBe(true);
-      // Seed has 15-20 projects (data-model.md §7.1 specifies 15-20)
-      expect(body.data.length).toBeGreaterThanOrEqual(15);
-      expect(body.data.length).toBeLessThanOrEqual(20);
+      // Seed has exactly 19 projects (data-model.md §7.1).
+      expect(body.data.length).toBe(19);
     });
 
     it('project number follows the "YYYY-NNN" format', async () => {

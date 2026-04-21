@@ -22,6 +22,7 @@ import type { Database } from './db/connection.js';
 import { users } from './db/schema.js';
 import { loadUsers } from './seed/users.js';
 import { loadBusiness } from './seed/business.js';
+import { loadNotificationRules } from './seed/notificationRules.js';
 import { SEED_DEFAULT_PASSWORD } from '../test/seedAssumptions.js';
 
 /**
@@ -45,8 +46,15 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   // Clear existing data atomically. Preserved verbatim from the
   // pre-refactor seed — the identical statement is part of AT-87's
   // implicit contract (tests rely on a truly empty slate).
+  //
+  // Notification rules and push subscriptions are NOT listed in the
+  // TRUNCATE: notification_rule has no FK back to any table in the
+  // wipe set, and CASCADE through users handles push_subscriptions.
+  // The rule table is truncated separately below so the seed-supplied
+  // v1 rule set lands cleanly even when notification_rule had prior
+  // rows (force-reseed).
   await db.execute(
-    sql`TRUNCATE TABLE project_workers, sessions, projects, customers, users CASCADE`,
+    sql`TRUNCATE TABLE notification_rule, project_workers, sessions, projects, customers, users CASCADE`,
   );
 
   // Reference moment for every relative date downstream. Captured once so
@@ -57,6 +65,7 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
 
   await loadUsers(db);
   await loadBusiness(db, { now });
+  await loadNotificationRules(db);
 
   console.warn(
     `⚠  Seed-Daten geladen. Alle Benutzer haben das Standardpasswort "${SEED_DEFAULT_PASSWORD}". ` +

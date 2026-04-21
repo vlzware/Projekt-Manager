@@ -13,6 +13,8 @@ import { createDatabase } from '../server/db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../server/seed.js';
 import { deactivateUser as deactivateUserRepo } from '../server/repositories/user.js';
+import { __resetForTests as resetAuditPublisher } from '../server/services/audit-publisher.js';
+import { __resetForTests as resetNotificationPublisher } from '../server/services/notification-publisher.js';
 import { randomBytes } from 'node:crypto';
 import type { Database } from '../server/db/connection.js';
 import { sessions, users } from '../server/db/schema.js';
@@ -64,12 +66,16 @@ export async function startApp(): Promise<FastifyInstance> {
  * Shut down the test application. Call in `afterAll`.
  *
  * Closing order matters: Fastify first (stops accepting requests and
- * waits for in-flight handlers to finish), then drain the pg pool.
+ * waits for in-flight handlers to finish), reset module-scoped state on
+ * the audit + notification publishers so the next `startApp()` wires
+ * onto a clean bus, then drain the pg pool.
  */
 export async function stopApp(): Promise<void> {
   if (app) {
     await app.close();
   }
+  resetNotificationPublisher();
+  resetAuditPublisher();
   if (pool) {
     await pool.end();
   }

@@ -1,8 +1,9 @@
 /**
  * Drizzle ORM schema — PostgreSQL tables for Projekt-Manager.
  *
- * Six tables: customers, projects, project_workers, users, sessions,
- * audit_log. See data-model.md for entity definitions.
+ * Tables: customers, projects, project_workers, users, sessions, audit_log,
+ * notification_rule, push_subscriptions. See data-model.md for entity
+ * definitions.
  */
 
 import { sql } from 'drizzle-orm';
@@ -17,6 +18,7 @@ import {
   jsonb,
   numeric,
   index,
+  uniqueIndex,
   check,
   primaryKey,
 } from 'drizzle-orm/pg-core';
@@ -77,6 +79,10 @@ export const users = pgTable(
     // the documented new-user default; the CHECK constraint below is the
     // defense-in-depth backstop pinned by AT-57 / AC-115.
     themePreference: text('theme_preference').notNull().default('system'),
+    // data-model.md §5.3 / §5.12: single self-settable boolean controlling
+    // push delivery. Mute is a delivery-time filter — activity-feed
+    // inclusion is independent.
+    pushMuted: boolean('push_muted').notNull().default(false),
   },
   (table) => [
     check(
@@ -297,5 +303,59 @@ export const auditLog = pgTable(
           AND length(trim(${table.actorReason})) > 0)
       )`,
     ),
+  ],
+);
+
+// ---------------------------------------------------------------
+// Notification rule (data-model.md §5.11, ADR-0023)
+//
+// Admin-editable rules mapping the closed event catalog to recipient
+// specs. CRUD does NOT route through `mutate()` — rule changes are
+// administrative config, not audited domain events (ADR-0023).
+// ---------------------------------------------------------------
+export const notificationRule = pgTable('notification_rule', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  // Event class — closed enum (data-model.md §5.11 NotificationEventClass).
+  // Application-level validation restricts the value set; left as text at
+  // the DB level so seed migrations do not need a CHECK update per rule.
+  eventClass: text('event_class').notNull(),
+  // Transition-only filter — matches when `after.status` equals the value;
+  // null means no state filter. Application validation rejects non-null
+  // values on non-transition classes.
+  stateFilter: text('state_filter'),
+  // Additive recipient spec: `{ roles, includeAssignedWorkers, userIds }`.
+  // Shape pinned by data-model.md §5.11 NotificationRecipientSpec.
+  recipientSpec: jsonb('recipient_spec').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+});
+
+// ---------------------------------------------------------------
+// Push subscriptions (data-model.md §5.12, ADR-0023)
+//
+// Per-device push subscription. A user may hold multiple rows (phone,
+// desktop). Unique on (user_id, endpoint) so re-subscribe upserts.
+// Hard-delete of the user cascades; deactivation retains rows (mute is
+// a delivery-time filter).
+// ---------------------------------------------------------------
+export const pushSubscriptions = pgTable(
+  'push_subscriptions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    endpoint: text('endpoint').notNull(),
+    p256dh: text('p256dh').notNull(),
+    auth: text('auth').notNull(),
+    userAgent: text('user_agent'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('push_subscriptions_user_endpoint_uq').on(table.userId, table.endpoint),
+    index('push_subscriptions_user_id_idx').on(table.userId),
   ],
 );

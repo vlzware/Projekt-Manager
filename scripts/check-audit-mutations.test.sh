@@ -29,6 +29,8 @@
 #      `src/server/routes/src/server/repositories/weird.ts` previously
 #      got a false allowlist hit because `src/server/repositories/` was
 #      matched as a substring anywhere in the path. Expected: exit 1.
+#   (Scenarios 8–9 covered notification_rule as an audited entity; removed
+#    when ADR-0023 carved it out of the audit coupling.)
 #
 # Usage:
 #   bash scripts/check-audit-mutations.test.sh
