@@ -166,57 +166,51 @@ describe('BinaryList — row rendering (AC-223)', () => {
   it('renders one row per ready binary with filename/label/uploader/download', async () => {
     render(<BinaryList projectId="p-42" />);
 
-    const pdfRow = await screen.findByTestId('binary-row-bin-pdf');
-    expect(pdfRow.textContent).toContain('angebot.pdf');
-    // Label is surfaced via the German enum label (configured per §8.15.5).
+    await screen.findByText('angebot.pdf');
+    const rows = screen.getAllByTestId('attachment-binary-row');
+    // Fixture has 2 ready binaries (pdf + docx); photo + pending are excluded.
+    expect(rows).toHaveLength(2);
+    const pdfRow = rows.find((r) => r.textContent?.includes('angebot.pdf'))!;
+    expect(pdfRow).toBeDefined();
     expect(pdfRow.textContent?.toLowerCase()).toContain('angebot');
-    // Uploader is the resolved display name, not the raw user id.
     expect(pdfRow.textContent).toContain('Anna Arbeiter');
-    // Download action is present and clickable.
-    expect(within(pdfRow).getByTestId('binary-download-bin-pdf')).toBeInTheDocument();
+    expect(within(pdfRow).getByTestId('attachment-download')).toBeInTheDocument();
   });
 
   it('excludes photo attachments from the binary list', async () => {
     render(<BinaryList projectId="p-42" />);
-    await screen.findByTestId('binary-row-bin-pdf');
-    expect(screen.queryByTestId('binary-row-ph-1')).not.toBeInTheDocument();
+    await screen.findByText('angebot.pdf');
+    expect(screen.queryByText('photo.jpg')).not.toBeInTheDocument();
   });
 
   it('excludes pending binary attachments from the list', async () => {
     render(<BinaryList projectId="p-42" />);
-    await screen.findByTestId('binary-row-bin-pdf');
-    expect(screen.queryByTestId('binary-row-bin-pending')).not.toBeInTheDocument();
+    await screen.findByText('angebot.pdf');
+    expect(screen.queryByText('pending.pdf')).not.toBeInTheDocument();
   });
 });
 
 describe('BinaryList — bulk selection + caps (AC-223)', () => {
   it('shows Auswahl als ZIP only once at least one row is selected', async () => {
     render(<BinaryList projectId="p-42" />);
-    await screen.findByTestId('binary-row-bin-pdf');
+    const pdfRow = (await screen.findByText('angebot.pdf')).closest('tr')!;
 
     expect(screen.queryByTestId('binary-bulk-download')).not.toBeInTheDocument();
 
-    await userEvent.click(screen.getByTestId('binary-select-bin-pdf'));
+    await userEvent.click(within(pdfRow).getByRole('checkbox'));
 
     expect(await screen.findByTestId('binary-bulk-download')).toBeInTheDocument();
   });
 
   it('blocks a selection above the caps with a German message naming both caps', async () => {
-    // Seed a list that exceeds both caps at once — 25 files, each
-    // 1 MB. The file-count cap (20) and the byte-size cap (20 MB)
-    // are both violated. The client message must name both caps
-    // per spec §8.15.5.
     const many = Array.from({ length: 25 }, (_, i) =>
       makeBinary({ id: `bin-${i}`, fileName: `file-${i}.pdf`, sizeBytes: 1_000_000 }),
     );
     listMock.mockResolvedValue(ok({ data: many }));
 
     render(<BinaryList projectId="p-42" />);
-    await screen.findByTestId('binary-row-bin-0');
+    await screen.findByText('file-0.pdf');
 
-    // Select-all must cover every row. The component must expose a
-    // select-all toggle for this scenario (a per-row click × 25 is
-    // possible but the select-all affordance is part of §8.15.5).
     await userEvent.click(screen.getByTestId('binary-select-all'));
     await userEvent.click(screen.getByTestId('binary-bulk-download'));
 
@@ -244,17 +238,14 @@ describe('BinaryList — "Datei fehlt" on download-click 404 (AC-224 binary side
 
     render(<BinaryList projectId="p-42" />);
 
-    const row = await screen.findByTestId('binary-row-bin-pdf');
-    await userEvent.click(within(row).getByTestId('binary-download-bin-pdf'));
+    const pdfRow = (await screen.findByText('angebot.pdf')).closest('tr')!;
+    await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
 
-    // The row flips to the missing-file placeholder.
     await waitFor(() => {
-      expect(screen.getByTestId('binary-missing-bin-pdf').textContent).toContain('Datei fehlt');
+      expect(within(pdfRow).getByText(/datei fehlt/i)).toBeInTheDocument();
     });
 
-    // The download action is now disabled on that row.
-    const downloadBtn = within(row).getByTestId('binary-download-bin-pdf');
-    expect(downloadBtn).toBeDisabled();
+    expect(within(pdfRow).getByTestId('attachment-download')).toBeDisabled();
   });
 
   it('excludes a missing-file row from bulk-download selection', async () => {
@@ -267,20 +258,14 @@ describe('BinaryList — "Datei fehlt" on download-click 404 (AC-224 binary side
 
     render(<BinaryList projectId="p-42" />);
 
-    const row = await screen.findByTestId('binary-row-bin-pdf');
-    await userEvent.click(within(row).getByTestId('binary-download-bin-pdf'));
+    const pdfRow = (await screen.findByText('angebot.pdf')).closest('tr')!;
+    await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
 
     await waitFor(() => {
-      expect(screen.getByTestId('binary-missing-bin-pdf')).toBeInTheDocument();
+      expect(within(pdfRow).getByText(/datei fehlt/i)).toBeInTheDocument();
     });
 
-    // The per-row select checkbox is either absent or disabled — the
-    // row must not be selectable for bulk download.
-    const checkbox = screen.queryByTestId('binary-select-bin-pdf');
-    if (checkbox) {
-      expect(checkbox).toBeDisabled();
-    } else {
-      expect(checkbox).toBeNull();
-    }
+    const checkbox = within(pdfRow).queryByRole('checkbox');
+    if (checkbox) expect(checkbox).toBeDisabled();
   });
 });

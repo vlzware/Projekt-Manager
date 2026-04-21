@@ -23,8 +23,11 @@ import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
 import { startSessionReaper } from './session-reaper.js';
 import { startAuditRetentionScheduler } from './audit-retention-scheduler.js';
+import { startAttachmentOrphanReaperScheduler } from './attachment-orphan-reaper-scheduler.js';
+import { startBulkDownloadReaperScheduler } from './bulk-download-reaper-scheduler.js';
 import { setOperationalLogger as setAuditPublisherLogger } from './services/audit-publisher.js';
 import { AUDIT_RETENTION } from '../config/auditRetention.js';
+import { ATTACHMENT_CONFIG } from '../config/attachmentConfig.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
 
@@ -182,6 +185,46 @@ async function start(): Promise<void> {
     },
   });
 
+  // Attachment orphan reaper (AC-213). Sweeps pending rows past the
+  // TTL together with their backing storage objects. Default cadence
+  // 5 min — tighter than audit retention because a stuck pending row
+  // has a correlated storage object that needs cleanup before it
+  // accretes.
+  const attachmentStorageForReaper = createStorageClient({
+    endpoint: env.STORAGE_ENDPOINT,
+    bucket: env.STORAGE_BUCKET,
+    accessKey: env.STORAGE_ACCESS_KEY,
+    secretKey: env.STORAGE_SECRET_KEY,
+  });
+  const attachmentReaper = startAttachmentOrphanReaperScheduler({
+    db,
+    storage: attachmentStorageForReaper,
+    intervalMinutes: env.ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES ?? 5,
+    ttlMinutes:
+      env.ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES ?? ATTACHMENT_CONFIG.orphanReaperTtlMinutes,
+    logger: {
+      info: (ctx, event) => console.log(event, ctx),
+      error: (ctx, event) => console.error(event, ctx),
+    },
+  });
+
+  // Bulk-download temp-zip reaper (#108). Storage-side ephemera are not
+  // tracked in the DB, so this sibling sweeps `bulk-downloads/` by
+  // LastModified age. Reuses the orphan-reaper TTL (`[C]` default
+  // 15 min) because both values describe "staleness of a short-lived
+  // storage artifact" — see `bulk-download-reaper.ts` header for the
+  // TTL rationale.
+  const bulkDownloadReaper = startBulkDownloadReaperScheduler({
+    storage: attachmentStorageForReaper,
+    intervalMinutes: env.ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES ?? 5,
+    ttlMinutes:
+      env.ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES ?? ATTACHMENT_CONFIG.orphanReaperTtlMinutes,
+    logger: {
+      info: (ctx, event) => console.log(event, ctx),
+      error: (ctx, event) => console.error(event, ctx),
+    },
+  });
+
   const app = buildApp({ logger: true, db });
 
   // Storage client for the health probe. Instantiated once at startup and
@@ -240,7 +283,12 @@ async function start(): Promise<void> {
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, async () => {
       // Wait for any in-flight sweep so pool.end() isn't called under its feet.
-      await Promise.all([reaper.stop(), auditRetention.stop()]);
+      await Promise.all([
+        reaper.stop(),
+        auditRetention.stop(),
+        attachmentReaper.stop(),
+        bulkDownloadReaper.stop(),
+      ]);
       await app.close();
       await pool.end();
       process.exit(0);

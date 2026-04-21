@@ -70,6 +70,15 @@ services:
       # blank to use that default. Interval default 1440 min (daily).
       AUDIT_RETENTION_WINDOW_DAYS: ${AUDIT_RETENTION_WINDOW_DAYS:-}
       AUDIT_RETENTION_INTERVAL_MINUTES: ${AUDIT_RETENTION_INTERVAL_MINUTES:-1440}
+      # Attachments (data-model.md §5.13, architecture.md §12.2). All
+      # caps / TTLs are [C] — defaults live in
+      # src/config/attachmentConfig.ts. Leave blank to use the defaults.
+      ATTACHMENT_PER_FILE_CAP_BYTES: ${ATTACHMENT_PER_FILE_CAP_BYTES:-}
+      ATTACHMENT_BULK_MAX_FILES: ${ATTACHMENT_BULK_MAX_FILES:-}
+      ATTACHMENT_BULK_MAX_BYTES: ${ATTACHMENT_BULK_MAX_BYTES:-}
+      ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES: ${ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES:-}
+      ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES: ${ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES:-}
+      ATTACHMENT_WORKER_SELF_DELETE_GRACE_MINUTES: ${ATTACHMENT_WORKER_SELF_DELETE_GRACE_MINUTES:-}
       # Web Push / VAPID (ADR-0023). Both optional — when unset the
       # server installs a no-op dispatcher and the UI opt-in reports
       # "nicht konfiguriert". VAPID_PRIVATE_KEY is a secret (lives in

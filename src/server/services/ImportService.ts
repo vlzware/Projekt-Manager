@@ -7,7 +7,7 @@
  */
 
 import { inArray, sql } from 'drizzle-orm';
-import { customers, projects, projectWorkers, users } from '../db/schema.js';
+import { attachments, customers, projects, projectWorkers, users } from '../db/schema.js';
 import type { Database, TransactionalDatabase } from '../db/connection.js';
 import {
   missingUserRefs,
@@ -24,6 +24,7 @@ import {
   type EnvelopeCustomer,
   type EnvelopeProject,
   type EnvelopeAssignment,
+  type EnvelopeAttachment,
   type ImportOptions,
   type ImportResult,
   type DryRunPreview,
@@ -219,6 +220,24 @@ function toAssignmentInsert(pw: EnvelopeAssignment) {
   return { projectId: pw.projectId, userId: pw.userId };
 }
 
+function toAttachmentInsert(a: EnvelopeAttachment) {
+  return {
+    id: a.id,
+    projectId: a.projectId,
+    status: a.status,
+    kind: a.kind,
+    label: a.label,
+    filename: a.fileName,
+    mimeType: a.mimeType,
+    sizeBytes: a.sizeBytes,
+    originalKey: a.originalKey,
+    thumbKey: a.thumbKey,
+    hasThumbnail: a.hasThumbnail,
+    createdAt: new Date(a.createdAt),
+    createdBy: a.createdBy,
+  };
+}
+
 export class ImportService {
   constructor(private db: Database) {}
 
@@ -257,6 +276,7 @@ export class ImportService {
               EXISTS (SELECT 1 FROM customers)
               OR EXISTS (SELECT 1 FROM projects)
               OR EXISTS (SELECT 1 FROM project_workers)
+              OR EXISTS (SELECT 1 FROM attachments)
             ) AS present`,
           );
           const presentIds = await this.fetchPresentUserIds(tx, uniqueReferencedIds);
@@ -306,6 +326,7 @@ export class ImportService {
     const customerRows = envelope.customers.map(toCustomerInsert);
     const projectRows = envelope.projects.map(toProjectInsert);
     const assignmentRows = envelope.project_workers.map(toAssignmentInsert);
+    const attachmentRows = (envelope.attachments ?? []).map(toAttachmentInsert);
 
     await this.db.transaction(async (tx) => {
       // VPN-first deployment (ADR-0008) rules out concurrent restores in
@@ -316,6 +337,7 @@ export class ImportService {
           EXISTS (SELECT 1 FROM customers)
           OR EXISTS (SELECT 1 FROM projects)
           OR EXISTS (SELECT 1 FROM project_workers)
+          OR EXISTS (SELECT 1 FROM attachments)
         ) AS present`,
       );
       const hasExisting = presenceResult.rows[0]?.present === true;
@@ -336,8 +358,10 @@ export class ImportService {
       }
 
       if (opts.override) {
+        // Attachments cascade via FK when projects are dropped, but we
+        // TRUNCATE them explicitly for symmetry with the other tables.
         await tx.execute(
-          sql`TRUNCATE TABLE project_workers, projects, customers RESTART IDENTITY CASCADE`,
+          sql`TRUNCATE TABLE attachments, project_workers, projects, customers RESTART IDENTITY CASCADE`,
         );
       }
 
@@ -349,6 +373,9 @@ export class ImportService {
       }
       if (assignmentRows.length > 0) {
         await tx.insert(projectWorkers).values(assignmentRows);
+      }
+      if (attachmentRows.length > 0) {
+        await tx.insert(attachments).values(attachmentRows);
       }
     });
 

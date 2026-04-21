@@ -47,6 +47,27 @@
   color: var(--color-text);
 }
 
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.openPageButton {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-base);
+  color: var(--color-text-strong);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.openPageButton:hover {
+  background: var(--color-surface-sunken);
+}
+
 .closeButton {
   padding: 4px 8px;
   border: none;

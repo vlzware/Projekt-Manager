@@ -16,12 +16,40 @@ import { projectApi, type ApiResult } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectManagementStore } from './projectManagementStore';
 
+/**
+ * Outcome of `fetchProject(id)`. Distinguishes the three meaningful
+ * branches the project-detail page cares about: authorization failure
+ * (AC-149 mirror), not-found, and everything-else.
+ */
+export type FetchProjectOutcome =
+  | { kind: 'ok'; project: Project }
+  | { kind: 'not_permitted' }
+  | { kind: 'not_found' }
+  | { kind: 'error'; message: string };
+
 interface ProjectState {
   projects: Project[];
   mutationError: string | null;
   mutationInFlight: Record<string, boolean>;
 
   fetchProjects: () => Promise<void>;
+  /**
+   * Fetch a single project by id and merge it into the local cache.
+   * Used by the project-detail page route (spec §8.15); the three
+   * failure branches are distinguished so the page can pick the
+   * matching surface.
+   */
+  fetchProject: (id: string) => Promise<FetchProjectOutcome>;
+  /**
+   * Replace the project's assigned-worker set (§8.15.3). Applies
+   * optimistically per behavior.md §9.5 and reverts on failure.
+   * Returns true when the server-confirmed row has been written back.
+   */
+  updateAssignedWorkers: (
+    id: string,
+    assignedWorkerIds: string[],
+    optimisticAssigned: { userId: string; displayName: string }[],
+  ) => Promise<boolean>;
   transitionForward: (projectId: string) => void;
   transitionBackward: (projectId: string) => void;
   updateDates: (projectId: string, start?: string | null, end?: string | null) => void;
@@ -134,6 +162,88 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       if (seq !== fetchSeq) return;
       if (!result.ok) return;
       set({ projects: result.data.data ?? result.data });
+    },
+
+    fetchProject: async (id: string): Promise<FetchProjectOutcome> => {
+      const result = await projectApi.get(id);
+      if (!result.ok) {
+        if (result.sessionExpired) {
+          handleSessionExpired();
+          return { kind: 'error', message: result.error.message || STRINGS.errors.mutationFailed };
+        }
+        if (result.category === 'authorization') return { kind: 'not_permitted' };
+        if (result.category === 'not_found') return { kind: 'not_found' };
+        return { kind: 'error', message: result.error.message || STRINGS.errors.mutationFailed };
+      }
+      const project = result.data;
+      set((s) => {
+        const present = s.projects.some((p) => p.id === project.id);
+        return {
+          projects: present
+            ? s.projects.map((p) => (p.id === project.id ? project : p))
+            : [...s.projects, project],
+        };
+      });
+      return { kind: 'ok', project };
+    },
+
+    updateAssignedWorkers: async (
+      id: string,
+      assignedWorkerIds: string[],
+      optimisticAssigned: { userId: string; displayName: string }[],
+    ): Promise<boolean> => {
+      const before = get().projects.find((p) => p.id === id)?.assignedWorkers;
+      set((s) => ({
+        projects: s.projects.map((p) =>
+          p.id === id ? { ...p, assignedWorkers: optimisticAssigned } : p,
+        ),
+        mutationInFlight: { ...s.mutationInFlight, [id]: true },
+        mutationError: null,
+      }));
+
+      let result;
+      try {
+        result = await projectApi.update(id, { assignedWorkerIds });
+      } catch {
+        set((s) => {
+          const { [id]: _, ...rest } = s.mutationInFlight;
+          return {
+            projects: s.projects.map((p) =>
+              p.id === id ? { ...p, assignedWorkers: before ?? [] } : p,
+            ),
+            mutationError: STRINGS.errors.mutationFailed,
+            mutationInFlight: rest,
+          };
+        });
+        return false;
+      }
+
+      if (!result.ok) {
+        if (result.sessionExpired) {
+          handleSessionExpired();
+          return false;
+        }
+        set((s) => {
+          const { [id]: _, ...rest } = s.mutationInFlight;
+          return {
+            projects: s.projects.map((p) =>
+              p.id === id ? { ...p, assignedWorkers: before ?? [] } : p,
+            ),
+            mutationError: result.error.message || STRINGS.errors.mutationFailed,
+            mutationInFlight: rest,
+          };
+        });
+        return false;
+      }
+
+      set((s) => {
+        const { [id]: _, ...rest } = s.mutationInFlight;
+        return {
+          projects: s.projects.map((p) => (p.id === id ? result.data : p)),
+          mutationInFlight: rest,
+        };
+      });
+      return true;
     },
 
     transitionForward: (projectId: string) => {

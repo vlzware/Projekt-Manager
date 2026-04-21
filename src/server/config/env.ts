@@ -99,6 +99,37 @@ export const envSchema = z.object({
   // ---------------------------------------------------------------
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().optional(),
+  // ---------------------------------------------------------------
+  // Attachments (data-model.md §5.13, architecture.md §12.2).
+  // All four overrides follow the "empty string → undefined" pattern
+  // so docker-compose's `${VAR:-}` forward does not collapse an unset
+  // variable into 0 (which `.positive()` would then reject). Build-time
+  // defaults live in `src/config/attachmentConfig.ts`.
+  // ---------------------------------------------------------------
+  ATTACHMENT_PER_FILE_CAP_BYTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_BULK_MAX_FILES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_BULK_MAX_BYTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_WORKER_SELF_DELETE_GRACE_MINUTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

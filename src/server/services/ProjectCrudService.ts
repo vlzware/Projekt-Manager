@@ -29,6 +29,7 @@ import {
   ProjectNotFoundError,
   ProjectNotArchivedError,
 } from '../repositories/project.js';
+import { listKeysForProject } from '../repositories/attachment.js';
 import type { ListProjectsOpts, ProjectRow } from '../repositories/project-read.js';
 import { customers, projects } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -44,6 +45,8 @@ import { isOutOfScope } from '../repositories/scope.js';
 import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
+import { bestEffortDeleteStorageKeys } from './AttachmentService.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
 
@@ -66,8 +69,19 @@ function projectUpdatableDiff(row: {
   };
 }
 
+export interface ProjectCrudServiceDeps {
+  storage?: AttachmentStorageClient;
+}
+
 export class ProjectCrudService {
-  constructor(private db: Database) {}
+  private readonly storage: AttachmentStorageClient | null;
+
+  constructor(
+    private db: Database,
+    deps: ProjectCrudServiceDeps = {},
+  ) {
+    this.storage = deps.storage ?? null;
+  }
 
   async listProjects(caller: AuthUser, opts: ListProjectsOpts) {
     return listProjectsRepo(this.db, caller, opts);
@@ -577,6 +591,13 @@ export class ProjectCrudService {
     correlationId?: string | null,
   ) {
     try {
+      // Collect attachment storage keys before the purge commits so the
+      // post-commit best-effort delete has something to work with
+      // (AC-218). The FK cascade on `attachments.project_id` removes the
+      // rows atomically with the project, but storage objects do not
+      // cascade — the app must delete them explicitly.
+      let collectedKeys: Array<{ originalKey: string; thumbKey: string | null }> = [];
+
       await mutate(
         this.db,
         { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
@@ -590,6 +611,7 @@ export class ProjectCrudService {
             // outside the tx and map to HTTP codes.
             const priorRows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
             const priorRow = priorRows[0];
+            collectedKeys = await listKeysForProject(tx, id);
             await hardDeleteProjectRepo(tx, id);
             return {
               entityId: id,
@@ -602,6 +624,13 @@ export class ProjectCrudService {
         },
       );
       log.info({ projectId: id, actorUserId: userId }, 'project_purged');
+
+      // Post-commit storage cleanup (AC-218). A failure here does not
+      // abort the DB cascade — the rows are already gone; orphaned
+      // keys are logged for operator cleanup.
+      if (this.storage && collectedKeys.length > 0) {
+        await bestEffortDeleteStorageKeys(this.storage, collectedKeys, log);
+      }
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       if (err instanceof ProjectNotArchivedError) {

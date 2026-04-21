@@ -9,9 +9,6 @@
  *   - `error` captures the last mutation error in the German canonical
  *     form (or the server-supplied German message when present), cleared
  *     by `clearError`.
- *
- * The skeleton today is intentionally a no-op; these assertions pin the
- * eventual behavior and are expected to fail in red.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -254,23 +251,8 @@ describe('attachmentStore — error state', () => {
 
 describe('attachmentStore — retry and download URL plumbing', () => {
   it('retryUpload re-runs init for the retained client id (no caching of failure)', async () => {
-    useAttachmentStore.setState({
-      pendingUploads: {
-        'client-1': {
-          clientId: 'client-1',
-          projectId: 'proj-1',
-          fileName: 'photo.jpg',
-          mimeType: 'image/jpeg',
-          sizeBytes: 10,
-          label: 'foto',
-          status: 'failed',
-          attachmentId: null,
-          progress: 0,
-          errorMessage: 'Netzwerkfehler.',
-        },
-      },
-    });
-
+    // Drive a real upload through the store so the internal file map is
+    // populated — retryUpload depends on it per the store's contract.
     initMock.mockResolvedValue({
       ok: false,
       error: { code: 'SERVER_ERROR', message: 'stop' },
@@ -278,10 +260,22 @@ describe('attachmentStore — retry and download URL plumbing', () => {
       sessionExpired: false,
     });
 
-    await useAttachmentStore.getState().retryUpload('client-1');
+    const file = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', {
+      type: 'image/jpeg',
+    });
+    await useAttachmentStore.getState().uploadFile('proj-1', file, {
+      label: 'foto',
+      hasThumbnail: true,
+    });
 
-    // init must be called again — no silent caching of the prior failure.
+    const clientId = Object.keys(useAttachmentStore.getState().pendingUploads)[0];
+    expect(clientId).toBeDefined();
     expect(initMock).toHaveBeenCalledTimes(1);
+
+    await useAttachmentStore.getState().retryUpload(clientId!);
+
+    // init must fire again — no silent caching of the prior failure.
+    expect(initMock).toHaveBeenCalledTimes(2);
   });
 
   it('requestDownloadUrl returns the server URL on success and null on failure', async () => {

@@ -1,3 +1,4 @@
+import { useLocation, useNavigate } from 'react-router-dom';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import { STRINGS } from '@/config/strings';
 import type { Project } from '@/domain/types';
@@ -17,6 +18,8 @@ interface ProjectDetailPanelProps {
 export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps) {
   const updateDates = useProjectStore((s) => s.updateDates);
   const projects = useProjectStore((s) => s.projects);
+  const navigate = useNavigate();
+  const location = useLocation();
 
   // Always get fresh project data from store
   const currentProject = projects.find((p) => p.id === project.id) ?? project;
@@ -53,6 +56,21 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
       )}`
     : null;
 
+  /**
+   * Öffnen affordance (AC-207, spec §8.4). Navigates to the full detail
+   * page and encodes the originating path as `?from=<pathname>` so the
+   * page shell can offer a contextual back target. The pathname is the
+   * stable identifier for the back surface — `/kanban` or `/calendar`
+   * — and survives role-label renames that a view-key-based scheme
+   * would not.
+   */
+  const originatingPath = location.pathname;
+  const openDetailPageHref = `/projects/${currentProject.id}?from=${encodeURIComponent(originatingPath.replace(/^\//, ''))}`;
+  const handleOpenDetailPage = () => {
+    onClose();
+    navigate(openDetailPageHref);
+  };
+
   return (
     <>
       <div className={styles.overlay} onClick={onClose} data-testid="detail-overlay" />
@@ -62,14 +80,24 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
             <div className={styles.projectNumber}>{currentProject.number}</div>
             <div className={styles.projectTitle}>{currentProject.title}</div>
           </div>
-          <button
-            className={styles.closeButton}
-            onClick={onClose}
-            data-testid="detail-close"
-            aria-label={STRINGS.ui.close}
-          >
-            &times;
-          </button>
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={styles.openPageButton}
+              onClick={handleOpenDetailPage}
+              data-testid="detail-open-page"
+            >
+              {STRINGS.attachments.openDetailPage}
+            </button>
+            <button
+              className={styles.closeButton}
+              onClick={onClose}
+              data-testid="detail-close"
+              aria-label={STRINGS.ui.close}
+            >
+              &times;
+            </button>
+          </div>
         </div>
 
         <div className={styles.body}>

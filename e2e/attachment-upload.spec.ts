@@ -62,7 +62,7 @@ async function openProjectDetailViaPanel(page: Page): Promise<string> {
   await expect(openAffordance).toBeVisible();
   await openAffordance.click();
 
-  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}$`));
+  await expect(page).toHaveURL(new RegExp(`/projects/${projectId}(?:\\?|$)`));
   await expect(page.getByTestId('project-detail-page')).toBeVisible();
 
   return projectId;

@@ -51,12 +51,39 @@ export interface EnvelopeAssignment {
   userId: string;
 }
 
+/**
+ * Attachment row in the export envelope — `status = 'ready'` only per
+ * data-model.md §5.8. Bytes remain storage-owned (ADR-0018); this
+ * envelope carries only the metadata row.
+ */
+export interface EnvelopeAttachment {
+  id: string;
+  projectId: string;
+  status: 'ready';
+  kind: 'photo' | 'binary';
+  label: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  originalKey: string;
+  thumbKey: string | null;
+  hasThumbnail: boolean;
+  createdAt: string;
+  createdBy: string | null;
+}
+
 export interface Envelope {
   schema_version: number;
   exported_at: string;
   customers: EnvelopeCustomer[];
   projects: EnvelopeProject[];
   project_workers: EnvelopeAssignment[];
+  /**
+   * Attachments — every row with `status = 'ready'`. Optional on the
+   * type so legacy fixtures without the field still parse; imports
+   * default to an empty list when absent.
+   */
+  attachments?: EnvelopeAttachment[];
 }
 
 export interface ImportOptions {

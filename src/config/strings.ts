@@ -428,6 +428,72 @@ export const STRINGS = {
     },
   },
 
+  /**
+   * Project-detail / attachment surface (ui/project-detail.md §8.15).
+   * The dropdown labels for `AttachmentLabel` live in
+   * `src/domain/attachments.ts`'s `ATTACHMENT_LABELS` catalog — this
+   * block carries the page-chrome copy that isn't a closed-enum label.
+   */
+  attachments: {
+    /** Öffnen affordance on the quick-glance panel (spec §8.4, AC-207). */
+    openDetailPage: 'Öffnen',
+    /** Not-found surface — 404 on `GET /projects/:id`. */
+    notFoundHeading: 'Projekt nicht gefunden',
+    notFoundBody: 'Das angeforderte Projekt existiert nicht.',
+
+    // Region headings
+    coreFields: 'Kernfelder',
+    assignedWorkers: 'Zugewiesene Mitarbeiter',
+    photoGallery: 'Fotogalerie',
+    binaryList: 'Dateien',
+    upload: 'Hochladen',
+    activity: 'Aktivität',
+
+    // Worker editor
+    addWorker: 'Mitarbeiter hinzufügen',
+    removeWorker: 'Entfernen',
+    noUnassignedWorkers: 'Keine weiteren Mitarbeiter verfügbar.',
+
+    // Upload surface
+    uploadDrop: 'Datei hier ablegen oder auswählen',
+    uploadPickFile: 'Datei auswählen',
+    uploadPickPhoto: 'Foto auswählen',
+    uploadPickBinary: 'Dokument auswählen',
+    takePhoto: 'Foto aufnehmen',
+    uploadLabel: 'Beschriftung',
+    uploadRetry: 'Erneut versuchen',
+    uploadDismiss: 'Verwerfen',
+    uploadProgressInit: 'Vorbereiten…',
+    uploadProgressUpload: 'Hochladen…',
+    uploadProgressComplete: 'Fertigstellen…',
+    uploadFileTooLarge: 'Datei zu groß.',
+    uploadMimeNotAllowed: 'Dateityp nicht erlaubt.',
+
+    // Missing-file placeholder (AC-224)
+    fileMissing: 'Datei fehlt',
+
+    // Deletion
+    deleteConfirmTitle: 'Datei löschen?',
+    deleteConfirmMessage: 'Diese Aktion kann nicht rückgängig gemacht werden.',
+
+    // Download actions
+    download: 'Herunterladen',
+    bulkDownload: 'Auswahl als ZIP',
+    selectAll: 'Alle auswählen',
+    /**
+     * Bulk-download cap violation message (AC-223) — MUST name both caps
+     * (file count AND summed bytes) per ui/project-detail.md §8.15.5.
+     */
+    bulkLimitExceeded: (maxFiles: number, maxMb: number) =>
+      `Auswahl überschreitet das Limit: maximal ${maxFiles} Dateien und maximal ${maxMb} MB Gesamtgröße.`,
+
+    // Table headers for the binary list
+    colFileName: 'Dateiname',
+    colLabel: 'Beschriftung',
+    colUploader: 'Hochgeladen von',
+    colUploaded: 'Hochgeladen am',
+  },
+
   backup: {
     green: 'Backup: aktuell',
     drillStale: 'Backup: aktuell, Drill-Schlüssel neu laden',

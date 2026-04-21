@@ -16,11 +16,27 @@ import {
   ProjectDatesService,
 } from '../services/project.js';
 import { STATE_KEYS, type WorkflowState } from '../../config/stateConfig.js';
+import { createStorageClient } from '../storage/client.js';
+import { getEnv } from '../config/env.js';
 
 export function projectRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
-    const crudService = new ProjectCrudService(db);
+    // Storage client for the purge-cascade's storage-side cleanup
+    // (AC-218). Optional — a deployment without storage configured
+    // (e.g. test harness without STORAGE_* env) falls back to DB-only
+    // cascade.
+    const env = getEnv();
+    const storage =
+      env.STORAGE_ENDPOINT && env.STORAGE_ACCESS_KEY && env.STORAGE_SECRET_KEY
+        ? createStorageClient({
+            endpoint: env.STORAGE_ENDPOINT,
+            bucket: env.STORAGE_BUCKET,
+            accessKey: env.STORAGE_ACCESS_KEY,
+            secretKey: env.STORAGE_SECRET_KEY,
+          })
+        : undefined;
+    const crudService = new ProjectCrudService(db, { storage });
     const transitionService = new ProjectTransitionService(db);
     const datesService = new ProjectDatesService(db);
 

@@ -95,7 +95,7 @@ beforeEach(() => {
 });
 
 async function pickFile(): Promise<void> {
-  const input = screen.getByTestId('upload-file-input') as HTMLInputElement;
+  const input = screen.getByTestId('attachment-photo-input') as HTMLInputElement;
   const file = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', { type: 'image/jpeg' });
   await userEvent.upload(input, file);
 }

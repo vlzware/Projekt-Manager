@@ -146,12 +146,13 @@ describe('describeAuditRow', () => {
 
   it('returns the raw action string for unknown actions (forward-compat)', () => {
     // data-model.md §5.10 pins action as free-text; the UI must render
-    // something for an action it has not learned yet.
+    // something for an action it has not learned yet. Sample action is
+    // deliberately absent from AUDIT_ACTION_LABELS.
     const out = describeAuditRow({
-      action: 'attachment:add',
+      action: 'supplier:add',
       entityType: 'project',
       payload: null,
     });
-    expect(out).toBe('attachment:add');
+    expect(out).toBe('supplier:add');
   });
 });

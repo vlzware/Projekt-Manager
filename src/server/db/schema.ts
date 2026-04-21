@@ -47,13 +47,29 @@ export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
  * `Record<AuditEntityType, …>` + `satisfies` forces a tsc error when a
  * new `AuditEntityType` value lands without a corresponding mapping:
  * that is the build-time seam AC-179 Part 2 pins.
+ *
+ * AC-179 Part 2 also pins `attachment` as an audited table even though
+ * `attachment` is NOT a member of `AuditEntityType`: attachment rows are
+ * audited as sub-entities of the owning project (entityType = 'project',
+ * action in `attachment:add` / `attachment:remove`). The explicit
+ * `attachment` key is tracked separately below so the arch-check sees
+ * the table while the enum stays the authoritative one-audit-row-per-
+ * entity catalog.
  */
 export const AUDIT_ENTITY_TO_TABLE = {
   project: { sqlName: 'projects', drizzleExport: 'projects' },
   customer: { sqlName: 'customers', drizzleExport: 'customers' },
   user: { sqlName: 'users', drizzleExport: 'users' },
   project_worker: { sqlName: 'project_workers', drizzleExport: 'projectWorkers' },
-} as const satisfies Record<AuditEntityType, { sqlName: string; drizzleExport: string }>;
+  // Sub-entity surface — AC-179 Part 2. Not a member of `AuditEntityType`;
+  // rows are audited as `entityType = 'project'`. Listed here so the CI
+  // architecture check observes the table; `scripts/print-audited-tables.ts`
+  // uses only the value names, so no satisfies-type drift.
+  attachment: { sqlName: 'attachments', drizzleExport: 'attachments' },
+} as const satisfies Record<
+  AuditEntityType | 'attachment',
+  { sqlName: string; drizzleExport: string }
+>;
 
 // ---------------------------------------------------------------
 // Users (data-model.md §5.3, §5.7)

@@ -245,7 +245,7 @@ describe('ProjectDetailPage — out-of-scope worker surface (AC-149 mirror)', ()
 
     renderAt('/projects/p-42');
 
-    expect(await screen.findByTestId('project-detail-not-permitted')).toBeInTheDocument();
+    expect(await screen.findByTestId('not-permitted-view')).toBeInTheDocument();
     // The detail shell is not mounted on the not-permitted branch.
     expect(screen.queryByTestId('project-detail-core')).not.toBeInTheDocument();
   });

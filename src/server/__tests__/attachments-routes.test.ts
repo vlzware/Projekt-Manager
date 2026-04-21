@@ -487,8 +487,19 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(res.json().code).toBe('VALIDATION_ERROR');
     });
 
-    it('returns 200 with a presigned URL when the batch fits the caps', async () => {
-      const ids = await seedReadyAttachments(projectId, [{ sizeBytes: 100 }, { sizeBytes: 100 }]);
+    it('returns 200 with a presigned URL that resolves to a real zip containing the requested entries', async () => {
+      // Real bytes behind the two ready rows so archiver has something
+      // to stream. Filenames chosen to exercise the no-collision path;
+      // the duplicate-filename disambiguation is covered by the next arm.
+      // Content-type is whitelisted (`application/pdf`) because the
+      // attachments table has a CHECK constraint on mime_type — the
+      // happy-path row must satisfy it.
+      const bytesA = Buffer.from('alpha-contents-alpha-contents-alpha', 'utf-8');
+      const bytesB = Buffer.from('bravo-1234-bravo-1234-bravo-1234', 'utf-8');
+      const ids = await seedReadyAttachmentsWithBytes(projectId, [
+        { bytes: bytesA, filename: 'alpha.pdf', mimeType: 'application/pdf' },
+        { bytes: bytesB, filename: 'bravo.pdf', mimeType: 'application/pdf' },
+      ]);
       const res = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/bulk-download`,
@@ -498,6 +509,38 @@ describe('Attachment routes — integration (issue #108)', () => {
       const body = res.json();
       expect(typeof body.url).toBe('string');
       expect(typeof body.expiresAt).toBe('string');
+
+      // Follow the presigned URL — the whole point of AC-221 is that the
+      // bytes do not transit the app. The URL must resolve to a real
+      // zip whose entries match the requested filenames.
+      const zipBuffer = await fetchBytesFromUrl(body.url);
+      const entries = await listZipEntries(zipBuffer);
+      expect(entries).toContain('alpha.pdf');
+      expect(entries).toContain('bravo.pdf');
+      expect(entries).toHaveLength(2);
+    });
+
+    it('disambiguates duplicate filenames within a single zip', async () => {
+      // Two rows sharing `doc.pdf` — archiver would otherwise emit two
+      // identically-named entries, which Windows Explorer + many zip
+      // viewers refuse to open. The service appends a short-id suffix
+      // before the extension.
+      const ids = await seedReadyAttachmentsWithBytes(projectId, [
+        { bytes: Buffer.from('first-copy'), filename: 'doc.pdf', mimeType: 'application/pdf' },
+        { bytes: Buffer.from('second-copy'), filename: 'doc.pdf', mimeType: 'application/pdf' },
+      ]);
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/bulk-download`,
+        { attachmentIds: ids },
+      );
+      expect(res.statusCode).toBe(200);
+      const zipBuffer = await fetchBytesFromUrl(res.json().url);
+      const entries = await listZipEntries(zipBuffer);
+      expect(entries).toHaveLength(2);
+      expect(entries).toContain('doc.pdf');
+      // The second copy is renamed with a short-id suffix: ` (xxxxxxxx).pdf`.
+      expect(entries.some((n) => /doc \([0-9a-f]{8}\)\.pdf/.test(n))).toBe(true);
     });
   });
 
@@ -649,4 +692,109 @@ async function seedReadyAttachments(projectId: string, specs: SeedReadySpec[]): 
   } finally {
     await pool.end();
   }
+}
+
+interface SeedReadyWithBytesSpec {
+  bytes: Buffer;
+  filename: string;
+  mimeType: string;
+  kind?: 'photo' | 'binary';
+  label?: string;
+}
+
+/**
+ * Seed `ready` rows AND upload the backing bytes to storage. Used by
+ * the bulk-download happy-path arm which follows the presigned URL and
+ * verifies the resulting zip's contents — a no-bytes seed can pass the
+ * DB validation but the archiver would stream nothing.
+ *
+ * Extends `seedReadyAttachments` rather than replacing it because most
+ * bulk-download arms do not need real bytes (cap-breach, cross-project,
+ * pending-in-batch all short-circuit before storage is touched).
+ */
+async function seedReadyAttachmentsWithBytes(
+  projectId: string,
+  specs: SeedReadyWithBytesSpec[],
+): Promise<string[]> {
+  const { db, pool } = createDatabase();
+  const s = storage();
+  try {
+    const ids: string[] = [];
+    for (const spec of specs) {
+      const id = crypto.randomUUID();
+      const kind = spec.kind ?? 'binary';
+      const label = spec.label ?? 'sonstiges';
+      const originalKey = `attachments/${projectId}/${id}.orig`;
+      const thumbKey = kind === 'photo' ? `attachments/${projectId}/${id}.thumb` : null;
+      await s.upload(originalKey, spec.bytes, spec.mimeType);
+      await db.execute(sql`
+        INSERT INTO attachments
+          (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+           original_key, thumb_key, has_thumbnail)
+        VALUES (${id}, ${projectId}, 'ready', ${kind}, ${label},
+                ${spec.filename}, ${spec.mimeType}, ${spec.bytes.length},
+                ${originalKey}, ${thumbKey}, ${kind === 'photo'})
+      `);
+      ids.push(id);
+    }
+    return ids;
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
+ * Download bytes from a URL. Used to verify the presigned-GET URL
+ * resolves to a real zip — the whole point of AC-221 is that the bytes
+ * flow direct from storage to client without transiting the app.
+ */
+async function fetchBytesFromUrl(url: string): Promise<Buffer> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Fetch failed: ${response.status} ${response.statusText} — ${url}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+/**
+ * List the entry names in a zip buffer. Parses the end-of-central-
+ * directory record and the central directory itself, reading only
+ * filenames — we do not need entry contents for these assertions.
+ *
+ * Zero external dependencies: the test file already imports
+ * `archiver` only indirectly (via the service); pulling in `yauzl` or
+ * `adm-zip` just to list entries would add a test-only dep for two
+ * assertions. The parser is ~40 lines and only reads well-defined
+ * fixed offsets from the zip spec (APPNOTE.TXT §4.4).
+ */
+async function listZipEntries(zip: Buffer): Promise<string[]> {
+  // End of central directory record signature: 0x06054b50, located in
+  // the last 22 bytes (or last 22 + comment bytes; comments rare).
+  const EOCD_SIG = 0x06054b50;
+  const CD_SIG = 0x02014b50;
+  let eocdOffset = -1;
+  for (let i = zip.length - 22; i >= 0; i--) {
+    if (zip.readUInt32LE(i) === EOCD_SIG) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset < 0) throw new Error('Not a zip buffer: EOCD record not found');
+  const cdSize = zip.readUInt32LE(eocdOffset + 12);
+  const cdOffset = zip.readUInt32LE(eocdOffset + 16);
+
+  const entries: string[] = [];
+  let cursor = cdOffset;
+  const end = cdOffset + cdSize;
+  while (cursor < end) {
+    if (zip.readUInt32LE(cursor) !== CD_SIG) break;
+    const nameLen = zip.readUInt16LE(cursor + 28);
+    const extraLen = zip.readUInt16LE(cursor + 30);
+    const commentLen = zip.readUInt16LE(cursor + 32);
+    const name = zip.subarray(cursor + 46, cursor + 46 + nameLen).toString('utf-8');
+    entries.push(name);
+    cursor += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
 }
