@@ -18,6 +18,7 @@ import {
   updateLastLogin,
   changePassword as changePasswordRepo,
   updateSelf as updateSelfRepo,
+  toUserResponse,
 } from '../repositories/user.js';
 import { createSession, deleteSession, deleteSessionsByUserId } from '../repositories/session.js';
 import { hashPassword, verifyPassword } from '../password.js';
@@ -76,6 +77,7 @@ export class AuthService {
         // Narrow the raw text column to the domain literal union; the
         // CHECK constraint in migration 0013 guarantees validity.
         themePreference: user.themePreference as ThemePreference,
+        pushMuted: user.pushMuted,
       },
     };
   }
@@ -85,47 +87,41 @@ export class AuthService {
    * Only fields the user themselves controls appear in `patch`; identity-
    * bearing fields stay administrative (see `UserService`).
    *
-   * Emits an `update` audit row on the `user` entity so the
-   * administrative audit surface records the preference change.
+   * Audit behaviour: self-preference writes (themePreference, pushMuted)
+   * do not produce an audit row. See data-model.md §5.10 "Non-audited
+   * self-preference writes on UserAccount" — per-user UI/notification
+   * preferences have no cross-user or security consequence and would
+   * drown out the actor-on-entity traffic the activity feed is tuned
+   * for (ADR-0021 "high-signal activity feed"). A transaction is still
+   * opened so MutatingDatabase's type-gate on the repo write is satisfied
+   * (AC-179's carve-out is expressed as an allowlisted write site, not
+   * a general bypass of the single-write-path helper).
    */
   async updateSelfPreferences(
     actingUserId: string,
-    patch: { themePreference?: ThemePreference },
+    patch: { themePreference?: ThemePreference; pushMuted?: boolean },
     log: ServiceLogger,
-    correlationId?: string | null,
   ) {
-    const updated = await mutate(
-      this.db,
-      { actorKind: 'user', actorId: actingUserId, correlationId: correlationId ?? null },
-      {
-        entityType: 'user',
-        action: 'update',
-        run: async (tx) => {
-          const prior = await findById(tx, actingUserId);
-          if (!prior) throw notFound(STRINGS.entities.user);
-
-          const row = await updateSelfRepo(tx, actingUserId, patch);
-          if (!row) throw notFound(STRINGS.entities.user);
-
-          const before: Record<string, unknown> = {};
-          const after: Record<string, unknown> = {};
-          if (patch.themePreference !== undefined) {
-            before.themePreference = prior.themePreference;
-            after.themePreference = row.themePreference;
-          }
-
-          return {
-            entityId: actingUserId,
-            entityLabel: row.displayName,
-            value: row,
-            before,
-            after,
-          };
-        },
-      },
-    );
+    const updated = await this.db.transaction(async (tx) => {
+      const prior = await findById(tx, actingUserId);
+      if (!prior) throw notFound(STRINGS.entities.user);
+      const row = await updateSelfRepo(tx, actingUserId, patch);
+      if (!row) throw notFound(STRINGS.entities.user);
+      return row;
+    });
     log.info({ userId: actingUserId }, 'user_self_updated');
     return updated;
+  }
+
+  /**
+   * Read the authenticated user's full row for GET /api/auth/me responses.
+   * Present so routes do not need to repeat the `findById` + `toUserResponse`
+   * pattern when surfacing self-preference fields.
+   */
+  async getSelf(userId: string) {
+    const row = await findById(this.db, userId);
+    if (!row) throw notFound(STRINGS.entities.user);
+    return toUserResponse(row);
   }
 
   async logout(token: string, userId: string, ip: string, log: ServiceLogger) {

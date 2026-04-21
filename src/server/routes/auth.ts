@@ -95,7 +95,7 @@ export function authRoutes(db: Database) {
     // so the route surface stays within the "no new endpoints" rule.
     // ---------------------------------------------------------------
     app.get('/api/auth/me', { preHandler: authenticate }, async (request, reply) => {
-      const { id, username, displayName, roles, email, themePreference } = request.user!;
+      const { id, username, displayName, roles, email, themePreference, pushMuted } = request.user!;
       const response: {
         user: {
           id: string;
@@ -104,10 +104,11 @@ export function authRoutes(db: Database) {
           roles: string[];
           email: string | null;
           themePreference: string;
+          pushMuted: boolean;
         };
         backupStatus?: BackupStatus;
       } = {
-        user: { id, username, displayName, roles, email, themePreference },
+        user: { id, username, displayName, roles, email, themePreference, pushMuted },
       };
 
       if (roles.includes('owner')) {
@@ -150,20 +151,26 @@ export function authRoutes(db: Database) {
               themePreference: {
                 type: 'string',
                 // data-model.md §5.7 — the accepted set. Kept in sync with
-                // the DB CHECK `users_valid_theme_preference` (migration 0013).
+                // the DB CHECK `users_valid_theme_preference`.
                 enum: ['light', 'dark', 'system'],
               },
+              // data-model.md §5.3 / api.md §14.2.1 — self-settable
+              // boolean. Validation of non-boolean values is Fastify's
+              // standard ajv path → 422 VALIDATION_ERROR (AC-195 arm).
+              pushMuted: { type: 'boolean' },
             },
           },
         },
       },
       async (request, reply) => {
-        const body = request.body as { themePreference?: 'light' | 'dark' | 'system' };
+        const body = request.body as {
+          themePreference?: 'light' | 'dark' | 'system';
+          pushMuted?: boolean;
+        };
         const updated = await authService.updateSelfPreferences(
           request.user!.id,
           body,
           request.log,
-          request.id ?? null,
         );
         // Same envelope shape as GET /api/auth/me and login — a typed
         // client consumes one response type across all three endpoints.
@@ -175,6 +182,7 @@ export function authRoutes(db: Database) {
             roles: updated.roles,
             email: updated.email,
             themePreference: updated.themePreference,
+            pushMuted: updated.pushMuted,
           },
         });
       },

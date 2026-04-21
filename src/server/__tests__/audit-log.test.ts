@@ -506,9 +506,11 @@ describe('AT-91: Audit-list access matrix', () => {
   let officeToken: string;
   let workerToken: string;
   let bookkeeperToken: string;
-  /** Positive control id — a user-entity audit row from the owner's
-   *  self-PATCH, proves the owner/office blocks aren't asserting on an
-   *  empty slice. */
+  /** Positive control id — a user-entity audit row authored by the
+   *  owner, proves the owner/office blocks aren't asserting on an empty
+   *  slice. Seeded by having owner update the office user via admin
+   *  user-management (self-preference PATCHes are non-audited per
+   *  data-model.md §5.10). */
   let ownerAuthoredUserRowId: string;
 
   beforeAll(async () => {
@@ -520,14 +522,6 @@ describe('AT-91: Audit-list access matrix', () => {
       login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD),
     ]);
 
-    // Drive at least one user-entity audit row so the owner/office
-    // positive-control assertions have something to find. PATCH
-    // /api/auth/me writes an entityType='user' row with actor_id=owner.
-    const ownerSelfPatch = await authPatch(ownerToken, `/api/auth/me`, {
-      themePreference: 'dark',
-    });
-    expect(ownerSelfPatch.statusCode).toBe(200);
-
     const { db: fixtureDb, pool: fixturePool } = createDatabase();
     try {
       const ownerLookup = await fixtureDb.execute(
@@ -537,6 +531,23 @@ describe('AT-91: Audit-list access matrix', () => {
       if (!ownerRow) {
         throw new Error('AT-91 fixture: owner user missing from seed');
       }
+
+      // Drive a user-entity audit row authored by owner: owner updates
+      // the office user's displayName via admin user-management. This
+      // path routes through mutate() and emits an entityType='user'
+      // row with actor_id=owner.
+      const officeLookup = await fixtureDb.execute(
+        sql`SELECT id FROM users WHERE username = ${SEED_USERS.office.username} LIMIT 1`,
+      );
+      const officeRow = officeLookup.rows[0] as { id: string } | undefined;
+      if (!officeRow) {
+        throw new Error('AT-91 fixture: office user missing from seed');
+      }
+      const adminPatch = await authPatch(ownerToken, `/api/users/${officeRow.id}`, {
+        displayName: `${SEED_USERS.office.displayName} (AT-91 fixture)`,
+      });
+      expect(adminPatch.statusCode).toBe(200);
+
       const ownerAuditLookup = await fixtureDb.execute(
         sql`SELECT id FROM audit_log
             WHERE entity_type = 'user' AND actor_id = ${ownerRow.id}
@@ -545,7 +556,7 @@ describe('AT-91: Audit-list access matrix', () => {
       const ownerAuditRow = ownerAuditLookup.rows[0] as { id: string } | undefined;
       if (!ownerAuditRow) {
         throw new Error(
-          'AT-91 fixture: no owner-authored user audit row — owner self-PATCH did not emit one',
+          'AT-91 fixture: no owner-authored user audit row — admin PATCH did not emit one',
         );
       }
       ownerAuthoredUserRowId = ownerAuditRow.id;
@@ -1014,6 +1025,96 @@ describe('AT-96: entity_label is frozen at event time (AC-188)', () => {
       };
       expect(createRow.action).toBe('create');
       expect(createRow.entity_label).toBe(customerName);
+    } finally {
+      await pool.end();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
+// AT-107 — Self-preference carve-out produces zero audit rows (AC-204)
+// ---------------------------------------------------------------------
+//
+// data-model.md §5.10 "Non-audited self-preference paths": PATCH
+// /api/auth/me updating `themePreference` or `pushMuted` must NOT
+// produce an audit_log row — these are self-controlled delivery/display
+// preferences, not domain state changes. By contrast, PATCH /api/users/:id
+// changing another user's `displayName` via admin management MUST still
+// emit exactly one audit row (AC-204 confirms the carve-out is scoped
+// to self-preference fields only, not to the whole user-update surface).
+describe('AT-107: self-preference carve-out (AC-204)', () => {
+  let ownerToken: string;
+  let officeUserId: string;
+
+  beforeAll(async () => {
+    await startApp();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+
+    const { db: fixtureDb, pool: fixturePool } = createDatabase();
+    try {
+      const row = await fixtureDb.execute(
+        sql`SELECT id FROM users WHERE username = ${SEED_USERS.office.username} LIMIT 1`,
+      );
+      const officeRow = row.rows[0] as { id: string } | undefined;
+      if (!officeRow) throw new Error('AT-107 fixture: office user missing from seed');
+      officeUserId = officeRow.id;
+    } finally {
+      await fixturePool.end();
+    }
+  });
+
+  afterAll(async () => {
+    await stopApp();
+  });
+
+  it('PATCH /api/auth/me updating themePreference produces zero audit_log rows', async () => {
+    const { db, pool } = createDatabase();
+    try {
+      const before = await countAuditRows(db);
+      const res = await authPatch(ownerToken, '/api/auth/me', { themePreference: 'dark' });
+      expect(res.statusCode).toBe(200);
+      const after = await countAuditRows(db);
+      expect(after - before).toBe(0);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('PATCH /api/auth/me updating pushMuted produces zero audit_log rows', async () => {
+    const { db, pool } = createDatabase();
+    try {
+      const before = await countAuditRows(db);
+      const res = await authPatch(ownerToken, '/api/auth/me', { pushMuted: true });
+      expect(res.statusCode).toBe(200);
+      const after = await countAuditRows(db);
+      expect(after - before).toBe(0);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('PATCH /api/users/:id changing displayName produces exactly one audit_log row', async () => {
+    const beforeTs = new Date();
+    const { db, pool } = createDatabase();
+    try {
+      const res = await authPatch(ownerToken, `/api/users/${officeUserId}`, {
+        displayName: `${SEED_USERS.office.displayName} (AT-107)`,
+      });
+      expect(res.statusCode).toBe(200);
+
+      // Narrow to rows written AFTER this test started so sibling
+      // describe blocks (AT-91 also patches the office user) do not
+      // inflate the count.
+      const rows = await db.execute(
+        sql`SELECT entity_type, action FROM audit_log
+            WHERE entity_type = 'user' AND entity_id = ${officeUserId}
+              AND created_at >= ${beforeTs}
+            ORDER BY created_at DESC`,
+      );
+      expect(rows.rows).toHaveLength(1);
+      const row = rows.rows[0] as { entity_type: string; action: string };
+      expect(row.entity_type).toBe('user');
+      expect(row.action).toBe('update');
     } finally {
       await pool.end();
     }
