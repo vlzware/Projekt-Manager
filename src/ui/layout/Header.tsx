@@ -79,15 +79,21 @@ export function Header() {
   // on summary content width, not viewport alone — so we measure the
   // button's position on open. Mutating the class directly (rather than
   // via setState) avoids a cascading render before paint.
+  //
+  // The width to fit against is the dropdown's actual `offsetWidth`, not
+  // a hardcoded constant. The earlier snapshot of `min-width: 140px`
+  // drifted from reality when the push-notification section added more
+  // items — the check kept evaluating `rect.right >= 140` as true and
+  // suppressed the flip even though the real 176-ish-px dropdown was
+  // still clipping off-screen. Reading the live width at measure time
+  // is self-correcting against future content growth.
   useLayoutEffect(() => {
     if (!dropdownOpen || !buttonRef.current || !dropdownRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
     const viewportWidth = document.documentElement.clientWidth;
-    // Dropdown's min-width from Header.module.css. Kept inline because
-    // it's stable and reading the live style would layout-thrash.
-    const dropdownMinWidth = 140;
-    const leftwardFits = rect.right >= dropdownMinWidth;
-    const rightwardFits = viewportWidth - rect.left >= dropdownMinWidth;
+    const dropdownWidth = dropdownRef.current.offsetWidth;
+    const leftwardFits = rect.right >= dropdownWidth;
+    const rightwardFits = viewportWidth - rect.left >= dropdownWidth;
     // Only flip when the default (leftward open) would clip AND the
     // flipped direction actually has room. If neither fits, keep the
     // default so the clipping is at least symmetric with the wide-
