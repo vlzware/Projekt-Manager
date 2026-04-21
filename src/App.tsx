@@ -16,6 +16,7 @@ import { ProjectManagement } from '@/ui/management/ProjectManagement';
 import { UserManagement } from '@/ui/management/UserManagement';
 import { DatenView } from '@/ui/management/DatenView';
 import { AuditManagement } from '@/ui/audit/AuditManagement';
+import { NotificationRulesManagement } from '@/ui/management/NotificationRulesManagement';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
@@ -103,6 +104,7 @@ const VIEW_ELEMENTS: Record<ViewMode, ReactElement> = {
   benutzer: <UserManagement />,
   daten: <DatenView />,
   aktivitaet: <AuditManagement />,
+  benachrichtigungen: <NotificationRulesManagement />,
 };
 
 export function App() {

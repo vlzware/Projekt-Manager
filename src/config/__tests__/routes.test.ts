@@ -31,9 +31,19 @@ const caller = (role: RoleName): RouteCaller => ({ roles: [role] });
 // source so a regression in either has to be reconciled by hand.
 // Aktivität (audit:read) is visible to owner / office only under the
 // current matrix; worker and bookkeeper lack `audit:read` and do not
-// see the tab.
+// see the tab. Benachrichtigungen (notifications:manage) is owner-only
+// per api.md §14.3 + ADR-0023 + AC-198.
 const MATRIX: Record<RoleName, readonly string[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivitaet'],
+  owner: [
+    'kanban',
+    'kalender',
+    'projekte',
+    'kunden',
+    'benutzer',
+    'daten',
+    'aktivitaet',
+    'benachrichtigungen',
+  ],
   office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
   worker: ['kanban', 'kalender'],
   bookkeeper: ['projekte', 'kunden'],

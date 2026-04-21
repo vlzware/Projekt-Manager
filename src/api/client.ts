@@ -192,6 +192,7 @@ import type { WorkflowState } from '@/config/stateConfig';
 import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 import type { BackupStatus } from '@/domain/backupBadge';
 import type { AuditEntry, AuditListParams, AuditListResponse } from '@/domain/audit';
+import type { NotificationRule, NotificationRuleInput } from '@/domain/notifications';
 
 interface AuthUser {
   id: string;
@@ -200,6 +201,13 @@ interface AuthUser {
   roles: string[];
   email: string | null;
   themePreference: ThemePreference;
+  /**
+   * Server-authoritative push-mute flag (data-model.md §5.3). When true,
+   * the dispatcher skips every subscription the user owns but the row is
+   * retained — unmuting restores delivery without a re-subscribe.
+   * Updated via the self-update API (§14.2.1).
+   */
+  pushMuted: boolean;
 }
 
 /**
@@ -258,7 +266,7 @@ export const authApi = {
       body: { currentPassword, newPassword },
     }),
 
-  updateSelf: (patch: { themePreference?: ThemePreference }) =>
+  updateSelf: (patch: { themePreference?: ThemePreference; pushMuted?: boolean }) =>
     apiCall<LoginResponse>('/api/auth/me', { method: 'PATCH', body: patch }),
 };
 
@@ -469,6 +477,31 @@ export const auditApi = {
   get: (id: string) => apiCall<AuditEntry>(`/api/audit/${id}`),
 };
 
+interface NotificationRuleListResponse {
+  data: NotificationRule[];
+  total: number;
+}
+
+/**
+ * Notification rules CRUD (api.md §14.2.9). Every endpoint is admin-only
+ * and gated server-side by `notifications:manage`; the UI layer mirrors
+ * the gate via `usePermission('notifications:manage')` for nav + surface
+ * hiding only.
+ */
+export const notificationRuleApi = {
+  list: () => apiCall<NotificationRuleListResponse>('/api/notification-rules'),
+
+  get: (id: string) => apiCall<NotificationRule>(`/api/notification-rules/${id}`),
+
+  create: (data: NotificationRuleInput) =>
+    apiCall<NotificationRule>('/api/notification-rules', { method: 'POST', body: data }),
+
+  update: (id: string, data: Partial<NotificationRuleInput>) =>
+    apiCall<NotificationRule>(`/api/notification-rules/${id}`, { method: 'PATCH', body: data }),
+
+  delete: (id: string) => apiCall<null>(`/api/notification-rules/${id}`, { method: 'DELETE' }),
+};
+
 /**
  * Public backup-status endpoint — no authentication required.
  *
@@ -480,6 +513,39 @@ export const auditApi = {
  */
 export const backupApi = {
   status: () => apiCall<BackupStatusResponse>('/api/backup/status'),
+};
+
+/**
+ * Server response for a subscribe call. The transport-only fields
+ * (`p256dh`, `auth`) are never echoed back — they are stored server-
+ * side and are opaque to the client after registration (see
+ * data-model.md §5.12).
+ */
+export interface PushSubscriptionRecord {
+  id: string;
+  endpoint: string;
+  createdAt: string;
+}
+
+/**
+ * Push-subscription endpoints (api.md §14.2.10). Self-scope — the server
+ * derives `userId` from the session, so the client never sends one.
+ */
+export const pushApi = {
+  subscribe: (body: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+    userAgent?: string | null;
+  }) =>
+    apiCall<PushSubscriptionRecord>('/api/push-subscriptions', {
+      method: 'POST',
+      body,
+    }),
+
+  unsubscribeByEndpoint: (endpoint: string) => {
+    const qs = toQuery({ endpoint });
+    return apiCall<null>('/api/push-subscriptions' + qs, { method: 'DELETE' });
+  },
 };
 
 export type { AuthUser };

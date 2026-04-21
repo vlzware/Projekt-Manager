@@ -22,7 +22,8 @@ export type NavViewKey =
   | 'kunden'
   | 'benutzer'
   | 'daten'
-  | 'aktivitaet';
+  | 'aktivitaet'
+  | 'benachrichtigungen';
 
 /**
  * Wait until the header has finished rendering. Counts taken before

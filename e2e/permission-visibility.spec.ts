@@ -47,6 +47,8 @@ interface RoleCase {
   canExportData: boolean;
   /** `data:restore` — gates the import form inside the Daten view. */
   canRestoreData: boolean;
+  /** `notifications:manage` — gates Benachrichtigungen tab visibility (AC-198). */
+  canManageNotifications: boolean;
 }
 
 /**
@@ -72,6 +74,7 @@ const roleCases: Record<Role, RoleCase> = {
     canDeleteCustomer: true,
     canExportData: true,
     canRestoreData: true,
+    canManageNotifications: true,
   },
   office: {
     username: 'buero',
@@ -95,6 +98,7 @@ const roleCases: Record<Role, RoleCase> = {
     canDeleteCustomer: false,
     canExportData: true,
     canRestoreData: false,
+    canManageNotifications: false,
   },
   worker: {
     username: 'arbeiter1',
@@ -113,6 +117,7 @@ const roleCases: Record<Role, RoleCase> = {
     canDeleteCustomer: false,
     canExportData: false,
     canRestoreData: false,
+    canManageNotifications: false,
   },
   bookkeeper: {
     username: 'buchhalter',
@@ -131,6 +136,7 @@ const roleCases: Record<Role, RoleCase> = {
     canDeleteCustomer: false,
     canExportData: false,
     canRestoreData: false,
+    canManageNotifications: false,
   },
 };
 
@@ -148,6 +154,13 @@ test.describe('AC-121: permission-based UI visibility', () => {
       await expectViewReachable(page, 'projekte', c.canSeeManagement);
       await expectViewReachable(page, 'kunden', c.canSeeManagement);
       await expectViewReachable(page, 'benutzer', c.canReadUsers);
+      // AC-198 — Notification Rules view (Benachrichtigungen tab)
+      // gated on notifications:manage (owner only under default matrix).
+      await expectViewReachable(
+        page,
+        'benachrichtigungen',
+        c.canManageNotifications,
+      );
       await expect(page.getByTestId('extract-button')).toHaveCount(c.canExtract ? 1 : 0);
 
       // -- Kanban view: transition controls on cards and detail panel ----
@@ -318,15 +331,27 @@ type NavView =
   | 'kunden'
   | 'benutzer'
   | 'daten'
-  | 'aktivitaet';
+  | 'aktivitaet'
+  | 'benachrichtigungen';
 
-// Worker deliberately excludes `aktivitaet`: the `audit:read` permission
-// is retained so deep-link navigation and server-side scoping still work,
-// but the tab is suppressed in the header because worker-visible rows
-// are scoped too narrowly to justify the nav slot
-// (see Header.tsx + docs/spec/ui/index.md §8.7.1).
+// Worker deliberately excludes `aktivitaet`: worker does not hold `audit:read`
+// (see src/config/permissions.ts) so the route guard and nav hide the tab.
+// Only kanban and kalender are in the worker matrix per AC-75
+// (docs/spec/ui/index.md §8.7.1).
+//
+// `benachrichtigungen` is owner-only per AC-75 + AC-198
+// (notifications:manage in the default matrix).
 const NAV_MATRIX: Record<Role, readonly NavView[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivitaet'],
+  owner: [
+    'kanban',
+    'kalender',
+    'projekte',
+    'kunden',
+    'benutzer',
+    'daten',
+    'aktivitaet',
+    'benachrichtigungen',
+  ],
   office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
   worker: ['kanban', 'kalender'],
   bookkeeper: ['projekte', 'kunden'],
@@ -340,6 +365,7 @@ const ALL_VIEWS: readonly NavView[] = [
   'benutzer',
   'daten',
   'aktivitaet',
+  'benachrichtigungen',
 ];
 
 test.describe('AC-75: per-role nav visibility matrix', () => {

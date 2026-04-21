@@ -28,6 +28,7 @@ function setAuthUser(roles: string[]): void {
     roles,
     email: null,
     themePreference: 'system',
+    pushMuted: false,
   };
   useAuthStore.setState({
     authUser: user,

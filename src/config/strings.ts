@@ -47,6 +47,8 @@ export const STRINGS = {
     customer: 'Kunde',
     user: 'Benutzer',
     audit: 'Audit-Eintrag',
+    notificationRule: 'Benachrichtigungsregel',
+    pushSubscription: 'Push-Abonnement',
     resource: 'Ressource',
   },
 
@@ -165,6 +167,28 @@ export const STRINGS = {
     system: 'Systemstandard',
   },
 
+  /**
+   * Push-notifications group in the user menu (spec ui/index.md §8.7.2,
+   * ui/behavior.md §9.8). Labels pinned by the spec and the e2e contract
+   * in e2e/push-permission.spec.ts.
+   *
+   * The permission-denied copy intentionally does NOT offer an in-app
+   * remediation — a denied browser permission is near-irreversible and
+   * the user must clear it via browser settings.
+   */
+  push: {
+    section: 'Push-Benachrichtigungen',
+    enable: 'Push-Benachrichtigungen aktivieren',
+    mute: 'Stummschalten',
+    unsubscribe: 'Gerät abmelden',
+    subscribed: 'Dieses Gerät ist angemeldet.',
+    denied:
+      'Push-Benachrichtigungen wurden für diese Webseite blockiert. Bitte in den Browser-Einstellungen freigeben.',
+    unsupported: 'Dieser Browser unterstützt keine Push-Benachrichtigungen.',
+    notConfigured: 'Push-Benachrichtigungen sind auf diesem Server nicht konfiguriert.',
+    subscribeFailed: 'Anmeldung für Push-Benachrichtigungen fehlgeschlagen.',
+  },
+
   ui: {
     confirm: 'Bestätigen',
     ok: 'OK',
@@ -196,6 +220,7 @@ export const STRINGS = {
     viewUsers: 'Benutzer',
     viewData: 'Daten',
     viewAudit: 'Aktivität',
+    viewNotifications: 'Benachrichtigungen',
     viewMonth: 'Monat',
     viewWeek: 'Woche',
     navAdminMenu: 'Verwaltung',
@@ -300,6 +325,17 @@ export const STRINGS = {
    */
   audit: {
     emptyState: 'Keine Aktivität',
+    /**
+     * Recipient-scoped empty-state copy on the global Aktivität view
+     * (AC-200). Rendered when the default (recipient-scoped) mode is
+     * active and the filtered set is empty because rules exist but
+     * none admit the caller as recipient. The plain "Keine Aktivität"
+     * fallback applies only under "Alles anzeigen".
+     */
+    emptyStateRecipient:
+      'Keine Benachrichtigungen für Sie. Alles anzeigen für den vollständigen Aktivitätsverlauf.',
+    /** Label on the "Alles anzeigen" toggle (AC-200, §8.13.1). */
+    toggleShowAll: 'Alles anzeigen',
     detailsShow: 'Details anzeigen',
     detailsHide: 'Details ausblenden',
     loadOlder: 'Ältere anzeigen',
@@ -338,12 +374,60 @@ export const STRINGS = {
   },
 
   /**
-   * Backup-freshness badge copy (AC-170, AC-171). Centralized so the
-   * derivation layer's reason strings and the visible German label
-   * share a single source. `unknown` pins the exact wording named in
-   * AC-171; the others map to the reason union in
-   * `src/domain/backupBadge.ts` — labels must cover every member.
+   * Notification rule editor + validation messages (api.md §14.2.9,
+   * data-model.md §5.11). Each message maps to one AC-190 rejection
+   * branch so a regression surfaces the specific validator that broke.
    */
+  notifications: {
+    invalidEventClass: 'Unbekannte Ereignisklasse.',
+    stateFilterNotAllowed: 'Ziel-Status ist nur für Statuswechsel-Ereignisse zulässig.',
+    invalidStateFilter: 'Ziel-Status ist kein gültiger Workflow-Status.',
+    includeAssignedWorkersNotAllowed:
+      'Zugewiesene Mitarbeiter können nur für projektbezogene Ereignisse benachrichtigt werden.',
+    invalidRole: (role: string) => `Unbekannte Rolle: "${role}".`,
+    invalidUserId: 'Mindestens eine angegebene Benutzer-ID ist nicht gültig oder inaktiv.',
+    invalidRecipientSpec: 'Empfänger-Spezifikation ist ungültig.',
+    emptyRecipientSpec: 'Empfänger-Spezifikation darf nicht leer sein.',
+    invalidEnabled: '"enabled" muss ein Boolean sein.',
+    invalidPushSubscription: 'Push-Abonnement ist ungültig.',
+
+    /**
+     * Rule-editor surface (ui/management.md §8.14). Kept under the
+     * existing `notifications` key so the admin-surface copy lives next
+     * to the validator messages it pairs with.
+     */
+    rules: {
+      heading: 'Benachrichtigungsregeln',
+      createButton: 'Regel erstellen',
+      createTitle: 'Regel erstellen',
+      editTitle: 'Regel bearbeiten',
+      emptyList: 'Keine Regeln',
+      colEvent: 'Ereignis',
+      colFilter: 'Filter',
+      colRecipients: 'Empfänger',
+      colEnabled: 'Aktiv',
+      colActions: 'Aktionen',
+      event: 'Ereignis',
+      stateFilter: 'Ziel-Status',
+      stateFilterAny: 'Beliebig',
+      recipients: 'Empfänger',
+      recipientRoles: 'Rollen',
+      recipientAssignedWorkers: 'Zugewiesene Mitarbeiter benachrichtigen',
+      recipientUsers: 'Einzelne Benutzer',
+      userPickerPlaceholder: 'Benutzer suchen…',
+      userPickerEmpty: 'Keine Treffer.',
+      addUser: 'Hinzufügen',
+      removeUser: 'Entfernen',
+      enabled: 'Aktiv',
+      deleteConfirm: 'Regel wirklich löschen?',
+      /** Compact recipientSpec summary for the list's Empfänger cell. */
+      summaryRoles: (labels: string) => `Rollen: ${labels}`,
+      summaryAssignedWorkers: 'Zugewiesene Mitarbeiter',
+      summaryUsers: (count: number) => `${count} Benutzer`,
+      summaryEmpty: '—',
+    },
+  },
+
   backup: {
     green: 'Backup: aktuell',
     drillStale: 'Backup: aktuell, Drill-Schlüssel neu laden',

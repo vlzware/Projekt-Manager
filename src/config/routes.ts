@@ -48,7 +48,8 @@ export type RouteView =
   | 'projekte'
   | 'benutzer'
   | 'daten'
-  | 'aktivitaet';
+  | 'aktivitaet'
+  | 'benachrichtigungen';
 
 export interface RouteEntry {
   /** Stable view key. */
@@ -155,6 +156,17 @@ export const ROUTES: readonly RouteEntry[] = [
     path: '/audit',
     label: STRINGS.ui.viewAudit,
     canAccess: (u) => hasPermission(u.roles, 'audit:read'),
+    isDefaultFor: () => false,
+  },
+  {
+    // Notification rules admin view (ui/management.md §8.14) — gated on
+    // `notifications:manage`. Owner-only under the default matrix per
+    // api.md §14.3 + ADR-0023. Server-side authorization remains
+    // authoritative; this is the nav-visibility concern only.
+    view: 'benachrichtigungen',
+    path: '/benachrichtigungen',
+    label: STRINGS.ui.viewNotifications,
+    canAccess: (u) => hasPermission(u.roles, 'notifications:manage'),
     isDefaultFor: () => false,
   },
 ] as const;

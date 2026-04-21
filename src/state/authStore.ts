@@ -37,6 +37,25 @@ interface AuthState {
   checkSession: () => Promise<void>;
   handleSessionExpired: () => void;
   updateThemePreference: (value: ThemePreference) => Promise<void>;
+  updatePushMuted: (value: boolean) => Promise<void>;
+}
+
+/**
+ * Normalize a server-returned user profile so optional fields the
+ * client relies on always carry a defined value.
+ *
+ * The login endpoint (api.md §14.2.1) historically did not include
+ * `pushMuted` in its response — only `/api/auth/me` and PATCH /me did.
+ * The data-model default for a fresh user is `false`
+ * (data-model.md §5.3), so a missing value maps to `false` here. This
+ * is a client-side safety net; the authoritative value still arrives
+ * via the next `/api/auth/me` hydration and wins on reconciliation.
+ */
+function normalizeAuthUser(user: AuthUser): AuthUser {
+  return {
+    ...user,
+    pushMuted: typeof user.pushMuted === 'boolean' ? user.pushMuted : false,
+  };
 }
 
 /**
@@ -160,7 +179,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     applyThemePreference(result.data.user.themePreference);
 
     set({
-      authUser: result.data.user,
+      authUser: normalizeAuthUser(result.data.user),
       authError: null,
       // `backupStatus` is only included by the server for owner callers
       // (verification.md AC-170). The envelope is typed as optional, so
@@ -207,7 +226,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         writeCachedPreference(user.themePreference);
         applyThemePreference(user.themePreference);
       }
-      set({ authUser: user, sessionChecked: true, backupStatus: result.data.backupStatus });
+      set({
+        authUser: normalizeAuthUser(user),
+        sessionChecked: true,
+        backupStatus: result.data.backupStatus,
+      });
     } else {
       set({ sessionChecked: true });
     }
@@ -288,9 +311,56 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       typeof serverUser.username === 'string' &&
       typeof serverUser.displayName === 'string'
     ) {
-      set({ authUser: serverUser });
+      set({ authUser: normalizeAuthUser(serverUser) });
       writeCachedPreference(serverUser.themePreference);
       applyThemePreference(serverUser.themePreference);
+    }
+  },
+
+  /**
+   * Self-update the user's push-mute flag.
+   *
+   * Spec ui/behavior.md §9.8 + §9.5: applied optimistically, reverts on
+   * failure. Same shape as `updateThemePreference` above — the only
+   * fields that diverge are the local-cache side effects (pushMuted has
+   * none; the server value is the single source of truth).
+   */
+  updatePushMuted: async (value: boolean) => {
+    const previousUser = get().authUser;
+    if (!previousUser) return;
+    if (previousUser.pushMuted === value) return;
+
+    // --- Optimistic leg ----------------------------------------------------
+    set({ authUser: { ...previousUser, pushMuted: value } });
+
+    const result = await authApi.updateSelf({ pushMuted: value });
+
+    if (!result.ok) {
+      // Revert to the pre-click state. Match the theme-preference
+      // handler: surface the session-expired path through the central
+      // helper so the UI bounces to the login screen, and surface
+      // every other failure via the mutation-error banner.
+      set({ authUser: previousUser });
+
+      if (result.sessionExpired) {
+        get().handleSessionExpired();
+        return;
+      }
+      useProjectStore.setState({
+        mutationError: result.error.message || STRINGS.errors.mutationFailed,
+      });
+      return;
+    }
+
+    // Reconcile with the server-returned profile. Defensive shape check
+    // matches `checkSession` and `updateThemePreference`.
+    const serverUser = result.data?.user;
+    if (
+      serverUser &&
+      typeof serverUser.username === 'string' &&
+      typeof serverUser.displayName === 'string'
+    ) {
+      set({ authUser: normalizeAuthUser(serverUser) });
     }
   },
 }));

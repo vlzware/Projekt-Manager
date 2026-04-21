@@ -13,6 +13,7 @@ import { SummaryArea } from './SummaryArea';
 import { BackupBadge } from './BackupBadge';
 import { EmailExtractModal } from '../extraction/EmailExtractModal';
 import { PasswordChangeModal } from './PasswordChangeModal';
+import { PushSubscriptionControls } from './PushSubscriptionControls';
 import styles from './Header.module.css';
 
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
@@ -26,7 +27,12 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
 // lower-frequency surfaces for the roles that see them; keeping them out
 // of the primary row keeps the header compact when the summary area is
 // wide.
-const SECONDARY_VIEWS: readonly RouteView[] = ['benutzer', 'daten', 'aktivitaet'];
+const SECONDARY_VIEWS: readonly RouteView[] = [
+  'benutzer',
+  'daten',
+  'aktivitaet',
+  'benachrichtigungen',
+];
 
 export function Header() {
   const activeView = useUIStore((s) => s.activeView);
@@ -244,13 +250,28 @@ export function Header() {
       </div>
       {authUser && (
         <div className={styles.userMenu} ref={menuRef}>
+          {/*
+            Two tests hit this button:
+              - `user-menu-trigger` is the push-permission e2e contract
+                (e2e/push-permission.spec.ts), where the spec clicks the
+                menu trigger to reach the push affordances.
+              - `user-indicator` is the legacy auth/kanban contract,
+                where specs assert the display name text and/or click
+                the element to open the menu.
+            HTML forbids duplicate attributes, and a single
+            `data-testid` can only carry one value. The click target is
+            the button (everything inside the span bubbles up), so the
+            inner `user-indicator` span is where the display-name text
+            lives and both legacy locators — `.click()` and
+            `.toContainText(displayName)` — still resolve against it.
+          */}
           <button
             ref={buttonRef}
             className={styles.userButton}
-            data-testid="user-indicator"
+            data-testid="user-menu-trigger"
             onClick={() => setDropdownOpen(!dropdownOpen)}
           >
-            {authUser.displayName}
+            <span data-testid="user-indicator">{authUser.displayName}</span>
           </button>
           {dropdownOpen && (
             <div ref={dropdownRef} className={styles.dropdown}>
@@ -272,6 +293,7 @@ export function Header() {
                   );
                 })}
               </div>
+              <PushSubscriptionControls />
               <button
                 className={styles.dropdownItem}
                 data-testid="pw-change-button"
