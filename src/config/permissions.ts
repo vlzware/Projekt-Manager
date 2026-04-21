@@ -16,6 +16,9 @@ export type Permission =
   | 'data:restore'
   | 'audit:read'
   | 'notifications:manage'
+  | 'attachment:read'
+  | 'attachment:write'
+  | 'attachment:delete'
   | 'auth:change-password';
 
 export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
@@ -53,6 +56,9 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     // (api.md §14.3, ADR-0023). Rule edits change who-sees-what platform-
     // wide, so the least-privilege baseline is owner only.
     'notifications:manage',
+    'attachment:read',
+    'attachment:write',
+    'attachment:delete',
     'auth:change-password',
   ],
   office: [
@@ -67,10 +73,20 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'user:read',
     'data:export',
     'audit:read',
+    'attachment:read',
+    'attachment:write',
+    'attachment:delete',
     'auth:change-password',
   ],
-  worker: ['project:read', 'customer:read', 'auth:change-password'],
-  bookkeeper: ['project:read', 'customer:read', 'auth:change-password'],
+  worker: [
+    'project:read',
+    'customer:read',
+    'attachment:read',
+    'attachment:write',
+    'attachment:delete',
+    'auth:change-password',
+  ],
+  bookkeeper: ['project:read', 'customer:read', 'attachment:read', 'auth:change-password'],
 };
 
 export function hasPermission(roles: string[], permission: Permission): boolean {

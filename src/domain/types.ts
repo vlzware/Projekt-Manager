@@ -106,4 +106,33 @@ export type ViewMode =
   | 'benutzer'
   | 'daten'
   | 'aktivitaet'
-  | 'benachrichtigungen';
+  | 'benachrichtigungen'
+  | 'projektDetail';
+
+export type AttachmentStatus = 'pending' | 'ready';
+
+export type AttachmentKind = 'photo' | 'binary';
+
+export type AttachmentLabel =
+  | 'angebot'
+  | 'auftragsbestaetigung'
+  | 'rechnung'
+  | 'aufmass'
+  | 'foto'
+  | 'sonstiges';
+
+export interface Attachment {
+  id: string;
+  projectId: string;
+  status: AttachmentStatus;
+  kind: AttachmentKind;
+  label: AttachmentLabel;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  originalKey: string;
+  thumbKey: string | null;
+  hasThumbnail: boolean;
+  createdAt: string;
+  createdBy: string | null;
+}

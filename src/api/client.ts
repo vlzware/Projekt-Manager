@@ -187,7 +187,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 
 // --- Typed API functions -----------------------------------------------------
 
-import type { Project, Customer, User } from '@/domain/types';
+import type { Project, Customer, User, Attachment, AttachmentLabel } from '@/domain/types';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 import type { BackupStatus } from '@/domain/backupBadge';
@@ -546,6 +546,68 @@ export const pushApi = {
     const qs = toQuery({ endpoint });
     return apiCall<null>('/api/push-subscriptions' + qs, { method: 'DELETE' });
   },
+};
+
+export interface PresignedPost {
+  url: string;
+  fields: Record<string, string>;
+  expiresAt: string;
+}
+
+export interface AttachmentInitResponse {
+  attachment: Attachment;
+  originalUpload: PresignedPost;
+  thumbnailUpload?: PresignedPost;
+}
+
+export interface AttachmentDownloadUrlResponse {
+  url: string;
+  expiresAt: string;
+}
+
+export interface AttachmentListResponse {
+  data: Attachment[];
+}
+
+export const attachmentApi = {
+  list: (projectId: string) =>
+    apiCall<AttachmentListResponse>(`/api/projects/${projectId}/attachments`),
+
+  initUpload: (
+    projectId: string,
+    input: {
+      fileName: string;
+      mimeType: string;
+      sizeBytes: number;
+      label: AttachmentLabel;
+      hasThumbnail: boolean;
+    },
+  ) =>
+    apiCall<AttachmentInitResponse>(`/api/projects/${projectId}/attachments/init`, {
+      method: 'POST',
+      body: input,
+    }),
+
+  completeUpload: (projectId: string, attachmentId: string) =>
+    apiCall<Attachment>(`/api/projects/${projectId}/attachments/${attachmentId}/complete`, {
+      method: 'POST',
+    }),
+
+  delete: (projectId: string, attachmentId: string) =>
+    apiCall<null>(`/api/projects/${projectId}/attachments/${attachmentId}`, {
+      method: 'DELETE',
+    }),
+
+  downloadUrl: (projectId: string, attachmentId: string, variant: 'original' | 'thumbnail') =>
+    apiCall<AttachmentDownloadUrlResponse>(
+      `/api/projects/${projectId}/attachments/${attachmentId}/download-url` + toQuery({ variant }),
+    ),
+
+  bulkDownloadUrl: (projectId: string, attachmentIds: string[]) =>
+    apiCall<AttachmentDownloadUrlResponse>(`/api/projects/${projectId}/attachments/bulk-download`, {
+      method: 'POST',
+      body: { attachmentIds },
+    }),
 };
 
 export type { AuthUser };

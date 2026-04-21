@@ -16,6 +16,7 @@ export type ErrorCode =
   | 'CONFLICT'
   | 'IDEMPOTENCY_CONFLICT'
   | 'NOT_FOUND'
+  | 'NOT_IMPLEMENTED'
   | 'RATE_LIMITED'
   | 'SCHEMA_VERSION_MISMATCH'
   | 'TARGET_NOT_EMPTY'
@@ -165,4 +166,8 @@ export function rateLimited(): AppError {
 
 export function serverError(): AppError {
   return new AppError('SERVER_ERROR', STRINGS.errors.serverError, 500);
+}
+
+export function notImplemented(): AppError {
+  return new AppError('NOT_IMPLEMENTED', STRINGS.errors.serverError, 501);
 }

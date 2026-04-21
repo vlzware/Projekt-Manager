@@ -1,0 +1,286 @@
+/**
+ * BinaryList — tabular list of non-photo attachments + bulk-download
+ * selection + "Datei fehlt" on download-click.
+ *
+ * Covers AC-223 (rows render filename/label/uploader/timestamp/
+ * download; a `Auswahl als ZIP` action respects client-side caps and
+ * the client message names both caps) and the binary side of AC-224
+ * (on a download 404 the row flips to `"Datei fehlt"` and the download
+ * action is disabled; the row is excluded from bulk-download).
+ *
+ * The bulk-download cap numbers live in config **[C]**; the test pins
+ * the cap names (file count + byte size) and asserts the client's
+ * German validation message references both, without hard-coding the
+ * numeric values a config edit can move.
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import type { ApiResult, AttachmentDownloadUrlResponse } from '@/api/client';
+import type { Attachment, User } from '@/domain/types';
+
+type ListResult = ApiResult<{ data: Attachment[] }>;
+type DownloadUrlResult = ApiResult<AttachmentDownloadUrlResponse>;
+type UserListResult = ApiResult<{ users: User[]; total: number }>;
+
+const listMock = vi.fn<(projectId: string) => Promise<ListResult>>();
+const downloadUrlMock =
+  vi.fn<
+    (
+      projectId: string,
+      attachmentId: string,
+      variant: 'original' | 'thumbnail',
+    ) => Promise<DownloadUrlResult>
+  >();
+const bulkDownloadUrlMock =
+  vi.fn<(projectId: string, attachmentIds: string[]) => Promise<DownloadUrlResult>>();
+const userListMock =
+  vi.fn<(params?: { offset?: number; limit?: number }) => Promise<UserListResult>>();
+
+vi.mock('@/api/client', async (importActual) => {
+  const actual = (await importActual()) as Record<string, unknown>;
+  return {
+    ...actual,
+    attachmentApi: {
+      list: (...args: unknown[]) => listMock(...(args as Parameters<typeof listMock>)),
+      downloadUrl: (...args: unknown[]) =>
+        downloadUrlMock(...(args as Parameters<typeof downloadUrlMock>)),
+      bulkDownloadUrl: (...args: unknown[]) =>
+        bulkDownloadUrlMock(...(args as Parameters<typeof bulkDownloadUrlMock>)),
+      initUpload: vi.fn(),
+      completeUpload: vi.fn(),
+      delete: vi.fn(),
+    },
+    userApi: {
+      list: (...args: unknown[]) => userListMock(...(args as Parameters<typeof userListMock>)),
+    },
+    authApi: {
+      login: vi.fn(),
+      logout: vi.fn(),
+      me: vi.fn().mockResolvedValue({ ok: false }),
+    },
+  };
+});
+
+const { BinaryList } = await import('@/ui/detail/BinaryList');
+const { useAuthStore } = await import('@/state/authStore');
+const { useAttachmentStore } = await import('@/state/attachmentStore');
+
+function makeBinary(overrides: Partial<Attachment>): Attachment {
+  return {
+    id: 'bin-1',
+    projectId: 'p-42',
+    status: 'ready',
+    kind: 'binary',
+    label: 'rechnung',
+    fileName: 'rechnung.pdf',
+    mimeType: 'application/pdf',
+    sizeBytes: 200_000,
+    originalKey: 'proj/p-42/bin-1/o.pdf',
+    thumbKey: null,
+    hasThumbnail: false,
+    createdAt: '2026-04-20T10:00:00Z',
+    createdBy: 'u-w1',
+    ...overrides,
+  };
+}
+
+function ok<T>(data: T): ApiResult<T> {
+  return { ok: true, data };
+}
+
+beforeEach(() => {
+  listMock.mockReset();
+  downloadUrlMock.mockReset();
+  bulkDownloadUrlMock.mockReset();
+  userListMock.mockReset();
+
+  useAttachmentStore.setState({ byProject: {}, pendingUploads: {}, error: null });
+  useAuthStore.setState({
+    authUser: {
+      id: 'u-1',
+      username: 'owner',
+      displayName: 'Owner',
+      roles: ['owner'],
+      email: null,
+      themePreference: 'system',
+      pushMuted: false,
+    },
+    authError: null,
+    sessionChecked: true,
+  });
+
+  // Default list: two ready binaries + one ready photo (excluded from
+  // binary list) + one pending binary (excluded until ready).
+  listMock.mockResolvedValue(
+    ok({
+      data: [
+        makeBinary({
+          id: 'bin-pdf',
+          fileName: 'angebot.pdf',
+          label: 'angebot',
+          sizeBytes: 120_000,
+          createdBy: 'u-w1',
+        }),
+        makeBinary({
+          id: 'bin-docx',
+          fileName: 'auftrag.docx',
+          label: 'auftragsbestaetigung',
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          sizeBytes: 80_000,
+          createdBy: 'u-w2',
+        }),
+        makeBinary({
+          id: 'ph-1',
+          kind: 'photo',
+          mimeType: 'image/jpeg',
+          fileName: 'photo.jpg',
+          label: 'foto',
+          hasThumbnail: true,
+          thumbKey: 'proj/p-42/ph-1/thumb.webp',
+        }),
+        makeBinary({ id: 'bin-pending', status: 'pending', fileName: 'pending.pdf' }),
+      ],
+    }),
+  );
+
+  downloadUrlMock.mockResolvedValue(
+    ok({ url: 'https://storage/dl', expiresAt: '2026-04-20T10:05:00Z' }),
+  );
+  bulkDownloadUrlMock.mockResolvedValue(
+    ok({ url: 'https://storage/zip', expiresAt: '2026-04-20T10:05:00Z' }),
+  );
+  userListMock.mockResolvedValue(
+    ok({
+      users: [
+        { id: 'u-w1', username: 'anna', displayName: 'Anna Arbeiter', roles: ['worker'] } as User,
+        { id: 'u-w2', username: 'bernd', displayName: 'Bernd Bauer', roles: ['worker'] } as User,
+      ],
+      total: 2,
+    }),
+  );
+});
+
+describe('BinaryList — row rendering (AC-223)', () => {
+  it('renders one row per ready binary with filename/label/uploader/download', async () => {
+    render(<BinaryList projectId="p-42" />);
+
+    const pdfRow = await screen.findByTestId('binary-row-bin-pdf');
+    expect(pdfRow.textContent).toContain('angebot.pdf');
+    // Label is surfaced via the German enum label (configured per §8.15.5).
+    expect(pdfRow.textContent?.toLowerCase()).toContain('angebot');
+    // Uploader is the resolved display name, not the raw user id.
+    expect(pdfRow.textContent).toContain('Anna Arbeiter');
+    // Download action is present and clickable.
+    expect(within(pdfRow).getByTestId('binary-download-bin-pdf')).toBeInTheDocument();
+  });
+
+  it('excludes photo attachments from the binary list', async () => {
+    render(<BinaryList projectId="p-42" />);
+    await screen.findByTestId('binary-row-bin-pdf');
+    expect(screen.queryByTestId('binary-row-ph-1')).not.toBeInTheDocument();
+  });
+
+  it('excludes pending binary attachments from the list', async () => {
+    render(<BinaryList projectId="p-42" />);
+    await screen.findByTestId('binary-row-bin-pdf');
+    expect(screen.queryByTestId('binary-row-bin-pending')).not.toBeInTheDocument();
+  });
+});
+
+describe('BinaryList — bulk selection + caps (AC-223)', () => {
+  it('shows Auswahl als ZIP only once at least one row is selected', async () => {
+    render(<BinaryList projectId="p-42" />);
+    await screen.findByTestId('binary-row-bin-pdf');
+
+    expect(screen.queryByTestId('binary-bulk-download')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('binary-select-bin-pdf'));
+
+    expect(await screen.findByTestId('binary-bulk-download')).toBeInTheDocument();
+  });
+
+  it('blocks a selection above the caps with a German message naming both caps', async () => {
+    // Seed a list that exceeds both caps at once — 25 files, each
+    // 1 MB. The file-count cap (20) and the byte-size cap (20 MB)
+    // are both violated. The client message must name both caps
+    // per spec §8.15.5.
+    const many = Array.from({ length: 25 }, (_, i) =>
+      makeBinary({ id: `bin-${i}`, fileName: `file-${i}.pdf`, sizeBytes: 1_000_000 }),
+    );
+    listMock.mockResolvedValue(ok({ data: many }));
+
+    render(<BinaryList projectId="p-42" />);
+    await screen.findByTestId('binary-row-bin-0');
+
+    // Select-all must cover every row. The component must expose a
+    // select-all toggle for this scenario (a per-row click × 25 is
+    // possible but the select-all affordance is part of §8.15.5).
+    await userEvent.click(screen.getByTestId('binary-select-all'));
+    await userEvent.click(screen.getByTestId('binary-bulk-download'));
+
+    const block = await screen.findByTestId('binary-bulk-limit-error');
+    // The German validation message names BOTH caps (files + bytes).
+    expect(block.textContent?.toLowerCase()).toMatch(/datei/);
+    expect(block.textContent?.toLowerCase()).toMatch(/mb|byte|gr[oö]ße/);
+
+    // Client-side block — no network call to the server.
+    expect(bulkDownloadUrlMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('BinaryList — "Datei fehlt" on download-click 404 (AC-224 binary side)', () => {
+  it('flips the row to "Datei fehlt" and disables the download when the fetch fails', async () => {
+    // Lazy detection: the list endpoint does not probe storage; the
+    // UI learns bytes are missing only when the user clicks download
+    // and the presigned-GET resolves to a 404.
+    downloadUrlMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'NOT_FOUND', message: 'Datei nicht gefunden.' },
+      category: 'not_found',
+      sessionExpired: false,
+    });
+
+    render(<BinaryList projectId="p-42" />);
+
+    const row = await screen.findByTestId('binary-row-bin-pdf');
+    await userEvent.click(within(row).getByTestId('binary-download-bin-pdf'));
+
+    // The row flips to the missing-file placeholder.
+    await waitFor(() => {
+      expect(screen.getByTestId('binary-missing-bin-pdf').textContent).toContain('Datei fehlt');
+    });
+
+    // The download action is now disabled on that row.
+    const downloadBtn = within(row).getByTestId('binary-download-bin-pdf');
+    expect(downloadBtn).toBeDisabled();
+  });
+
+  it('excludes a missing-file row from bulk-download selection', async () => {
+    downloadUrlMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'NOT_FOUND', message: 'Datei nicht gefunden.' },
+      category: 'not_found',
+      sessionExpired: false,
+    });
+
+    render(<BinaryList projectId="p-42" />);
+
+    const row = await screen.findByTestId('binary-row-bin-pdf');
+    await userEvent.click(within(row).getByTestId('binary-download-bin-pdf'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('binary-missing-bin-pdf')).toBeInTheDocument();
+    });
+
+    // The per-row select checkbox is either absent or disabled — the
+    // row must not be selectable for bulk download.
+    const checkbox = screen.queryByTestId('binary-select-bin-pdf');
+    if (checkbox) {
+      expect(checkbox).toBeDisabled();
+    } else {
+      expect(checkbox).toBeNull();
+    }
+  });
+});

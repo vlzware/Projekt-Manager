@@ -99,6 +99,15 @@ export function customerScopeForCaller(user: AuthUser): SQL | null {
   )`;
 }
 
+export function attachmentScopeForCaller(user: AuthUser): SQL | null {
+  if (isUnscoped(user)) return null;
+  return sql`EXISTS (
+    SELECT 1 FROM project_workers pw
+    WHERE pw.project_id = attachments.project_id
+      AND pw.user_id = ${user.id}
+  )`;
+}
+
 /**
  * Three-valued get-by-id result.
  *

@@ -13,6 +13,7 @@ import {
   varchar,
   text,
   boolean,
+  bigint,
   timestamp,
   date,
   jsonb,
@@ -357,5 +358,44 @@ export const pushSubscriptions = pgTable(
   (table) => [
     uniqueIndex('push_subscriptions_user_endpoint_uq').on(table.userId, table.endpoint),
     index('push_subscriptions_user_id_idx').on(table.userId),
+  ],
+);
+
+// ---------------------------------------------------------------
+// Attachments (data-model.md §5.13)
+// ---------------------------------------------------------------
+export const attachments = pgTable(
+  'attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    status: text('status').notNull(),
+    kind: text('kind').notNull(),
+    label: text('label').notNull(),
+    filename: text('filename').notNull(),
+    mimeType: text('mime_type').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    originalKey: text('original_key').notNull(),
+    thumbKey: text('thumb_key'),
+    hasThumbnail: boolean('has_thumbnail').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (table) => [
+    index('attachments_project_id_idx').on(table.projectId),
+    index('attachments_created_by_idx').on(table.createdBy),
+    uniqueIndex('attachments_original_key_uq').on(table.originalKey),
+    check('attachments_valid_status', sql`${table.status} IN ('pending', 'ready')`),
+    check('attachments_valid_kind', sql`${table.kind} IN ('photo', 'binary')`),
+    check(
+      'attachments_valid_label',
+      sql`${table.label} IN ('angebot', 'auftragsbestaetigung', 'rechnung', 'aufmass', 'foto', 'sonstiges')`,
+    ),
+    check(
+      'attachments_valid_mime_type',
+      sql`${table.mimeType} IN ('image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')`,
+    ),
   ],
 );

@@ -39,6 +39,8 @@ export const AUDIT_ACTION_KEYS = [
   'deactivate',
   'password-reset',
   'password-change',
+  'attachment:add',
+  'attachment:remove',
 ] as const;
 
 export type AuditActionKey = (typeof AUDIT_ACTION_KEYS)[number];
@@ -69,6 +71,8 @@ export const AUDIT_ACTION_LABELS: Record<AuditActionKey, string> = {
   deactivate: 'Deaktiviert',
   'password-reset': 'Passwort zurückgesetzt',
   'password-change': 'Passwort geändert',
+  'attachment:add': 'Datei hinzugefügt',
+  'attachment:remove': 'Datei entfernt',
 };
 
 /**

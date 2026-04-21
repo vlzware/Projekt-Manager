@@ -68,7 +68,7 @@ describe('ROUTES — per-role nav matrix (AC-75)', () => {
     // The header renders in table order; swapping the table order would
     // silently reshuffle the nav buttons.
     const owner = visibleRoutesForUser(caller('owner')).map((r) => r.view);
-    expect(owner).toEqual(ROUTES.map((r) => r.view));
+    expect(owner).toEqual(ROUTES.filter((r) => !r.path.includes('/:')).map((r) => r.view));
   });
 
   it('never exposes a Daten tab to a caller without data:export', () => {
@@ -123,6 +123,10 @@ describe('ROUTES — path/view helpers', () => {
     expect(routeByPath('/kanban')?.view).toBe('kanban');
     expect(routeByPath('/data')?.view).toBe('daten');
     expect(routeByPath('/nowhere')).toBeUndefined();
+  });
+
+  it('routeByPath resolves parametrized paths by pattern', () => {
+    expect(routeByPath('/projects/abc123')?.view).toBe('projektDetail');
   });
 
   it('routeByView throws for an unknown view', () => {

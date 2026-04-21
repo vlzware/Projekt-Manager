@@ -23,6 +23,7 @@
  * union mirrored from `src/domain/types.ts`'s `ViewMode` — the
  * `ROUTE_VIEWS` const below asserts exact mirror at compile time.
  */
+import { matchPath } from 'react-router-dom';
 import type { Role } from '@/config/permissions';
 import { hasPermission } from '@/config/permissions';
 import { STRINGS } from '@/config/strings';
@@ -49,7 +50,8 @@ export type RouteView =
   | 'benutzer'
   | 'daten'
   | 'aktivitaet'
-  | 'benachrichtigungen';
+  | 'benachrichtigungen'
+  | 'projektDetail';
 
 export interface RouteEntry {
   /** Stable view key. */
@@ -169,6 +171,13 @@ export const ROUTES: readonly RouteEntry[] = [
     canAccess: (u) => hasPermission(u.roles, 'notifications:manage'),
     isDefaultFor: () => false,
   },
+  {
+    view: 'projektDetail',
+    path: '/projects/:id',
+    label: STRINGS.ui.viewProjects,
+    canAccess: (u) => hasPermission(u.roles, 'project:read'),
+    isDefaultFor: () => false,
+  },
 ] as const;
 
 /**
@@ -197,9 +206,9 @@ export function assertSingleLanding(caller: RouteCaller): void {
   }
 }
 
-/** Route keyed by URL path. `undefined` for unknown paths. */
+/** Route keyed by URL path. Matches parametrized patterns (e.g. `/projects/:id`). `undefined` for unknown paths. */
 export function routeByPath(pathname: string): RouteEntry | undefined {
-  return ROUTES.find((r) => r.path === pathname);
+  return ROUTES.find((r) => matchPath({ path: r.path, end: true }, pathname) !== null);
 }
 
 /** Route keyed by view. Throws for unknown views (compile-time impossible today). */
@@ -221,9 +230,9 @@ export function pathFromView(view: RouteView): string {
   return routeByView(view).path;
 }
 
-/** The nav set this caller sees, in matrix order. */
+/** The nav set this caller sees, in matrix order. Parametrized paths are excluded — they're deep-linked, not nav entries. */
 export function visibleRoutesForUser(caller: RouteCaller): readonly RouteEntry[] {
-  return ROUTES.filter((r) => r.canAccess(caller));
+  return ROUTES.filter((r) => !r.path.includes('/:') && r.canAccess(caller));
 }
 
 /**
