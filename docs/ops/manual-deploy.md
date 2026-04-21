@@ -73,13 +73,17 @@ curl -sS https://${DOMAIN}/api/health
 
 ### Contents of `secrets.env.age`
 
-Shell `KEY='value'` format. Three Layer 1 secrets (app + TLS) and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
+Shell `KEY='value'` format. Three required Layer 1 secrets (app + TLS), one optional Layer 1 secret (push), and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
 
-Layer 1:
+Layer 1 (required):
 
 - `POSTGRES_PASSWORD`
 - `MINIO_ROOT_PASSWORD`
 - `CLOUDFLARE_API_TOKEN`
+
+Layer 1 (optional — push notifications, ADR-0023):
+
+- `VAPID_PRIVATE_KEY` -- Web Push signing key. Generate once with `npx web-push generate-vapid-keys --json` and keep the `privateKey` value stable across deploys (rotating invalidates every browser subscription). The matching public key is derived at startup. Unset = push dispatch is a no-op, UI shows "nicht konfiguriert". `VAPID_SUBJECT` (e.g. `mailto:admin@<your-domain>`) is non-secret and lives in the plain `.env` next to `DOMAIN`.
 
 Layer 2:
 

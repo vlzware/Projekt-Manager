@@ -49,7 +49,6 @@ function makeEnv(overrides: Partial<Env>): Env {
     R2_REGION: 'auto',
     AGE_RECIPIENT: undefined,
     AGE_IDENTITY_PATH: '/run/drill-key/identity',
-    VAPID_PUBLIC_KEY: undefined,
     VAPID_PRIVATE_KEY: undefined,
     VAPID_SUBJECT: undefined,
     ...overrides,

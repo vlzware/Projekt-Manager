@@ -70,6 +70,13 @@ services:
       # blank to use that default. Interval default 1440 min (daily).
       AUDIT_RETENTION_WINDOW_DAYS: ${AUDIT_RETENTION_WINDOW_DAYS:-}
       AUDIT_RETENTION_INTERVAL_MINUTES: ${AUDIT_RETENTION_INTERVAL_MINUTES:-1440}
+      # Web Push / VAPID (ADR-0023). Both optional — when unset the
+      # server installs a no-op dispatcher and the UI opt-in reports
+      # "nicht konfiguriert". VAPID_PRIVATE_KEY is a secret (lives in
+      # secrets.env.age); VAPID_SUBJECT is non-secret operator config.
+      # See docs/ops/manual-deploy.md § Secrets.
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
     healthcheck:
       test:
         [

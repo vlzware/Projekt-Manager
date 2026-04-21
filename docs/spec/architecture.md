@@ -189,7 +189,7 @@ Process-local projection over two feeds: the post-commit `audit_log` stream (mut
 
 **Failure isolation.** Handlers run post-commit; a throwing handler does not roll back the mutation ([AC-183](verification.md#1523-audit-log)). Per-recipient push failures do not block remaining recipients.
 
-**Push transport.** The real dispatcher wraps the `web-push` npm package and is selected at app composition when the full `VAPID_*` triple is present in the deploy env; a missing value falls back to a no-op dispatcher with a startup warning. The VAPID public key is served to the client via an unauthenticated endpoint ([api.md §14.2.10](api.md#14210-push-subscription)); the private key never leaves the server.
+**Push transport.** The real dispatcher wraps the `web-push` npm package and is selected at app composition when VAPID credentials are configured; otherwise a no-op dispatcher is installed with a startup warning. The VAPID public key is derived from the private half at startup and served to the client via an unauthenticated endpoint ([api.md §14.2.10](api.md#14210-push-subscription)); the private key never leaves the server.
 
 ---
 

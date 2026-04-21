@@ -35,3 +35,6 @@ e2e/.auth/
 
 # WIP scratch directory (local only)
 docs/wip/
+
+# Server-side runtime data (dev-generated VAPID key, etc.) — never committed.
+data/

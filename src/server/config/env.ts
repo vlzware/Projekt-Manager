@@ -88,18 +88,15 @@ export const envSchema = z.object({
    * in Dockerfile.backup so operators don't need to set it. */
   AGE_IDENTITY_PATH: z.string().default('/run/drill-key/identity'),
   // ---------------------------------------------------------------
-  // Web Push / VAPID (ADR-0023). All three must be present for real
-  // push transport; when any is missing the app composition falls
-  // back to `noopPushDispatcher` and logs a one-line warn on start.
-  // The public key is served to the client via GET /api/push/vapid-
-  // public-key (api.md §14.2.10) so the operator only needs to set
-  // it once (server-side). `VITE_VAPID_PUBLIC_KEY` is retained as an
-  // offline-dev fallback on the client; the endpoint is primary.
-  // `VAPID_SUBJECT` must be either a `mailto:` URL or an `https:`
-  // URL per RFC 8292 §2.1 — validated at WebPushDispatcher boot, not
-  // here, because the format check belongs with the consumer.
+  // Web Push / VAPID (ADR-0023). The public key is derived from the
+  // private half at startup (P-256 ECDSA — `src/server/config/vapid.ts`),
+  // so the operator only maintains the private key. In production,
+  // missing `VAPID_PRIVATE_KEY` falls back to `noopPushDispatcher` with
+  // a startup warn. In dev/test the helper auto-generates a key into
+  // `data/.vapid/private-key` on first boot so push works zero-config.
+  // `VAPID_SUBJECT` must be either a `mailto:` URL or an `https:` URL
+  // per RFC 8292 §2.1 — format validated at WebPushDispatcher boot.
   // ---------------------------------------------------------------
-  VAPID_PUBLIC_KEY: z.string().optional(),
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().optional(),
 });

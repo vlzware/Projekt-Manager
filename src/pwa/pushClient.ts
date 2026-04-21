@@ -13,13 +13,11 @@
  *     forward the result to the self-scope server endpoints
  *     (api.md §14.2.10).
  *
- * VAPID public-key source: primary is `GET /api/push/vapid-public-key`
- * (api.md §14.2.10) at subscribe time — runtime fetch so the operator
- * only maintains `VAPID_PUBLIC_KEY` server-side. `VITE_VAPID_PUBLIC_KEY`
- * survives as an offline-dev fallback when the endpoint is unreachable
- * (e.g. `npm run dev:client` without the server). A missing or empty
- * key from both sources surfaces as the `notConfigured` branch in the
- * UI.
+ * VAPID public-key source: `GET /api/push/vapid-public-key`
+ * (api.md §14.2.10) at subscribe time. The server derives the public
+ * key from `VAPID_PRIVATE_KEY` at boot, so the operator maintains a
+ * single env var. A missing or empty key surfaces as the
+ * `notConfigured` branch in the UI.
  */
 
 import { pushApi } from '@/api/client';
@@ -41,25 +39,11 @@ export function isPushSupported(): boolean {
 }
 
 /**
- * Read the VAPID public key from the client-build env. Retained as a
- * fallback when the runtime endpoint (`GET /api/push/vapid-public-key`)
- * is unreachable — e.g. `npm run dev:client` without the server. The
- * endpoint is primary; operators only set this var for offline-dev
- * workflows.
- */
-export function getVapidPublicKeyFromBuildEnv(): string | null {
-  const raw = import.meta.env.VITE_VAPID_PUBLIC_KEY;
-  if (typeof raw !== 'string' || raw.length === 0) return null;
-  return raw;
-}
-
-/**
- * Runtime VAPID public-key resolution. Primary source is the server
- * endpoint (single source of truth — the operator sets `VAPID_PUBLIC_
- * KEY` once, server-side). Fallback is the build-time Vite env so an
- * offline-dev workflow without the backend still renders a functional
- * opt-in affordance. Returns `null` when neither source yields a key,
- * triggering the `notConfigured` UI branch.
+ * Runtime VAPID public-key resolution via `GET /api/push/vapid-public-
+ * key` (single source of truth — the server derives the public half
+ * from `VAPID_PRIVATE_KEY` at boot). Returns `null` when the server
+ * reports the key as unconfigured or the request fails, triggering
+ * the `notConfigured` UI branch.
  *
  * Not cached in-module — the browser's HTTP cache (5-minute max-age
  * set by the endpoint) is the cache layer. Re-fetching per
@@ -72,24 +56,15 @@ export async function resolveVapidPublicKey(): Promise<string | null> {
       method: 'GET',
       credentials: 'same-origin',
     });
-    if (response.ok) {
-      const body = (await response.json()) as { vapidPublicKey?: unknown };
-      if (typeof body.vapidPublicKey === 'string' && body.vapidPublicKey.length > 0) {
-        return body.vapidPublicKey;
-      }
-      // Endpoint says null → server is explicit that push is not
-      // configured. Do NOT fall back to the build env in this case;
-      // that would invite split-brain (client subscribed to a key the
-      // server does not hold, every push silently dropped).
-      if (body.vapidPublicKey === null) {
-        return null;
-      }
+    if (!response.ok) return null;
+    const body = (await response.json()) as { vapidPublicKey?: unknown };
+    if (typeof body.vapidPublicKey === 'string' && body.vapidPublicKey.length > 0) {
+      return body.vapidPublicKey;
     }
+    return null;
   } catch {
-    // Network / CORS / parse failure — fall through to the build-env
-    // fallback so offline-dev workflows still work.
+    return null;
   }
-  return getVapidPublicKeyFromBuildEnv();
 }
 
 /**
