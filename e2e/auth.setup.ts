@@ -55,7 +55,10 @@ async function loginAndSaveState(
   await page.getByTestId('login-password').fill(SEED_DEFAULT_PASSWORD);
   await page.getByTestId('login-submit').click();
 
-  await expect(page.getByTestId(landingTestId)).toBeVisible();
+  // Vite pre-optimizes deps on startup (optimizeDeps.entries in vite.config.ts)
+  // so the first cold request no longer triggers a mid-session re-optimize.
+  // Default 5 s budget is sufficient.
+  await expect(page.getByTestId(landingTestId)).toBeVisible({ timeout: 5_000 });
   await expect(page.getByTestId('user-indicator')).toContainText(user.displayName);
 
   await page.context().storageState({ path: statePath });

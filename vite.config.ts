@@ -28,6 +28,14 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src'),
     },
   },
+  // Force Vite to resolve and bundle all dependencies when the dev server
+  // starts, rather than on the first browser request. Without this, the
+  // first cold-start hit triggers "Re-optimizing dependencies" mid-test
+  // and delays the landing view render by 10–15 s, causing flaky timeouts
+  // in Playwright's auth setup (`e2e/auth.setup.ts`).
+  optimizeDeps: {
+    entries: ['index.html'],
+  },
   server: {
     // Listen on all interfaces so the dev server is reachable via the
     // machine's IP address — needed for E2E tests that verify the
