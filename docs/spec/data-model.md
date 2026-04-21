@@ -98,6 +98,7 @@ interface UserAccount {
   email?: string;
   active: boolean; // soft-disable without deletion
   themePreference: ThemePreference; // default 'system' — see §5.7
+  pushMuted: boolean; // default false — mutes push delivery only; activity-feed inclusion unaffected (§5.12)
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
   lastLoginAt?: string; // ISO 8601
@@ -112,6 +113,7 @@ Design notes:
 - `roles` is an array — supports multi-role assignment without schema changes. Role set is configurable **[C]**. Role labels are applied by configuration.
 - `passwordHash` is **never** included in API responses.
 - `themePreference` controls the rendered color scheme per user (see [§5.7](#57-user-theme-preference)). The value must be one of the allowed literals; the database enforces this via a CHECK constraint (defense in depth).
+- `pushMuted` is a self-settable boolean alongside `themePreference`. Default `false`. Updated via the self-update API ([api.md §14.2.1](api.md#1421-authentication)). Subscription-level semantics: [§5.12](#512-push-subscription); rationale for a single boolean vs. per-event matrix: [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md).
 - Users can be deactivated (`active = false`) or hard-deleted (owner only). See [§6.9](#69-soft-deletes).
 
 ### 5.4 Session
@@ -272,13 +274,84 @@ Design notes:
 - **Actor kind semantics.**
   - `user` — an authenticated caller performed the mutation. `actorId` references the `UserAccount.id`; `actorReason` is null.
   - `system` — no authenticated caller is present. `actorId` is null; `actorReason` is required and carries a human-readable cue naming the code path (e.g., `"first-run-bootstrap"`). First-run admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) is the current domain-entity system-actor path. A system entry with an empty or missing `actorReason` is rejected by the database via a CHECK constraint (defense in depth) — else a system write would be invisible in the activity feed.
-- **Action vocabulary.** `action` is free text so new mutation shapes can record without a schema migration. The current vocabulary is `create`, `update`, `delete`, `transition:forward`, `transition:backward`, `purge`, `reactivate`, `deactivate`, `password-reset`, `password-change`. A free-text field is chosen over an enum because the vocabulary is expected to grow with new features (e.g., file uploads introduce `attachment:add` / `attachment:remove`) and an enum would churn the schema; uniqueness and casing are enforced by convention and reviewed at PR time. Each entry in the vocabulary maps to exactly one mutation shape.
+- **Action vocabulary.** `action` is free text so new mutation shapes can record without a schema migration. The current vocabulary is `create`, `update`, `delete`, `archive`, `transition:forward`, `transition:backward`, `purge`, `reactivate`, `deactivate`, `password-reset`, `password-change`. `archive` is the `entityType = 'project'` soft-delete action (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)); `delete` and `purge` remain distinct (generic delete for non-project entities, hard-delete on projects respectively). A free-text field is chosen over an enum because the vocabulary is expected to grow with new features (e.g., file uploads introduce `attachment:add` / `attachment:remove`) and an enum would churn the schema; uniqueness and casing are enforced by convention and reviewed at PR time. Each entry in the vocabulary maps to exactly one mutation shape.
 - **Payload shape.** `payload` carries the changed fields only, as `{ before, after }` field-keyed objects — not the full row. For a create, `before` is empty and `after` carries the persisted values for every non-server-managed field. For a delete or purge, `after` is empty. For a state transition, `before` and `after` carry `status` and `statusChangedAt`. Full-row snapshots are deliberately excluded (see [ADR-0021 — Alternatives Considered](../adr/0021-audit-log-and-notifications-single-write-path.md#alternatives-considered)).
 - **Entity label snapshot.** `entityLabel` is a nullable text column captured at write time (e.g. a project's `"2026-002 Innenraumgestaltung Weber"`, a customer's `"Firma Weber GmbH"`, a user's `displayName`). Frozen with the audit row so the activity feed stays readable after the target is renamed or purged. Write paths that do not have a natural label (import, retention cleanup) leave it null; the UI falls back to `entityId`. This is display metadata — it is not part of the `{ before, after }` diff contract. For `project_worker` rows specifically, `entityId` is the project's id (not the join-row's composite key) and `entityLabel` is the **worker's** displayName — the feed reads "Jan Nowak wurde zugewiesen" under the owning project's header, so the worker name is the meaningful label, while the project id remains the row's target. Pinned by [AC-188](verification.md#1523-audit-log).
 - **Correlation id.** `correlationId` is a nullable, per-request id set at the route layer and threaded through the service call chain. It groups every audit row produced by one request, enabling a future bulk-undo or one-request trace. Null is valid for entries produced outside a request (bootstrap and other unattended domain-entity writes).
 - **Referential integrity.** `actorId` is a nullable foreign key to `UserAccount.id`; when a user is hard-deleted, `actorId` is set to null rather than cascading the audit row (parity with [AC-98](verification.md#1517-data-integrity)). `entityId` is not foreign-keyed — a purge removes the target row while its audit trail remains.
 - **Transactional write.** Every domain-entity mutation and its audit row commit in a single database transaction. The application does not write the state change without the audit row, and it does not write the audit row without the state change. See [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) and [ADR-0021 — Decision](../adr/0021-audit-log-and-notifications-single-write-path.md#decision).
+- **Non-audited self-preference writes on `UserAccount`.** A narrow carve-out from the single-write-path invariant: a self-update API call ([api.md §14.2.1](api.md#1421-authentication)) whose patch touches only `themePreference`, `pushMuted`, or both writes the new values without producing an `audit_log` row. These are per-user UI/notification preferences with no cross-user or security consequence; auditing them would add rows to the activity feed that are not "who-did-what-to-whom" events and would drown out the actor-on-entity traffic the feed is optimized for (ADR-0021 "high-signal activity feed"). Any write that touches `roles`, `active`, `username`, `displayName`, `email`, or `passwordHash` (administrator paths, not self-update) goes through `mutate()` and produces an audit row unconditionally. The CI architecture check ([verification.md AC-179](verification.md#1523-audit-log)) remains authoritative for every non-carve-out mutation on `user_accounts`; the carve-out is expressed as an allowlisted write site, not a general bypass of the single-write-path helper.
 - **Post-commit notification dispatch.** Subscribers (notification publisher and any future projection) dispatch after the transaction commits, so a throwing subscriber cannot roll back domain state. The `audit_log` row is the event source; publishing is a read-over-audit projection.
+
+### 5.11 Notification Rule
+
+Admin-editable configuration mapping a closed event catalog to recipient specs. Rule writes are direct repository writes; rule configuration is not surfaced on the activity feed. Rationale and alternatives: [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md).
+
+```typescript
+type NotificationEventClass =
+  | 'project.transition_forward'
+  | 'project.transition_backward'
+  | 'project.archived'
+  | 'project.assignment_changed'
+  | 'backup.failed'
+  | 'disk.threshold_reached';
+
+interface NotificationRecipientSpec {
+  roles: AccountRole[]; // additive — every user holding any of these roles
+  includeAssignedWorkers: boolean; // additive — only meaningful for project-scoped events
+  userIds: string[]; // additive — UserAccount.id values
+}
+
+interface NotificationRule {
+  id: string; // UUID
+  eventClass: NotificationEventClass;
+  stateFilter?: WorkflowState | null; // only meaningful for transition events; null = no filter
+  recipientSpec: NotificationRecipientSpec;
+  enabled: boolean;
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+  createdBy?: string; // UserAccount.id
+  updatedBy?: string; // UserAccount.id
+}
+```
+
+Design notes:
+
+- **Closed event catalog.** `NotificationEventClass` is the shipping set. Adding a class is a code change plus a migration ([ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md)); users never author event classes. Upload-milestone classes ship with the upload-milestone surface.
+- **Event source mapping.** `project.transition_forward` / `project.transition_backward` → `entityType = 'project'` AND `action = 'transition:forward' | 'transition:backward'`. `project.archived` → `entityType = 'project'` AND `action = 'archive'` (soft-delete = archive — distinct from `purge` (hard-delete) and the generic `delete` used for other entity types, see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). `project.assignment_changed` → `entityType = 'project_worker'` with `action` in `create` or `delete`. `backup.failed` and `disk.threshold_reached` are non-mutation system events — they publish to the in-process bus without an `audit_log` row, per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+- **`stateFilter` semantics.** Non-null only on the two transition event classes. Matches when `after.status` equals the filter; null means match regardless of target state. A non-null filter on a non-transition class is rejected at validation time.
+- **`recipientSpec` is additive.** `roles`, `includeAssignedWorkers`, and `userIds` are unioned. An empty spec is rejected at validation so an enabled rule always has a non-empty candidate set before dedup.
+- **`includeAssignedWorkers` scope.** Only meaningful when the event carries a `projectId` (`project.transition_*`, `project.archived`, `project.assignment_changed`). Rejected at validation for `backup.failed` and `disk.threshold_reached`.
+- **No templates in the model.** Per-event German message templates are code-owned in the config layer. See [ADR-0023 Alternatives](../adr/0023-notification-rules-db-stored-closed-event-catalog.md#full-freeform-predicate-dsl-with-user-editable-message-templates).
+- **No priority / no override.** Multiple matches produce a recipient **union**, deduplicated by `UserAccount.id`. No priority field, override flag, or AND/OR tree — see [ADR-0023 Alternatives](../adr/0023-notification-rules-db-stored-closed-event-catalog.md#rule-matching-with-priority--override--and-or-trees).
+- **Invalid-recipient resilience.** A resolved recipient whose `UserAccount` is missing or `active = false` is skipped at dispatch; remaining recipients proceed. Zero live recipients completes without error.
+- **Rule take-effect.** A rule change affects the next event committed after the change; in-flight events use the rule set read at their own commit.
+- **Configuration layering.** Each `NotificationEventClass`'s German activity-feed description lives in the `[C]` catalogue ([architecture.md §12.2](architecture.md#122-company-configurable-settings)) under the audit activity-feed rendering entry — already keyed on `(action, payload)`, the per-event identity the publisher emits.
+
+### 5.12 Push Subscription
+
+Per-device push subscription. A user may register multiple devices (phone, desktop); unsubscribing one does not affect the others.
+
+```typescript
+interface PushSubscription {
+  id: string; // UUID
+  userId: string; // references UserAccount.id (ON DELETE CASCADE)
+  endpoint: string; // opaque browser-provided endpoint — unique within a user
+  p256dh: string; // opaque key material delivered by the browser push API
+  auth: string; // opaque key material delivered by the browser push API
+  userAgent?: string; // nullable — captured at subscribe time so the user can identify a device in their subscription list
+  createdAt: string; // ISO 8601
+}
+```
+
+Design notes:
+
+- **Per-device identity.** `endpoint` is unique within a user (`(userId, endpoint)` uniqueness); re-subscribing an existing endpoint updates the row. Rows are deleted either by the server on a permanent-error dispatch or by the user via unsubscribe.
+- **Ownership.** `userId` is set from the authenticated caller at subscribe time; a caller-supplied user id is ignored.
+- **Denormalized key material.** `p256dh` and `auth` are the two opaque tokens the browser push API returns at subscribe time. They are stored as two named text fields rather than a single JSONB blob so the dispatcher reads them directly without an additional unpacking step. The field names `p256dh` and `auth` are the browser push API's own externally-defined names — not implementation details — and round-trip verbatim between the client, the server, and the push service. Neither field is ever rendered in the UI.
+- **Mute interaction.** When the owner's `pushMuted` is `true`, the dispatcher skips every subscription they own. Rows are retained — mute is a delivery-time filter, so unmuting restores delivery without a re-subscribe.
+- **User deactivation / deletion.** Deactivation (`active = false`) suspends dispatch to the user's subscriptions. Hard-delete cascades `push_subscription` rows (parity with session cleanup; see [§6.9](#69-soft-deletes)).
+- **No retention window.** Rows live until unsubscribed or cascaded by user deletion; stale endpoints are pruned at dispatch time via permanent-error handling. There is no elapsed-time garbage collection — rows are removed only by unsubscribe, user cascade, or a permanent dispatch error (e.g., a gone-endpoint response from the push service).
 
 ---
 

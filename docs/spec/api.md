@@ -28,19 +28,19 @@ The API is the boundary between the front end and all persistent state ([archite
 
 #### 14.2.1 Authentication
 
-| Operation            | Input              | Output                                                                                                        | Notes                                                                                                                                                                                                                                                                   |
-| -------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Login**            | username, password | session token, user profile (id, username, displayName, roles, email, themePreference) enveloped under `user` | Creates a new session. Rejects inactive users (`active = false`).                                                                                                                                                                                                       |
-| **Logout**           | session token      | --                                                                                                            | Invalidates the specific session, not all sessions for the user.                                                                                                                                                                                                        |
-| **Get current user** | (session)          | user profile (id, username, displayName, roles, email, themePreference) enveloped under `user`                | Returns the authenticated user's profile under the same `{ user: ... }` envelope as Login, so a typed client shares one response type. Used on app load to restore session (see [ui/behavior.md — Authentication Behavior](ui/behavior.md#94-authentication-behavior)). |
-| **Update self**      | themePreference?   | updated user profile enveloped under `user`                                                                   | Updates the authenticated user's own preferences. PATCH semantics — omitted fields are unchanged. Currently accepts `themePreference` only. Requires a valid session; no additional permission check (self-scope).                                                      |
+| Operation            | Input                        | Output                                                                                                                   | Notes                                                                                                                                                                                                                                                                        |
+| -------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Login**            | username, password           | session token, user profile (id, username, displayName, roles, email, themePreference, pushMuted) enveloped under `user` | Creates a new session. Rejects inactive users (`active = false`).                                                                                                                                                                                                            |
+| **Logout**           | session token                | --                                                                                                                       | Invalidates the specific session, not all sessions for the user.                                                                                                                                                                                                             |
+| **Get current user** | (session)                    | user profile (id, username, displayName, roles, email, themePreference, pushMuted) enveloped under `user`                | Returns the authenticated user's profile under the same `{ user: ... }` envelope as Login, so a typed client shares one response type. Used on app load to restore session (see [ui/behavior.md — Authentication Behavior](ui/behavior.md#94-authentication-behavior)).      |
+| **Update self**      | themePreference?, pushMuted? | updated user profile enveloped under `user`                                                                              | Updates the authenticated user's own preferences. PATCH semantics — omitted fields are unchanged. Accepts `themePreference` and `pushMuted` (see [data-model.md §5.3](data-model.md#53-user-entity)). Requires a valid session; no additional permission check (self-scope). |
 
 Design notes:
 
 - Failed login returns a generic error — no distinction between "user not found" and "wrong password".
 - User profiles never include `passwordHash`.
 - **Update self** is restricted to the caller's own record. The endpoint cannot affect any other user and does not accept a user ID. Identity-bearing fields (`username`, `roles`, `active`) are never updatable through this operation — those remain administrative (see [§14.2.3](#1423-user-management)).
-- **Update self error paths** (mapped to the categories in [§14.4.1](#1441-error-categories)): missing or invalid session → authentication error; request body violating the allowed value set (e.g., `themePreference` outside `'light' | 'dark' | 'system'`) → validation error.
+- **Update self error paths** (mapped to the categories in [§14.4.1](#1441-error-categories)): missing or invalid session → authentication error; request body violating the allowed value set (e.g., `themePreference` outside `'light' | 'dark' | 'system'`, `pushMuted` not a boolean) → validation error.
 
 #### 14.2.2 Projects
 
@@ -198,6 +198,57 @@ Design notes:
   - `setOperationalLogger(logger)` — wires the structured operational logger used to surface handler failures.
     A throwing handler does not roll back the originating mutation — see [AC-183](verification.md#1523-audit-log) for the failure-surface contract. The publisher is process-local; restart-durability is out of scope (in-process dispatch per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md)).
 
+#### 14.2.9 Notification Rules
+
+Admin-editable rules mapping the closed event catalog ([data-model.md §5.11](data-model.md#511-notification-rule)) to recipient specs. CRUD is gated on `notifications:manage` and follows the validation rules below ([ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md)).
+
+| Operation       | Input                                                        | Output                 | Notes                                                                                                                                                                                  |
+| --------------- | ------------------------------------------------------------ | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **List rules**  | optional: offset, limit                                      | rule list, total count | All rules. Ordered by `eventClass` ascending, `createdAt` ascending as tiebreaker. Requires `notifications:manage`.                                                                    |
+| **Get rule**    | rule id                                                      | single rule            | Full rule or not-found. Requires `notifications:manage`.                                                                                                                               |
+| **Create rule** | eventClass, stateFilter?, recipientSpec, enabled             | created rule           | `recipientSpec` must carry at least one non-empty part. `stateFilter` permitted only on `project.transition_forward` / `project.transition_backward`. Requires `notifications:manage`. |
+| **Update rule** | rule id, eventClass?, stateFilter?, recipientSpec?, enabled? | updated rule           | PATCH — omitted fields unchanged. Same validation as create. `eventClass` is updatable. Requires `notifications:manage`.                                                               |
+| **Delete rule** | rule id                                                      | success/failure        | Hard-deletes. No soft-delete — rules are configuration. Requires `notifications:manage`.                                                                                               |
+
+Design notes:
+
+- **Validation rules** (all raise validation error on breach):
+  - `eventClass` must be a member of [`NotificationEventClass`](data-model.md#511-notification-rule).
+  - `stateFilter` must be null unless `eventClass` is a transition event; when present, it must be a member of the configured workflow-state set ([index.md §3](index.md#3-workflow-states)).
+  - `recipientSpec.roles` must be a subset of the configured role set ([index.md §4.2](index.md#42-users)); `userIds` must each reference an active `UserAccount`; `includeAssignedWorkers` is rejected when `eventClass` is a non-project-scoped event (`backup.failed`, `disk.threshold_reached`).
+  - At least one of `roles`, `includeAssignedWorkers`, or `userIds` must resolve to a non-empty part — an enabled rule with an empty spec is rejected.
+- **Error paths** (mapped to the categories in [§14.4.1](#1441-error-categories)):
+  - Missing or expired session → `401 UNAUTHENTICATED` / `SESSION_EXPIRED`.
+  - Caller lacks `notifications:manage` → `403 NOT_PERMITTED`.
+  - Get / update / delete on an unknown id → `404 NOT_FOUND`.
+  - Validation breaches above → `422 VALIDATION_ERROR`.
+- **Take-effect semantics.** A successful create, update, or delete affects the next event committed after the change; in-flight events use the rule set read at their own commit.
+- **No uniqueness constraint on `(eventClass, stateFilter, recipientSpec)`.** Duplicates are permitted; the publisher's recipient-union dedups by `user_id` at resolution. A uniqueness constraint would force admins to reason about rule-equivalence — exactly the complexity the flat model avoids ([ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md)).
+
+#### 14.2.10 Push Subscription
+
+Browser push subscription management. Authenticated self-scope — a caller manages only their own subscriptions. The VAPID public-key read is the only unauthenticated route in this section (the key is intentionally public; the private half never leaves the server).
+
+| Operation                 | Input                                     | Output                             | Notes                                                                                                                                                                                                         |
+| ------------------------- | ----------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Read VAPID public key** | —                                         | `{ vapidPublicKey: string\|null }` | Unauthenticated. Returns the server-configured VAPID public key, or `null` when the triple (`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT`) is not fully configured. GET-only; non-GET verbs 405. |
+| **Subscribe to push**     | endpoint, keys (p256dh, auth), userAgent? | success/failure                    | Registers a subscription for the authenticated caller. Re-subscribing an existing `endpoint` updates the row rather than duplicating.                                                                         |
+| **Unsubscribe from push** | endpoint (or subscription id)             | success/failure                    | Removes one of the caller's subscriptions. Unknown endpoints / ids are idempotent no-ops.                                                                                                                     |
+
+Design notes:
+
+- **VAPID key is server-sourced.** The client fetches the public key at subscribe time from the read endpoint; the operator sets `VAPID_PUBLIC_KEY` server-side and the client never needs a matching build-time env. An optional client-build fallback survives for offline-dev workflows. Short HTTP cache (5 minutes) — a deploy rotates the key and the browser cache expires well inside one user session.
+- **Ownership is derived.** The server sets `userId` from the session; a client-supplied user id is ignored.
+- **Self-scoped lookups.** Subscribe / unsubscribe filter by `(subscription.id OR endpoint, userId = session.userId)` before acting. An id or endpoint belonging to another user is treated as unknown — the no-op response is indistinguishable from a truly-unknown one. Rationale: self-scope endpoints must not enumerate other users' subscriptions.
+- **No auto-request.** The permission prompt is user-initiated from the settings affordance ([ui/index.md §8.7.2](ui/index.md#872-user-menu)); the server never pushes a registration on login.
+- **Dispatch-time pruning.** A subscription the browser reports permanently dead at dispatch is removed server-side — housekeeping, not a user-facing operation.
+- **Mute interaction.** `pushMuted = true` suppresses delivery to every subscription the user owns; rows are retained, so unmuting restores delivery without a re-subscribe.
+- **Rate limiting.** Mutation paths (`POST`, `DELETE`) share a per-session mutation bucket ([architecture.md §12.2 rate-limit config](architecture.md#122-company-configurable-settings) `[C]`); exceeding returns `429 RATE_LIMITED`. The VAPID public-key read is not rate-limited (unauthenticated, GET-only, 5-minute cache).
+- **Error paths** (mapped to the categories in [§14.4.1](#1441-error-categories)):
+  - Missing or expired session → `401 UNAUTHENTICATED` / `SESSION_EXPIRED` (subscribe / unsubscribe only; the VAPID read is unauthenticated).
+  - Malformed `endpoint` / `keys` → `422 VALIDATION_ERROR`.
+  - `endpoint` exceeds 2048 characters, `keys.p256dh` or `keys.auth` exceeds 512 characters, or `endpoint` is not a syntactically valid URI → `422 VALIDATION_ERROR` (bounded to protect the subscription table from pathological input).
+
 ---
 
 ### 14.3 Authorization Rules
@@ -205,16 +256,17 @@ Design notes:
 - All API operations require authentication (valid, active session).
 - The system implements a basic role-based permission matrix. All authenticated, active users can view all projects (list, get) and change their own password. Other operations — including mutations, imports, and exports — require specific permissions granted by role:
 
-| Role       | Permissions                                                                                                                                                                                                                                                      |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| owner      | project:read, project:transition, project:dates, project:create, project:update, project:delete, project:purge, customer:read, customer:write, customer:delete, user:read, user:manage, user:delete, data:export, data:restore, audit:read, auth:change-password |
-| office     | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, user:read, data:export, audit:read, auth:change-password                                                                         |
-| worker     | project:read, customer:read, auth:change-password                                                                                                                                                                                                                |
-| bookkeeper | project:read, customer:read, auth:change-password                                                                                                                                                                                                                |
+| Role       | Permissions                                                                                                                                                                                                                                                                            |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| owner      | project:read, project:transition, project:dates, project:create, project:update, project:delete, project:purge, customer:read, customer:write, customer:delete, user:read, user:manage, user:delete, data:export, data:restore, audit:read, notifications:manage, auth:change-password |
+| office     | project:read, project:transition, project:dates, project:create, project:update, project:delete, customer:read, customer:write, user:read, data:export, audit:read, auth:change-password                                                                                               |
+| worker     | project:read, customer:read, auth:change-password                                                                                                                                                                                                                                      |
+| bookkeeper | project:read, customer:read, auth:change-password                                                                                                                                                                                                                                      |
 
 Design notes:
 
 - **Data exchange permissions are distinct from entity read/write permissions.** `data:export` gates the unified export ([§14.2.4](#1424-unified-data-exchange)); `data:restore` gates the unified import. Granting `project:read` does not imply `data:export`.
+- **`notifications:manage` is admin-only.** The rule-editor surface ([§14.2.9](#1429-notification-rules)) is admin-only (owner under the default matrix, per [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md)); rule changes affect who-sees-what platform-wide, so this aligns with `user:manage`.
 - **`data:restore` is owner-only.** The import destroys or replaces business data in a single transaction — a destructive operation, reserved to the most privileged role consistent with `customer:delete`, `user:delete`, and `project:purge`.
 - **Audit read is a single permission; visibility is narrowed by orthogonal scope predicates at the repository layer.** `audit:read` admits a caller to the audit surface at all. Destructive-action visibility is not a second permission: it is the `auditDestructiveScopeForCaller` predicate defined in [§14.2.8](#1428-audit-log) — owner gets a null filter; every other role gets a `WHERE` fragment excluding destructive entries. This follows [ADR-0019](../adr/0019-worker-data-scoping-repository-layer-predicate.md)'s decision that permissions stay coarse and scope is orthogonal to capability — encoding scope in the permission catalog would conflate _capability_ with _extent_.
 - The API must be designed so that scoping reads to a subset (e.g. "projects assigned to user X") is an additive query filter on the list operation, not a restructuring of the endpoint.

@@ -102,7 +102,7 @@ The detail panel surfaces the project's activity history — a reverse-chronolog
 - A German one-line description derived from `action` and `payload` — e.g. `"Status geändert: Geplant → In Arbeit"`, `"Termine aktualisiert"`, `"Mitarbeiter zugewiesen: Jan Nowak"`. Mapping from `(action, payload)` to string is configured **[C]**.
 - Actor display: `displayName` for `user`-actor entries, resolved server-side. When the actor has been hard-deleted (AC-98 sets `actor_id` to null) the UI renders a neutral German label `"Benutzer"`. `system`-actor entries display the German label `"System"` and the `actorReason` as supporting text.
 - Timestamp — `createdAt` in German locale (`DD.MM.YYYY HH:mm`).
-- Payload drawer — a disclosure toggle (`Details anzeigen`) revealing the field-level `{ before, after }` diff. Rendered only when the API returns a `payload` for the entry, per the role-dependent shape in [api.md §14.2.8](../api.md#1428-audit-log) (client-side hiding is defense-in-depth, not the authoritative gate).
+- Payload drawer — a disclosure toggle (`Details anzeigen`) revealing the field-level `{ before, after }` diff. Rendered only when the API response for the entry includes a non-null `payload` ([api.md §14.2.8](../api.md#1428-audit-log)); client-side hiding is defense-in-depth, not the authoritative gate.
 
 **Pagination:** default page size matches the list endpoints. A `"Ältere anzeigen"` action fetches the next page and appends; a page-boundary does not collapse already-visible rows.
 

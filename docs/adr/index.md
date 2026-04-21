@@ -24,3 +24,4 @@
 | [0020](0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)    | Layer 2 — encrypted R2 backups with operator-loaded drills            | Accepted | 2026-04-17 |
 | [0021](0021-audit-log-and-notifications-single-write-path.md)               | Audit log and notifications — single write path, publisher-over-audit | Accepted | 2026-04-19 |
 | [0022](0022-binary-off-site-encrypted-mirror-on-b2.md)                      | Binary off-site encrypted mirror on Backblaze B2                      | Accepted | 2026-04-19 |
+| [0023](0023-notification-rules-db-stored-closed-event-catalog.md)           | Notification rules as DB-stored configuration with a closed catalog   | Accepted | 2026-04-20 |
