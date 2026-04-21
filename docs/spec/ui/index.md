@@ -11,6 +11,7 @@ Section 8 of the [product spec](../index.md): UI surface. Split into per-subsyst
 | **[management.md](management.md)**         | §8.8–§8.10, §8.13 | Project, Customer, and User management tabular CRUD views; global Audit View |
 | **[daten.md](daten.md)**                   | §8.11             | Daten view — unified business-data restore + export                          |
 | **[email-intake.md](email-intake.md)**     | §8.12             | Email Data Intake — modal LLM extraction to customer + project               |
+| **[project-detail.md](project-detail.md)** | §8.15             | Project Detail Page — dedicated `/projects/:id` route with attachments       |
 | **[behavior.md](behavior.md)**             | §9, §10           | Cross-cutting behavioral rules + responsive column collapse                  |
 
 ---

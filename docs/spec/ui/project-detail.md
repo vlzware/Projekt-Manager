@@ -1,0 +1,102 @@
+# UI: Project Detail Page
+
+Section 8.15 of the [product spec](../index.md) — the dedicated, shareable detail surface for a single project at `/projects/:id`. The existing Project Detail Panel ([workflow-views.md §8.4](workflow-views.md#84-project-detail-panel)) stays as the quick-glance overlay on Kanban and Calendar; the page is the canonical full-context view.
+
+Shell and navigation live in [index.md](index.md); cross-cutting behavioral rules (in-flight lock, error handling, mutation semantics) in [behavior.md](behavior.md).
+
+---
+
+## 8.15 Project Detail Page
+
+A full-page view of a single project. Reachable by URL (`/projects/:id`) and from the `Öffnen` affordance on the quick-glance detail panel. Route access follows the role matrix — workers land on the not-permitted surface ([AC-149](../verification.md#1521-role-scoping)) when the project is out of their scope.
+
+### 8.15.1 Layout
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Header — number, title, status badge, forward/backward   │
+├──────────────────────────────────────────────────────────┤
+│ Core fields — customer, dates, value, notes              │
+├──────────────────────────────────────────────────────────┤
+│ Assigned workers — inline editor                         │
+├──────────────────────────────────────────────────────────┤
+│ Photo gallery — thumbnails + lightbox                    │
+├──────────────────────────────────────────────────────────┤
+│ Binary list — PDFs, DOCX, other non-photo attachments    │
+├──────────────────────────────────────────────────────────┤
+│ Activity feed — scoped to this project (see §8.4.1)      │
+└──────────────────────────────────────────────────────────┘
+```
+
+Every region renders read-only for a caller without the relevant write permission; mutation controls follow [AC-121](../verification.md#1516-management-views).
+
+### 8.15.2 Core Fields
+
+The core-field region reuses the read contents of [workflow-views.md §8.4](workflow-views.md#84-project-detail-panel) — project number and title, status badge, forward/backward transition buttons, customer (name, phone, email, address with map link when present), planned start/end date pickers, estimated value, notes, audit timestamps. Editability parity matches the management edit view ([management.md §8.8.3](management.md#883-edit-project)) — notes, customer, estimated value, dates, and assigned workers are editable with `project:update`. Title edits also go through `project:update`. Status is mutated only through the transition operations; project number is immutable.
+
+### 8.15.3 Assigned-Worker Editor
+
+Inline control, visible on the page (not modal). Backed by the existing Update project API operation ([api.md §14.2.2](../api.md#1422-projects)) with a patch carrying `assignedWorkerIds`.
+
+- Multi-select from the active set of users holding the `worker` role. Each selected entry renders as a chip carrying the worker's `displayName`; a remove affordance detaches.
+- Mutations require `project:update`. The control is hidden for callers without it; the page-level read surface continues to render the current assigned list.
+- Changes are audited per [AC-177](../verification.md#1523-audit-log) — the `mutate()` helper writes a `project_worker` audit row (`action` ∈ `create` / `delete`; `entityLabel` = worker displayName per [data-model.md §5.10](../data-model.md#510-audit-log-entity)).
+- In-flight mutation lock per [behavior.md §9.5](behavior.md#95-asynchronous-mutation-behavior): while the patch is resolving, the chip set and the add control are disabled; a failed mutation reverts the optimistic UI ([AC-53](../verification.md#153-behavioral)).
+
+### 8.15.4 Photo Gallery
+
+Displays every `status = 'ready'` attachment with `kind = 'photo'` for the project. Thumbnails use the WebP thumbnail variant via a presigned-GET URL ([api.md §14.2.11](../api.md#14211-attachments)); clicking a thumbnail opens a lightbox that requests the original variant on demand.
+
+- **Upload surface.** Shown for callers with `attachment:write`. Two entry points: a drag-drop zone and a dedicated `Foto aufnehmen` CTA that invokes the platform camera on supporting devices. The CTA is rendered only when the device exposes a camera capability; otherwise only the drag-drop zone is offered.
+- **Client image pipeline.** The browser reads the original file, transcodes HEIC to JPEG when needed, downscales and re-encodes the original while preserving EXIF (including GPS), and additionally produces a WebP thumbnail. Sizing and quality parameters are applied per the `[C]` catalogue entry for attachment client-encoding ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Both objects are then POSTed directly to object storage against the two presigned descriptors returned by init ([api.md §14.2.11](../api.md#14211-attachments)). The app server never sees the bytes. Preserving EXIF (including GPS) matches [kickoff.md](../../project/kickoff.md)'s worker-view expectation that GPS coordinates stay available to the worker; EXIF preservation as a whole is a design choice of this spec.
+- **Size cap.** If the re-encoded original exceeds the configured attachment per-file size cap **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)), the client surfaces a German validation message (`"Datei zu groß"`) and does not call init. The cap is also enforced server-side by the presigned policy's `content-length-range`; a mismatch between the two is a client-side bug, not a security gap.
+- **Per-photo controls.** Each thumbnail carries a label dropdown (closed enum — `Foto` by default on photo uploads, selectable from the full enum) and a delete affordance. Delete follows the permission matrix in §8.15.6.
+- **No offline binary processing.** The service worker does not queue, compress, or resume uploads in the background. A page reload cancels an in-flight upload cleanly; the server-side reaper ([data-model.md §6.11](../data-model.md#611-attachment-orphan-reaper)) removes the orphan `pending` row.
+
+### 8.15.5 Binary List
+
+Displays every `status = 'ready'` attachment with `kind = 'binary'` (PDF, DOCX) for the project. Renders as a tabular list: filename, label, uploader, upload timestamp, download action.
+
+- **Upload surface.** Shown for callers with `attachment:write`. A file picker accepts the binary MIME types from the whitelist ([data-model.md §5.13](../data-model.md#513-attachment)); a file outside the whitelist is rejected client-side with a German validation message (`"Dateityp nicht erlaubt"`).
+- **No thumbnail pipeline.** `hasThumbnail = false` at init for binary uploads; the server issues a single presigned-POST descriptor for the original.
+- **Per-file controls.** Label dropdown (closed enum, default `Sonstiges`) and a delete affordance. A `Herunterladen` action requests a download URL ([api.md §14.2.11](../api.md#14211-attachments)) and navigates the browser to it.
+- **Bulk download.** A `Auswahl als ZIP` action appears when the user selects at least one file. Selection exceeding the configured bulk-download caps **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) — maximum file count OR summed byte size — is blocked client-side with a German validation message naming both caps. The server re-validates per [api.md §14.2.11](../api.md#14211-attachments); the mismatch path surfaces the same German message via the mutation error banner ([index.md §8.1.2](index.md#812-authenticated-state)).
+
+### 8.15.6 Deletion
+
+- Owner, office: any attachment on the project.
+- Worker: own attachments only, within the configured self-delete grace window **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Outside that window the delete control is hidden; the server rejects with `403 NOT_PERMITTED` as the authoritative gate ([api.md §14.2.11](../api.md#14211-attachments)).
+- Bookkeeper: no delete.
+
+Every delete carries a Yes / No confirmation dialog with a German warning that recovery is not possible. Hard-delete is the only deletion mode — no soft-delete, no trash. Attachment versioning and retention are not part of this surface; any future capability of that class belongs to the storage-provider layer ([data-model.md §5.13](../data-model.md#513-attachment), [ADR-0018](../../adr/0018-data-persistence-and-recovery-layered-strategy.md)).
+
+### 8.15.7 Restored Rows Without Backing Bytes
+
+A `status = 'ready'` attachment row whose backing object is absent in storage (possible after a Layer 1 restore whose Layer 3 storage has diverged — see [data-model.md §5.8](../data-model.md#58-export-envelope)) renders in the gallery or list with a neutral German label `"Datei fehlt"` and a muted thumbnail placeholder. The download action is disabled. A "Datei fehlt" row is excluded from the bulk-download selection and from the photo gallery's lightbox. The row is not auto-deleted — the mismatch is an operational signal, not a schema error, and the UI's job is to render it honestly.
+
+**Detection is lazy.** The server does not probe object storage when answering the list endpoint ([api.md §14.2.11](../api.md#14211-attachments)). The UI learns bytes are missing only when the browser follows a presigned-GET URL and the provider responds with a 404 / NoSuchKey. For photos, the trigger is the thumbnail fetch at gallery render — the affected row flips to the "Datei fehlt" placeholder as soon as that fetch fails. For binaries, the list renders normally on mount (no thumbnail fetch); the trigger is the user's download click, at which point the action surfaces the "Datei fehlt" state on the row and suppresses the download. In both cases, a subsequent manual attempt on the same row repeats the fetch and re-observes the same state — no client-side caching of the missing verdict.
+
+### 8.15.8 Upload Failure and Retry
+
+Per-upload states rendered in the gallery and list next to the affected row:
+
+- **Progress.** A percentage or indeterminate indicator while the POST is in flight.
+- **Failure banner.** On any failure (network error, storage 4xx/5xx, complete returning a conflict) the row renders a red banner with the German message from the API error category ([behavior.md §9.5](behavior.md#95-asynchronous-mutation-behavior)) plus a `Erneut versuchen` action that restarts the flow from init. The row is removed from the UI when the user dismisses the banner; the server's reaper removes the orphan `pending` row on its next sweep.
+- **No silent retry.** The UI does not retry uploads on its own — silent retry would hide an intermittent failure class from the user. Retry is always a deliberate user action.
+
+### 8.15.9 Permissions Summary
+
+| Region                 | `attachment:read` | `attachment:write` | `attachment:delete`                      |
+| ---------------------- | ----------------- | ------------------ | ---------------------------------------- |
+| View gallery + list    | yes               | —                  | —                                        |
+| Upload photo / binary  | —                 | yes (in-scope)     | —                                        |
+| Delete any attachment  | —                 | —                  | owner, office                            |
+| Delete own attachment  | —                 | —                  | worker, within self-delete grace **[C]** |
+| Bulk download (ZIP)    | yes               | —                  | —                                        |
+| Assigned-worker editor | read inherent     | `project:update`   | —                                        |
+
+Server-side authorization is authoritative ([api.md §14.2.11](../api.md#14211-attachments)); client-side hiding is a UX convenience per [AC-121](../verification.md#1516-management-views).
+
+---
+
+_Cross-references: [index.md](../index.md) for scope and assumptions, [data-model.md](../data-model.md) for the Attachment entity, [api.md](../api.md) for the presigned-POST flow, [workflow-views.md §8.4](workflow-views.md#84-project-detail-panel) for the quick-glance overlay, [verification.md](../verification.md) for acceptance criteria._

@@ -82,13 +82,14 @@ A detail view that preserves the context of the underlying view (the user should
 Contents:
 
 - Project number, title
+- **`Öffnen` affordance** in the panel header area — navigates to the canonical Project Detail Page at `/projects/:id` ([ui/project-detail.md §8.15](project-detail.md#815-project-detail-page)). The navigation preserves the originating view (Kanban or Calendar) as the back target so the user can return without re-navigating. Rendered whenever the panel is.
 - Current status with colored badge + German label
 - **Forward transition button** (same as [→]). Hidden for `Erledigt`.
 - **Backward transition button**, styled less prominently. Hidden for `Anfrage` (no previous state) and `Erledigt` (terminal).
 - Customer: name, phone (clickable), email (clickable)
 - Address (clickable map link if available)
 - **Dates: planned start/end** — editable via date picker inputs. Changes update `plannedStart`/`plannedEnd` and are reflected in both views immediately. The UI prevents invalid combinations: clearing `plannedStart` while `plannedEnd` is set also clears `plannedEnd` (see [data-model.md §6.8](../data-model.md#68-date-validation)).
-- Assigned workers (list of display names). Editing is available in the Project Management View ([management.md §8.8.3](management.md#883-edit-project)).
+- Assigned workers (list of display names). Editing is available on the Project Detail Page ([ui/project-detail.md §8.15.3](project-detail.md#8153-assigned-worker-editor)) and in the Project Management View ([management.md §8.8.3](management.md#883-edit-project)).
 - Estimated value, formatted as `8.500,00 €` (German locale)
 - Notes (read-only in the Kanban/Calendar context; editable in the Project Management View, [management.md §8.8.3](management.md#883-edit-project))
 - Timestamps: created, last updated, status changed

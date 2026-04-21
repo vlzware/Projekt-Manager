@@ -210,6 +210,7 @@ interface ExportEnvelope {
   customers: Customer[]; // every row, all fields from §5.6
   projects: Project[]; // every row, all fields from §5.1, including archived (deleted = true)
   project_workers: { projectId: string; userId: string }[]; // every row of the join
+  attachments: Attachment[]; // every row with status = 'ready', all fields from §5.13
 }
 ```
 
@@ -218,6 +219,7 @@ Design notes:
 - **Row-level fidelity.** Each entity in the envelope carries all persisted fields including `id`, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`, and `deleted`. Imports preserve IDs exactly (see [ADR-0018 §Decision](../adr/0018-data-persistence-and-recovery-layered-strategy.md#decision)).
 - **Archived rows are included.** Projects with `deleted = true` round-trip with their archive state intact (see [§6.9](#69-soft-deletes)).
 - **Users and sessions are not included.** Admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) handles fresh installs; seed-time loading of users uses a direct-DB helper, while seed-time business-data loading goes through the import code path (see [§7](#7-seed-data-specification)).
+- **Attachments: metadata only.** Only rows with `status = 'ready'` are exported; `pending` rows are excluded because they represent an uncommitted upload. Bytes live in object storage (Layer 3 per [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md)) and are not part of the envelope. On import, attachment rows are restored without their bytes; whether the backing objects exist depends on the storage layer's own recovery. A restored row whose original or thumbnail object is missing renders a "bytes missing" state in the UI ([ui/project-detail.md §8.15.7](ui/project-detail.md#8157-restored-rows-without-backing-bytes)).
 - **`schema_version` is monotonic.** Imports compare strictly and reject any mismatch — no format migration code.
 
 ### 5.9 Backup Status Entity
@@ -353,6 +355,51 @@ Design notes:
 - **User deactivation / deletion.** Deactivation (`active = false`) suspends dispatch to the user's subscriptions. Hard-delete cascades `push_subscription` rows (parity with session cleanup; see [§6.9](#69-soft-deletes)).
 - **No retention window.** Rows live until unsubscribed or cascaded by user deletion; stale endpoints are pruned at dispatch time via permanent-error handling. There is no elapsed-time garbage collection — rows are removed only by unsubscribe, user cascade, or a permanent dispatch error (e.g., a gone-endpoint response from the push service).
 
+### 5.13 Attachment
+
+A file attached to a project. Metadata lives in the database (Layer 1 business data, round-trips with [§5.8](#58-export-envelope)); the bytes themselves live in object storage (Layer 3, [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md)).
+
+```typescript
+type AttachmentLabel =
+  | 'angebot'
+  | 'auftragsbestaetigung'
+  | 'rechnung'
+  | 'aufmass'
+  | 'foto'
+  | 'sonstiges';
+
+type AttachmentKind = 'photo' | 'binary';
+
+type AttachmentStatus = 'pending' | 'ready';
+
+interface Attachment {
+  id: string; // UUID
+  projectId: string; // references Project.id (ON DELETE CASCADE)
+  status: AttachmentStatus; // 'pending' after init; 'ready' after complete + HEAD
+  label: AttachmentLabel; // closed set — see below
+  kind: AttachmentKind; // 'photo' for image types rendered in the gallery; 'binary' otherwise
+  fileName: string; // client-supplied display name, sanitized
+  mimeType: string; // from the MIME whitelist — see below
+  sizeBytes: number; // size of the original object (not the thumbnail)
+  originalKey: string; // opaque storage key for the original object
+  thumbKey?: string; // opaque storage key for the WebP thumbnail; null for non-photo kinds
+  createdAt: string; // ISO 8601
+  createdBy?: string; // UserAccount.id — set from the session at init time
+}
+```
+
+Design notes:
+
+- **State machine.** `pending` on successful init (row + presigned-POST URLs issued). `ready` after the complete call verifies both objects exist via HEAD against object storage. No other states. A failed HEAD leaves the row at `pending`; the reaper ([§6.11](#611-attachment-orphan-reaper)) is the only path that removes a stuck `pending` row.
+- **Label is a closed set** — no free text, no per-deployment labels. German display labels are applied via configuration **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). Rationale: closed-catalog pattern mirrors [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md) — labels are referenced by UI and filtering code; a user-authored taxonomy drifts.
+- **Kind is derived from `mimeType` at init time.** `image/jpeg`, `image/png`, `image/webp`, `image/heic` → `'photo'`. `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` → `'binary'`. Other types are rejected at init.
+- **MIME whitelist** — exactly: `image/jpeg`, `image/png`, `image/webp`, `image/heic`, `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`. Values outside the set are rejected at init.
+- **Size cap** — `sizeBytes` must not exceed the configured per-file cap **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). The server enforces this by constraining the presigned upload and by verifying the HEAD-reported size at complete.
+- **Storage keys are opaque.** `originalKey` and `thumbKey` are emitted by the server at init time. Clients treat them as opaque — only the server issues them, and only the server maps them to a download URL (see [api.md §14.2.11](api.md#14211-attachments)).
+- **Ownership.** `createdBy` is set from the session at init time; a client-supplied value is ignored.
+- **Cascade on project hard-delete.** When a project is purged (hard-delete via [api.md §14.2.2](api.md#1422-projects)), all `attachment` rows cascade via FK; the server also deletes the backing objects from storage as part of the purge. Soft-delete (archive) leaves attachments intact.
+- **Referential integrity with the export envelope.** Attachment rows round-trip with Layer 1 per [§5.8](#58-export-envelope); bytes remain storage-owned per [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) and are not part of the envelope. A restored row whose backing objects are absent renders a "Datei fehlt" state in the UI ([ui/project-detail.md §8.15.7](ui/project-detail.md#8157-restored-rows-without-backing-bytes)) and is excluded from the photo gallery and from bulk download. The metadata row stays intact — the mismatch is an operational condition, not a schema error.
+
 ---
 
 ## 6. Persistence Principles
@@ -423,6 +470,14 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 - Each cleanup run is itself recorded — not in `audit_log` (the scope is domain entities only, per [§5.10](#510-audit-log-entity)), but in the structured operational logger, tagged as a system event. Rationale: keeping retention out of `audit_log` preserves the "append-only from the application" invariant for callers reading the activity feed; retention visibility lives in operational logs alongside other scheduled-job outputs.
 - **Operational-log contract.** Each run emits exactly one structured log line at `info` level with the following fields: `event = 'audit-retention-cleanup'` (fixed discriminator), `window_days` (integer — the configured retention window applied, from the `[C]` catalogue above), `removed_count` (non-negative integer — rows deleted in the run; `0` on a no-op run), `ran_at` (ISO 8601 timestamp of the run). An operator verifies retention by querying the operational log for `event = 'audit-retention-cleanup'`; the Aktivität UI ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed), [ui/management.md §8.13](ui/management.md#813-audit-view)) is _not_ the verification surface — it deliberately omits retention events to keep the domain-entity scope intact. The retention of the operational log line itself follows whatever operational-log retention the deployed environment enforces — this spec does not pin a separate retention for system log lines.
 - Retention applies uniformly to all entity types; there is no per-entity-type override.
+
+### 6.11 Attachment Orphan Reaper
+
+- A scheduled job removes `attachment` rows stuck at `status = 'pending'` longer than the configured orphan-reaper TTL **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). Rationale: the upload flow ([api.md §14.2.11](api.md#14211-attachments)) creates a `pending` row before the client uploads bytes; a client that aborts between init and complete leaves the row and any half-uploaded object behind.
+- Each pending row the reaper removes is accompanied by a delete of its `originalKey` and (if set) its `thumbKey` in object storage. The row and the bytes are the two halves of the same garbage; leaving either behind reintroduces the orphan class.
+- Each run emits exactly one structured operational log line at `info` level with fields `event = 'attachment-orphan-reaper'` (fixed discriminator), `ttl_minutes` (integer — the configured TTL applied, from the `[C]` catalogue above), `removed_count` (non-negative integer — rows deleted in the run; `0` on a no-op run), `ran_at` (ISO 8601 timestamp of the run). The run does not produce an `audit_log` row — attachments stuck at `pending` have never entered the domain (no `ready` ever observed), so removing them is housekeeping, not a domain event.
+- A storage object deletion that fails (object already gone, provider transient error) is logged under the same event with `error_hint` populated; the row is still removed. The goal is to keep the metadata table clean; an object delete that finds nothing is a no-op, not a failure.
+- An in-flight sweep is drained on graceful shutdown before the database pool closes — parity with the session reaper ([verification.md AC-132](verification.md#159-infrastructure)).
 
 ---
 

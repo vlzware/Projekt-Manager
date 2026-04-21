@@ -146,14 +146,14 @@ For development, initial users come from seed data (see [data-model.md §7.2](da
 
 This specification is split across multiple files:
 
-| File                                   | Sections | Contents                                                                                                |
-| -------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------- |
-| **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                                               |
-| **[data-model.md](data-model.md)**     | 5–7      | Project, Customer, User, Session, Audit Log entities; state metadata; persistence principles; seed data |
-| **[ui/](ui/index.md)**                 | 8–10     | UI: shell, navigation, workflow views, management, Daten, email intake, behavior + responsive           |
-| **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security                       |
-| **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                                        |
-| **[verification.md](verification.md)** | 15–17    | Acceptance criteria, test specifications, risks                                                         |
+| File                                   | Sections | Contents                                                                                                      |
+| -------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| **[index.md](index.md)** (this file)   | 1–4      | Goal, scope, workflow states, assumptions                                                                     |
+| **[data-model.md](data-model.md)**     | 5–7      | Project, Customer, User, Session, Audit Log entities; state metadata; persistence principles; seed data       |
+| **[ui/](ui/index.md)**                 | 8–10     | UI: shell, navigation, workflow views, management, Daten, email intake, project detail, behavior + responsive |
+| **[architecture.md](architecture.md)** | 11–13    | Responsibility layers, dependencies, extensibility, configuration, NFRs, security                             |
+| **[api.md](api.md)**                   | 14       | API design principles, operations, authorization, error handling                                              |
+| **[verification.md](verification.md)** | 15–17    | Acceptance criteria, test specifications, risks                                                               |
 
 The test-spec traceability matrix (AC ↔ tests) lives in [docs/testing/traceability.md](../testing/traceability.md) — not in the spec itself, because it is a verification artifact maintained alongside the test suite (see [CONTRIBUTING.md §Workflow](../../CONTRIBUTING.md#workflow) step 3).
 
