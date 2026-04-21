@@ -4,30 +4,27 @@ import { STORAGE_STATES } from './storage-states';
 /**
  * E2E — Push permission + Stummschalten toggle.
  *
- * Pins AC-201 (no auto-prompt on page load; prompt only on user
- * activation of the opt-in affordance) and AC-202 (Stummschalten
- * toggle reflects `pushMuted` and persists).
+ * Pins AC-201's "no auto-prompt on page load" clause and AC-202
+ * (Stummschalten toggle reflects `pushMuted` and persists).
  *
- * AC-201 rationale: a denied permission is near-irreversible in-app;
- * every prompt must be a deliberate user action. We cannot assert on
- * the browser's permission UI rendering — the contract is about
- * whether the app calls `Notification.requestPermission()`, which we
- * spy on from the page context.
+ * AC-201's second clause — "activation triggers exactly one prompt" —
+ * is NOT exercised here. Headless Chromium pins
+ * `Notification.permission === 'denied'` regardless of
+ * `grantPermissions` / `clearPermissions`, so the opt-in affordance
+ * never renders and cannot be clicked. Patching the DOM to force it
+ * ships a fake-pass. Regression gate moved to
+ * `src/ui/layout/__tests__/PushSubscriptionControls.test.tsx` —
+ * documented exception from the `[vis]` → E2E-only rule. See that
+ * file's header for the full rationale.
  *
- * Under Playwright, browser-level permission grants happen via
- * `browserContext.grantPermissions(['notifications'])` — see
- * https://playwright.dev/docs/api/class-browsercontext#browser-context-grant-permissions.
- * We spy on `window.Notification.requestPermission` rather than
- * observing the UI prompt.
- *
- * Uses `chromium-mutating` because `Stummschalten` persists via the
- * self-update mutation.
+ * AC-202 uses `chromium-mutating` because `Stummschalten` persists via
+ * the self-update mutation.
  */
 
 test.describe.configure({ mode: 'serial' });
 
 // ---------------------------------------------------------------
-// AC-201 — No auto-request; user activation triggers one prompt
+// AC-201 — No auto-request on page load
 // ---------------------------------------------------------------
 test.describe('AC-201: push permission is user-initiated, not auto-requested', () => {
   test.use({ storageState: STORAGE_STATES.owner });
@@ -70,67 +67,6 @@ test.describe('AC-201: push permission is user-initiated, not auto-requested', (
       () => (window as unknown as { __requestPermissionCalls: number }).__requestPermissionCalls,
     );
     expect(calls).toBe(0);
-  });
-
-  test('activating "Push-Benachrichtigungen aktivieren" triggers exactly one prompt', async ({
-    page,
-    context,
-    browserName,
-  }) => {
-    // Probe the real permission state after clearPermissions() to
-    // determine if headless Chromium returns 'default' — which is
-    // required for the opt-in affordance to render. If the browser
-    // returns 'denied' despite clearPermissions(), the opt-in path
-    // cannot be exercised without patching the DOM, so we skip with a
-    // documented reason rather than shipping a fake-pass.
-    await context.clearPermissions();
-    const permissionAfterClear = await page.evaluate(
-      () =>
-        typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
-    );
-    if (permissionAfterClear !== 'default') {
-      test.skip(
-        true,
-        `${browserName} headless returns Notification.permission === '${permissionAfterClear}' after clearPermissions() — the opt-in affordance cannot render without patching the DOM. Real-browser behavior verified by the component-level unit tests.`,
-      );
-      return;
-    }
-
-    // Grant notifications so the requestPermission call resolves to
-    // "granted" without a blocking interactive prompt. The app's behavior
-    // under denied/unsupported is a separate spec.
-    await context.grantPermissions(['notifications']);
-    // Clear again so permission is 'default' at page load — the opt-in
-    // affordance only renders when permission !== 'denied' AND no
-    // subscription is active. After grantPermissions resolves to
-    // 'granted', clearPermissions resets it to 'default', giving the
-    // component the correct starting state.
-    await context.clearPermissions();
-
-    await page.addInitScript(() => {
-      const W = window as unknown as Record<string, unknown>;
-      W.__requestPermissionCalls = 0;
-      const orig = window.Notification?.requestPermission?.bind(window.Notification);
-      if (orig) {
-        window.Notification.requestPermission = () => {
-          (W.__requestPermissionCalls as number)++;
-          return orig();
-        };
-      }
-    });
-
-    await page.goto('/');
-    // Open the user menu; activate the opt-in affordance.
-    await page.getByTestId('user-menu-trigger').click();
-    await page.getByTestId('push-opt-in-button').click();
-
-    await expect
-      .poll(async () =>
-        page.evaluate(
-          () => (window as unknown as { __requestPermissionCalls: number }).__requestPermissionCalls,
-        ),
-      )
-      .toBe(1);
   });
 });
 
