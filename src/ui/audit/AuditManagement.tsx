@@ -20,6 +20,13 @@
  * actor-filter is effectively useless for them; the UI still shows
  * the input rather than removing it, so the filter bar's shape is
  * invariant across roles.
+ *
+ * Recipient-scope toggle (AC-200, §8.13.1): default mode narrows the
+ * feed to rows the caller would receive per the resolved notification-
+ * rule set — `recipientScope = true` on the wire. The `"Alles anzeigen"`
+ * toggle flips the client to the full RBAC-scoped feed (`recipientScope`
+ * omitted). State is local only; navigating away and back resets to the
+ * default — a fresh mount re-initializes `showAll = false`.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -29,6 +36,7 @@ import { STRINGS } from '@/config/strings';
 import type { AuditEntityType, AuditListParams } from '@/domain/audit';
 import { ActivityFeed } from './ActivityFeed';
 import { AuditFilterBar, type LocalFilters } from './AuditFilterBar';
+import { AuditScopeToggle } from './AuditScopeToggle';
 import styles from './AuditManagement.module.css';
 
 const ENTITY_TYPE_OPTIONS: { value: AuditEntityType; label: string }[] = [
@@ -95,6 +103,13 @@ export function AuditManagement() {
   const [dateError, setDateError] = useState<string | null>(null);
   const [entityLabelError, setEntityLabelError] = useState<string | null>(null);
   const [actorIdError, setActorIdError] = useState<string | null>(null);
+  /**
+   * `showAll = false` is the default recipient-scoped mode (AC-200). A
+   * fresh mount always starts in the default; navigating away and back
+   * unmounts/remounts this component, so the toggle resets without any
+   * bespoke lifecycle handling.
+   */
+  const [showAll, setShowAll] = useState(false);
 
   // Load the user list once for the actor dropdown. Callers without
   // `user:read` skip this — the actor filter falls back to a free-text
@@ -113,6 +128,13 @@ export function AuditManagement() {
   // and (b) pass shape validation. A too-short entityLabelQuery or an
   // invalid UUID in actorId is surfaced via the validation error and
   // NOT sent to the server.
+  //
+  // `recipientScope = true` goes on the wire in the default mode. When
+  // the user flips to "Alles anzeigen" the parameter is omitted so the
+  // server returns the full RBAC-scoped feed unchanged. Omission rather
+  // than `false` keeps the API contract minimal: the server's default
+  // (no narrowing) is implicit, and a `recipientScope=false` value
+  // would need a separate contract clause to document as equivalent.
   const appliedFilters = useMemo<AuditListParams>(() => {
     const out: AuditListParams = {};
     if (local.entityType) out.entityType = local.entityType;
@@ -123,8 +145,9 @@ export function AuditManagement() {
     if (local.action) out.action = local.action;
     if (local.from) out.from = localStartOfDayIso(local.from);
     if (local.to) out.to = localEndOfDayIso(local.to);
+    if (!showAll) out.recipientScope = true;
     return out;
-  }, [local]);
+  }, [local, showAll]);
 
   const filterKey = useMemo(() => JSON.stringify(appliedFilters), [appliedFilters]);
 
@@ -178,6 +201,31 @@ export function AuditManagement() {
     return null;
   }
 
+  // Empty-state copy selection:
+  //   - `Alles anzeigen` (showAll) → always `"Keine Aktivität"` (AC-185).
+  //   - Default recipient-scoped mode with NO user-applied filters → the
+  //     distinctive AC-200 literal so the user learns why the feed is
+  //     empty and what the toggle does.
+  //   - Default recipient-scoped mode WITH user-applied filters → fall
+  //     back to `"Keine Aktivität"`. AC-200's distinctive copy is for
+  //     "rules exist but none admit the caller"; when a filter is
+  //     narrowing the result set the user already has context, and the
+  //     recipient-scoping wording is misleading.
+  const hasUserFilters =
+    !!local.entityType ||
+    !!local.entityLabelQuery ||
+    !!local.actorId ||
+    !!local.action ||
+    !!local.from ||
+    !!local.to;
+  const emptyState =
+    showAll || hasUserFilters
+      ? undefined
+      : {
+          testId: 'activity-recipient-empty-state',
+          message: STRINGS.audit.emptyStateRecipient,
+        };
+
   return (
     <div className={styles.container}>
       <h2 className={styles.heading}>{STRINGS.audit.heading}</h2>
@@ -193,6 +241,8 @@ export function AuditManagement() {
         onClear={clearFilters}
       />
 
+      <AuditScopeToggle showAll={showAll} onChange={setShowAll} />
+
       {dateError && <div className={styles.validationError}>{dateError}</div>}
       {entityLabelError && <div className={styles.validationError}>{entityLabelError}</div>}
       {actorIdError && <div className={styles.validationError}>{actorIdError}</div>}
@@ -202,6 +252,7 @@ export function AuditManagement() {
         filterKey={filterKey}
         testId="audit-list"
         layout="table"
+        emptyState={emptyState}
       />
     </div>
   );

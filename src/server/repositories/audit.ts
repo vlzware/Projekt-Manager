@@ -31,6 +31,111 @@ function escapeLike(value: string): string {
 }
 
 /**
+ * SQL predicate restricting the audit feed to rows whose resolved
+ * notification-dispatch recipient set would have included `caller`
+ * (verification.md AC-200 — the Aktivität "Meine Benachrichtigungen"
+ * default view).
+ *
+ * Structure — a single EXISTS subquery over `notification_rule`:
+ *   - Rule is enabled.
+ *   - Rule's `event_class` matches the `(entity_type, action)` → class
+ *     map from `src/config/notificationEvents.ts`. Encoded inline as a
+ *     CASE expression — the map is closed and not user-editable
+ *     (data-model.md §5.11), so inlining keeps the predicate composable
+ *     in SQL without a server-side round trip. A row whose
+ *     `(entity_type, action)` is not in the map yields NULL from the
+ *     CASE and cannot match any rule → excluded (expected).
+ *   - `state_filter` semantics: NULL matches any `after.status` (or no
+ *     status at all); a non-null filter matches only when the payload's
+ *     `after.status` equals the filter (mirrors `ruleMatches` in
+ *     notificationRecipientResolver.ts — the non-transition classes
+ *     only carry NULL per AC-190, so the branch collapses for them).
+ *   - Recipient-spec match — at least one of:
+ *       a) Role overlap: caller's roles intersect the rule's
+ *          `recipient_spec.roles` jsonb array. Encoded with
+ *          `jsonb_array_elements_text` + a caller-roles array literal.
+ *          Cheap: roles are a tiny bounded set.
+ *       b) Assigned-worker match: rule has `includeAssignedWorkers =
+ *          true`, the row's entity is project-scoped
+ *          (`project` / `project_worker`), and caller is on
+ *          `project_workers` for `audit_log.entity_id` (entity_id is
+ *          the project id in both cases per the single-write-path
+ *          convention — see `extractProjectId` in
+ *          notificationRecipientResolver.ts).
+ *       c) Explicit userIds membership: caller.id is a string element
+ *          of the rule's `recipient_spec.userIds` jsonb array. The `?`
+ *          operator tests jsonb key-or-string-array-element existence.
+ *
+ * Caller liveness: `AuthUser` is produced by the auth middleware, which
+ * rejects inactive users with `SESSION_EXPIRED` (401) before the route
+ * runs. Dispatch-time also drops inactive users (AC-192 / AC-203) — so
+ * no live caller reaches this code path with `active = false`, and the
+ * predicate intentionally does not re-check liveness.
+ *
+ * Returns `null` when `recipientScope` is false/omitted — the caller
+ * composes the result into the WHERE clause with `and(...)` so a null
+ * collapses to a no-op filter.
+ */
+function auditRecipientScopePredicate(caller: AuthUser, enabled: boolean): SQL | null {
+  if (!enabled) return null;
+
+  // Literal SQL array of caller roles — constructed once. Empty arrays
+  // are safe: Postgres array overlap `&&` on two empty arrays returns
+  // false, so a caller with no roles cannot match the role clause.
+  const rolesLiteral = sql.join(
+    caller.roles.map((role) => sql`${role}`),
+    sql`, `,
+  );
+  const callerRolesArray =
+    caller.roles.length > 0 ? sql`ARRAY[${rolesLiteral}]::text[]` : sql`ARRAY[]::text[]`;
+
+  return sql`EXISTS (
+    SELECT 1 FROM notification_rule nr
+    WHERE nr.enabled = TRUE
+      AND nr.event_class = (
+        CASE
+          WHEN audit_log.entity_type = 'project' AND audit_log.action = 'transition:forward'
+            THEN 'project.transition_forward'
+          WHEN audit_log.entity_type = 'project' AND audit_log.action = 'transition:backward'
+            THEN 'project.transition_backward'
+          WHEN audit_log.entity_type = 'project' AND audit_log.action = 'archive'
+            THEN 'project.archived'
+          WHEN audit_log.entity_type = 'project_worker' AND audit_log.action = 'create'
+            THEN 'project.assignment_changed'
+          WHEN audit_log.entity_type = 'project_worker' AND audit_log.action = 'delete'
+            THEN 'project.assignment_changed'
+          ELSE NULL
+        END
+      )
+      AND (
+        nr.state_filter IS NULL
+        OR nr.state_filter = (audit_log.payload -> 'after' ->> 'status')
+      )
+      AND (
+        -- (a) role overlap
+        EXISTS (
+          SELECT 1 FROM jsonb_array_elements_text(nr.recipient_spec -> 'roles') AS r(role)
+          WHERE r.role = ANY(${callerRolesArray})
+        )
+        OR
+        -- (b) includeAssignedWorkers, project-scoped rows only
+        (
+          (nr.recipient_spec ->> 'includeAssignedWorkers')::boolean = TRUE
+          AND audit_log.entity_type IN ('project', 'project_worker')
+          AND EXISTS (
+            SELECT 1 FROM project_workers pw
+            WHERE pw.project_id = audit_log.entity_id
+              AND pw.user_id = ${caller.id}
+          )
+        )
+        OR
+        -- (c) explicit userIds membership — jsonb ? operator on a string array
+        (nr.recipient_spec -> 'userIds') ? ${caller.id}
+      )
+  )`;
+}
+
+/**
  * Joined audit row shape returned from the repository, before the
  * service-layer redacts it per role. Carries the raw DB column values
  * plus the joined actor display name (when the actor is a user).
@@ -73,6 +178,14 @@ export interface ListAuditOpts {
   from?: Date;
   to?: Date;
   action?: string;
+  /**
+   * When true, narrow the feed to rows whose resolved dispatch recipient
+   * set would have included the caller (verification.md AC-200 — the
+   * Aktivität default view). Composes AND with every other filter and
+   * is applied BEFORE offset/limit so pagination never drops matching
+   * rows. Default false preserves the full RBAC-scoped feed (AC-180).
+   */
+  recipientScope?: boolean;
 }
 
 /** Re-exported so route-layer schema validation pins the same set. */
@@ -116,6 +229,9 @@ export async function listAuditEntries(
 
   const destructive = auditDestructiveScopeForCaller(caller);
   if (destructive) conditions.push(destructive);
+
+  const recipientScope = auditRecipientScopePredicate(caller, opts.recipientScope === true);
+  if (recipientScope) conditions.push(recipientScope);
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

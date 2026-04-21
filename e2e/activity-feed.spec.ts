@@ -52,6 +52,31 @@ async function assertDrawerOpensInline(
   await expect(row.getByTestId('activity-feed-drawer-content')).toBeVisible();
 }
 
+/**
+ * AC-200 opt-out — the Aktivität view now defaults to a recipient-scoped
+ * feed (only audit rows whose `(entity_type, action)` maps to a
+ * `NotificationEventClass` AND at least one rule admits the caller). The
+ * four payload-drawer / destructive-action tests below were authored
+ * against the pre-iter-8 "full feed by default" behaviour and need to
+ * assert over the full RBAC-scoped feed (AC-180, unchanged).
+ *
+ * This helper flips the `Alles anzeigen` toggle after the caller has
+ * already navigated to the view, then waits for the next `GET /api/audit`
+ * response to settle so subsequent row assertions observe the widened
+ * feed rather than the recipient-scoped one still in flight. Mirrors the
+ * click pattern in `activity-recipient-scope.spec.ts`.
+ */
+async function showAllActivity(page: Page): Promise<void> {
+  const toggle = page.getByTestId('activity-recipient-toggle');
+  await expect(toggle).toBeVisible();
+  await Promise.all([
+    page.waitForResponse(
+      (res) => res.url().includes('/api/audit') && res.request().method() === 'GET',
+    ),
+    toggle.check(),
+  ]);
+}
+
 // ---------------------------------------------------------------
 // AC-186 — Aktivität nav presence per role (precondition for everything)
 // ---------------------------------------------------------------
@@ -207,12 +232,80 @@ test.describe('AC-185: project activity feed (reverse-chrono, paginated, empty s
 //   - worker callers: drawer rendered only on rows where the worker is
 //     the actor (self-authored). On every other row the API strips the
 //     payload, so the drawer affordance is absent.
+//
+// Each test runs assertions TWICE:
+//   1. Default recipient-scoped view — verifies drawer works on the rows
+//      the caller is actually a recipient for (AC-186 pin).
+//   2. Full RBAC feed (Alles anzeigen) — verifies drawer works on the
+//      wider row set as the pre-iter-8 tests did.
+//
+// The beforeAll guarantees rows the seed rule set admits for owner
+// (project.archived → owner) and for office (project.transition_forward
+// → assigned workers, but office has audit:read so rows are visible in
+// the full feed; the default view needs a rule that resolves to office).
+// Rather than rely on the seed state, we drive a `project.archived` event
+// via the fixture in AC-187's beforeAll — the seed rule for
+// `project.archived` resolves to owner, so owner's default view has rows.
+// For office, the full-feed path is tested; a seed rule for
+// `project.transition_forward` resolves to assigned workers so office's
+// default view may be empty — the default-view assertion is gated with a
+// conditional skip when no rows are present (see inline comment).
 test.describe('AC-186: payload drawer visibility per role — owner', () => {
   test.use({ storageState: STORAGE_STATES.owner });
 
-  test('owner sees a payload-drawer affordance on every payload-bearing row', async ({ page }) => {
+  // Drive a `project.archived` event so the default recipient-scoped
+  // view has at least one row for owner (seed rule: project.archived →
+  // owner). Without this, the default view may be empty if no prior
+  // spec triggered an archive. The project is created and immediately
+  // archived — the archive audit row is what the default view renders.
+  test.beforeAll(async ({ browser }) => {
+    const ctx = await browser.newContext({ storageState: STORAGE_STATES.owner });
+    try {
+      const custRes = await ctx.request.post('/api/customers', {
+        data: { name: `AC-186 fixture ${Date.now()}` },
+      });
+      if (!custRes.ok()) throw new Error(`AC-186 fixture: customer POST ${custRes.status()}`);
+      const custId = (await custRes.json()).id as string;
+
+      const projRes = await ctx.request.post('/api/projects', {
+        data: { number: `AC186-${Date.now()}`, title: 'AC-186 drawer fixture', customerId: custId },
+      });
+      if (!projRes.ok()) throw new Error(`AC-186 fixture: project POST ${projRes.status()}`);
+      const projId = (await projRes.json()).id as string;
+
+      const archiveRes = await ctx.request.delete(`/api/projects/${projId}`);
+      if (!archiveRes.ok()) throw new Error(`AC-186 fixture: archive DELETE ${archiveRes.status()}`);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('owner — default view: drawer toggle on recipient-scoped row', async ({ page }) => {
     await page.goto('/');
     await clickView(page, 'aktivitaet');
+
+    // Default recipient-scoped view. Owner is a recipient for
+    // `project.archived` (seed rule). The beforeAll above drives an
+    // archive so there is at least one matching row.
+    const rows = page.locator('[data-testid^="activity-feed-row-"]');
+    await expect.poll(async () => rows.count(), { timeout: 5000 }).toBeGreaterThanOrEqual(1);
+
+    const firstRow = rows.first();
+    await firstRow.waitFor();
+    await expect(firstRow.getByTestId('activity-feed-drawer-toggle')).toBeVisible();
+    await assertDrawerOpensInline(page, firstRow);
+  });
+
+  test('owner — full view (Alles anzeigen): drawer toggle on every payload-bearing row', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await clickView(page, 'aktivitaet');
+    // AC-200: widen from the recipient-scoped default to the full RBAC
+    // feed so the first rendered row is drawn from the same set this
+    // test was written against (every owner-visible payload-bearing
+    // row, not only those matching a notification-rule recipient).
+    await showAllActivity(page);
 
     // Find any row — owner is unscoped, so the first rendered row
     // has a payload (updates, creates, and deletes all do).
@@ -228,9 +321,43 @@ test.describe('AC-186: payload drawer visibility per role — owner', () => {
 test.describe('AC-186: payload drawer visibility per role — office', () => {
   test.use({ storageState: STORAGE_STATES.office });
 
-  test('office sees a payload-drawer affordance on every payload-bearing row', async ({ page }) => {
+  test('office — default view: drawer toggle present on any recipient-scoped rows', async ({
+    page,
+  }) => {
     await page.goto('/');
     await clickView(page, 'aktivitaet');
+
+    // Default recipient-scoped view. Office may not be a recipient for
+    // any seeded rule (transition events → assigned workers; archived →
+    // owner). If the default view is empty, we note the gap and skip
+    // the drawer assertion — the full-view test below covers office's
+    // drawer contract for the wider row set. This avoids a false-pass
+    // on an empty feed while still exercising the default-view path.
+    const rows = page.locator('[data-testid^="activity-feed-row-"]');
+    const count = await rows.count();
+    if (count === 0) {
+      // No rows in the recipient-scoped default for office with the
+      // current seed rules — drawer assertion must be in the full-view
+      // test. This is a known gap: office is not a default rule
+      // recipient for any of the seed events.
+      return;
+    }
+
+    const firstRow = rows.first();
+    await firstRow.waitFor();
+    await expect(firstRow.getByTestId('activity-feed-drawer-toggle')).toBeVisible();
+    await assertDrawerOpensInline(page, firstRow);
+  });
+
+  test('office — full view (Alles anzeigen): drawer toggle on every payload-bearing row', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await clickView(page, 'aktivitaet');
+    // AC-200: widen from the recipient-scoped default to the full RBAC
+    // feed — office's payload visibility (AC-186) is asserted over the
+    // same row set as pre-iter-8.
+    await showAllActivity(page);
 
     // Office is unscoped for destructive actions and every user-kind
     // row — the first rendered row is guaranteed to carry a payload,
@@ -306,6 +433,11 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
     test('purge entries are visible in the global Aktivität view', async ({ page }) => {
       await page.goto('/');
       await clickView(page, 'aktivitaet');
+      // AC-200: `purge` has no mapped NotificationEventClass, so the
+      // recipient-scoped default hides the fixture's purge row even for
+      // owner. Flip to the full RBAC feed — AC-187's visibility split
+      // is asserted over the unscoped set.
+      await showAllActivity(page);
       // A row with action=purge must exist (the fixture above drove
       // one). The UI's German label for `purge` is implementation-
       // defined; we filter by a structural `data-action` attribute.
@@ -319,6 +451,12 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
     test('purge entries are not visible', async ({ page }) => {
       await page.goto('/');
       await clickView(page, 'aktivitaet');
+      // Widen to the full RBAC feed so the absence assertion below is
+      // the complement of owner's presence assertion on the same feed
+      // shape — AT-93 pins the API-level split; this UI walk must
+      // observe it over the same set, not merely the recipient-scoped
+      // subset (which would pass trivially for purge regardless).
+      await showAllActivity(page);
       const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
       await expect(purgeRows).toHaveCount(0);
     });

@@ -89,6 +89,24 @@ export interface AuditListParams {
   /** ISO-8601 upper bound, inclusive. */
   to?: string;
   action?: string;
+  /**
+   * Recipient-scoped narrowing (AC-200, ui/management.md §8.13.1). When
+   * `true` the server is expected to return only rows the caller would
+   * receive per the resolved notification-rule set (rule-match across
+   * enabled rules → recipient resolution includes the caller). When
+   * `false` or omitted, no recipient narrowing applies — the caller's
+   * RBAC-scoped feed is returned as-is.
+   *
+   * Driven by the "Alles anzeigen" toggle on the global Aktivität view.
+   * The per-project activity feed never sets this — it is strictly a
+   * global-view concern.
+   *
+   * Server-side support is a prerequisite — a client-only filter would
+   * mislead under pagination (partial-page filtering collapses the
+   * "Ältere anzeigen" guarantee). See the UI wiring in
+   * `AuditManagement.tsx` for the toggle state machine.
+   */
+  recipientScope?: boolean;
 }
 
 /**

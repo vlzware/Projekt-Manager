@@ -6,7 +6,9 @@
  * Responsibilities:
  *  - Instantiate a per-mount audit store (see `createAuditStore()`).
  *  - Trigger a fetch with the passed-in filter on mount and on filterKey change.
- *  - Render the empty state ("Keine Aktivität") when the result set is empty.
+ *  - Render the empty state when the result set is empty — default
+ *    "Keine Aktivität" (AC-185) or the caller-supplied override used by
+ *    the global Aktivität view's recipient-scoped mode (AC-200).
  *  - Render rows in the requested layout.
  *  - Offer an "Ältere anzeigen" action when more rows remain.
  *
@@ -56,12 +58,30 @@ interface Props {
    * action, payload).
    */
   layout?: 'list' | 'table';
+  /**
+   * Override for the empty-state cell. Used by the global Aktivität view
+   * under recipient-scoped mode (AC-200) to distinguish "rules exist but
+   * none admit the caller" from "genuinely empty feed". When omitted the
+   * feed falls back to the default `"Keine Aktivität"` copy pinned by
+   * AC-185 — the per-project feed and the `Alles anzeigen` branch of the
+   * global view both rely on the default.
+   */
+  emptyState?: { testId: string; message: string };
 }
 
 /** Column count of the table layout — drives `colSpan` on empty/loader rows. */
 const TABLE_COLUMN_COUNT = 5;
 
-export function ActivityFeed({ filters, filterKey, testId, inline, layout = 'list' }: Props) {
+export function ActivityFeed({
+  filters,
+  filterKey,
+  testId,
+  inline,
+  layout = 'list',
+  emptyState,
+}: Props) {
+  const emptyTestId = emptyState?.testId ?? 'audit-empty-state';
+  const emptyMessage = emptyState?.message ?? STRINGS.audit.emptyState;
   // One store instance per mount. The empty dependency array is
   // intentional — we never want a remount-equivalent swap of the store
   // on a prop change. Filter changes flow through `fetchList` below.
@@ -118,9 +138,9 @@ export function ActivityFeed({ filters, filterKey, testId, inline, layout = 'lis
                 <td
                   colSpan={TABLE_COLUMN_COUNT}
                   className={tableStyles.emptyCell}
-                  data-testid="audit-empty-state"
+                  data-testid={emptyTestId}
                 >
-                  {STRINGS.audit.emptyState}
+                  {emptyMessage}
                 </td>
               </tr>
             )}
@@ -152,8 +172,8 @@ export function ActivityFeed({ filters, filterKey, testId, inline, layout = 'lis
       {error && <div className={styles.error}>{error}</div>}
       {showLoader && <div className={styles.loader}>{STRINGS.ui.loading}</div>}
       {showEmpty && (
-        <div className={styles.emptyState} data-testid="audit-empty-state">
-          {STRINGS.audit.emptyState}
+        <div className={styles.emptyState} data-testid={emptyTestId}>
+          {emptyMessage}
         </div>
       )}
       {entries.map((entry) => (

@@ -28,6 +28,7 @@ export function toUserResponse(row: UserRow) {
     email: row.email ?? null,
     active: row.active,
     themePreference: narrowThemePreference(row.themePreference),
+    pushMuted: row.pushMuted,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     lastLoginAt: row.lastLoginAt?.toISOString() ?? null,
@@ -121,7 +122,7 @@ export async function updateUser(
 export async function updateSelf(
   db: MutatingDatabase,
   userId: string,
-  patch: { themePreference?: ThemePreference },
+  patch: { themePreference?: ThemePreference; pushMuted?: boolean },
 ): Promise<ReturnType<typeof toUserResponse> | null> {
   const setClause: Record<string, unknown> = {
     updatedAt: new Date(),
@@ -129,6 +130,9 @@ export async function updateSelf(
   };
   if (patch.themePreference !== undefined) {
     setClause.themePreference = patch.themePreference;
+  }
+  if (patch.pushMuted !== undefined) {
+    setClause.pushMuted = patch.pushMuted;
   }
 
   const rows = await db.update(users).set(setClause).where(eq(users.id, userId)).returning();
