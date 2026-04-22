@@ -2,18 +2,24 @@
  * Periodic bulk-download reaper scheduler — sibling of
  * `attachment-orphan-reaper-scheduler.ts`.
  *
+ * Thin caller over `createPeriodicSweeper` (see
+ * `src/server/periodicSweeper.ts`): the timer drive, sustained-
+ * failure backoff, and `stop()` drain are shared with the audit
+ * retention and attachment orphan reaper schedulers.
+ *
  * Sweeps `bulk-downloads/` temp zips past the TTL on the same cadence
  * as the orphan reaper (default 5 min, configurable via
  * `ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES`). The two sweeps are
- * independent — a failure in one does not block the other.
+ * independent — a failure in one does not block the other. The
+ * constants + event names diverge so operators can separate signal-
+ * by-origin in the op-log.
  *
- * Mirrors the orphan-reaper scheduler's exponential-backoff behavior
- * on sustained failures so a misconfigured storage surface cannot log
- * a stream of per-minute errors. The constants + event names diverge
- * so operators can separate signal-by-origin in the op-log.
+ * Single-process invariant (ADR-0021). Multi-replica deployments
+ * would need a lease at this caller site.
  */
 
 import type { StorageClient } from './storage/client.js';
+import { createPeriodicSweeper, type PeriodicSweeperHandle } from './periodicSweeper.js';
 import { runBulkDownloadReaper } from './services/bulk-download-reaper.js';
 import type { ServiceLogger } from './services/Logger.js';
 
@@ -28,81 +34,24 @@ export interface StartBulkDownloadReaperSchedulerOptions {
   logger: ServiceLogger;
 }
 
-export interface BulkDownloadReaperScheduler {
-  stop: () => Promise<void>;
-}
-
-const SUSTAINED_FAILURE_CEILING = 3;
-const MAX_BACKOFF_TICKS = 24;
+export type BulkDownloadReaperScheduler = PeriodicSweeperHandle;
 
 export function startBulkDownloadReaperScheduler(
   opts: StartBulkDownloadReaperSchedulerOptions,
 ): BulkDownloadReaperScheduler {
-  const intervalMs = opts.intervalMinutes * 60 * 1000;
-  let currentSweep: Promise<void> | null = null;
-  const state: SweepState = { consecutiveFailures: 0, ticksToSkip: 0 };
-
-  const handle = setInterval(() => {
-    if (currentSweep) return;
-    if (state.ticksToSkip > 0) {
-      state.ticksToSkip -= 1;
-      return;
-    }
-    currentSweep = sweep(opts, state).finally(() => {
-      currentSweep = null;
-    });
-  }, intervalMs);
-  handle.unref();
-
-  return {
-    stop: async () => {
-      clearInterval(handle);
-      if (currentSweep) await currentSweep;
+  return createPeriodicSweeper({
+    intervalMs: opts.intervalMinutes * 60 * 1000,
+    logger: opts.logger,
+    events: {
+      sweepFailed: EVENT_SWEEP_FAILED,
+      sustainedFailure: EVENT_SUSTAINED_FAILURE,
+      recovered: EVENT_RECOVERED,
     },
-  };
-}
-
-interface SweepState {
-  consecutiveFailures: number;
-  ticksToSkip: number;
-}
-
-async function sweep(
-  opts: StartBulkDownloadReaperSchedulerOptions,
-  state: SweepState,
-): Promise<void> {
-  try {
-    await runBulkDownloadReaper({
-      storage: opts.storage,
-      logger: opts.logger,
-      ttlMinutes: opts.ttlMinutes,
-    });
-    if (state.consecutiveFailures >= SUSTAINED_FAILURE_CEILING) {
-      opts.logger.info({ event: EVENT_RECOVERED }, EVENT_RECOVERED);
-    }
-    state.consecutiveFailures = 0;
-    state.ticksToSkip = 0;
-  } catch (err) {
-    state.consecutiveFailures += 1;
-    opts.logger.error(
-      {
-        event: EVENT_SWEEP_FAILED,
-        error_message: err instanceof Error ? err.message : String(err),
-      },
-      EVENT_SWEEP_FAILED,
-    );
-    if (state.consecutiveFailures === SUSTAINED_FAILURE_CEILING) {
-      opts.logger.error(
-        {
-          event: EVENT_SUSTAINED_FAILURE,
-          error_message: err instanceof Error ? err.message : String(err),
-        },
-        EVENT_SUSTAINED_FAILURE,
-      );
-    }
-    if (state.consecutiveFailures >= SUSTAINED_FAILURE_CEILING) {
-      const exponent = state.consecutiveFailures - SUSTAINED_FAILURE_CEILING + 1;
-      state.ticksToSkip = Math.min(2 ** exponent, MAX_BACKOFF_TICKS);
-    }
-  }
+    sweep: () =>
+      runBulkDownloadReaper({
+        storage: opts.storage,
+        logger: opts.logger,
+        ttlMinutes: opts.ttlMinutes,
+      }),
+  });
 }
