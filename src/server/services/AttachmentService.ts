@@ -610,7 +610,7 @@ export class AttachmentService {
       throw notPermitted();
     }
 
-    const rows = await listByIdsForProject(this.db, projectId, attachmentIds);
+    const rows = await listByIdsForProject(this.db, projectId, attachmentIds, caller);
     // Every requested id must exist on this project.
     if (rows.length !== attachmentIds.length) {
       throw validationError(STRINGS.errors.invalidInput);

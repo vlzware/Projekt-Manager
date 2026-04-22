@@ -136,17 +136,26 @@ export async function listOrphans(db: Database, cutoffTime: Date): Promise<Attac
  * Fetch attachments on a project regardless of status — used by the
  * bulk-download service to detect pending rows inside the batch
  * (AC-216 "any id referencing a row with status = 'pending' …").
+ *
+ * The caller's scope predicate is ANDed into the query per ADR-0019,
+ * so a scoped caller hitting ids on an unassigned project gets an
+ * empty result set at the repo layer. The service layer's
+ * `isProjectInScope` precondition still runs first — defence in depth.
  */
 export async function listByIdsForProject(
   db: Database,
   projectId: string,
   ids: string[],
+  caller: AuthUser,
 ): Promise<AttachmentRow[]> {
   if (ids.length === 0) return [];
+  const scope = attachmentScopeForCaller(caller);
+  const conditions = [eq(attachments.projectId, projectId), inArray(attachments.id, ids)];
+  if (scope) conditions.push(scope);
   return db
     .select()
     .from(attachments)
-    .where(and(eq(attachments.projectId, projectId), inArray(attachments.id, ids)));
+    .where(and(...conditions));
 }
 
 /**
