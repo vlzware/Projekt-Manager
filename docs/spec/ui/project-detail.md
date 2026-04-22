@@ -45,10 +45,10 @@ Inline control, visible on the page (not modal). Backed by the existing Update p
 
 ### 8.15.4 Photo Gallery
 
-Displays every `status = 'ready'` attachment with `kind = 'photo'` for the project. Thumbnails use the WebP thumbnail variant via a presigned-GET URL ([api.md §14.2.11](../api.md#14211-attachments)); clicking a thumbnail opens a lightbox that requests the original variant on demand.
+Displays every `status = 'ready'` attachment with `kind = 'photo'` for the project. Thumbnails use the client-generated thumbnail variant via a presigned-GET URL ([api.md §14.2.11](../api.md#14211-attachments)); clicking a thumbnail opens a lightbox that requests the original variant on demand.
 
 - **Upload surface.** Shown for callers with `attachment:write`. Two entry points: a drag-drop zone and a dedicated `Foto aufnehmen` CTA that invokes the platform camera on supporting devices. The CTA is rendered only when the device exposes a camera capability; otherwise only the drag-drop zone is offered.
-- **Client image pipeline.** The browser reads the original file, transcodes HEIC to JPEG when needed, downscales and re-encodes the original while preserving EXIF (including GPS), and additionally produces a WebP thumbnail. Sizing and quality parameters are applied per the `[C]` catalogue entry for attachment client-encoding ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Both objects are then POSTed directly to object storage against the two presigned descriptors returned by init ([api.md §14.2.11](../api.md#14211-attachments)). The app server never sees the bytes. Preserving EXIF (including GPS) matches [kickoff.md](../../project/kickoff.md)'s worker-view expectation that GPS coordinates stay available to the worker; EXIF preservation as a whole is a design choice of this spec.
+- **Client image pipeline.** Before calling init, the browser re-encodes the original (preserving EXIF including GPS) and produces a thumbnail variant, applying the sizing and quality parameters in the `[C]` catalogue entry for attachment client-encoding ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Both objects are then POSTed directly to object storage against the two presigned descriptors returned by init ([api.md §14.2.11](../api.md#14211-attachments)); the app server never sees the bytes. Preserving EXIF (including GPS) matches [kickoff.md](../../project/kickoff.md)'s worker-view expectation that GPS coordinates stay available to the worker; EXIF preservation as a whole is a design choice of this spec. The concrete transcoding steps and the libraries used live in `ARCHITECTURE.md § Attachments Module — Client image pipeline`.
 - **Size cap.** If the re-encoded original exceeds the configured attachment per-file size cap **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)), the client surfaces a German validation message (`"Datei zu groß"`) and does not call init. The cap is also enforced server-side by the presigned policy's `content-length-range`; a mismatch between the two is a client-side bug, not a security gap.
 - **Per-photo controls.** Each thumbnail carries a label dropdown (closed enum — `Foto` by default on photo uploads, selectable from the full enum) and a delete affordance. Delete follows the permission matrix in §8.15.6.
 - **No offline binary processing.** The service worker does not queue, compress, or resume uploads in the background. A page reload cancels an in-flight upload cleanly; the server-side reaper ([data-model.md §6.11](../data-model.md#611-attachment-orphan-reaper)) removes the orphan `pending` row.
@@ -86,16 +86,17 @@ Per-upload states rendered in the gallery and list next to the affected row:
 
 ### 8.15.9 Permissions Summary
 
-| Region                 | `attachment:read` | `attachment:write` | `attachment:delete`                      |
-| ---------------------- | ----------------- | ------------------ | ---------------------------------------- |
-| View gallery + list    | yes               | —                  | —                                        |
-| Upload photo / binary  | —                 | yes (in-scope)     | —                                        |
-| Delete any attachment  | —                 | —                  | owner, office                            |
-| Delete own attachment  | —                 | —                  | worker, within self-delete grace **[C]** |
-| Bulk download (ZIP)    | yes               | —                  | —                                        |
-| Assigned-worker editor | read inherent     | `project:update`   | —                                        |
+Capability-to-region mapping on the project detail page:
 
-Server-side authorization is authoritative ([api.md §14.2.11](../api.md#14211-attachments)); client-side hiding is a UX convenience per [AC-121](../verification.md#1516-management-views).
+| Region                 | Permission required to see / use                                                                                 |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| View gallery + list    | `attachment:read`                                                                                                |
+| Upload photo / binary  | `attachment:write` (worker additionally requires project assignment)                                             |
+| Delete an attachment   | `attachment:delete` (worker additionally requires authorship AND self-delete grace window **[C]** — see §8.15.6) |
+| Bulk download (ZIP)    | `attachment:read`                                                                                                |
+| Assigned-worker editor | read inherent to the page; edit requires `project:update`                                                        |
+
+The role → capability mapping (which role holds `attachment:read`, `attachment:write`, `attachment:delete`) is defined by the permission matrix in [api.md §14.3](../api.md#143-authorization-rules) — that is the SSOT. Server-side authorization is authoritative ([api.md §14.2.11](../api.md#14211-attachments)); client-side hiding is a UX convenience per [AC-121](../verification.md#1516-management-views).
 
 ---
 

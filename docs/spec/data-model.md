@@ -252,7 +252,7 @@ An append-only record of every domain-entity state change. Drives the user-facin
 ```typescript
 type AuditActorKind = 'user' | 'system';
 
-type AuditEntityType = 'project' | 'customer' | 'user' | 'project_worker';
+type AuditEntityType = 'project' | 'customer' | 'user' | 'project_worker' | 'attachment';
 
 interface AuditLogEntry {
   id: string; // UUID
@@ -272,11 +272,11 @@ interface AuditLogEntry {
 Design notes:
 
 - **Append-only from the application.** The application never updates an `audit_log` row and never deletes one through any API, service, or UI path. The retention cleanup job ([§6.10](#610-audit-log-retention)) is the only path that removes rows and operates as infrastructure, not as a domain mutation — it does not itself produce an `audit_log` row.
-- **Scope is domain entities only.** `project`, `customer`, `user`, and `project_worker` are the audited types. Authentication and session events (login, logout, session reap) are security events and surface through the structured logger, not `audit_log` — per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+- **Scope is domain-entity state changes.** `project`, `customer`, `user`, `project_worker`, and `attachment` are the audited types. Authentication and session events (login, logout, session reap) are security events and surface through the structured logger, not `audit_log` — per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
 - **Actor kind semantics.**
   - `user` — an authenticated caller performed the mutation. `actorId` references the `UserAccount.id`; `actorReason` is null.
   - `system` — no authenticated caller is present. `actorId` is null; `actorReason` is required and carries a human-readable cue naming the code path (e.g., `"first-run-bootstrap"`). First-run admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) is the current domain-entity system-actor path. A system entry with an empty or missing `actorReason` is rejected by the database via a CHECK constraint (defense in depth) — else a system write would be invisible in the activity feed.
-- **Action vocabulary.** `action` is free text so new mutation shapes can record without a schema migration. The current vocabulary is `create`, `update`, `delete`, `archive`, `transition:forward`, `transition:backward`, `purge`, `reactivate`, `deactivate`, `password-reset`, `password-change`. `archive` is the `entityType = 'project'` soft-delete action (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)); `delete` and `purge` remain distinct (generic delete for non-project entities, hard-delete on projects respectively). A free-text field is chosen over an enum because the vocabulary is expected to grow with new features (e.g., file uploads introduce `attachment:add` / `attachment:remove`) and an enum would churn the schema; uniqueness and casing are enforced by convention and reviewed at PR time. Each entry in the vocabulary maps to exactly one mutation shape.
+- **Action vocabulary.** `action` is free text so new mutation shapes can record without a schema migration. The current vocabulary is `create`, `update`, `delete`, `archive`, `transition:forward`, `transition:backward`, `purge`, `reactivate`, `deactivate`, `password-reset`, `password-change`, `attachment:add`, `attachment:remove`. `archive` is the `entityType = 'project'` soft-delete action (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)); `delete` and `purge` remain distinct (generic delete for non-project entities, hard-delete on projects respectively). `attachment:add` and `attachment:remove` live on `entityType = 'attachment'`. A free-text field is chosen over an enum because the vocabulary is expected to grow with new features and an enum would churn the schema; uniqueness and casing are enforced by convention and reviewed at PR time. Each entry in the vocabulary maps to exactly one mutation shape.
 - **Payload shape.** `payload` carries the changed fields only, as `{ before, after }` field-keyed objects — not the full row. For a create, `before` is empty and `after` carries the persisted values for every non-server-managed field. For a delete or purge, `after` is empty. For a state transition, `before` and `after` carry `status` and `statusChangedAt`. Full-row snapshots are deliberately excluded (see [ADR-0021 — Alternatives Considered](../adr/0021-audit-log-and-notifications-single-write-path.md#alternatives-considered)).
 - **Entity label snapshot.** `entityLabel` is a nullable text column captured at write time (e.g. a project's `"2026-002 Innenraumgestaltung Weber"`, a customer's `"Firma Weber GmbH"`, a user's `displayName`). Frozen with the audit row so the activity feed stays readable after the target is renamed or purged. Write paths that do not have a natural label (import, retention cleanup) leave it null; the UI falls back to `entityId`. This is display metadata — it is not part of the `{ before, after }` diff contract. For `project_worker` rows specifically, `entityId` is the project's id (not the join-row's composite key) and `entityLabel` is the **worker's** displayName — the feed reads "Jan Nowak wurde zugewiesen" under the owning project's header, so the worker name is the meaningful label, while the project id remains the row's target. Pinned by [AC-188](verification.md#1523-audit-log).
 - **Correlation id.** `correlationId` is a nullable, per-request id set at the route layer and threaded through the service call chain. It groups every audit row produced by one request, enabling a future bulk-undo or one-request trace. Null is valid for entries produced outside a request (bootstrap and other unattended domain-entity writes).
@@ -378,11 +378,11 @@ interface Attachment {
   status: AttachmentStatus; // 'pending' after init; 'ready' after complete + HEAD
   label: AttachmentLabel; // closed set — see below
   kind: AttachmentKind; // 'photo' for image types rendered in the gallery; 'binary' otherwise
-  fileName: string; // client-supplied display name, sanitized
+  fileName: string; // client-supplied display name; sanitized — see design note "Filename sanitization"
   mimeType: string; // from the MIME whitelist — see below
   sizeBytes: number; // size of the original object (not the thumbnail)
   originalKey: string; // opaque storage key for the original object
-  thumbKey?: string; // opaque storage key for the WebP thumbnail; null for non-photo kinds
+  thumbKey?: string; // opaque storage key for the client-generated thumbnail; null for non-photo kinds
   createdAt: string; // ISO 8601
   createdBy?: string; // UserAccount.id — set from the session at init time
 }
@@ -395,10 +395,11 @@ Design notes:
 - **Kind is derived from `mimeType` at init time.** `image/jpeg`, `image/png`, `image/webp`, `image/heic` → `'photo'`. `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` → `'binary'`. Other types are rejected at init.
 - **MIME whitelist** — exactly: `image/jpeg`, `image/png`, `image/webp`, `image/heic`, `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`. Values outside the set are rejected at init.
 - **Size cap** — `sizeBytes` must not exceed the configured per-file cap **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). The server enforces this by constraining the presigned upload and by verifying the HEAD-reported size at complete.
+- **Filename sanitization.** `fileName` must be non-empty, at most 255 characters, with no control characters (`\x00`–`\x1F`, `\x7F`), no path separators (`/`, `\`), and no double-quote (`"`). The double-quote rule exists because `fileName` is interpolated into the storage `Content-Disposition: attachment; filename="…"` header on presigned-GET download responses — a stray quote would let a malicious uploader inject header content. The server rejects violating values at init with `422 VALIDATION_ERROR` and persists no row ([api.md §14.2.11](api.md#14211-attachments)).
 - **Storage keys are opaque.** `originalKey` and `thumbKey` are emitted by the server at init time. Clients treat them as opaque — only the server issues them, and only the server maps them to a download URL (see [api.md §14.2.11](api.md#14211-attachments)).
 - **Ownership.** `createdBy` is set from the session at init time; a client-supplied value is ignored.
 - **Cascade on project hard-delete.** When a project is purged (hard-delete via [api.md §14.2.2](api.md#1422-projects)), all `attachment` rows cascade via FK; the server also deletes the backing objects from storage as part of the purge. Soft-delete (archive) leaves attachments intact.
-- **Referential integrity with the export envelope.** Attachment rows round-trip with Layer 1 per [§5.8](#58-export-envelope); bytes remain storage-owned per [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) and are not part of the envelope. A restored row whose backing objects are absent renders a "Datei fehlt" state in the UI ([ui/project-detail.md §8.15.7](ui/project-detail.md#8157-restored-rows-without-backing-bytes)) and is excluded from the photo gallery and from bulk download. The metadata row stays intact — the mismatch is an operational condition, not a schema error.
+- **Referential integrity with the export envelope.** Attachment rows round-trip with Layer 1 per [§5.8](#58-export-envelope); bytes remain storage-owned per [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) and are not part of the envelope. A restored row whose backing objects are absent is excluded from the photo gallery and from bulk download; the metadata row stays intact — the mismatch is an operational condition, not a schema error. The exact UI rendering (German label, muted placeholder, disabled download action) lives in the SSOT: see [ui/project-detail.md §8.15.7](ui/project-detail.md#8157-restored-rows-without-backing-bytes).
 
 ---
 
@@ -478,6 +479,14 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 - Each run emits exactly one structured operational log line at `info` level with fields `event = 'attachment-orphan-reaper'` (fixed discriminator), `ttl_minutes` (integer — the configured TTL applied, from the `[C]` catalogue above), `removed_count` (non-negative integer — rows deleted in the run; `0` on a no-op run), `ran_at` (ISO 8601 timestamp of the run). The run does not produce an `audit_log` row — attachments stuck at `pending` have never entered the domain (no `ready` ever observed), so removing them is housekeeping, not a domain event.
 - A storage object deletion that fails (object already gone, provider transient error) is logged under the same event with `error_hint` populated; the row is still removed. The goal is to keep the metadata table clean; an object delete that finds nothing is a no-op, not a failure.
 - An in-flight sweep is drained on graceful shutdown before the database pool closes — parity with the session reaper ([verification.md AC-132](verification.md#159-infrastructure)).
+
+### 6.12 Bulk-Download Zip Reaper
+
+- A scheduled job sweeps the object-storage `bulk-downloads/` prefix and removes objects whose `LastModified` age exceeds the configured bulk-zip TTL **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). Rationale: the bulk-download flow ([api.md §14.2.11](api.md#14211-attachments)) stages a per-request zip as `bulk-downloads/<uuid>.zip` so the client can pull it via a short-lived presigned GET; once the presigned URL expires, the zip is dead weight against storage quota.
+- No database row participates — these objects are ephemeral, storage-only artifacts. The reaper therefore operates entirely at the object-storage layer: list by prefix filtered by `LastModified` < cutoff, then `deleteObject` per key.
+- Each run emits exactly one structured operational log line at `info` level with fields `event = 'bulk-download-reaper'` (fixed discriminator), `ttl_minutes` (integer — the configured TTL applied, from the `[C]` catalogue above), `removed_count` (non-negative integer — objects deleted in the run; `0` on a no-op run), `ran_at` (ISO 8601 timestamp of the run). The run does not produce an `audit_log` row — bulk-download zips never entered the domain (no DB row, no `audit_log` event at creation), so removing them is housekeeping.
+- A storage object deletion that fails (object already gone, provider transient error) is logged under the same event with `error_hint` populated; the sweep continues with the next key. Partial progress is acceptable — the next sweep picks up anything left behind.
+- An in-flight sweep is drained on graceful shutdown before the database pool closes — parity with the attachment orphan reaper ([§6.11](#611-attachment-orphan-reaper)) and the session reaper ([verification.md AC-132](verification.md#159-infrastructure)).
 
 ---
 

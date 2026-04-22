@@ -183,7 +183,7 @@ All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives h
 | POST   | `/api/extract`                                                | session | `customer:write`       | none       | LLM email extraction via OpenRouter (ADR-0016). Requires `OPENROUTER_API_KEY` env var.                                                                                                                                                                          |
 | GET    | `/api/audit`                                                  | session | `audit:read`           | none       | List audit entries (ADR-0021). Filters: `entityType`, `entityId`, `entityLabelQuery`, `actorId`, `from`, `to`, `action`. Destructive-action narrowing via `auditDestructiveScopeForCaller` — owner unfiltered, office hides purge / user-delete / role-updates. |
 | GET    | `/api/audit/:id`                                              | session | `audit:read`           | none       | Single audit entry. Out-of-scope rows return `403 NOT_PERMITTED` (parity with AC-147).                                                                                                                                                                          |
-| GET    | `/api/projects/:id/attachments`                               | session | `attachment:read`      | none       | List ready + pending attachments for a project. Narrowed by `attachmentScopeForCaller` (ADR-0019) — workers see rows only on assigned projects.                                                                                                                 |
+| GET    | `/api/projects/:id/attachments`                               | session | `attachment:read`      | none       | List `status='ready'` attachments for a project (`pending` rows excluded — see `AttachmentService.listAttachments`). Narrowed by `attachmentScopeForCaller` (ADR-0019) — workers see rows only on assigned projects.                                            |
 | POST   | `/api/projects/:id/attachments/init`                          | session | `attachment:write`     | none       | Initialize an upload: validate MIME / label / size, write a `pending` row via `mutate()` (`attachment:add`), return one or two presigned POST descriptors (thumbnail-optional).                                                                                 |
 | POST   | `/api/projects/:id/attachments/:attId/complete`               | session | `attachment:write`     | none       | HEAD-verify uploaded objects and flip `pending → ready`. No audit row (AC-219). 409 on already-ready, size/MIME mismatch; 404 if the reaper removed the row.                                                                                                    |
 | DELETE | `/api/projects/:id/attachments/:attId`                        | session | `attachment:delete`    | none       | Hard-delete the row via `mutate()` (`attachment:remove`) and best-effort delete storage objects. Worker is restricted to own rows within the configured self-delete grace (AC-215).                                                                             |
@@ -318,6 +318,52 @@ One GitHub Actions workflow (`ci.yml`) produces an image; one operator-run scrip
 6. Smoke test: `docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"` polls for up to 60 s. Failure dumps the last 50 lines of compose logs and exits non-zero, leaving the previously running version in place.
 
 No automatic deploy. Rationale: [ADR-0012](docs/adr/0012-manual-pull-based-deploy-over-wireguard.md). Day-to-day procedure: [docs/ops/manual-deploy.md](docs/ops/manual-deploy.md). Bootstrap (first-run) procedure: [docs/ops/manual-deploy.md#bootstrap-first-run-on-fresh-vps](docs/ops/manual-deploy.md#bootstrap-first-run-on-fresh-vps).
+
+---
+
+## Attachments Module
+
+Spec contract: [docs/spec/data-model.md §5.13](docs/spec/data-model.md#513-attachment) (entity), [docs/spec/api.md §14.2.11](docs/spec/api.md#14211-attachments) (operations), [docs/spec/ui/project-detail.md §8.15](docs/spec/ui/project-detail.md#815-project-detail-page) (UI surface). This section pins the implementation choices that are implementation-specific and therefore live here rather than in the spec.
+
+### Client image pipeline
+
+`src/domain/imagePipeline.ts` performs all browser-side transformations before the presigned-POST upload.
+
+- **HEIC → JPEG transcoding.** iOS photos arrive as `image/heic`; the pipeline decodes them to a `Canvas` via [`heic-to`](https://www.npmjs.com/package/heic-to) and re-encodes as JPEG. The server MIME whitelist accepts `image/heic` for round-trip integrity but most photos land as JPEG after the client-side pass.
+- **EXIF preservation.** Decode-and-re-encode drops EXIF by default; the pipeline reads EXIF from the source with [`exifr`](https://www.npmjs.com/package/exifr) and writes it back on the JPEG output with [`piexifjs`](https://www.npmjs.com/package/piexifjs). GPS coordinates must survive the pipeline for the worker-view expectation recorded in [kickoff.md](docs/project/kickoff.md).
+- **Downscale + re-encode.** Both the original and the WebP thumbnail are resized by longest-edge and re-encoded at the quality targets in `src/config/attachmentPipeline.ts` (the `[C]` catalogue entry "Attachment client-encoding parameters"). The thumbnail is WebP for better compression at thumbnail scale; the original keeps JPEG for compatibility with Windows Explorer previews.
+- **No offline queue.** The service worker does not intercept attachment uploads — a page reload cancels an in-flight upload cleanly; the server-side orphan reaper removes the `pending` row.
+
+### Server-side orchestration
+
+`src/server/services/AttachmentService.ts` is the single surface that owns the state machine.
+
+- **`pending → ready` transition.** Init writes the `pending` row through `mutate()` (`attachment:add`) and returns presigned-POST descriptors. Complete HEAD-verifies both objects against the storage provider, flips the row to `ready` on match, and is allowlisted in the architecture check as a no-audit state-machine finalize.
+- **Bulk-download zip.** Validates caps, streams the batch through [`archiver`](https://www.npmjs.com/package/archiver) into a temporary `bulk-downloads/<uuid>.zip` object, returns its presigned-GET. The zip is storage-only ephemera — no DB row, no audit row — so the cleanup path is a sibling reaper rather than a `mutate()` deletion.
+- **Orphan reaper.** `src/server/services/attachment-orphan-reaper.ts` removes `status='pending'` rows past their TTL together with their backing objects. Scheduled by `src/server/attachment-orphan-reaper-scheduler.ts` and allowlisted in the architecture check.
+- **Bulk-download zip reaper.** `src/server/services/bulk-download-reaper.ts` sweeps the `bulk-downloads/` object-storage prefix on a schedule and removes zips older than the configured TTL. Scheduled by `src/server/bulk-download-reaper-scheduler.ts`. No DB row participates — the reaper operates entirely at the storage layer (list-by-prefix → `deleteObject` per key). Spec contract: [docs/spec/data-model.md §6.12](docs/spec/data-model.md#612-bulk-download-zip-reaper), [AC-227](docs/spec/verification.md#1526-attachments).
+
+### Lifecycle of a bulk-download zip
+
+```
+client POST bulk-download → AttachmentService.createBulkDownload()
+                              ├─ validate caps (≤20 files, ≤20 MB, no pending, same project)
+                              ├─ stream selected attachments through archiver
+                              ├─ putObject → bulk-downloads/<uuid>.zip
+                              └─ return { url: presignedGet(zipKey, ttl=5 min), expiresAt }
+
+(client downloads via presigned URL within the 5-min TTL)
+
+scheduler tick  → runBulkDownloadReaper()
+                    ├─ list bulk-downloads/ filtered by LastModified < now - TTL
+                    └─ deleteObject(key) for each stale key
+```
+
+The reaper TTL is intentionally longer than the presigned-URL TTL so a client that clicks the download link at the end of its URL window still finds the object.
+
+### Storage client surface
+
+`src/server/storage/client.ts` exports an `AttachmentStorageClient` type that narrows the general `StorageClient` to the operations the attachment module uses: `createPresignedPost`, `createPresignedGet` (with optional attachment-disposition filename so the browser saves by `fileName`), `headObject`, `listObjects`, `deleteObject`. The narrower type lets the orphan reaper and bulk-download reaper fail at compile time against a mock that skips a required operation.
 
 ---
 
