@@ -98,6 +98,7 @@ export interface SummaryData {
  * See architecture.md §11.5.
  */
 export type ViewMode =
+  | 'meineProjekte'
   | 'kanban'
   | 'kalender'
   | 'kunden'

@@ -48,7 +48,7 @@ try {
 async function loginAndSaveState(
   page: Page,
   user: { username: string; displayName: string },
-  landingTestId: 'kanban-board' | 'project-table',
+  landingTestId: 'kanban-board' | 'project-table' | 'my-projects-view',
   statePath: string,
 ): Promise<void> {
   await page.goto('/');
@@ -107,7 +107,8 @@ setup('authenticate office', async ({ page }) => {
 });
 
 setup('authenticate worker', async ({ page }) => {
-  await loginAndSaveState(page, SEED_USERS.worker1, 'kanban-board', STORAGE_STATES.worker);
+  // Worker landing is now `/meine-projekte` (the personal list view).
+  await loginAndSaveState(page, SEED_USERS.worker1, 'my-projects-view', STORAGE_STATES.worker);
 });
 
 setup('authenticate bookkeeper', async ({ page }) => {

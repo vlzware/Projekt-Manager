@@ -43,6 +43,7 @@ export interface RouteCaller {
  * two unions stay in sync; a drift there fails `tsc --noEmit`.
  */
 export type RouteView =
+  | 'meineProjekte'
   | 'kanban'
   | 'kalender'
   | 'kunden'
@@ -81,19 +82,32 @@ function hasRole(caller: RouteCaller, ...roles: Role[]): boolean {
 }
 
 /**
- * Worker / office / owner landing: Kanban (ui/index.md §8.1.2). Kept
+ * Owner / office landing: Kanban (ui/index.md §8.1.2). Worker has its
+ * own personal landing — see `landsOnMeineProjekte` below. Kept
  * explicit so a future role that also has Kanban access (e.g. a new
  * "supervisor") does not accidentally inherit the landing.
  */
 function landsOnKanban(caller: RouteCaller): boolean {
-  return hasRole(caller, 'owner', 'office', 'worker');
+  return hasRole(caller, 'owner', 'office');
+}
+
+/**
+ * Worker landing: a personal "Meine Projekte" list. Workers spend most
+ * of their app time on phones; the kanban board is a manager's view.
+ * The dedicated list is one tap away from any of their projects'
+ * detail pages, with no horizontal scroll and no per-state column
+ * collapse. Kanban + Kalender remain available as secondary nav.
+ */
+function landsOnMeineProjekte(caller: RouteCaller): boolean {
+  return hasRole(caller, 'worker');
 }
 
 function landsOnProjects(caller: RouteCaller): boolean {
-  // Bookkeeper doesn't have Kanban, so they land on Projekte. Checked
-  // by role rather than "no Kanban access" so a future bookkeeper-like
-  // role doesn't implicitly land on Projekte without a spec update.
-  return hasRole(caller, 'bookkeeper') && !landsOnKanban(caller);
+  // Bookkeeper doesn't have Kanban or Meine Projekte, so they land on
+  // Projekte. Checked by role rather than "no other landing" so a
+  // future bookkeeper-like role doesn't implicitly land on Projekte
+  // without a spec update.
+  return hasRole(caller, 'bookkeeper') && !landsOnKanban(caller) && !landsOnMeineProjekte(caller);
 }
 
 /**
@@ -101,6 +115,17 @@ function landsOnProjects(caller: RouteCaller): boolean {
  * §8.7.1`. The Header renders in this order.
  */
 export const ROUTES: readonly RouteEntry[] = [
+  {
+    view: 'meineProjekte',
+    path: '/meine-projekte',
+    label: STRINGS.ui.viewMyProjects,
+    // Worker-only surface — owner/office have richer tools and don't
+    // need a personal "what am I assigned to" view as their first
+    // screen. If office ever needs a personal view, gate via a new
+    // permission rather than widening this role check.
+    canAccess: (u) => hasRole(u, 'worker'),
+    isDefaultFor: landsOnMeineProjekte,
+  },
   {
     view: 'kanban',
     path: '/kanban',

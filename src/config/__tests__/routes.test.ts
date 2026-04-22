@@ -45,14 +45,14 @@ const MATRIX: Record<RoleName, readonly string[]> = {
     'benachrichtigungen',
   ],
   office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
-  worker: ['kanban', 'kalender'],
+  worker: ['meineProjekte', 'kanban', 'kalender'],
   bookkeeper: ['projekte', 'kunden'],
 };
 
 const LANDINGS: Record<RoleName, string> = {
   owner: '/kanban',
   office: '/kanban',
-  worker: '/kanban',
+  worker: '/meine-projekte',
   bookkeeper: '/projects',
 };
 
@@ -67,8 +67,11 @@ describe('ROUTES — per-role nav matrix (AC-75)', () => {
   it('preserves matrix order in the visible list', () => {
     // The header renders in table order; swapping the table order would
     // silently reshuffle the nav buttons.
-    const owner = visibleRoutesForUser(caller('owner')).map((r) => r.view);
-    expect(owner).toEqual(ROUTES.filter((r) => !r.path.includes('/:')).map((r) => r.view));
+    const ownerCaller = caller('owner');
+    const owner = visibleRoutesForUser(ownerCaller).map((r) => r.view);
+    expect(owner).toEqual(
+      ROUTES.filter((r) => !r.path.includes('/:') && r.canAccess(ownerCaller)).map((r) => r.view),
+    );
   });
 
   it('never exposes a Daten tab to a caller without data:export', () => {

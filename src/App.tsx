@@ -9,6 +9,7 @@ import { ROUTES, routeByPath, landingPathForUser } from '@/config/routes';
 import { isInsecureConnection } from '@/config/insecureConnection';
 import { Header } from '@/ui/layout/Header';
 import { Footer } from '@/ui/layout/Footer';
+import { MyProjectsView } from '@/ui/myprojects/MyProjectsView';
 import { KanbanBoard } from '@/ui/kanban/KanbanBoard';
 import { CalendarView } from '@/ui/calendar/CalendarView';
 import { CustomerManagement } from '@/ui/management/CustomerManagement';
@@ -98,6 +99,7 @@ function LandingRedirect() {
 }
 
 const VIEW_ELEMENTS: Record<ViewMode, ReactElement> = {
+  meineProjekte: <MyProjectsView />,
   kanban: <KanbanBoard />,
   kalender: <CalendarView />,
   kunden: <CustomerManagement />,

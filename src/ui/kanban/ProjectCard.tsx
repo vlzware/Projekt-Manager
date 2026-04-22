@@ -5,7 +5,7 @@ import { formatDateRange, formatDateDE } from '@/domain/dateFormat';
 import { isAgingBold, getAgingText } from '@/domain/aging';
 import { useProjectTransition } from '@/hooks/useProjectTransition';
 import { usePermission } from '@/hooks/usePermission';
-import { useUIStore } from '@/state/uiStore';
+import { useOpenProject } from '@/hooks/useOpenProject';
 import styles from './ProjectCard.module.css';
 
 interface ProjectCardProps {
@@ -15,7 +15,7 @@ interface ProjectCardProps {
 export function ProjectCard({ project }: ProjectCardProps) {
   const { canForward, canBackward, forward, backward, inFlight } = useProjectTransition(project);
   const canTransition = usePermission('project:transition');
-  const selectProject = useUIStore((s) => s.selectProject);
+  const openProject = useOpenProject();
   const config = STATE_CONFIG_MAP[project.status];
   const bold = isAgingBold(project.status, project.statusChangedAt);
   const agingText = getAgingText(project.status, project.statusChangedAt);
@@ -26,7 +26,7 @@ export function ProjectCard({ project }: ProjectCardProps) {
   const entryDate = formatDateDE(project.statusChangedAt);
 
   const handleCardClick = () => {
-    selectProject(project.id);
+    openProject(project.id);
   };
 
   const handleForwardClick = (e: React.MouseEvent) => {
