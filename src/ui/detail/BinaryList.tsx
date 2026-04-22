@@ -142,11 +142,16 @@ export function BinaryList({ projectId }: BinaryListProps) {
   };
 
   const [preview, setPreview] = useState<{ url: string; fileName: string } | null>(null);
-  const closePreview = useCallback(() => setPreview(null), []);
+  // Track the blob URL lifecycle: `URL.createObjectURL` must be paired
+  // with `revokeObjectURL` or the browser leaks the buffer. We revoke
+  // eagerly on close and on unmount.
+  const closePreview = useCallback(() => {
+    setPreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+  }, []);
 
-  // Esc-to-close for the PDF preview. Listener installs only while the
-  // preview is open so the rest of the page keeps its normal keyboard
-  // behaviour.
   useEffect(() => {
     if (!preview) return;
     const onKey = (e: KeyboardEvent) => {
@@ -159,13 +164,38 @@ export function BinaryList({ projectId }: BinaryListProps) {
     return () => document.removeEventListener('keydown', onKey);
   }, [preview, closePreview]);
 
+  // Revoke on unmount — covers the case where the component unmounts
+  // while the preview is still open (e.g. navigation away).
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview.url);
+    };
+  }, [preview]);
+
   const handleView = async (bin: Attachment) => {
     const url = await requestDownloadUrl(projectId, bin.id, 'original');
     if (!url) {
       setMissing((prev) => new Set(prev).add(bin.id));
       return;
     }
-    setPreview({ url, fileName: bin.fileName });
+    // The server emits `Content-Disposition: attachment` on the
+    // presigned URL — browsers honour that over iframe embedding and
+    // force a download. To preview inline we fetch the bytes and wrap
+    // them in a same-origin blob URL with MIME `application/pdf`; the
+    // blob URL has no disposition header and the browser renders it
+    // in its native PDF viewer.
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        setMissing((prev) => new Set(prev).add(bin.id));
+        return;
+      }
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+      setPreview({ url: blobUrl, fileName: bin.fileName });
+    } catch {
+      setMissing((prev) => new Set(prev).add(bin.id));
+    }
   };
 
   const handleBulkDownload = async () => {
