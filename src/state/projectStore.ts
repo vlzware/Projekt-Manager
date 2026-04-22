@@ -63,6 +63,19 @@ interface ProjectState {
 /** Monotonic counter to discard stale fetch responses. */
 let fetchSeq = 0;
 
+/**
+ * Per-project serialization for `updateAssignedWorkers`. A second
+ * worker-assignment mutation that fires before the first has settled
+ * would otherwise capture the first's optimistic state as its own
+ * `before` snapshot — a failure would then roll back to the wrong
+ * baseline. Chaining the second call onto the first's promise makes
+ * the two operations strictly sequential: the second's `before` is
+ * whatever the server wrote back (or the revert), which is a true
+ * server-authoritative snapshot. The queue is empty once all chained
+ * calls settle; we drop the entry so the map does not grow unbounded.
+ */
+const ASSIGNED_WORKERS_QUEUE = new Map<string, Promise<unknown>>();
+
 export const useProjectStore = create<ProjectState>((set, get) => {
   /**
    * Shared transition runner used by both forward and backward transitions.
@@ -192,58 +205,78 @@ export const useProjectStore = create<ProjectState>((set, get) => {
       assignedWorkerIds: string[],
       optimisticAssigned: { userId: string; displayName: string }[],
     ): Promise<boolean> => {
-      const before = get().projects.find((p) => p.id === id)?.assignedWorkers;
-      set((s) => ({
-        projects: s.projects.map((p) =>
-          p.id === id ? { ...p, assignedWorkers: optimisticAssigned } : p,
-        ),
-        mutationInFlight: { ...s.mutationInFlight, [id]: true },
-        mutationError: null,
-      }));
+      // Serialize per-project mutations so the second call's `before`
+      // snapshot is the first's committed result (server data or a
+      // revert), not the first's in-flight optimistic state. A chain of
+      // rapidly-dispatched remove-Anna + remove-Bernd thus rolls back
+      // to the right baseline on failure.
+      const prior = ASSIGNED_WORKERS_QUEUE.get(id) ?? Promise.resolve();
+      const task = prior.then(async () => {
+        const before = get().projects.find((p) => p.id === id)?.assignedWorkers;
+        set((s) => ({
+          projects: s.projects.map((p) =>
+            p.id === id ? { ...p, assignedWorkers: optimisticAssigned } : p,
+          ),
+          mutationInFlight: { ...s.mutationInFlight, [id]: true },
+          mutationError: null,
+        }));
 
-      let result;
-      try {
-        result = await projectApi.update(id, { assignedWorkerIds });
-      } catch {
-        set((s) => {
-          const { [id]: _, ...rest } = s.mutationInFlight;
-          return {
-            projects: s.projects.map((p) =>
-              p.id === id ? { ...p, assignedWorkers: before ?? [] } : p,
-            ),
-            mutationError: STRINGS.errors.mutationFailed,
-            mutationInFlight: rest,
-          };
-        });
-        return false;
-      }
-
-      if (!result.ok) {
-        if (result.sessionExpired) {
-          handleSessionExpired();
+        let result;
+        try {
+          result = await projectApi.update(id, { assignedWorkerIds });
+        } catch {
+          set((s) => {
+            const { [id]: _, ...rest } = s.mutationInFlight;
+            return {
+              projects: s.projects.map((p) =>
+                p.id === id ? { ...p, assignedWorkers: before ?? [] } : p,
+              ),
+              mutationError: STRINGS.errors.mutationFailed,
+              mutationInFlight: rest,
+            };
+          });
           return false;
         }
+
+        if (!result.ok) {
+          if (result.sessionExpired) {
+            handleSessionExpired();
+            return false;
+          }
+          set((s) => {
+            const { [id]: _, ...rest } = s.mutationInFlight;
+            return {
+              projects: s.projects.map((p) =>
+                p.id === id ? { ...p, assignedWorkers: before ?? [] } : p,
+              ),
+              mutationError: result.error.message || STRINGS.errors.mutationFailed,
+              mutationInFlight: rest,
+            };
+          });
+          return false;
+        }
+
         set((s) => {
           const { [id]: _, ...rest } = s.mutationInFlight;
           return {
-            projects: s.projects.map((p) =>
-              p.id === id ? { ...p, assignedWorkers: before ?? [] } : p,
-            ),
-            mutationError: result.error.message || STRINGS.errors.mutationFailed,
+            projects: s.projects.map((p) => (p.id === id ? result.data : p)),
             mutationInFlight: rest,
           };
         });
-        return false;
-      }
-
-      set((s) => {
-        const { [id]: _, ...rest } = s.mutationInFlight;
-        return {
-          projects: s.projects.map((p) => (p.id === id ? result.data : p)),
-          mutationInFlight: rest,
-        };
+        return true;
       });
-      return true;
+
+      // Register the task so a rapid follow-up waits for it. The finally
+      // hook drops the queue entry only when no newer chain has already
+      // replaced it — otherwise we would orphan the tail of the chain.
+      ASSIGNED_WORKERS_QUEUE.set(id, task);
+      try {
+        return await task;
+      } finally {
+        if (ASSIGNED_WORKERS_QUEUE.get(id) === task) {
+          ASSIGNED_WORKERS_QUEUE.delete(id);
+        }
+      }
     },
 
     transitionForward: (projectId: string) => {
