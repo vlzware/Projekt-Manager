@@ -14,6 +14,7 @@ import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import { ATTACHMENT_CONFIG } from '@/config/attachmentConfig';
 import { ATTACHMENT_LABELS, canDeleteAttachment } from '@/domain/attachments';
 import type { Attachment, AttachmentLabel, User } from '@/domain/types';
+import { usePermission } from '@/hooks/usePermission';
 import { useAttachmentStore } from '@/state/attachmentStore';
 import { useAuthStore } from '@/state/authStore';
 import { useConfirmStore } from '@/state/confirmStore';
@@ -76,14 +77,16 @@ export function BinaryList({ projectId }: BinaryListProps) {
   const [capError, setCapError] = useState<string | null>(null);
   const users = useUserStore((s) => s.users);
   const fetchUsers = useUserStore((s) => s.fetchUsers);
+  const canReadUsers = usePermission('user:read');
 
   useEffect(() => {
     void fetchForProject(projectId);
   }, [fetchForProject, projectId]);
 
   useEffect(() => {
+    if (!canReadUsers) return;
     void fetchUsers();
-  }, [fetchUsers]);
+  }, [canReadUsers, fetchUsers]);
 
   const userById = useMemo(() => {
     const map = new Map<string, User>();
