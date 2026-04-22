@@ -347,6 +347,32 @@
 
 /* Upload CTA */
 
+/* Drag-drop zone wraps the explicit pickers. The dashed outline +
+   subtle background reuse the existing `fileLabel` language so the
+   region reads as a single upload surface. The active state lifts the
+   border + background to signal "drop will land here." */
+.uploadDropZone {
+  padding: 16px;
+  border: 2px dashed var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-base);
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.uploadDropZoneActive {
+  border-color: var(--color-accent);
+  background: var(--color-surface-sunken);
+}
+
+.uploadDropHint {
+  margin: 0 0 12px;
+  font-size: 0.8rem;
+  color: var(--color-text-subtle);
+  text-align: center;
+}
+
 .uploadControls {
   display: flex;
   flex-wrap: wrap;
@@ -386,6 +412,14 @@
   background: var(--color-surface-raised);
   color: var(--color-text-strong);
   font-size: 0.85rem;
+}
+
+/* Wrapper for pending-upload status rows. Also acts as the
+   `role=status` / `aria-live=polite` surface — children changing
+   triggers an announcement. Plain block so assistive tech is not
+   confused by `display: contents` edge cases. */
+.progressRegion {
+  display: block;
 }
 
 .progressRow {

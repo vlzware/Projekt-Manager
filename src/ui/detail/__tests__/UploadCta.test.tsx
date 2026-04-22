@@ -152,7 +152,11 @@ describe('UploadCta — Erneut versuchen restarts init (AC-225)', () => {
   });
 
   it('retry succeeds when init recovers — banner is cleared', async () => {
-    // First attempt fails, second attempt succeeds.
+    // First attempt fails, second attempt succeeds end-to-end. The
+    // previous version of this test relied on a broken ack set that
+    // masked any downstream failure behind "retry clicked"; post-fix
+    // the banner only clears when the upload actually completes, so
+    // we stub every network step of the happy path.
     initMock
       .mockResolvedValueOnce({
         ok: false,
@@ -176,16 +180,27 @@ describe('UploadCta — Erneut versuchen restarts init (AC-225)', () => {
           },
         },
       });
+    // Presigned POSTs — return a 204 so `postPresignedForm` reads `ok`.
+    const fetchStub = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = fetchStub as unknown as typeof globalThis.fetch;
+    // Complete call — succeeds, which triggers `removePending` and drops
+    // the banner for good.
+    completeMock.mockResolvedValue({ ok: true, data: makeAttachment() });
 
-    render(<UploadCta projectId="p-42" />);
-    await pickFile();
-    await screen.findByTestId('upload-error-banner');
+    try {
+      render(<UploadCta projectId="p-42" />);
+      await pickFile();
+      await screen.findByTestId('upload-error-banner');
 
-    await userEvent.click(screen.getByTestId('upload-retry'));
+      await userEvent.click(screen.getByTestId('upload-retry'));
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('upload-error-banner')).not.toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(screen.queryByTestId('upload-error-banner')).not.toBeInTheDocument();
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 
