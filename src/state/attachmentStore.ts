@@ -53,6 +53,15 @@ interface AttachmentState {
   ) => Promise<void>;
   retryUpload: (clientId: string) => Promise<void>;
   dismissUpload: (clientId: string) => void;
+  /**
+   * Abort the in-flight upload identified by `clientId` and drop its
+   * pending row. No-op if no such upload exists. Safe to call from
+   * unmount / nav-away effects — any concurrent `fetch` wired to the
+   * upload's AbortSignal is cancelled at the transport level.
+   */
+  cancelUpload: (clientId: string) => void;
+  /** Cancel every in-flight upload for `projectId`. */
+  cancelUploadsForProject: (projectId: string) => void;
   deleteAttachment: (projectId: string, attachmentId: string) => Promise<void>;
   requestDownloadUrl: (
     projectId: string,
@@ -82,6 +91,15 @@ interface PendingFileSlot {
 const FILES_BY_CLIENT_ID = new Map<string, PendingFileSlot>();
 
 /**
+ * Per-upload `AbortController` map. Stored outside Zustand state so
+ * the controller survives store rehydration and stays out of the
+ * serialised snapshot. One controller per clientId; aborting it
+ * cancels every transport-level fetch wired to its signal and
+ * short-circuits the orchestrator's subsequent steps.
+ */
+const ABORTERS_BY_CLIENT_ID = new Map<string, AbortController>();
+
+/**
  * Generate a client-side id for a new upload. `crypto.randomUUID()` is
  * available in every modern browser and Node 20+. Falls back to a
  * Math.random-based id only to survive legacy test harnesses.
@@ -103,7 +121,8 @@ async function postPresignedForm(
   descriptor: PresignedPost,
   blob: Blob,
   fileName: string,
-): Promise<{ ok: boolean; status: number }> {
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; status: number; aborted: boolean }> {
   const form = new FormData();
   for (const [k, v] of Object.entries(descriptor.fields)) {
     form.append(k, v);
@@ -111,10 +130,14 @@ async function postPresignedForm(
   // S3 form-upload contract: `file` must be the LAST field.
   form.append('file', blob, fileName);
   try {
-    const res = await fetch(descriptor.url, { method: 'POST', body: form });
-    return { ok: res.ok, status: res.status };
-  } catch {
-    return { ok: false, status: 0 };
+    const res = await fetch(descriptor.url, { method: 'POST', body: form, signal });
+    return { ok: res.ok, status: res.status, aborted: false };
+  } catch (err) {
+    // `AbortError` surfaces here when the signal fires mid-flight.
+    // DOMException-name check keeps the store free of DOM typings.
+    const aborted =
+      err instanceof DOMException ? err.name === 'AbortError' : signal?.aborted === true;
+    return { ok: false, status: 0, aborted };
   }
 }
 
@@ -145,11 +168,18 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       return { pendingUploads: rest };
     });
     FILES_BY_CLIENT_ID.delete(clientId);
+    ABORTERS_BY_CLIENT_ID.delete(clientId);
   }
 
   /**
    * Core upload orchestration — shared by `uploadFile` (fresh) and
    * `retryUpload` (same `clientId`, fresh run-through).
+   *
+   * Each run registers a fresh `AbortController` so cancellation (explicit
+   * `cancelUpload`, project-change, unmount) tears down every in-flight
+   * fetch at the transport level. After any terminal state the controller
+   * is released via `removePending` or the explicit `delete` on a failed
+   * row kept in state.
    */
   async function runUpload(clientId: string, projectId: string): Promise<void> {
     const slot = FILES_BY_CLIENT_ID.get(clientId);
@@ -165,10 +195,24 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
     const { file, hasThumbnail } = slot;
     const label = pending.label;
+    // Abort any prior controller for this clientId (a retry that starts
+    // while a previous attempt's transport is still unwinding) then
+    // install a fresh one.
+    ABORTERS_BY_CLIENT_ID.get(clientId)?.abort();
+    const aborter = new AbortController();
+    ABORTERS_BY_CLIENT_ID.set(clientId, aborter);
+    const signal = aborter.signal;
+
+    const wasAborted = (): boolean => signal.aborted;
 
     try {
       // Step 1 — client image pipeline.
+      // TODO(PR-C coord w/ PR-B): if imagePipeline exposes
+      //   `exceedsRawCap(file, liberalCap)`, call it before `runImagePipeline`
+      //   to fail fast on obviously-too-large inputs and skip the
+      //   decode-and-reencode work entirely. Review finding: frontend.
       const processed = await runImagePipeline(file, { hasThumbnail });
+      if (wasAborted()) return;
 
       // Step 2 — per-file size cap. Enforced server-side by the
       // presigned policy's `content-length-range`; mismatch here is a
@@ -180,13 +224,18 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
       // Step 3 — init (creates a `pending` row + presigned POST
       // descriptors).
-      const initResult = await attachmentApi.initUpload(projectId, {
-        fileName: file.name,
-        mimeType: processed.mimeType,
-        sizeBytes: processed.sizeBytes,
-        label,
-        hasThumbnail: hasThumbnail && processed.thumbnail !== null,
-      });
+      const initResult = await attachmentApi.initUpload(
+        projectId,
+        {
+          fileName: file.name,
+          mimeType: processed.mimeType,
+          sizeBytes: processed.sizeBytes,
+          label,
+          hasThumbnail: hasThumbnail && processed.thumbnail !== null,
+        },
+        signal,
+      );
+      if (wasAborted()) return;
       if (!initResult.ok) {
         if (initResult.sessionExpired) {
           handleSessionExpired();
@@ -209,7 +258,9 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         initData.originalUpload,
         processed.original,
         file.name,
+        signal,
       );
+      if (originalResp.aborted || wasAborted()) return;
       if (!originalResp.ok) {
         markFailed(clientId, STRINGS.errors.mutationFailed);
         return;
@@ -221,7 +272,9 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
           initData.thumbnailUpload,
           processed.thumbnail,
           file.name,
+          signal,
         );
+        if (thumbResp.aborted || wasAborted()) return;
         if (!thumbResp.ok) {
           markFailed(clientId, STRINGS.errors.mutationFailed);
           return;
@@ -230,7 +283,12 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
       // Step 6 — complete (server verifies bytes via HEAD).
       updatePending(clientId, { status: 'completing' });
-      const completeResult = await attachmentApi.completeUpload(projectId, initData.attachment.id);
+      const completeResult = await attachmentApi.completeUpload(
+        projectId,
+        initData.attachment.id,
+        signal,
+      );
+      if (wasAborted()) return;
       if (!completeResult || !completeResult.ok) {
         if (completeResult && completeResult.sessionExpired) {
           handleSessionExpired();
@@ -245,10 +303,18 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       // Step 7 — success. Remove the pending entry and refresh the list.
       removePending(clientId);
       await get().fetchForProject(projectId);
-    } catch {
-      // Catches throws from the pipeline, fetch (rare — we caught inside
-      // `postPresignedForm`), or any unexpected state transition.
+    } catch (err) {
+      // Ignore aborts — the caller intentionally tore the run down; no
+      // user-visible failure banner. Everything else marks failed.
+      const aborted = err instanceof DOMException ? err.name === 'AbortError' : signal.aborted;
+      if (aborted) return;
       markFailed(clientId, STRINGS.errors.mutationFailed);
+    } finally {
+      // Release the controller if it's still the one we installed. If a
+      // retry has already replaced it, leave that entry alone.
+      if (ABORTERS_BY_CLIENT_ID.get(clientId) === aborter) {
+        ABORTERS_BY_CLIENT_ID.delete(clientId);
+      }
     }
   }
 
@@ -318,7 +384,38 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
     },
 
     dismissUpload: (clientId) => {
+      // Dismiss also aborts any transport still in flight — the user
+      // said "forget this" and we should not let a racing POST land a
+      // row after the dismiss.
+      ABORTERS_BY_CLIENT_ID.get(clientId)?.abort();
       removePending(clientId);
+    },
+
+    cancelUpload: (clientId) => {
+      ABORTERS_BY_CLIENT_ID.get(clientId)?.abort();
+      removePending(clientId);
+    },
+
+    cancelUploadsForProject: (projectId) => {
+      const state = get();
+      for (const [id, entry] of Object.entries(state.pendingUploads)) {
+        if (entry.projectId !== projectId) continue;
+        ABORTERS_BY_CLIENT_ID.get(id)?.abort();
+      }
+      // Drop all pending rows for the project in one batched update so
+      // React sees a single re-render instead of N.
+      set((s) => {
+        const next: Record<string, PendingUpload> = {};
+        for (const [id, entry] of Object.entries(s.pendingUploads)) {
+          if (entry.projectId === projectId) {
+            FILES_BY_CLIENT_ID.delete(id);
+            ABORTERS_BY_CLIENT_ID.delete(id);
+            continue;
+          }
+          next[id] = entry;
+        }
+        return { pendingUploads: next };
+      });
     },
 
     deleteAttachment: async (projectId, attachmentId) => {

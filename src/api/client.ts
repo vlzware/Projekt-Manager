@@ -84,6 +84,13 @@ function classifyCode(code: string): ErrorCategory {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
+  /**
+   * Optional `AbortSignal`. When fired mid-flight the fetch rejects
+   * with an `AbortError`; the rejection is caught below and returned
+   * as a `network`-category ApiResult so callers see a consistent
+   * shape. Transport-level cancellation; no UI side effects here.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -107,6 +114,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       headers,
       credentials: 'same-origin',
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal,
     });
   } catch (err) {
     const isNetwork = err instanceof TypeError && /fetch|network/i.test(err.message);
@@ -582,15 +590,18 @@ export const attachmentApi = {
       label: AttachmentLabel;
       hasThumbnail: boolean;
     },
+    signal?: AbortSignal,
   ) =>
     apiCall<AttachmentInitResponse>(`/api/projects/${projectId}/attachments/init`, {
       method: 'POST',
       body: input,
+      signal,
     }),
 
-  completeUpload: (projectId: string, attachmentId: string) =>
+  completeUpload: (projectId: string, attachmentId: string, signal?: AbortSignal) =>
     apiCall<Attachment>(`/api/projects/${projectId}/attachments/${attachmentId}/complete`, {
       method: 'POST',
+      signal,
     }),
 
   delete: (projectId: string, attachmentId: string) =>

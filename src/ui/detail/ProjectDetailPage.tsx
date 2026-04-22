@@ -12,6 +12,7 @@ import { useParams } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import { useProjectStore, type FetchProjectOutcome } from '@/state/projectStore';
+import { useAttachmentStore } from '@/state/attachmentStore';
 import { usePermission } from '@/hooks/usePermission';
 import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
 import { ActivityFeed } from '@/ui/audit/ActivityFeed';
@@ -43,6 +44,17 @@ export function ProjectDetailPage() {
       cancelled = true;
     };
   }, [projectId, fetchProject]);
+
+  // Abort in-flight uploads when the user navigates away or the project
+  // id changes. `useAttachmentStore.getState()` is the stable way to
+  // read the latest action without subscribing (a subscription would
+  // re-run the cleanup effect on every store update). Matches the
+  // store's lifecycle contract in `cancelUploadsForProject`.
+  useEffect(() => {
+    return () => {
+      useAttachmentStore.getState().cancelUploadsForProject(projectId);
+    };
+  }, [projectId]);
 
   if (state.kind === 'loading') {
     return <div className={styles.loading}>{STRINGS.ui.loading}</div>;
