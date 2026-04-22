@@ -18,27 +18,54 @@
   background: var(--color-surface-raised);
   box-shadow: -4px 0 20px rgba(var(--color-overlay-rgb), 0.15);
   z-index: 101;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-.header {
-  padding: 20px;
+/* Row wraps the clickable header button plus the close button as
+   siblings (nested buttons are invalid HTML). The row owns the
+   bottom border so the two sibling buttons visually read as one
+   header strip. */
+.headerRow {
+  display: flex;
+  align-items: stretch;
   border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* Header button is the primary affordance — the whole strip opens
+   the detail page. Strip native button chrome; keep the original
+   padded layout. */
+.header {
+  flex: 1;
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  padding: 20px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background 0.15s;
+}
+
+.header:hover,
+.header:focus-visible {
+  background: var(--color-surface-sunken);
+  outline: none;
 }
 
 .headerInfo {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .projectNumber {
   font-size: 0.85rem;
   color: var(--color-text-muted);
-  margin-bottom: 4px;
 }
 
 .projectTitle {
@@ -47,47 +74,43 @@
   color: var(--color-text);
 }
 
-.headerActions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.openPageButton {
-  padding: 4px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 4px;
-  background: var(--color-surface-base);
-  color: var(--color-text-strong);
-  cursor: pointer;
-  font-size: 0.8rem;
+.headerHint {
+  font-size: 0.75rem;
+  color: var(--color-accent);
   font-weight: 500;
-}
-
-.openPageButton:hover {
-  background: var(--color-surface-sunken);
+  margin-top: 2px;
 }
 
 .closeButton {
-  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
   border: none;
-  background: none;
+  border-left: 1px solid var(--color-border-subtle);
+  background: transparent;
   color: var(--color-text-subtle);
   cursor: pointer;
   font-size: 1.25rem;
   line-height: 1;
+  flex-shrink: 0;
 }
 
-.closeButton:hover {
+.closeButton:hover,
+.closeButton:focus-visible {
   color: var(--color-text-secondary);
+  background: var(--color-surface-muted);
+  outline: none;
 }
 
 .body {
   padding: 20px;
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  overflow-y: auto;
 }
 
 .section {
@@ -114,44 +137,6 @@
   font-weight: 500;
   color: var(--color-text-on-accent);
   width: fit-content;
-}
-
-.transitionButtons {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.forwardBtn {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-  cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: 500;
-  transition: background 0.15s;
-}
-
-.forwardBtn:hover {
-  background: var(--color-accent-hover);
-}
-
-.backwardBtn {
-  padding: 8px 16px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--color-surface-base);
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font-size: 0.85rem;
-  font-weight: 500;
-  transition: background 0.15s;
-}
-
-.backwardBtn:hover {
-  background: var(--color-surface-sunken);
 }
 
 .fieldValue {
@@ -226,4 +211,21 @@
   padding: 10px;
   border-radius: 4px;
   border: 1px solid var(--color-border-muted);
+}
+
+/* Activity section carries its own scroll so a long history does not
+   push the other sections out of reach. Capped to a reasonable slice
+   of viewport height; inside the container the ActivityFeed's rows
+   scroll. */
+.activityBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.activityScroll {
+  max-height: 40vh;
+  overflow-y: auto;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
 }

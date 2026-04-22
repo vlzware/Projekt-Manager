@@ -41,11 +41,16 @@ export async function updateDates(
 
   const project = rows[0]!;
 
-  // Effective dates after the update.
-  // Precedence: new value > existing value > null.
-  // When only plannedStart is sent (no plannedEnd key), plannedEnd is cleared.
+  // Effective dates after the update. PATCH is partial: a key that is
+  // absent means "don't touch". An explicit `null` means "clear". A
+  // string means "set". An earlier version auto-cleared plannedEnd
+  // whenever plannedStart was sent alone — that silently wiped user
+  // data (an edit-start-date flow lost end-date on every save). The
+  // invariant (end >= start, no end-only) is enforced by validation
+  // below; the server surfaces the validator's German message instead
+  // of papering over a conflict with data loss.
   const effectiveStart =
-    dates.plannedStart !== undefined
+    'plannedStart' in dates
       ? dates.plannedStart
         ? new Date(dates.plannedStart)
         : null
@@ -55,9 +60,7 @@ export async function updateDates(
       ? dates.plannedEnd
         ? new Date(dates.plannedEnd)
         : null
-      : dates.plannedStart !== undefined
-        ? null
-        : (project.plannedEnd ?? null);
+      : (project.plannedEnd ?? null);
 
   if (effectiveEnd && !effectiveStart) {
     throw new DateValidationError(STRINGS.projects.endWithoutStart);
@@ -74,15 +77,12 @@ export async function updateDates(
     updatedBy: userId,
   };
 
-  if (dates.plannedStart !== undefined) {
+  if ('plannedStart' in dates) {
     updateData.plannedStart = effectiveStart;
   }
 
   if ('plannedEnd' in dates) {
     updateData.plannedEnd = effectiveEnd;
-  } else if (dates.plannedStart !== undefined) {
-    // Only plannedStart sent without plannedEnd key — clear plannedEnd
-    updateData.plannedEnd = null;
   }
 
   const updated = await db.update(projects).set(updateData).where(eq(projects.id, id)).returning();

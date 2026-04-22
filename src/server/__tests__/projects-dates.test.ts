@@ -147,23 +147,61 @@ describe('Project Operations — Dates', () => {
     });
 
     it('accepts plannedStart without plannedEnd (single-day block)', async () => {
-      // data-model.md §6.8: plannedStart alone is valid — renders as a single-day block
+      // data-model.md §6.8: plannedStart alone is valid — renders as a
+      // single-day block on the calendar. Seed the precondition by
+      // first clearing both dates; then PATCH plannedStart alone.
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      const project = projects.find((p: Record<string, unknown>) => p.plannedStart != null);
+      const project = projects.find(
+        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
+      );
       expect(project).toBeDefined();
+
+      const clearRes = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: null,
+        plannedEnd: null,
+      });
+      expect(clearRes.statusCode).toBe(200);
 
       const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
         plannedStart: '2026-09-01',
-        // No plannedEnd — valid per spec
+        // No plannedEnd — valid per spec (partial PATCH: end stays null)
       });
 
       expect(res.statusCode).toBe(200);
 
       const updated = res.json();
       expect(updated.plannedStart).toContain('2026-09-01');
-      // plannedEnd should be absent or null after this update
       expect(updated.plannedEnd == null).toBe(true);
+    });
+
+    it('PATCH of plannedStart alone preserves an existing plannedEnd (partial PATCH)', async () => {
+      // Regression guard: before this fix the repo auto-cleared
+      // plannedEnd whenever plannedStart was sent alone. That silently
+      // wiped user data on every start-date edit. PATCH is partial —
+      // an absent key means unchanged. If the resulting pair violates
+      // the end >= start invariant, the validator rejects with
+      // VALIDATION_ERROR; it does not paper over the conflict by
+      // clearing end.
+      const listRes = await authGet(token, '/api/projects');
+      const projects = listRes.json().data;
+      const project = projects.find(
+        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
+      );
+      expect(project).toBeDefined();
+
+      const originalEnd = project.plannedEnd as string;
+
+      // Move start earlier so end >= start still holds. The point of
+      // this test is "end is not wiped", not "end migrates with start".
+      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
+        plannedStart: '2026-03-01',
+      });
+
+      expect(res.statusCode).toBe(200);
+      const updated = res.json();
+      expect(updated.plannedStart).toContain('2026-03-01');
+      expect(updated.plannedEnd).toContain(originalEnd.slice(0, 10));
     });
 
     it('clears plannedStart and plannedEnd when null values are sent explicitly', async () => {
