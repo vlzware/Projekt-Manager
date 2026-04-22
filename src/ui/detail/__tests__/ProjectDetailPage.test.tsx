@@ -179,9 +179,9 @@ describe('ProjectDetailPage — layout (spec §8.15.1)', () => {
       'project-detail-activity',
     ];
 
-    const rendered = expectedOrder
-      .map((id) => within(page).queryByTestId(id))
-      .filter((el): el is HTMLElement => el !== null);
+    // `getByTestId` throws on missing — a missing region fails the test
+    // with a clear error rather than silently shortening the list.
+    const rendered = expectedOrder.map((id) => within(page).getByTestId(id));
 
     expect(rendered.map((el) => el.getAttribute('data-testid'))).toEqual(expectedOrder);
   });
