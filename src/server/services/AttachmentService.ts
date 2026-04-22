@@ -414,7 +414,10 @@ export class AttachmentService {
     // Flip pending → ready via a MutatingDatabase (no audit row, so we
     // use db.transaction directly — AC-219). A racing reaper between
     // the HEAD checks and this write surfaces as 404 on the next read,
-    // which matches the client contract.
+    // which matches the client contract. The reaper may delete this
+    // row during the HEAD→markReady gap; a storage object verified by
+    // HEAD but not-yet-marked-ready can remain orphaned for up to one
+    // reaper tick before the next sweep cleans it up.
     const updated = await this.db.transaction(async (tx) => markReady(tx, attachmentId));
     if (!updated) {
       // Either the row disappeared between the get + markReady calls
