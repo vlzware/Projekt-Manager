@@ -78,6 +78,14 @@ export interface AuditListParams {
   entityType?: AuditEntityType;
   entityId?: string;
   /**
+   * Ancestor-scoped filter (architecture.md §11.12). Returns every row
+   * whose write-time ancestor link equals `(ancestorType, ancestorId)`.
+   * Used by the project-detail activity feed so the one call returns
+   * project rows plus nested entities (worker assignments, attachments).
+   */
+  ancestorType?: AuditEntityType;
+  ancestorId?: string;
+  /**
    * Case-insensitive substring match on `entityLabel`. Min 3 chars so
    * the server's GIN trigram index can serve the query (api.md §14.2.8).
    * Rows with a null label are excluded.

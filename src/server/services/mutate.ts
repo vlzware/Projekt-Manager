@@ -111,6 +111,23 @@ export interface MutateResult<T> {
    * natural label exists; the UI falls back to the entityId.
    */
   entityLabel?: string | null;
+  /**
+   * Ancestor-link snapshot (architecture.md §11.12). Populated at write
+   * time so the per-parent activity feed can fetch every row scoped to a
+   * project in one indexed predicate. Services return both fields — or
+   * neither, for top-level entities (`customer`, `user`).
+   *
+   * Write-time convention:
+   *   - `entityType='project'`        → `('project', entityId)` (self-ancestor).
+   *   - `entityType='project_worker'` → `('project', projectId)`.
+   *   - `entityType='attachment'`     → `('project', projectId)`.
+   *   - `entityType='customer'|'user'` → omit.
+   *
+   * Both-or-neither is enforced at the service layer (`validateAncestor`)
+   * and by the DB CHECK `audit_log_ancestor_pair`.
+   */
+  ancestorEntityType?: AuditEntityType;
+  ancestorEntityId?: string;
 }
 
 /**
@@ -170,6 +187,7 @@ export async function mutateInTx<T>(
   validateContext(ctx);
 
   const domainResult = await spec.run(tx);
+  validateAncestor(domainResult);
 
   const payload = {
     before: domainResult.before ?? {},
@@ -185,6 +203,8 @@ export async function mutateInTx<T>(
       entityType: spec.entityType,
       entityId: domainResult.entityId,
       entityLabel: domainResult.entityLabel ?? null,
+      ancestorEntityType: domainResult.ancestorEntityType ?? null,
+      ancestorEntityId: domainResult.ancestorEntityId ?? null,
       action: spec.action,
       // Drizzle's `jsonb()` column serializes the JS value automatically
       // via the pg driver. The earlier `sql\`${JSON.stringify(...)}::jsonb\``
@@ -210,6 +230,8 @@ export async function mutateInTx<T>(
     entityType: inserted.entityType as AuditEntityType,
     entityId: inserted.entityId,
     entityLabel: inserted.entityLabel,
+    ancestorEntityType: inserted.ancestorEntityType as AuditEntityType | null,
+    ancestorEntityId: inserted.ancestorEntityId,
     action: inserted.action,
     payload: inserted.payload,
     correlationId: inserted.correlationId,
@@ -226,6 +248,25 @@ export async function mutateInTx<T>(
 export async function dispatchAuditRows(rows: AuditLogRow[]): Promise<void> {
   for (const row of rows) {
     await dispatch(row);
+  }
+}
+
+/**
+ * Enforce the both-or-neither ancestor invariant at the service layer
+ * so a programmer error surfaces with a clean stack trace rather than
+ * as a 23514 CHECK violation at commit time. The DB CHECK
+ * `audit_log_ancestor_pair` is the backstop.
+ */
+function validateAncestor(spec: {
+  ancestorEntityType?: unknown;
+  ancestorEntityId?: unknown;
+}): void {
+  const hasType = spec.ancestorEntityType !== undefined && spec.ancestorEntityType !== null;
+  const hasId = spec.ancestorEntityId !== undefined && spec.ancestorEntityId !== null;
+  if (hasType !== hasId) {
+    throw new Error(
+      'mutate(): ancestorEntityType and ancestorEntityId must be provided together or both omitted',
+    );
   }
 }
 

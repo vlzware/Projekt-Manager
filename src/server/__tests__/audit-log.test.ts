@@ -1122,6 +1122,152 @@ describe('AT-107: self-preference carve-out (AC-204)', () => {
 });
 
 // ---------------------------------------------------------------------
+// AT-124 — Ancestor-scoped filter on GET /api/audit
+// (architecture.md §11.12; pins #124)
+// ---------------------------------------------------------------------
+//
+// `ancestorType` + `ancestorId` return every row whose write-time
+// ancestor pair equals the filter — project rows self-ancestor, and
+// nested entities (project_worker, attachment) set their ancestor to
+// the owning project's id. The feed therefore unions every entity
+// type scoped to the project in one indexed predicate.
+describe('AT-124: ancestor-scoped filter unions project + nested entities', () => {
+  let ownerToken: string;
+  let seededCustomerId: string;
+  let projectId: string;
+  let attachmentId: string;
+
+  beforeAll(async () => {
+    await startApp();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+
+    const custList = await authGet(ownerToken, '/api/customers?limit=1');
+    seededCustomerId = (custList.json().customers as { id: string }[])[0]!.id;
+
+    // Drive: create a project (one project row), assign a worker
+    // (one project_worker row), init an attachment (one attachment row).
+    // Each goes through `mutate()`, so each audit row carries the
+    // ancestor-link the read filter asserts against.
+    const createRes = await authPost(ownerToken, '/api/projects', {
+      number: `AT124-${Date.now().toString(36)}`,
+      title: 'AT-124 ancestor-scoped feed',
+      customerId: seededCustomerId,
+    });
+    expect(createRes.statusCode).toBe(201);
+    projectId = createRes.json().id as string;
+
+    // Seed worker assignment — lookup worker1's id first.
+    const { db: lookupDb, pool: lookupPool } = createDatabase();
+    try {
+      const workerLookup = await lookupDb.execute(
+        sql`SELECT id FROM users WHERE username = ${SEED_USERS.worker1.username} LIMIT 1`,
+      );
+      const workerId = (workerLookup.rows[0] as { id: string }).id;
+      const patchRes = await authPatch(ownerToken, `/api/projects/${projectId}`, {
+        assignedWorkerIds: [workerId],
+      });
+      expect(patchRes.statusCode).toBe(200);
+    } finally {
+      await lookupPool.end();
+    }
+
+    // Attachment init. The architecture-check scan rules `attachment` as
+    // allowlisted under __tests__/; using the real API path keeps the
+    // ancestor-write assertion covering the production `AttachmentService`
+    // mutation rather than a raw-insert stand-in.
+    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+      fileName: 'ancestor.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 123,
+      label: 'rechnung',
+      hasThumbnail: false,
+    });
+    expect(initRes.statusCode).toBe(201);
+    attachmentId = initRes.json().attachment.id as string;
+  });
+
+  afterAll(async () => {
+    await stopApp();
+  });
+
+  it('returns project + project_worker + attachment rows scoped to the project id', async () => {
+    const res = await authGet(
+      ownerToken,
+      `/api/audit?ancestorType=project&ancestorId=${projectId}&limit=1000`,
+    );
+    expect(res.statusCode).toBe(200);
+    const entries = res.json().data as AuditApiEntry[];
+
+    // Every returned entry must belong to THIS project (the ancestor
+    // predicate is scoping the feed, not post-hoc filtered).
+    expect(entries.length).toBeGreaterThan(0);
+    for (const e of entries) {
+      // The ancestor fields themselves are not in the API entry shape
+      // (the client filters by them, not renders them). We assert the
+      // predicate worked by checking every row's `entityType` is one
+      // that can carry a project ancestor, AND that the three grain
+      // events we seeded above each appear below.
+      expect(['project', 'project_worker', 'attachment']).toContain(e.entityType);
+    }
+
+    const types = entries.map((e) => e.entityType);
+    expect(types).toContain('project');
+    expect(types).toContain('project_worker');
+    expect(types).toContain('attachment');
+
+    // Attachment row id must match the one we initialized.
+    const attachmentEntry = entries.find(
+      (e) => e.entityType === 'attachment' && e.entityId === attachmentId,
+    );
+    expect(attachmentEntry).toBeDefined();
+  });
+
+  it('AND-composes with action + actor filters', async () => {
+    // The project create emits a single `create` row on entity_type=project.
+    // Narrowing the ancestor-scoped feed to action=create should include
+    // that row AND the worker-assignment create rows (also action=create
+    // on entity_type=project_worker), but must not include the attachment
+    // add row (action=attachment:add).
+    const res = await authGet(
+      ownerToken,
+      `/api/audit?ancestorType=project&ancestorId=${projectId}&action=create&limit=1000`,
+    );
+    expect(res.statusCode).toBe(200);
+    const entries = res.json().data as AuditApiEntry[];
+    expect(entries.length).toBeGreaterThan(0);
+    for (const e of entries) {
+      expect(e.action).toBe('create');
+      expect(['project', 'project_worker']).toContain(e.entityType);
+    }
+  });
+
+  it('excludes rows from a different project + top-level entities', async () => {
+    // Drive a customer create — top-level, ancestor is NULL. It must
+    // NOT appear in an ancestor-scoped feed even when its id matches
+    // a project id by coincidence (the filter keys off the ancestor
+    // pair, not the entity id).
+    const custRes = await authPost(ownerToken, '/api/customers', {
+      name: `AT-124 cross-scope ${Date.now().toString(36)}`,
+    });
+    expect(custRes.statusCode).toBe(201);
+    const otherCustomerId = custRes.json().id as string;
+
+    const res = await authGet(
+      ownerToken,
+      `/api/audit?ancestorType=project&ancestorId=${projectId}&limit=1000`,
+    );
+    expect(res.statusCode).toBe(200);
+    const entries = res.json().data as AuditApiEntry[];
+    const ids = new Set(entries.map((e) => e.entityId));
+    // The customer create row must not appear under the project's
+    // ancestor scope.
+    expect(ids.has(otherCustomerId)).toBe(false);
+    // And no entry with entityType='customer' leaks in.
+    expect(entries.every((e) => e.entityType !== 'customer')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------
 // Housekeeping — defensive cleanup of test-created users/customers.
 //
 // The outer `startApp()` / `stopApp()` pair in each `describe` block

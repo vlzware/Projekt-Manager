@@ -216,6 +216,9 @@ export class ProjectCrudService {
               estimatedValue: row.estimatedValue,
               notes: row.notes,
             },
+            // Project rows self-ancestor (architecture.md §11.12).
+            ancestorEntityType: 'project',
+            ancestorEntityId: row.id,
           };
         },
       });
@@ -239,6 +242,9 @@ export class ProjectCrudService {
               value: null,
               before: {},
               after: { projectId: inserted.id, userId: workerId, displayName },
+              // Nested entity: ancestor = project (architecture.md §11.12).
+              ancestorEntityType: 'project',
+              ancestorEntityId: inserted.id,
             };
           },
         });
@@ -472,6 +478,9 @@ export class ProjectCrudService {
                 value: updated,
                 before,
                 after,
+                // Self-ancestor for a project row (architecture.md §11.12).
+                ancestorEntityType: 'project',
+                ancestorEntityId: id,
               };
             },
           });
@@ -498,6 +507,8 @@ export class ProjectCrudService {
                   value: null,
                   before: { projectId: id, userId: workerId, displayName },
                   after: {},
+                  ancestorEntityType: 'project',
+                  ancestorEntityId: id,
                 };
               },
             });
@@ -516,6 +527,8 @@ export class ProjectCrudService {
                   value: null,
                   before: {},
                   after: { projectId: id, userId: workerId, displayName },
+                  ancestorEntityType: 'project',
+                  ancestorEntityId: id,
                 };
               },
             });
@@ -573,6 +586,8 @@ export class ProjectCrudService {
               value: null,
               before: { number: priorRow.number, title: priorRow.title },
               after: {},
+              ancestorEntityType: 'project',
+              ancestorEntityId: id,
             };
           },
         },
@@ -619,6 +634,8 @@ export class ProjectCrudService {
               value: null,
               before: priorRow ? { number: priorRow.number, title: priorRow.title } : {},
               after: {},
+              ancestorEntityType: 'project',
+              ancestorEntityId: id,
             };
           },
         },

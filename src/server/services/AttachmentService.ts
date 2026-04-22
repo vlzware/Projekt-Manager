@@ -263,6 +263,10 @@ export class AttachmentService {
               mimeType: input.mimeType,
               sizeBytes: input.sizeBytes,
             },
+            // Nested entity: ancestor = project (architecture.md §11.12)
+            // so the per-project activity feed picks this row up.
+            ancestorEntityType: 'project',
+            ancestorEntityId: projectId,
           };
         },
       },
@@ -446,6 +450,8 @@ export class AttachmentService {
               sizeBytes: row.sizeBytes,
             },
             after: {},
+            ancestorEntityType: 'project',
+            ancestorEntityId: projectId,
           };
         },
       },

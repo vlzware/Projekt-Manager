@@ -1,5 +1,5 @@
 {
-  "id": "9029abe2-0a5b-472c-a1fe-68f4747e930f",
+  "id": "aeccc480-16ed-4da7-b18f-cc688901b455",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -242,6 +242,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "ancestor_entity_type": {
+          "name": "ancestor_entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ancestor_entity_id": {
+          "name": "ancestor_entity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "action": {
           "name": "action",
           "type": "text",
@@ -326,6 +338,39 @@
           "method": "btree",
           "with": {}
         },
+        "audit_log_ancestor_idx": {
+          "name": "audit_log_ancestor_idx",
+          "columns": [
+            {
+              "expression": "ancestor_entity_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ancestor_entity_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "audit_log_entity_label_trgm_idx": {
           "name": "audit_log_entity_label_trgm_idx",
           "columns": [
@@ -368,6 +413,14 @@
         "audit_log_entity_type_valid": {
           "name": "audit_log_entity_type_valid",
           "value": "\"audit_log\".\"entity_type\" IN ('project', 'customer', 'user', 'project_worker', 'attachment')"
+        },
+        "audit_log_ancestor_type_valid": {
+          "name": "audit_log_ancestor_type_valid",
+          "value": "\"audit_log\".\"ancestor_entity_type\" IS NULL\n          OR \"audit_log\".\"ancestor_entity_type\" IN ('project', 'customer', 'user', 'project_worker', 'attachment')"
+        },
+        "audit_log_ancestor_pair": {
+          "name": "audit_log_ancestor_pair",
+          "value": "(\"audit_log\".\"ancestor_entity_type\" IS NULL AND \"audit_log\".\"ancestor_entity_id\" IS NULL)\n          OR (\"audit_log\".\"ancestor_entity_type\" IS NOT NULL AND \"audit_log\".\"ancestor_entity_id\" IS NOT NULL)"
         },
         "audit_log_actor_shape": {
           "name": "audit_log_actor_shape",

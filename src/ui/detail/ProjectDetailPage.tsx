@@ -167,7 +167,10 @@ export function ProjectDetailPage() {
         <h3 className={styles.regionHeading}>{STRINGS.attachments.activity}</h3>
         {canReadAudit && (
           <ActivityFeed
-            filters={{ entityType: 'project', entityId: project.id }}
+            // Ancestor-scoped filter (architecture.md §11.12) — returns
+            // project rows + nested-entity rows (project_worker,
+            // attachment) in one indexed query.
+            filters={{ ancestorType: 'project', ancestorId: project.id }}
             filterKey={`project-detail:${project.id}`}
             testId="project-detail-activity-feed"
             inline

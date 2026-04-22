@@ -42,6 +42,15 @@ export interface AuditLogRow {
   entityId: string;
   /** Human-readable label snapshot (data-model.md §5.10). */
   entityLabel: string | null;
+  /**
+   * Ancestor-link snapshot (architecture.md §11.12). Populated at write
+   * time for nested entities (project_worker, attachment) and for
+   * project rows (self-ancestor) so the per-parent activity feed can
+   * fetch every row scoped to a project in one indexed query. Null for
+   * top-level entities (customer, user).
+   */
+  ancestorEntityType: AuditEntityType | null;
+  ancestorEntityId: string | null;
   action: string;
   payload: unknown;
   correlationId: string | null;

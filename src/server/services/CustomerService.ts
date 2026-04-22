@@ -289,6 +289,11 @@ export class CustomerService {
               value: null,
               before: { number: row.number, title: row.title, customerId: row.customerId },
               after: {},
+              // Self-ancestor (architecture.md §11.12) — purged-project
+              // rows remain available under the project's activity feed
+              // filter until audit retention sweeps them.
+              ancestorEntityType: 'project',
+              ancestorEntityId: row.id,
             };
           },
         });

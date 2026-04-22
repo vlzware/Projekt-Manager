@@ -53,6 +53,8 @@ export class ProjectDatesService {
                 plannedStart: r.after.plannedStart,
                 plannedEnd: r.after.plannedEnd,
               },
+              ancestorEntityType: 'project',
+              ancestorEntityId: projectId,
             };
           },
         },

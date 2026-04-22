@@ -53,6 +53,11 @@ export function auditRoutes(db: Database) {
               limit: { type: 'integer', minimum: 1, maximum: 1000 },
               entityType: { type: 'string', enum: [...AUDIT_ENTITY_TYPES] },
               entityId: { type: 'string', format: 'uuid' },
+              // Ancestor-scoped filter (architecture.md §11.12) — powers
+              // the project-detail activity feed by pulling every row
+              // scoped to a project in one indexed predicate.
+              ancestorType: { type: 'string', enum: [...AUDIT_ENTITY_TYPES] },
+              ancestorId: { type: 'string', format: 'uuid' },
               // Substring search on entity_label (see repo). Min 3 chars
               // keeps queries trigram-eligible — shorter patterns would
               // fall back to a seq scan. Max 255 mirrors the longest
@@ -80,6 +85,8 @@ export function auditRoutes(db: Database) {
           limit?: number;
           entityType?: AuditEntityType;
           entityId?: string;
+          ancestorType?: AuditEntityType;
+          ancestorId?: string;
           entityLabelQuery?: string;
           actorId?: string;
           from?: string;
@@ -101,6 +108,8 @@ export function auditRoutes(db: Database) {
           limit: query.limit,
           entityType: query.entityType,
           entityId: query.entityId,
+          ancestorType: query.ancestorType,
+          ancestorId: query.ancestorId,
           entityLabelQuery: query.entityLabelQuery,
           actorId: query.actorId,
           from,

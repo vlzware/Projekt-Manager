@@ -63,6 +63,8 @@ export class ProjectTransitionService {
                 status: repoResult.project.status,
                 statusChangedAt: repoResult.project.statusChangedAt,
               },
+              ancestorEntityType: 'project',
+              ancestorEntityId: projectId,
             };
           },
         },
@@ -121,6 +123,8 @@ export class ProjectTransitionService {
                 status: repoResult.project.status,
                 statusChangedAt: repoResult.project.statusChangedAt,
               },
+              ancestorEntityType: 'project',
+              ancestorEntityId: projectId,
             };
           },
         },

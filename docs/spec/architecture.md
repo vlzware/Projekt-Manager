@@ -191,6 +191,21 @@ Process-local projection over two feeds: the post-commit `audit_log` stream (mut
 
 **Push transport.** The real dispatcher wraps the `web-push` npm package and is selected at app composition when VAPID credentials are configured; otherwise a no-op dispatcher is installed with a startup warning. The VAPID public key is derived from the private half at startup and served to the client via an unauthenticated endpoint ([api.md §14.2.10](api.md#14210-push-subscription)); the private key never leaves the server.
 
+### 11.12 Audit Ancestor Link
+
+Each `audit_log` row carries an optional `(ancestorEntityType, ancestorEntityId)` pair alongside its own `(entityType, entityId)`. The pair exists so a per-parent activity feed (project detail) can pull every row scoped to that parent in one indexed predicate — without JSON-path probes or bespoke `projectScope` carve-outs. Both columns are populated atomically with the audit row by the `mutate()` helper; the DB CHECK `audit_log_ancestor_pair` enforces both-or-neither.
+
+**Write-time convention.**
+
+- `entityType = 'project'` rows self-ancestor: `ancestor = ('project', entityId)`.
+- Nested entities (`entityType = 'project_worker'`, `entityType = 'attachment'`) set `ancestor = ('project', projectId)` — the id of the owning project is already in scope at every service call site.
+- Top-level entities (`entityType = 'customer'`, `entityType = 'user'`) leave the ancestor pair NULL.
+- New nested entity types extend the convention by setting their parent ancestor at the service layer; no schema change is required.
+
+**Read path.** The compound index `audit_log_ancestor_idx` on `(ancestor_entity_type, ancestor_entity_id, created_at DESC, id DESC)` serves the project-detail query shape — filter by ancestor pair, order by `createdAt DESC, id DESC` (the list endpoint's tiebreaker from [api.md §14.2.8](api.md#1428-audit-log)). The index key mirrors the ORDER BY so a page is served entirely from the index.
+
+**CHECK closure.** `audit_log_ancestor_type_valid` pins `ancestorEntityType` to the same closed `AuditEntityType` set as `entityType`, keeping the two columns in lock-step when a new entity type lands.
+
 ---
 
 ## 12. Configuration Boundaries

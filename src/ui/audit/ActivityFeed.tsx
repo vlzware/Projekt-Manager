@@ -32,8 +32,8 @@ import tableStyles from './AuditTable.module.css';
 interface Props {
   /**
    * Filter applied to the first fetch. For the project-detail feed this
-   * is `{ entityType: 'project', entityId: '…' }`; for the global view
-   * it is the set of active filters.
+   * is `{ ancestorType: 'project', ancestorId: '…' }` (architecture.md
+   * §11.12); for the global view it is the set of active filters.
    */
   filters: AuditListParams;
   /**

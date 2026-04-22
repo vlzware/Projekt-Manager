@@ -246,14 +246,16 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
             </span>
           </div>
 
-          {/* Activity feed (ui/workflow-views.md §8.4.1). Scoped by
-              entityType=project + entityId. Server-side scope predicates
-              filter per role; client renders the already-redacted rows. */}
+          {/* Activity feed (ui/workflow-views.md §8.4.1). Ancestor-scoped
+              (architecture.md §11.12) so the feed includes project,
+              project_worker, and attachment rows in one indexed query.
+              Server-side scope predicates filter per role; client
+              renders the already-redacted rows. */}
           {canReadAudit && (
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{STRINGS.audit.heading}</div>
               <ActivityFeed
-                filters={{ entityType: 'project', entityId: currentProject.id }}
+                filters={{ ancestorType: 'project', ancestorId: currentProject.id }}
                 filterKey={`project:${currentProject.id}`}
                 testId="project-activity-feed"
                 inline

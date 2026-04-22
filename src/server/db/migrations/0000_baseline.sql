@@ -33,11 +33,17 @@ CREATE TABLE "audit_log" (
 	"entity_type" text NOT NULL,
 	"entity_id" uuid NOT NULL,
 	"entity_label" text,
+	"ancestor_entity_type" text,
+	"ancestor_entity_id" uuid,
 	"action" text NOT NULL,
 	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"correlation_id" text,
 	CONSTRAINT "audit_log_actor_kind_valid" CHECK ("audit_log"."actor_kind" IN ('user', 'system')),
 	CONSTRAINT "audit_log_entity_type_valid" CHECK ("audit_log"."entity_type" IN ('project', 'customer', 'user', 'project_worker', 'attachment')),
+	CONSTRAINT "audit_log_ancestor_type_valid" CHECK ("audit_log"."ancestor_entity_type" IS NULL
+          OR "audit_log"."ancestor_entity_type" IN ('project', 'customer', 'user', 'project_worker', 'attachment')),
+	CONSTRAINT "audit_log_ancestor_pair" CHECK (("audit_log"."ancestor_entity_type" IS NULL AND "audit_log"."ancestor_entity_id" IS NULL)
+          OR ("audit_log"."ancestor_entity_type" IS NOT NULL AND "audit_log"."ancestor_entity_id" IS NOT NULL)),
 	CONSTRAINT "audit_log_actor_shape" CHECK ((
         ("audit_log"."actor_kind" = 'user'
           AND "audit_log"."actor_reason" IS NULL)
@@ -171,6 +177,7 @@ CREATE UNIQUE INDEX "attachments_original_key_uq" ON "attachments" USING btree (
 CREATE INDEX "audit_log_entity_idx" ON "audit_log" USING btree ("entity_type","entity_id","created_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "audit_log_actor_idx" ON "audit_log" USING btree ("actor_id","created_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "audit_log_created_at_idx" ON "audit_log" USING btree ("created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "audit_log_ancestor_idx" ON "audit_log" USING btree ("ancestor_entity_type","ancestor_entity_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "audit_log_entity_label_trgm_idx" ON "audit_log" USING gin ("entity_label" gin_trgm_ops);--> statement-breakpoint
 CREATE INDEX "idx_project_workers_user_id" ON "project_workers" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "idx_projects_status" ON "projects" USING btree ("status");--> statement-breakpoint

@@ -167,6 +167,21 @@ export interface ListAuditOpts {
   entityType?: AuditEntityType;
   entityId?: string;
   /**
+   * Ancestor-scoped filter (architecture.md §11.12). When set, narrows
+   * to rows whose `ancestorEntityType` / `ancestorEntityId` equal the
+   * given pair. Powers the per-project activity feed: one indexed
+   * predicate returns the project row plus every nested-entity row
+   * (`project_worker`, `attachment`, …) scoped to that project.
+   *
+   * AND-composes with every other filter. The DB CHECK
+   * `audit_log_ancestor_pair` guarantees the columns are both set or
+   * both null at write time, so a filter on (type, id) produces a
+   * well-defined index scan without needing to guard against partial
+   * rows in SQL.
+   */
+  ancestorType?: AuditEntityType;
+  ancestorId?: string;
+  /**
    * Substring match on `entity_label` (case-insensitive). Used by the
    * Aktivität filter bar in lieu of a UUID input; project-detail's
    * contextual feed continues to filter by `entityId`. NULL-labelled
@@ -210,6 +225,12 @@ export async function listAuditEntries(
   }
   if (opts.entityId !== undefined) {
     conditions.push(eq(auditLog.entityId, opts.entityId));
+  }
+  if (opts.ancestorType !== undefined) {
+    conditions.push(eq(auditLog.ancestorEntityType, opts.ancestorType));
+  }
+  if (opts.ancestorId !== undefined) {
+    conditions.push(eq(auditLog.ancestorEntityId, opts.ancestorId));
   }
   if (opts.entityLabelQuery !== undefined) {
     conditions.push(ilike(auditLog.entityLabel, `%${escapeLike(opts.entityLabelQuery)}%`));

@@ -55,7 +55,8 @@ async function fetchLatestAuditRow(
   const { db, pool } = createDatabase();
   try {
     const res = await db.execute(sql`
-      SELECT id, entity_type, entity_id, action, actor_id, actor_kind, payload
+      SELECT id, entity_type, entity_id, action, actor_id, actor_kind,
+             ancestor_entity_type, ancestor_entity_id, payload
       FROM audit_log
       WHERE entity_id = ${entityId} AND action = ${action}
       ORDER BY created_at DESC
@@ -114,6 +115,13 @@ describe('Attachment audit contract (AC-219)', () => {
     expect(row!.action).toBe('attachment:add');
     expect(row!.actor_kind).toBe('user');
     expect(row!.actor_id).not.toBeNull();
+
+    // Ancestor link (architecture.md §11.12). Attachment rows carry
+    // `('project', projectId)` so the per-project activity feed's
+    // ancestor-scoped filter picks them up alongside project and
+    // project_worker rows in one indexed query.
+    expect(row!.ancestor_entity_type).toBe('project');
+    expect(row!.ancestor_entity_id).toBe(projectId);
 
     const payload = row!.payload as { after?: Record<string, unknown> };
     expect(payload.after).toBeDefined();
@@ -206,6 +214,9 @@ describe('Attachment audit contract (AC-219)', () => {
     expect(row!.entity_id).toBe(attachmentId);
     expect(row!.action).toBe('attachment:remove');
     expect(row!.actor_kind).toBe('user');
+    // Ancestor link (architecture.md §11.12).
+    expect(row!.ancestor_entity_type).toBe('project');
+    expect(row!.ancestor_entity_id).toBe(projectId);
 
     const payload = row!.payload as { before?: Record<string, unknown> };
     expect(payload.before).toBeDefined();

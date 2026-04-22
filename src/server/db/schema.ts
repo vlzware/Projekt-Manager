@@ -267,6 +267,18 @@ export const auditLog = pgTable(
     // cannot supply a label (import, retention cleanup); the client
     // falls back to the UUID.
     entityLabel: text('entity_label'),
+    // Ancestor denormalization (architecture.md §11.12). Per-parent
+    // activity feeds (project detail) need rows for the project itself
+    // AND for its nested entities (`project_worker`, `attachment`).
+    // Write-time convention:
+    //   - `project` rows self-ancestor: ancestor = (project, entityId).
+    //   - Nested entities (`project_worker`, `attachment`) set
+    //     ancestor = (project, projectId).
+    //   - Top-level entities (`customer`, `user`) leave ancestor NULL.
+    // Reads use a single indexed predicate (`audit_log_ancestor_idx`)
+    // instead of a JSONB path match or a bespoke `projectScope` carve-out.
+    ancestorEntityType: text('ancestor_entity_type'),
+    ancestorEntityId: uuid('ancestor_entity_id'),
     action: text('action').notNull(),
     payload: jsonb('payload')
       .notNull()
@@ -277,6 +289,16 @@ export const auditLog = pgTable(
     index('audit_log_entity_idx').on(table.entityType, table.entityId, table.createdAt.desc()),
     index('audit_log_actor_idx').on(table.actorId, table.createdAt.desc()),
     index('audit_log_created_at_idx').on(table.createdAt.desc()),
+    // Compound index for the per-parent activity-feed query shape
+    // (`ancestorEntityType + ancestorEntityId + createdAt DESC`, with
+    // `id DESC` mirroring the ORDER BY tiebreaker in `listAuditEntries`
+    // so the page is served entirely from the index — no sort step).
+    index('audit_log_ancestor_idx').on(
+      table.ancestorEntityType,
+      table.ancestorEntityId,
+      table.createdAt.desc(),
+      table.id.desc(),
+    ),
     // GIN trigram index powers the Aktivität view's substring search on
     // entity_label (ui/management.md §8.13.2). Without it, `ILIKE '%q%'`
     // falls back to a seq scan. The pg_trgm extension itself is enabled
@@ -287,6 +309,21 @@ export const auditLog = pgTable(
     check(
       'audit_log_entity_type_valid',
       sql`${table.entityType} IN ('project', 'customer', 'user', 'project_worker', 'attachment')`,
+    ),
+    // Ancestor type must be one of the same closed set, OR NULL (top-
+    // level entities). Kept in lock-step with `audit_log_entity_type_valid`
+    // — a new entity type added to `AUDIT_ENTITY_TYPES` lands here too.
+    check(
+      'audit_log_ancestor_type_valid',
+      sql`${table.ancestorEntityType} IS NULL
+          OR ${table.ancestorEntityType} IN ('project', 'customer', 'user', 'project_worker', 'attachment')`,
+    ),
+    // Both ancestor columns must be NULL or both non-NULL — a partial
+    // ancestor is meaningless and would break the compound-index lookup.
+    check(
+      'audit_log_ancestor_pair',
+      sql`(${table.ancestorEntityType} IS NULL AND ${table.ancestorEntityId} IS NULL)
+          OR (${table.ancestorEntityType} IS NOT NULL AND ${table.ancestorEntityId} IS NOT NULL)`,
     ),
     // Compound invariant — AC-178 defense in depth. Missing this CHECK
     // would let a bootstrap write land with actor_reason=NULL, making
