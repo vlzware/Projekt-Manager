@@ -50,7 +50,7 @@ test.describe('AC-206: unassigned worker deep-linking /projects/:id', () => {
     // reach the full project list, so we pay one owner login to learn
     // the id, then navigate as the worker.
     const ownerCtx = await playwright.request.newContext({
-      baseURL: 'http://localhost:5173',
+      baseURL: test.info().project.use.baseURL,
       storageState: STORAGE_STATES.owner,
     });
     const unassignedId = await resolveProjectIdBySuffix(ownerCtx, '-010');
@@ -76,7 +76,7 @@ test.describe('AC-206 / AC-215 / AC-217: bookkeeper reads the detail page, canno
     playwright,
   }) => {
     const ownerCtx = await playwright.request.newContext({
-      baseURL: 'http://localhost:5173',
+      baseURL: test.info().project.use.baseURL,
       storageState: STORAGE_STATES.owner,
     });
     const projectId = await resolveProjectIdBySuffix(ownerCtx, '-007');

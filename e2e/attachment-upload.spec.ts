@@ -109,7 +109,17 @@ test.describe('Attachment happy-path upload (worker on assigned project)', () =>
     // The PDF lands in the binary list with filename, label, uploader,
     // timestamp, and a download action (ui/project-detail.md §8.15.5).
     const binaryList = page.getByTestId('project-detail-binaries');
-    const pdfRow = binaryList.getByTestId('attachment-binary-row').filter({ hasText: 'sample.pdf' });
+    // Each row has `data-testid="attachment-binary-row-<id>"`, so
+    // `getByTestId('attachment-binary-row')` would require an exact
+    // match and never hit. Use a CSS prefix selector and filter by
+    // the filename text. `.first()` tolerates leftover sample.pdf
+    // rows from earlier runs in the same mutating-test file — the
+    // describe block's TRUNCATE only runs once at auth-setup time,
+    // so upload fixtures accumulate within a single Playwright run.
+    const pdfRow = binaryList
+      .locator('[data-testid^="attachment-binary-row-"]')
+      .filter({ hasText: 'sample.pdf' })
+      .first();
     await expect(pdfRow).toBeVisible({ timeout: 15_000 });
 
     // Exercise the download action — pin that the browser actually

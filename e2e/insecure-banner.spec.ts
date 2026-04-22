@@ -39,7 +39,12 @@ test.describe('Insecure connection banner', () => {
     const ip = getLocalIPv4();
     test.skip(!ip, 'No non-loopback IPv4 address available');
 
-    await page.goto(`http://${ip}:5173/`);
+    // Swap the `localhost` host for the machine's LAN IP while keeping
+    // whatever port the active project was configured with — 5173 for
+    // the developer dev server, 5174 for Playwright's isolated E2E
+    // server (see playwright.config.ts webServer).
+    const port = new URL(test.info().project.use.baseURL ?? 'http://localhost:5173').port || '5173';
+    await page.goto(`http://${ip}:${port}/`);
     await expect(page.getByTestId('login-form')).toBeVisible();
 
     await expect(page.getByTestId('insecure-banner')).toBeVisible();
