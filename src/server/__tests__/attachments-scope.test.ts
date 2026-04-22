@@ -228,6 +228,10 @@ describe('Attachment scope (AC-214, AC-217)', () => {
       const res = await authGet(workerToken, `/api/projects/${assignedProjectId}/attachments`);
       expect(res.statusCode).toBe(200);
       const rows = (res.json().data as { projectId: string }[]) ?? [];
+      // Guard against empty-result regression — an empty `rows` would
+      // let the per-row assertion below pass vacuously, masking a
+      // predicate that accidentally filters everything out.
+      expect(rows.length).toBeGreaterThan(0);
       // Every returned row must belong to the assigned project.
       for (const row of rows) {
         expect(row.projectId).toBe(assignedProjectId);

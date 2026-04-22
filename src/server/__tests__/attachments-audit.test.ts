@@ -215,4 +215,49 @@ describe('Attachment audit contract (AC-219)', () => {
     expect(payload.before!.mimeType).toBe('application/pdf');
     expect(payload.before!.sizeBytes).toBe(9876);
   });
+
+  // -------------------------------------------------------------------
+  // Cross-entity isolation — attachment writes stay on
+  // `entityType='attachment'` and do NOT bleed onto sibling entities.
+  //
+  // Guard against a regression that mistakenly stamps every audit row
+  // with `entityType='attachment'` (e.g. a constant substituted for a
+  // per-call parameter in `mutate()`). Trigger two writes in the same
+  // run — one attachment op, one non-attachment op — and assert the
+  // two resulting rows carry DISTINCT `entity_type` values.
+  //
+  // Customer create is the cheapest sibling op: single POST, no
+  // fixture seeding, yields one `entity_type='customer'` audit row.
+  // -------------------------------------------------------------------
+  it('attachment and non-attachment writes produce distinct entity_type audit rows', async () => {
+    // Attachment write → `entity_type='attachment'`.
+    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+      fileName: 'cross-entity.pdf',
+      mimeType: 'application/pdf',
+      sizeBytes: 1000,
+      label: 'sonstiges',
+      hasThumbnail: false,
+    });
+    expect(initRes.statusCode).toBe(201);
+    const attachmentId = initRes.json().attachment.id as string;
+
+    // Non-attachment write → `entity_type='customer'`.
+    const customerRes = await authPost(ownerToken, '/api/customers', {
+      name: 'Cross-Entity Isolation Test',
+    });
+    expect(customerRes.statusCode).toBe(201);
+    const customerId = customerRes.json().id as string;
+
+    const attachmentRow = await fetchLatestAuditRow(attachmentId, 'attachment:add');
+    const customerRow = await fetchLatestAuditRow(customerId, 'create');
+
+    expect(attachmentRow).not.toBeNull();
+    expect(customerRow).not.toBeNull();
+
+    // Core invariant — a regression that flipped every audit row to
+    // `'attachment'` would fail HERE.
+    expect(attachmentRow!.entity_type).toBe('attachment');
+    expect(customerRow!.entity_type).toBe('customer');
+    expect(attachmentRow!.entity_type).not.toBe(customerRow!.entity_type);
+  });
 });
