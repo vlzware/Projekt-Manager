@@ -212,8 +212,8 @@ export function BinaryList({ projectId }: BinaryListProps) {
                 return (
                   <tr
                     key={bin.id}
-                    data-testid="attachment-binary-row"
-                    data-row-id={`binary-row-${bin.id}`}
+                    data-testid={`attachment-binary-row-${bin.id}`}
+                    data-attachment-id={bin.id}
                   >
                     <td>
                       {isMissing ? (

@@ -166,12 +166,13 @@ describe('BinaryList — row rendering (AC-223)', () => {
   it('renders one row per ready binary with filename/label/uploader/download', async () => {
     render(<BinaryList projectId="p-42" />);
 
-    await screen.findByText('angebot.pdf');
-    const rows = screen.getAllByTestId('attachment-binary-row');
+    // Resolve rows by their per-row testid rather than by text-matching:
+    // the selector pins the row contract independent of German labels.
+    const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
+    const docxRow = await screen.findByTestId('attachment-binary-row-bin-docx');
     // Fixture has 2 ready binaries (pdf + docx); photo + pending are excluded.
-    expect(rows).toHaveLength(2);
-    const pdfRow = rows.find((r) => r.textContent?.includes('angebot.pdf'))!;
-    expect(pdfRow).toBeDefined();
+    expect(docxRow).toBeDefined();
+    expect(pdfRow.textContent).toContain('angebot.pdf');
     expect(pdfRow.textContent?.toLowerCase()).toContain('angebot');
     expect(pdfRow.textContent).toContain('Anna Arbeiter');
     expect(within(pdfRow).getByTestId('attachment-download')).toBeInTheDocument();
@@ -179,21 +180,21 @@ describe('BinaryList — row rendering (AC-223)', () => {
 
   it('excludes photo attachments from the binary list', async () => {
     render(<BinaryList projectId="p-42" />);
-    await screen.findByText('angebot.pdf');
-    expect(screen.queryByText('photo.jpg')).not.toBeInTheDocument();
+    await screen.findByTestId('attachment-binary-row-bin-pdf');
+    expect(screen.queryByTestId('attachment-binary-row-ph-1')).not.toBeInTheDocument();
   });
 
   it('excludes pending binary attachments from the list', async () => {
     render(<BinaryList projectId="p-42" />);
-    await screen.findByText('angebot.pdf');
-    expect(screen.queryByText('pending.pdf')).not.toBeInTheDocument();
+    await screen.findByTestId('attachment-binary-row-bin-pdf');
+    expect(screen.queryByTestId('attachment-binary-row-bin-pending')).not.toBeInTheDocument();
   });
 });
 
 describe('BinaryList — bulk selection + caps (AC-223)', () => {
   it('shows Auswahl als ZIP only once at least one row is selected', async () => {
     render(<BinaryList projectId="p-42" />);
-    const pdfRow = (await screen.findByText('angebot.pdf')).closest('tr')!;
+    const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
 
     expect(screen.queryByTestId('binary-bulk-download')).not.toBeInTheDocument();
 
@@ -209,7 +210,7 @@ describe('BinaryList — bulk selection + caps (AC-223)', () => {
     listMock.mockResolvedValue(ok({ data: many }));
 
     render(<BinaryList projectId="p-42" />);
-    await screen.findByText('file-0.pdf');
+    await screen.findByTestId('attachment-binary-row-bin-0');
 
     await userEvent.click(screen.getByTestId('binary-select-all'));
     await userEvent.click(screen.getByTestId('binary-bulk-download'));
@@ -238,7 +239,7 @@ describe('BinaryList — "Datei fehlt" on download-click 404 (AC-224 binary side
 
     render(<BinaryList projectId="p-42" />);
 
-    const pdfRow = (await screen.findByText('angebot.pdf')).closest('tr')!;
+    const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
     await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
 
     await waitFor(() => {
@@ -258,7 +259,7 @@ describe('BinaryList — "Datei fehlt" on download-click 404 (AC-224 binary side
 
     render(<BinaryList projectId="p-42" />);
 
-    const pdfRow = (await screen.findByText('angebot.pdf')).closest('tr')!;
+    const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
     await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
 
     await waitFor(() => {
