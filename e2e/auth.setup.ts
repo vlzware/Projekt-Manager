@@ -56,10 +56,13 @@ async function loginAndSaveState(
   await page.getByTestId('login-password').fill(SEED_DEFAULT_PASSWORD);
   await page.getByTestId('login-submit').click();
 
-  // Vite pre-optimizes deps on startup (optimizeDeps.entries in vite.config.ts)
-  // so the first cold request no longer triggers a mid-session re-optimize.
-  // Default 5 s budget is sufficient.
-  await expect(page.getByTestId(landingTestId)).toBeVisible({ timeout: 5_000 });
+  // Playwright spawns a fresh vite + Fastify on every run (see
+  // `reuseExistingServer: false` in playwright.config.ts), so the
+  // first landing request pays vite's cold-start cost the first time
+  // through. 15 s absorbs the worst case on a warm-ish cache; a cold
+  // `.vite` directory can push this closer to 30 s, but we don't
+  // optimise for the once-per-week case.
+  await expect(page.getByTestId(landingTestId)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByTestId('user-indicator')).toContainText(user.displayName);
 
   await page.context().storageState({ path: statePath });

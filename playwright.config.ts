@@ -8,6 +8,33 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Preload `.env` into this config process so the webServer command
+// inherits MINIO_*, POSTGRES_PASSWORD, and any other secrets the dev
+// environment relies on. The E2E-specific overrides below (PORT,
+// DATABASE_URL, VITE_DEV_PORT) then beat the file values because
+// `webServer.env` is merged on top of process.env.
+//
+// `dev:e2e:server` (see package.json) intentionally skips Node's
+// `--env-file-if-exists=.env` — otherwise Node would re-read the file
+// in the child process and clobber the override values (Node's
+// `--env-file` semantics: file wins over environment).
+try {
+  process.loadEnvFile(path.resolve(__dirname, '.env'));
+} catch {
+  // .env missing — rely on the ambient environment.
+}
+
+// The Playwright process itself needs DATABASE_URL pointed at the
+// isolated E2E database — auth.setup.ts opens a direct DB handle
+// (createDatabase → process.env.DATABASE_URL) to run `migrate()` +
+// `seed(force: true)`. Without this override, the setup would
+// truncate-and-reseed the developer's main `projekt_manager` DB,
+// defeating the whole point of the isolation.
+const E2E_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ||
+  `postgresql://pm:${process.env.POSTGRES_PASSWORD || 'changeme'}@localhost:5432/projekt_manager_e2e`;
+process.env.DATABASE_URL = E2E_DATABASE_URL;
+
 /**
  * Default auth storage path — owner role. Must match
  * `STORAGE_STATES.owner` in e2e/auth.setup.ts. Declared here as a
@@ -137,15 +164,22 @@ export default defineConfig({
    * one fastify per run; the gain is a reliable, deterministic suite.
    */
   webServer: {
-    command: 'npm run dev -- --port 5174',
+    command: 'npm run dev:e2e',
     url: 'http://localhost:5174',
     reuseExistingServer: false,
+    // 2-minute budget covers vite's first-time dep prebundle on a
+    // cold node_modules/.vite cache; the default 60 s was tight enough
+    // that a slow disk + canvas install could push us past it.
+    timeout: 120_000,
     env: {
+      // Fastify listens on 3100 (defaults to 3000); vite on 5174
+      // (defaults to 5173). Both are overridden via env so the
+      // long-standing `npm run dev` on 3000/5173 can keep running
+      // alongside `npx playwright test` without port or DB collisions.
       PORT: '3100',
+      VITE_DEV_PORT: '5174',
       VITE_API_PROXY_TARGET: 'http://localhost:3100',
-      DATABASE_URL:
-        process.env.E2E_DATABASE_URL ||
-        `postgresql://pm:${process.env.POSTGRES_PASSWORD || 'changeme'}@localhost:5432/projekt_manager_e2e`,
+      DATABASE_URL: E2E_DATABASE_URL,
     },
   },
 });
