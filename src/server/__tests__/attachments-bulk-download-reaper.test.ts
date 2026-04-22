@@ -49,7 +49,7 @@ import {
   EVENT_BULK_DOWNLOAD_REAPER,
   runBulkDownloadReaper,
 } from '../services/bulk-download-reaper.js';
-import { BULK_DOWNLOAD_PREFIX } from '../services/AttachmentService.js';
+import { BULK_DOWNLOAD_PREFIX } from '../services/BulkDownloadOrchestrator.js';
 import { startBulkDownloadReaperScheduler } from '../bulk-download-reaper-scheduler.js';
 
 const SECOND_MS = 1000;

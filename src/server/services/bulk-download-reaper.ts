@@ -34,7 +34,7 @@
 
 import type { StorageClient } from '../storage/client.js';
 import type { ServiceLogger } from './Logger.js';
-import { BULK_DOWNLOAD_PREFIX } from './AttachmentService.js';
+import { BULK_DOWNLOAD_PREFIX } from './BulkDownloadOrchestrator.js';
 
 const MS_PER_MINUTE = 60 * 1000;
 
