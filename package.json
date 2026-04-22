@@ -25,6 +25,9 @@
     "check:tokens": "bash scripts/check-theme-tokens.sh",
     "prepare": "husky || true"
   },
+  "overrides": {
+    "fast-xml-parser": "^5.7.0"
+  },
   "lint-staged": {
     "src/**/*.{ts,tsx}": [
       "eslint --fix",
