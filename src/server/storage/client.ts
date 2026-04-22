@@ -189,15 +189,14 @@ export interface AttachmentStorageClient extends StorageClient {
   listObjects: (prefix: string, olderThan?: Date) => Promise<string[]>;
 }
 
-const VALID_KEY_PATTERN = STORAGE_CONFIG.validKeyPattern;
-
 /**
  * Validates a storage key to prevent path traversal and malformed keys.
- * Allowed: alphanumeric, `/`, `_`, `.`, `-`, length 1–1024.
- * Rejected: `..` sequences, leading `/` or `.`.
+ * Charset + length rule lives on `STORAGE_CONFIG.validKeyPattern` (single
+ * source of truth). Structural rules (no `..`, no leading `/` or `.`)
+ * are enforced here because they're per-key shape, not a reusable regex.
  */
 export function validateKey(key: string): void {
-  if (!key || !VALID_KEY_PATTERN.test(key)) {
+  if (!key || !STORAGE_CONFIG.validKeyPattern.test(key)) {
     throw new Error(
       `Invalid storage key: must be 1–1024 characters matching [a-zA-Z0-9/_.-]. Got: "${key}"`,
     );
@@ -470,8 +469,9 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     async listObjects(prefix: string, olderThan?: Date): Promise<string[]> {
       // No `validateKey` on `prefix` — a prefix is a substring match,
       // not a key. It still must stay in the allowed charset so a
-      // caller cannot probe arbitrary bucket namespaces.
-      if (!prefix || !/^[a-zA-Z0-9/_.-]{1,1024}$/.test(prefix)) {
+      // caller cannot probe arbitrary bucket namespaces. Reuses the
+      // same pattern as keys (single source of truth in STORAGE_CONFIG).
+      if (!prefix || !STORAGE_CONFIG.validKeyPattern.test(prefix)) {
         throw new Error(`Invalid listObjects prefix: "${prefix}"`);
       }
       const keys: string[] = [];
