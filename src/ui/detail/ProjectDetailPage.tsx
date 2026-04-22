@@ -1,26 +1,33 @@
 /**
  * Project detail page — full-context view of a single project at
- * `/projects/:id` (spec §8.15). Six regions in spec order: header,
- * core fields, assigned workers, photos, binaries, activity feed.
+ * `/projects/:id`. Primary surface for project work: core fields are
+ * editable in place, attachments, activity feed.
+ *
+ * Edits commit on blur / enter — no modal save dialog. Each field owns
+ * a local draft so transient invalid states (e.g. `<input type="date">`
+ * emitting empty mid-edit) don't clobber unrelated fields.
  *
  * Out-of-scope workers land here via the server returning
- * NOT_PERMITTED — render the AC-149 mirror surface (spec §8.15).
+ * NOT_PERMITTED — render the AC-149 mirror surface.
  */
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import { useProjectStore, type FetchProjectOutcome } from '@/state/projectStore';
 import { useAttachmentStore } from '@/state/attachmentStore';
+import { useProjectManagementStore } from '@/state/projectManagementStore';
+import { useConfirmStore } from '@/state/confirmStore';
 import { usePermission } from '@/hooks/usePermission';
-import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
+import { formatDateDE } from '@/domain/dateFormat';
 import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
 import { PhotoGallery } from './PhotoGallery';
 import { BinaryList } from './BinaryList';
 import { AssignedWorkerEditor } from './AssignedWorkerEditor';
 import { UploadCta } from './UploadCta';
+import { dateInputValue } from './dateInputValue';
 import styles from './ProjectDetail.module.css';
 
 type LoadState = { kind: 'loading' } | FetchProjectOutcome;
@@ -31,7 +38,24 @@ export function ProjectDetailPage() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const canReadAudit = usePermission('audit:read');
   const canWrite = usePermission('attachment:write');
+  const canUpdate = usePermission('project:update');
+  const canUpdateDates = usePermission('project:dates');
+  const canDelete = usePermission('project:delete');
+  const canPurge = usePermission('project:purge');
+
   const fetchProject = useProjectStore((s) => s.fetchProject);
+  const updateDates = useProjectStore((s) => s.updateDates);
+  const storeProject = useProjectStore((s) => s.projects.find((p) => p.id === projectId));
+
+  const updateProject = useProjectManagementStore((s) => s.updateProject);
+  const deleteProject = useProjectManagementStore((s) => s.deleteProject);
+  const purgeProject = useProjectManagementStore((s) => s.purgeProject);
+  const requestConfirm = useConfirmStore((s) => s.request);
+
+  const requestBulkDownloadUrl = useAttachmentStore((s) => s.requestBulkDownloadUrl);
+  const attachmentsByProject = useAttachmentStore((s) => s.byProject[projectId]);
+
+  const navigate = useNavigate();
 
   useEffect(() => {
     let cancelled = false;
@@ -46,17 +70,20 @@ export function ProjectDetailPage() {
   }, [projectId, fetchProject]);
 
   // Abort in-flight uploads when the user navigates away or the project
-  // id changes. `useAttachmentStore.getState()` is the stable way to
-  // read the latest action without subscribing (a subscription would
-  // re-run the cleanup effect on every store update). Matches the
-  // store's lifecycle contract in `cancelUploadsForProject`.
+  // id changes. Reading the action via `getState` keeps the cleanup
+  // effect from re-running on every store update.
   useEffect(() => {
     return () => {
       useAttachmentStore.getState().cancelUploadsForProject(projectId);
     };
   }, [projectId]);
 
-  if (state.kind === 'loading') {
+  // Prefer the freshest copy from the store once it has arrived. The
+  // local `state` is only the fallback for the initial load / error
+  // surfaces; all inline edits flow through the store.
+  const project = storeProject ?? (state.kind === 'ok' ? state.project : null);
+
+  if (state.kind === 'loading' && !project) {
     return <div className={styles.loading}>{STRINGS.ui.loading}</div>;
   }
 
@@ -73,11 +100,14 @@ export function ProjectDetailPage() {
     );
   }
 
-  if (state.kind === 'error') {
+  if (state.kind === 'error' && !project) {
     return <div className={styles.errorBanner}>{state.message}</div>;
   }
 
-  const { project } = state;
+  if (!project) {
+    return <div className={styles.loading}>{STRINGS.ui.loading}</div>;
+  }
+
   const config = STATE_CONFIG_MAP[project.status];
   const customer = project.customer;
   const address = customer?.address ?? null;
@@ -87,6 +117,46 @@ export function ProjectDetailPage() {
       )}`
     : null;
 
+  const handleArchive = async () => {
+    const confirmed = await requestConfirm(
+      STRINGS.projects.archiveConfirm(`${project.number} — ${project.title}`),
+    );
+    if (!confirmed) return;
+    const ok = await deleteProject(project.id);
+    if (ok) navigate('/projects');
+  };
+
+  const handlePurge = async () => {
+    const confirmed = await requestConfirm(
+      STRINGS.projects.purgeConfirm(`${project.number} — ${project.title}`),
+    );
+    if (!confirmed) return;
+    const ok = await purgeProject(project.id);
+    if (ok) navigate('/projects');
+  };
+
+  const handleDownloadAll = async () => {
+    const rows = (attachmentsByProject ?? []).filter((a) => a.status === 'ready');
+    if (rows.length === 0) return;
+    const url = await requestBulkDownloadUrl(
+      project.id,
+      rows.map((a) => a.id),
+    );
+    if (url) {
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = STRINGS.attachments.bulkZipFileName;
+      anchor.rel = 'noopener';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    }
+  };
+
+  const readyAttachmentCount = (attachmentsByProject ?? []).filter(
+    (a) => a.status === 'ready',
+  ).length;
+
   return (
     <article
       aria-label={STRINGS.ui.viewDetails}
@@ -94,12 +164,91 @@ export function ProjectDetailPage() {
       className={styles.page}
     >
       <header data-testid="project-detail-header" className={styles.header}>
-        <div className={styles.projectNumber}>{project.number}</div>
-        <h1 className={styles.projectTitle}>{project.title}</h1>
-        <span className={styles.statusBadge} style={{ backgroundColor: config?.color }}>
-          {config?.label ?? project.status}
-        </span>
+        <div className={styles.headerTopRow}>
+          <div className={styles.headerIdentity}>
+            <div className={styles.projectNumber}>{project.number}</div>
+            <InlineTitle
+              value={project.title}
+              readOnly={!canUpdate}
+              onCommit={(next) => void updateProject(project.id, { title: next })}
+            />
+            <span
+              className={styles.statusBadge}
+              style={{ backgroundColor: config?.color }}
+              data-testid="project-detail-status"
+            >
+              {config?.label ?? project.status}
+            </span>
+            {project.deleted && (
+              <span className={styles.archivedBadge} data-testid="project-archived-badge">
+                {STRINGS.projects.archivedBadge}
+              </span>
+            )}
+          </div>
+
+          <div className={styles.headerActions}>
+            <button
+              type="button"
+              className={styles.downloadAllButton}
+              onClick={() => void handleDownloadAll()}
+              disabled={readyAttachmentCount === 0}
+              data-testid="project-download-all"
+              title={readyAttachmentCount === 0 ? STRINGS.attachments.noAttachments : undefined}
+            >
+              {STRINGS.attachments.downloadAll}
+            </button>
+            {canDelete && !project.deleted && (
+              <button
+                type="button"
+                className={styles.archiveButton}
+                onClick={() => void handleArchive()}
+                data-testid="project-detail-archive"
+              >
+                {STRINGS.projects.archive}
+              </button>
+            )}
+            {canPurge && project.deleted && (
+              <button
+                type="button"
+                className={styles.purgeButton}
+                onClick={() => void handlePurge()}
+                data-testid="project-detail-purge"
+              >
+                {STRINGS.projects.purge}
+              </button>
+            )}
+          </div>
+        </div>
       </header>
+
+      {/* Floating camera-capture button — fixed top-right of the page.
+          Only mounts when the user can upload; the UploadCta's own
+          Foto-aufnehmen control has moved here so a worker standing on
+          a roof doesn't hunt for it in the form layout. */}
+      {canWrite && (
+        <label className={styles.cameraFab} data-testid="detail-camera-capture">
+          <input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            capture="environment"
+            multiple
+            className={styles.cameraFabInput}
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              if (files.length === 0) return;
+              const store = useAttachmentStore.getState();
+              for (const file of files) {
+                void store.uploadFile(project.id, file, { label: 'foto', hasThumbnail: true });
+              }
+              e.target.value = '';
+            }}
+          />
+          <span aria-hidden="true" className={styles.cameraFabIcon}>
+            📷
+          </span>
+          <span className={styles.visuallyHidden}>{STRINGS.attachments.takePhoto}</span>
+        </label>
+      )}
 
       <section
         aria-label={STRINGS.attachments.coreFields}
@@ -107,15 +256,15 @@ export function ProjectDetailPage() {
         className={styles.coreSection}
       >
         <h3 className={styles.regionHeading}>{STRINGS.attachments.coreFields}</h3>
-        <dl className={styles.coreGrid}>
-          <div>
-            <dt>{STRINGS.ui.customer}</dt>
-            <dd>{customer?.name ?? '—'}</dd>
+        <div className={styles.coreGrid}>
+          <div className={styles.coreField}>
+            <span className={styles.coreLabel}>{STRINGS.ui.customer}</span>
+            <span className={styles.coreValue}>{customer?.name ?? '—'}</span>
           </div>
           {address && (
-            <div>
-              <dt>{STRINGS.ui.address}</dt>
-              <dd>
+            <div className={styles.coreField}>
+              <span className={styles.coreLabel}>{STRINGS.ui.address}</span>
+              <span className={styles.coreValue}>
                 {address.street}, {address.zip} {address.city}
                 {mapsUrl && (
                   <>
@@ -125,30 +274,68 @@ export function ProjectDetailPage() {
                     </a>
                   </>
                 )}
-              </dd>
+              </span>
             </div>
           )}
-          <div>
-            <dt>{STRINGS.ui.dateStart}</dt>
-            <dd>{project.plannedStart ? formatDateDE(project.plannedStart) : '—'}</dd>
+          <div className={styles.coreField}>
+            <span className={styles.coreLabel}>{STRINGS.ui.dateStart}</span>
+            {canUpdateDates ? (
+              <DateField
+                initial={project.plannedStart}
+                otherDate={project.plannedEnd}
+                role="start"
+                testId="project-detail-start"
+                onCommit={(start) => {
+                  if (!start && project.plannedEnd) {
+                    updateDates(project.id, null, null);
+                  } else {
+                    updateDates(project.id, start, undefined);
+                  }
+                }}
+              />
+            ) : (
+              <span className={styles.coreValue}>
+                {project.plannedStart ? formatDateDE(project.plannedStart) : '—'}
+              </span>
+            )}
           </div>
-          <div>
-            <dt>{STRINGS.ui.dateEnd}</dt>
-            <dd>{project.plannedEnd ? formatDateDE(project.plannedEnd) : '—'}</dd>
+          <div className={styles.coreField}>
+            <span className={styles.coreLabel}>{STRINGS.ui.dateEnd}</span>
+            {canUpdateDates ? (
+              <DateField
+                initial={project.plannedEnd}
+                otherDate={project.plannedStart}
+                role="end"
+                testId="project-detail-end"
+                onCommit={(end) => {
+                  updateDates(project.id, undefined, end);
+                }}
+              />
+            ) : (
+              <span className={styles.coreValue}>
+                {project.plannedEnd ? formatDateDE(project.plannedEnd) : '—'}
+              </span>
+            )}
           </div>
-          <div>
-            <dt>{STRINGS.ui.estimatedValue}</dt>
-            <dd>
-              {project.estimatedValue != null ? formatCurrencyDE(project.estimatedValue) : '—'}
-            </dd>
+          <div className={styles.coreField}>
+            <span className={styles.coreLabel}>{STRINGS.ui.estimatedValue}</span>
+            <InlineNumberField
+              initial={project.estimatedValue}
+              readOnly={!canUpdate}
+              testId="project-value-edit"
+              onCommit={(value) => void updateProject(project.id, { estimatedValue: value })}
+            />
           </div>
-          {project.notes && (
-            <div className={styles.notesRow}>
-              <dt>{STRINGS.ui.notes}</dt>
-              <dd className={styles.notes}>{project.notes}</dd>
-            </div>
-          )}
-        </dl>
+          <div className={styles.coreFieldFull}>
+            <span className={styles.coreLabel}>{STRINGS.ui.notes}</span>
+            <InlineTextareaField
+              initial={project.notes}
+              readOnly={!canUpdate}
+              testId="project-notes-input"
+              onCommit={(notes) => void updateProject(project.id, { notes })}
+            />
+          </div>
+        </div>
       </section>
 
       <AssignedWorkerEditor projectId={project.id} />
@@ -167,16 +354,207 @@ export function ProjectDetailPage() {
         <h3 className={styles.regionHeading}>{STRINGS.attachments.activity}</h3>
         {canReadAudit && (
           <ActivityFeed
-            // Ancestor-scoped filter (architecture.md §11.12) — returns
-            // project rows + nested-entity rows (project_worker,
-            // attachment) in one indexed query.
             filters={{ ancestorType: 'project', ancestorId: project.id }}
-            filterKey={`project-detail:${project.id}`}
+            filterKey={`project-detail:${project.id}:${project.updatedAt}`}
             testId="project-detail-activity-feed"
             inline
           />
         )}
       </section>
     </article>
+  );
+}
+
+/**
+ * Inline editable title. Renders a borderless input that looks like a
+ * heading until it gets focus. Commits on blur or Enter. Reads fresh
+ * from props so a store-driven update (reflecting the server response)
+ * swaps in without leaving the user's half-typed draft untouched.
+ */
+function InlineTitle({
+  value,
+  readOnly,
+  onCommit,
+}: {
+  value: string;
+  readOnly: boolean;
+  onCommit: (next: string) => void;
+}) {
+  // "Adjust state during render" pattern — re-seed the draft when the
+  // underlying prop changes (server-commit, store refetch) without a
+  // useEffect cascade.
+  const [draft, setDraft] = useState(value);
+  const [lastSeen, setLastSeen] = useState(value);
+  if (value !== lastSeen) {
+    setLastSeen(value);
+    setDraft(value);
+  }
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === value) {
+      setDraft(value);
+      return;
+    }
+    onCommit(trimmed);
+  };
+
+  return (
+    <input
+      className={styles.titleInput}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
+      readOnly={readOnly}
+      data-testid="project-title-edit"
+      aria-label={STRINGS.ui.title}
+    />
+  );
+}
+
+/**
+ * Editable date field. Save-on-blur; an empty onBlur value is a
+ * deliberate clear (intermediate `<input type="date">` empties during
+ * typing never reach blur, so they don't trigger a commit). The
+ * `otherDate` prop is currently only used to seed the commit decision
+ * in the parent.
+ */
+function DateField({
+  initial,
+  otherDate: _otherDate,
+  role,
+  testId,
+  onCommit,
+}: {
+  initial: string | null;
+  otherDate: string | null;
+  role: 'start' | 'end';
+  testId: string;
+  onCommit: (value: string | null) => void;
+}) {
+  const initialValue = dateInputValue(initial);
+  const [draft, setDraft] = useState(initialValue);
+  const [lastSeen, setLastSeen] = useState(initial);
+  if (initial !== lastSeen) {
+    setLastSeen(initial);
+    setDraft(dateInputValue(initial));
+  }
+
+  const commit = () => {
+    if (draft === dateInputValue(initial)) return;
+    onCommit(draft || null);
+  };
+
+  return (
+    <input
+      type="date"
+      className={styles.dateInput}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      data-testid={testId}
+      aria-label={role === 'start' ? STRINGS.ui.dateStart : STRINGS.ui.dateEnd}
+    />
+  );
+}
+
+function InlineNumberField({
+  initial,
+  readOnly,
+  testId,
+  onCommit,
+}: {
+  initial: number | null;
+  readOnly: boolean;
+  testId: string;
+  onCommit: (next: number | null) => void;
+}) {
+  const initialText = initial != null ? String(initial) : '';
+  const [draft, setDraft] = useState(initialText);
+  const [lastSeen, setLastSeen] = useState(initialText);
+  if (initialText !== lastSeen) {
+    setLastSeen(initialText);
+    setDraft(initialText);
+  }
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed === lastSeen) return;
+    if (!trimmed) {
+      onCommit(null);
+      return;
+    }
+    const parsed = parseFloat(trimmed.replace(',', '.'));
+    if (Number.isNaN(parsed)) {
+      setDraft(lastSeen);
+      return;
+    }
+    onCommit(parsed);
+  };
+
+  return (
+    <input
+      className={styles.valueInput}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          e.currentTarget.blur();
+        }
+      }}
+      readOnly={readOnly}
+      data-testid={testId}
+      placeholder="0,00"
+      inputMode="decimal"
+      aria-label={STRINGS.ui.estimatedValue}
+    />
+  );
+}
+
+function InlineTextareaField({
+  initial,
+  readOnly,
+  testId,
+  onCommit,
+}: {
+  initial: string | null;
+  readOnly: boolean;
+  testId: string;
+  onCommit: (next: string | null) => void;
+}) {
+  const initialText = initial ?? '';
+  const [draft, setDraft] = useState(initialText);
+  const [lastSeen, setLastSeen] = useState(initialText);
+  if (initialText !== lastSeen) {
+    setLastSeen(initialText);
+    setDraft(initialText);
+  }
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    const normalized = trimmed || null;
+    if ((normalized ?? '') === (initial ?? '')) return;
+    onCommit(normalized);
+  };
+
+  return (
+    <textarea
+      className={styles.notesInput}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      readOnly={readOnly}
+      data-testid={testId}
+      aria-label={STRINGS.ui.notes}
+      rows={4}
+    />
   );
 }

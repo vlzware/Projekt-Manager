@@ -1,13 +1,18 @@
-/* Project detail page + its subcomponents (spec §8.15). Shared module so
-   the page and the five region components stay in one CSS file. */
+/* Project detail page + its subcomponents. Shared module so
+   the page and the region components stay in one CSS file. */
 
 .page {
+  position: relative;
   padding: 24px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px;
   max-width: 1200px;
   margin: 0 auto;
+  height: 100%;
+  overflow-y: auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .loading {
@@ -34,6 +39,8 @@
   gap: 12px;
 }
 
+/* Header */
+
 .header {
   display: flex;
   flex-direction: column;
@@ -42,16 +49,63 @@
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
+.headerTopRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.headerIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 280px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
 .projectNumber {
   font-size: 0.9rem;
   color: var(--color-text-muted);
 }
 
-.projectTitle {
-  margin: 0;
+/* Inline-editable title. Looks like an h1 until the user clicks into
+   it; reveals the input affordance on hover/focus. */
+.titleInput {
   font-size: 1.5rem;
   font-weight: 700;
   color: var(--color-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin: 0;
+  width: 100%;
+  max-width: 640px;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.titleInput:hover:not([readonly]) {
+  border-color: var(--color-border-subtle);
+}
+
+.titleInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+  background: var(--color-surface-raised);
+}
+
+.titleInput[readonly] {
+  cursor: default;
 }
 
 .statusBadge {
@@ -62,6 +116,117 @@
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--color-text-on-accent);
+}
+
+.archivedBadge {
+  display: inline-block;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-on-accent);
+  background: var(--color-text-subtle);
+}
+
+.downloadAllButton {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-strong);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.downloadAllButton:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+}
+
+.downloadAllButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.archiveButton {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.archiveButton:hover {
+  background: var(--color-surface-sunken);
+}
+
+.purgeButton {
+  padding: 8px 14px;
+  border: 1px solid var(--color-danger-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-danger-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.purgeButton:hover {
+  background: var(--color-danger-bg);
+}
+
+/* Floating camera capture — fixed to the viewport's top-right corner so
+   a worker on-site can reach it without hunting the layout. Stays
+   visible across scroll; the detail shell is the only page that mounts
+   it (wrapped in `{canWrite && …}` on the caller side). */
+.cameraFab {
+  position: fixed;
+  top: 84px;
+  right: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(var(--color-overlay-rgb), 0.2);
+  cursor: pointer;
+  z-index: 90;
+  transition:
+    transform 0.15s,
+    box-shadow 0.15s;
+}
+
+.cameraFab:hover,
+.cameraFab:focus-within {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(var(--color-overlay-rgb), 0.25);
+}
+
+.cameraFabIcon {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+.cameraFabInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  padding: 0;
+  border: 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
 .regionHeading {
@@ -85,36 +250,92 @@
   border-radius: 8px;
 }
 
+/* Editable core grid. Two columns on wide screens, stack below. Notes
+   span the full row. Each field stacks label above value so inputs
+   align cleanly without a fixed-width label gutter. */
 .coreGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 20px;
   margin: 0;
 }
 
-.coreGrid dt {
+.coreField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.coreFieldFull {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.coreLabel {
   font-size: 0.75rem;
   color: var(--color-text-subtle);
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
 
-.coreGrid dd {
-  margin: 4px 0 0;
+.coreValue {
   font-size: 0.9rem;
   color: var(--color-text);
+  padding: 6px 0;
 }
 
-.notesRow {
-  grid-column: 1 / -1;
-}
-
-.notes {
-  white-space: pre-wrap;
-  background: var(--color-surface-base);
-  padding: 10px;
+.dateInput,
+.valueInput {
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
   border-radius: 4px;
-  border: 1px solid var(--color-border-muted);
+  background: var(--color-surface-base);
+  color: var(--color-text-strong);
+  font-size: 0.9rem;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dateInput:focus,
+.valueInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+}
+
+.valueInput[readonly] {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  cursor: default;
+}
+
+.notesInput {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-base);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.notesInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+}
+
+.notesInput[readonly] {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  cursor: default;
+  resize: none;
 }
 
 /* Chips (worker assignment) */
@@ -221,6 +442,10 @@
   gap: 8px;
 }
 
+.photoItem {
+  position: relative;
+}
+
 .photoThumb {
   display: block;
   width: 100%;
@@ -277,6 +502,45 @@
   object-fit: contain;
 }
 
+/* PDF preview — same overlay chrome as the lightbox, with an iframe
+   carrier for the browser's native PDF viewer. The iframe click is NOT
+   stopPropagation'd since PDFs need clicks to flow through for scroll
+   affordances, so a close button is overlaid on the corner. */
+.pdfPreview {
+  position: fixed;
+  inset: 0;
+  background: rgba(var(--color-overlay-rgb), 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.pdfPreviewClose {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(var(--color-overlay-rgb), 0.3);
+}
+
+.pdfPreviewFrame {
+  width: 90vw;
+  height: 90vh;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  box-shadow: 0 8px 32px rgba(var(--color-overlay-rgb), 0.3);
+}
+
 /* Binary list */
 
 .binaryTable {
@@ -300,6 +564,14 @@
   letter-spacing: 0.04em;
 }
 
+.rowActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.viewButton,
 .downloadButton {
   padding: 4px 10px;
   border: 1px solid var(--color-border);
@@ -310,13 +582,29 @@
   font-size: 0.8rem;
 }
 
+.viewButton:hover:not(:disabled),
 .downloadButton:hover:not(:disabled) {
   background: var(--color-surface-sunken);
 }
 
-.downloadButton:disabled {
+.downloadButton:disabled,
+.viewButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.deleteButton {
+  padding: 4px 10px;
+  border: 1px solid var(--color-danger-border);
+  background: var(--color-surface-base);
+  color: var(--color-danger-text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.deleteButton:hover {
+  background: var(--color-danger-bg);
 }
 
 .missingBadge {
@@ -345,17 +633,48 @@
   background: var(--color-accent-hover);
 }
 
-/* Upload CTA */
+/* Upload CTA — redesigned so photos and documents live in clearly
+   separated blocks. The Beschriftung dropdown sits inside the document
+   block so it visually belongs to binaries only; photos default to the
+   `foto` label. */
+.uploadGroups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
 
-/* Drag-drop zone wraps the explicit pickers. The dashed outline +
-   subtle background reuse the existing `fileLabel` language so the
-   region reads as a single upload surface. The active state lifts the
-   border + background to signal "drop will land here." */
-.uploadDropZone {
-  padding: 16px;
-  border: 2px dashed var(--color-border);
+.uploadGroup {
+  padding: 14px;
+  border: 1px dashed var(--color-border);
   border-radius: 8px;
   background: var(--color-surface-base);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.uploadGroupHeading {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+.uploadGroupControls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+/* Drag-drop state — outer wrapper lifts the border when a file is
+   hovering over the drop zone. */
+.uploadDropZone {
+  border: 2px dashed transparent;
+  border-radius: 10px;
+  padding: 4px;
   transition:
     border-color 0.15s,
     background 0.15s;
@@ -367,17 +686,10 @@
 }
 
 .uploadDropHint {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   font-size: 0.8rem;
   color: var(--color-text-subtle);
   text-align: center;
-}
-
-.uploadControls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: flex-end;
 }
 
 .fileLabel {
@@ -385,12 +697,16 @@
   align-items: center;
   gap: 6px;
   padding: 8px 14px;
-  border: 1px dashed var(--color-border);
+  border: 1px solid var(--color-border);
   border-radius: 6px;
   cursor: pointer;
-  background: var(--color-surface-base);
+  background: var(--color-surface-raised);
   font-size: 0.85rem;
   color: var(--color-text-strong);
+}
+
+.fileLabel:hover {
+  background: var(--color-surface-sunken);
 }
 
 .fileInput {
@@ -414,12 +730,11 @@
   font-size: 0.85rem;
 }
 
-/* Wrapper for pending-upload status rows. Also acts as the
-   `role=status` / `aria-live=polite` surface — children changing
-   triggers an announcement. Plain block so assistive tech is not
-   confused by `display: contents` edge cases. */
+/* Wrapper for pending-upload status rows; `role=status` + `aria-live`
+   live on this node so a row change announces to assistive tech. */
 .progressRegion {
   display: block;
+  margin-top: 12px;
 }
 
 .progressRow {

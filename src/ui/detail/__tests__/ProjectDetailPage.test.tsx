@@ -190,17 +190,24 @@ describe('ProjectDetailPage — layout (spec §8.15.1)', () => {
     setAuthUser(['owner']);
     renderAt('/projects/p-42');
 
-    // Header carries project number + title.
+    // Header carries the project number (plain text) and the title
+    // (inline input — read its `value`, not textContent).
     const header = await screen.findByTestId('project-detail-header');
     expect(header.textContent).toContain('P-042');
-    expect(header.textContent).toContain('Dachsanierung');
+    const titleInput = within(header).getByTestId('project-title-edit') as HTMLInputElement;
+    expect(titleInput.value).toBe('Dachsanierung');
 
     // Core region surfaces the customer, planned dates, value, notes.
+    // Dates / value / notes are editable inputs; assert on their
+    // current value rather than textContent (which is '' for inputs).
     const core = screen.getByTestId('project-detail-core');
     expect(core.textContent).toContain('Kunde GmbH');
-    expect(core.textContent).toMatch(/01\.05\.2026|2026-05-01/);
-    expect(core.textContent).toMatch(/01\.06\.2026|2026-06-01/);
-    expect(core.textContent).toContain('Kundennotiz');
+    const start = within(core).getByTestId('project-detail-start') as HTMLInputElement;
+    const end = within(core).getByTestId('project-detail-end') as HTMLInputElement;
+    expect(start.value).toBe('2026-05-01');
+    expect(end.value).toBe('2026-06-01');
+    const notes = within(core).getByTestId('project-notes-input') as HTMLTextAreaElement;
+    expect(notes.value).toBe('Kundennotiz');
   });
 });
 

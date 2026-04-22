@@ -465,8 +465,11 @@ export const STRINGS = {
     uploadDrop: 'Datei hier ablegen oder auswählen',
     uploadPickFile: 'Datei auswählen',
     uploadPickPhoto: 'Foto auswählen',
+    uploadPickPhotos: 'Fotos auswählen',
     uploadPickBinary: 'Dokument auswählen',
     takePhoto: 'Foto aufnehmen',
+    photoSectionTitle: 'Fotos',
+    binarySectionTitle: 'Dokument',
     uploadLabel: 'Beschriftung',
     uploadRetry: 'Erneut versuchen',
     uploadDismiss: 'Verwerfen',
@@ -493,7 +496,10 @@ export const STRINGS = {
 
     // Download actions
     download: 'Herunterladen',
+    view: 'Ansehen',
     bulkDownload: 'Auswahl als ZIP',
+    downloadAll: 'Alle herunterladen',
+    noAttachments: 'Keine Dateien zum Herunterladen.',
     /**
      * Fallback filename hinted to the browser when the bulk-download
      * anchor is created. The server's Content-Disposition is still
