@@ -255,8 +255,8 @@ test.describe('Management flows', () => {
       await freshPage.getByTestId('login-password').fill(testPassword);
       await freshPage.getByTestId('login-submit').click();
 
-      // Should see the Kanban board (worker has project:read)
-      await expect(freshPage.getByTestId('kanban-board')).toBeVisible();
+      // Worker landing is /meine-projekte (the personal list).
+      await expect(freshPage.getByTestId('my-projects-view')).toBeVisible();
     } finally {
       await freshContext.close();
     }

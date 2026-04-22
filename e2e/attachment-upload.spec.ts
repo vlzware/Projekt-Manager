@@ -40,9 +40,13 @@ test.use({ storageState: STORAGE_STATES.worker });
  * assigned), hit `Öffnen`, and wait for the project detail page to
  * render. Centralized here because both the gallery and binary flows
  * start from the same navigation sequence.
+ *
+ * Worker landing is now `/meine-projekte` (the personal list). The
+ * upload-from-kanban flow this helper exercises still exists, so we
+ * navigate to /kanban explicitly rather than chasing the landing.
  */
 async function openProjectDetailViaPanel(page: Page): Promise<string> {
-  await page.goto('/');
+  await page.goto('/kanban');
   await expect(page.getByTestId('kanban-board')).toBeVisible();
 
   // Pick the -007 geplant card (assigned to arbeiter1 per seed data).
