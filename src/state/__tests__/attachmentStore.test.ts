@@ -18,6 +18,7 @@ import type {
   AttachmentDownloadUrlResponse,
 } from '@/api/client';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
+import type { ProcessedUpload } from '@/domain/imagePipeline';
 
 type ListResult = ApiResult<{ data: Attachment[] }>;
 type InitResult = ApiResult<AttachmentInitResponse>;
@@ -34,7 +35,8 @@ type InitInput = {
 };
 
 const listMock = vi.fn<(projectId: string) => Promise<ListResult>>();
-const initMock = vi.fn<(projectId: string, input: InitInput) => Promise<InitResult>>();
+const initMock =
+  vi.fn<(projectId: string, input: InitInput, signal?: AbortSignal) => Promise<InitResult>>();
 const completeMock = vi.fn<(projectId: string, attachmentId: string) => Promise<CompleteResult>>();
 const deleteMock = vi.fn<(projectId: string, attachmentId: string) => Promise<DeleteResult>>();
 const downloadUrlMock =
@@ -47,6 +49,24 @@ const downloadUrlMock =
   >();
 const bulkDownloadUrlMock =
   vi.fn<(projectId: string, attachmentIds: string[]) => Promise<DownloadUrlResult>>();
+
+// Pipeline mock — observable so the retry-cache test can assert the
+// canvas-heavy work runs at most once across a failed-then-retried
+// upload. The real pipeline touches `document.createElement('canvas')`,
+// which adds nothing to store-behaviour coverage and confuses failure
+// attribution; a passthrough mock keeps the store's orchestration in
+// focus.
+const runImagePipelineMock =
+  vi.fn<(file: File, opts: { hasThumbnail: boolean }) => Promise<ProcessedUpload>>();
+
+vi.mock('@/domain/imagePipeline', async (importActual) => {
+  const actual = (await importActual()) as Record<string, unknown>;
+  return {
+    ...actual,
+    runImagePipeline: (...args: Parameters<typeof runImagePipelineMock>) =>
+      runImagePipelineMock(...args),
+  };
+});
 
 vi.mock('@/api/client', async (importActual) => {
   const actual = (await importActual()) as Record<string, unknown>;
@@ -104,6 +124,15 @@ beforeEach(() => {
   deleteMock.mockReset();
   downloadUrlMock.mockReset();
   bulkDownloadUrlMock.mockReset();
+  runImagePipelineMock.mockReset();
+  // Default: passthrough — echo the input file's bytes. Tests that want
+  // to observe re-encoding override per-call with `mockImplementationOnce`.
+  runImagePipelineMock.mockImplementation(async (file) => ({
+    original: file,
+    thumbnail: null,
+    mimeType: file.type,
+    sizeBytes: file.size,
+  }));
   useAttachmentStore.setState({
     byProject: {},
     pendingUploads: {},
@@ -277,6 +306,40 @@ describe('attachmentStore — retry and download URL plumbing', () => {
     expect(initMock).toHaveBeenCalledTimes(2);
   });
 
+  it('retry reuses the cached pipeline output so the canvas work runs exactly once', async () => {
+    // The store caches the ProcessedUpload on `FILES_BY_CLIENT_ID` after
+    // a first successful pipeline run so a network-level failure at init
+    // / POST / complete does NOT force a re-encode on retry. Force `init`
+    // to fail on both attempts; assert the pipeline mock fires only once.
+    initMock.mockResolvedValue({
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'server busy' },
+      category: 'server_error',
+      sessionExpired: false,
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', {
+      type: 'image/jpeg',
+    });
+    await useAttachmentStore.getState().uploadFile('proj-1', file, {
+      label: 'foto',
+      hasThumbnail: true,
+    });
+
+    const clientId = Object.keys(useAttachmentStore.getState().pendingUploads)[0];
+    expect(clientId).toBeDefined();
+    expect(runImagePipelineMock).toHaveBeenCalledTimes(1);
+
+    await useAttachmentStore.getState().retryUpload(clientId!);
+
+    // Pipeline stays at one invocation across both attempts — the second
+    // run pulls the cached `ProcessedUpload` from the side-map.
+    expect(runImagePipelineMock).toHaveBeenCalledTimes(1);
+    // Init did fire twice — the retry actually ran, it just skipped the
+    // expensive pipeline step.
+    expect(initMock).toHaveBeenCalledTimes(2);
+  });
+
   it('requestDownloadUrl returns the server URL on success and null on failure', async () => {
     downloadUrlMock.mockResolvedValueOnce(
       ok({ url: 'https://storage/thumb', expiresAt: '2026-04-20T10:05:00Z' }),
@@ -296,5 +359,131 @@ describe('attachmentStore — retry and download URL plumbing', () => {
       .getState()
       .requestDownloadUrl('proj-1', 'att-1', 'original');
     expect(urlFail).toBeNull();
+  });
+});
+
+/**
+ * Deferred-promise helper — lets a test hold a mock call open at a chosen
+ * point in the orchestrator, so the surrounding orchestration can be
+ * observed (cancelled, retried, etc.) mid-flight. Preferred over timer
+ * hacks because it produces deterministic tests.
+ */
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe('attachmentStore — cancellation', () => {
+  it('cancelUpload aborts the in-flight transport and drops the pending row', async () => {
+    // Hold `initUpload` open so the orchestrator is mid-flight when we
+    // fire `cancelUpload`. Capture the `AbortSignal` passed by the store
+    // so we can assert `abort()` landed on it.
+    const init = deferred<InitResult>();
+    let capturedSignal: AbortSignal | undefined;
+    initMock.mockImplementation(async (_projectId, _input, signal) => {
+      capturedSignal = signal;
+      return init.promise;
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', { type: 'image/jpeg' });
+    const uploadPromise = useAttachmentStore
+      .getState()
+      .uploadFile('proj-1', file, { label: 'foto', hasThumbnail: false });
+
+    // Let the synchronous insert + pipeline microtasks settle so the
+    // AbortController is installed and `initUpload` is awaiting.
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const clientId = Object.keys(useAttachmentStore.getState().pendingUploads)[0];
+    expect(clientId).toBeDefined();
+    expect(capturedSignal).toBeDefined();
+    expect(capturedSignal!.aborted).toBe(false);
+
+    useAttachmentStore.getState().cancelUpload(clientId!);
+
+    expect(capturedSignal!.aborted).toBe(true);
+    // Pending row is dropped immediately so the UI reflects the cancel
+    // without waiting for the transport to finish unwinding.
+    expect(useAttachmentStore.getState().pendingUploads[clientId!]).toBeUndefined();
+
+    // Release the hanging init so vitest doesn't hold an open promise.
+    init.resolve({
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'late' },
+      category: 'server_error',
+      sessionExpired: false,
+    });
+    await uploadPromise;
+  });
+
+  it('cancelUploadsForProject aborts only the target project, leaves others untouched', async () => {
+    // Three in-flight uploads: two on proj-A, one on proj-B. Hold every
+    // `initUpload` open so they all sit at the init step when cancel fires.
+    const deferredByOrder: Array<{
+      promise: Promise<InitResult>;
+      resolve: (v: InitResult) => void;
+    }> = [deferred<InitResult>(), deferred<InitResult>(), deferred<InitResult>()];
+    const signalsByProject: Record<string, AbortSignal[]> = { 'proj-A': [], 'proj-B': [] };
+
+    let callIndex = 0;
+    initMock.mockImplementation(async (projectId, _input, signal) => {
+      if (projectId === 'proj-A' || projectId === 'proj-B') {
+        signalsByProject[projectId].push(signal!);
+      }
+      const d = deferredByOrder[callIndex];
+      callIndex += 1;
+      return d.promise;
+    });
+
+    const files = [
+      new File([new Uint8Array([1])], 'a1.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([2])], 'a2.jpg', { type: 'image/jpeg' }),
+      new File([new Uint8Array([3])], 'b1.jpg', { type: 'image/jpeg' }),
+    ];
+    const pending = [
+      useAttachmentStore
+        .getState()
+        .uploadFile('proj-A', files[0], { label: 'foto', hasThumbnail: false }),
+      useAttachmentStore
+        .getState()
+        .uploadFile('proj-A', files[1], { label: 'foto', hasThumbnail: false }),
+      useAttachmentStore
+        .getState()
+        .uploadFile('proj-B', files[2], { label: 'foto', hasThumbnail: false }),
+    ];
+
+    // Let the three orchestrators advance to the init step.
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+
+    expect(signalsByProject['proj-A']).toHaveLength(2);
+    expect(signalsByProject['proj-B']).toHaveLength(1);
+
+    useAttachmentStore.getState().cancelUploadsForProject('proj-A');
+
+    // Every proj-A transport is cancelled.
+    for (const s of signalsByProject['proj-A']) expect(s.aborted).toBe(true);
+    // proj-B is not touched.
+    expect(signalsByProject['proj-B'][0].aborted).toBe(false);
+
+    // Pending rows for proj-A are gone; proj-B's row is still in the map.
+    const remaining = Object.values(useAttachmentStore.getState().pendingUploads);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0].projectId).toBe('proj-B');
+
+    // Release all hanging inits so the uploads finish cleanly.
+    for (const d of deferredByOrder) {
+      d.resolve({
+        ok: false,
+        error: { code: 'SERVER_ERROR', message: 'late' },
+        category: 'server_error',
+        sessionExpired: false,
+      });
+    }
+    await Promise.all(pending);
   });
 });

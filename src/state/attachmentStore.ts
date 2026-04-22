@@ -50,6 +50,21 @@ interface AttachmentState {
     file: File,
     input: { label: AttachmentLabel; hasThumbnail: boolean },
   ) => Promise<void>;
+  /**
+   * Restart a previously-failed upload for `clientId`. Implicit contract:
+   * retry only succeeds while the original `File` is still present in the
+   * module-local `FILES_BY_CLIENT_ID` side-map — i.e. the same page
+   * lifecycle that first invoked `uploadFile`. A page reload drops the
+   * side-map entirely (File handles cannot be persisted), so a retry
+   * attempted after reload has no bytes to POST and short-circuits to the
+   * canonical `mutationFailed` banner. This matches the spec's "page
+   * reload cancels an in-flight upload cleanly" wording — there is no
+   * file-picker re-prompt; the user re-adds the file from scratch.
+   *
+   * Within a single lifecycle the retry reuses the cached `ProcessedUpload`
+   * (see `FILES_BY_CLIENT_ID.processed`) so the canvas-heavy image pipeline
+   * does not re-run for a network-level failure at init / POST / complete.
+   */
   retryUpload: (clientId: string) => Promise<void>;
   dismissUpload: (clientId: string) => void;
   /**
