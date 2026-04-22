@@ -246,3 +246,25 @@
     justify-content: flex-start;
   }
 }
+
+/* Below ~768px the nav pill + badges can't fit in one row; let the
+   nav group wrap and shrink instead of forcing a viewport-wide header.
+   Segmented-pill end caps degrade gracefully on wrap because each
+   button already carries its own border. */
+@media (max-width: 768px) {
+  .header {
+    padding: 10px 12px;
+  }
+
+  .navGroup {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+    min-width: 0;
+    gap: 8px 12px;
+  }
+
+  .viewToggle {
+    flex-wrap: wrap;
+    flex-shrink: 1;
+  }
+}
