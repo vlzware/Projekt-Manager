@@ -8,7 +8,7 @@
  * summed bytes) per AC-223.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import { ATTACHMENT_CONFIG } from '@/config/attachmentConfig';
@@ -20,6 +20,11 @@ import { useConfirmStore } from '@/state/confirmStore';
 import { useUserStore } from '@/state/userStore';
 import { formatDateDE } from '@/domain/dateFormat';
 import styles from './ProjectDetail.module.css';
+
+function isPdf(row: { fileName: string; mimeType?: string | null }): boolean {
+  if (row.mimeType === 'application/pdf') return true;
+  return row.fileName.toLowerCase().endsWith('.pdf');
+}
 
 interface BinaryListProps {
   projectId: string;
@@ -136,6 +141,33 @@ export function BinaryList({ projectId }: BinaryListProps) {
     triggerDownload(url, row?.fileName ?? '');
   };
 
+  const [preview, setPreview] = useState<{ url: string; fileName: string } | null>(null);
+  const closePreview = useCallback(() => setPreview(null), []);
+
+  // Esc-to-close for the PDF preview. Listener installs only while the
+  // preview is open so the rest of the page keeps its normal keyboard
+  // behaviour.
+  useEffect(() => {
+    if (!preview) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closePreview();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [preview, closePreview]);
+
+  const handleView = async (bin: Attachment) => {
+    const url = await requestDownloadUrl(projectId, bin.id, 'original');
+    if (!url) {
+      setMissing((prev) => new Set(prev).add(bin.id));
+      return;
+    }
+    setPreview({ url, fileName: bin.fileName });
+  };
+
   const handleBulkDownload = async () => {
     const ids = Array.from(effectiveSelected);
     const selectedRows = binaries.filter((b) => ids.includes(b.id));
@@ -238,34 +270,47 @@ export function BinaryList({ projectId }: BinaryListProps) {
                     <td>{uploader ?? bin.createdBy ?? ''}</td>
                     <td>{formatDateDE(bin.createdAt)}</td>
                     <td>
-                      {isMissing && (
-                        <span
-                          className={styles.missingBadge}
-                          data-testid={`binary-missing-${bin.id}`}
-                        >
-                          {STRINGS.attachments.fileMissing}
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        className={styles.downloadButton}
-                        data-testid="attachment-download"
-                        disabled={isMissing}
-                        onClick={() => void handleDownload(bin.id)}
-                      >
-                        {STRINGS.attachments.download}
-                      </button>
-                      {canDelete && (
+                      <div className={styles.rowActions}>
+                        {isMissing && (
+                          <span
+                            className={styles.missingBadge}
+                            data-testid={`binary-missing-${bin.id}`}
+                          >
+                            {STRINGS.attachments.fileMissing}
+                          </span>
+                        )}
+                        {isPdf(bin) && (
+                          <button
+                            type="button"
+                            className={styles.viewButton}
+                            data-testid={`attachment-view-${bin.id}`}
+                            disabled={isMissing}
+                            onClick={() => void handleView(bin)}
+                          >
+                            {STRINGS.attachments.view}
+                          </button>
+                        )}
                         <button
                           type="button"
-                          className={styles.deleteButton}
-                          data-testid="attachment-delete"
-                          onClick={() => void handleDelete(bin)}
-                          aria-label={STRINGS.ui.delete}
+                          className={styles.downloadButton}
+                          data-testid="attachment-download"
+                          disabled={isMissing}
+                          onClick={() => void handleDownload(bin.id)}
                         >
-                          {STRINGS.ui.delete}
+                          {STRINGS.attachments.download}
                         </button>
-                      )}
+                        {canDelete && (
+                          <button
+                            type="button"
+                            className={styles.deleteButton}
+                            data-testid="attachment-delete"
+                            onClick={() => void handleDelete(bin)}
+                            aria-label={STRINGS.ui.delete}
+                          >
+                            {STRINGS.ui.delete}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -284,6 +329,27 @@ export function BinaryList({ projectId }: BinaryListProps) {
             </button>
           )}
         </>
+      )}
+
+      {preview && (
+        <div
+          className={styles.pdfPreview}
+          data-testid="pdf-preview"
+          role="dialog"
+          aria-modal="true"
+          aria-label={preview.fileName}
+        >
+          <button
+            type="button"
+            className={styles.pdfPreviewClose}
+            onClick={closePreview}
+            aria-label={STRINGS.ui.close}
+            data-testid="pdf-preview-close"
+          >
+            ×
+          </button>
+          <iframe className={styles.pdfPreviewFrame} src={preview.url} title={preview.fileName} />
+        </div>
       )}
     </section>
   );

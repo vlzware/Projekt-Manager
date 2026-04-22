@@ -227,13 +227,16 @@ describe('UploadCta — no silent retry (AC-225)', () => {
 });
 
 describe('UploadCta — closed-enum label dropdown (AC-226)', () => {
-  it('renders a label selector populated with exactly the closed-enum labels', async () => {
+  it('renders a label selector populated with the document (non-photo) labels', async () => {
+    // The dropdown belongs to the document block — photos are hardcoded
+    // to `foto`, so `foto` is excluded from the picker. The remaining
+    // options are the closed enum minus `foto`.
     render(<UploadCta projectId="p-42" />);
     await pickFile();
 
     const select = (await screen.findByTestId('upload-label-select')) as HTMLSelectElement;
     const optionValues = Array.from(select.options).map((o) => o.value);
-    const expected = ATTACHMENT_LABELS.map((l) => l.value);
+    const expected = ATTACHMENT_LABELS.map((l) => l.value).filter((v) => v !== 'foto');
     expect(new Set(optionValues)).toEqual(new Set(expected));
   });
 
