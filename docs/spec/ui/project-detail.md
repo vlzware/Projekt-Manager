@@ -36,7 +36,7 @@ The core-field region reuses the read contents of [workflow-views.md §8.4](work
 
 ### 8.15.3 Assigned-Worker Editor
 
-Inline control, visible on the page (not modal). Backed by the existing Update project API operation ([api.md §14.2.2](../api.md#1422-projects)) with a patch carrying `assignedWorkerIds`.
+Worker-assignment editor visible on the page (not routed to a dedicated view). Backed by the existing Update project API operation ([api.md §14.2.2](../api.md#1422-projects)) with a patch carrying `assignedWorkerIds`.
 
 - Multi-select from the active set of users holding the `worker` role. Each selected entry renders as a chip carrying the worker's `displayName`; a remove affordance detaches.
 - Mutations require `project:update`. The control is hidden for callers without it; the page-level read surface continues to render the current assigned list.
@@ -47,7 +47,7 @@ Inline control, visible on the page (not modal). Backed by the existing Update p
 
 Displays every `status = 'ready'` attachment with `kind = 'photo'` for the project. Thumbnails use the client-generated thumbnail variant via a presigned-GET URL ([api.md §14.2.11](../api.md#14211-attachments)); clicking a thumbnail opens a lightbox that requests the original variant on demand.
 
-- **Upload surface.** Shown for callers with `attachment:write`. Two entry points: a drag-drop zone and a dedicated `Foto aufnehmen` CTA that invokes the platform camera on supporting devices. The CTA is rendered only when the device exposes a camera capability; otherwise only the drag-drop zone is offered.
+- **Upload surface.** Shown for callers with `attachment:write`. An upload affordance supporting drop and explicit browse; on camera-capable devices the affordance additionally invokes camera capture. German CTA copy lives in the attachment upload CTA labels `[C]` catalogue entry ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)).
 - **Client image pipeline.** Before calling init, the browser re-encodes the original (preserving EXIF including GPS) and produces a thumbnail variant, applying the sizing and quality parameters in the `[C]` catalogue entry for attachment client-encoding ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Both objects are then POSTed directly to object storage against the two presigned descriptors returned by init ([api.md §14.2.11](../api.md#14211-attachments)); the app server never sees the bytes. Preserving EXIF (including GPS) matches [kickoff.md](../../project/kickoff.md)'s worker-view expectation that GPS coordinates stay available to the worker; EXIF preservation as a whole is a design choice of this spec. The concrete transcoding steps and the libraries used live in `ARCHITECTURE.md § Attachments Module — Client image pipeline`.
 - **Size cap.** If the re-encoded original exceeds the configured attachment per-file size cap **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)), the client surfaces a German validation message (`"Datei zu groß"`) and does not call init. The cap is also enforced server-side by the presigned policy's `content-length-range`; a mismatch between the two is a client-side bug, not a security gap.
 - **Per-photo controls.** Each thumbnail carries a label dropdown (closed enum — `Foto` by default on photo uploads, selectable from the full enum) and a delete affordance. Delete follows the permission matrix in §8.15.6.
