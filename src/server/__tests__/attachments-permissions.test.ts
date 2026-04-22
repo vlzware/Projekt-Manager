@@ -36,6 +36,7 @@ import {
 } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
+import { ATTACHMENT_CONFIG } from '../../config/attachmentConfig.js';
 
 const year = new Date().getFullYear();
 
@@ -150,7 +151,7 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
       ['owner', () => ownerToken],
       ['office', () => officeToken],
     ] as const)(
-      '%s passes the permission gate (may 201 or 422 downstream)',
+      '%s passes the permission gate (expected 201 on a valid payload)',
       async (_label, getToken) => {
         const res = await authPost(getToken(), `/api/projects/${projectId}/attachments/init`, {
           fileName: 'gate.pdf',
@@ -159,10 +160,12 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
           label: 'sonstiges',
           hasThumbnail: false,
         });
-        // The gate must not reject with 403 — the permission is held.
-        // A downstream 422 (validation) or 201 (success) are both
-        // acceptable signals that the gate did NOT fire.
-        expect(res.statusCode).not.toBe(403);
+        // The gate must not reject with 403, AND the payload is valid,
+        // so the only acceptable non-gate outcomes are 201 (success) or
+        // 422 (a future validator gets stricter). Asserting a specific
+        // set instead of `not.toBe(403)` catches a 5xx regression that
+        // the looser check would silently accept.
+        expect([201, 422]).toContain(res.statusCode);
       },
     );
 
@@ -174,7 +177,10 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
         label: 'sonstiges',
         hasThumbnail: false,
       });
-      expect(res.statusCode).not.toBe(403);
+      // Same tight contract as the owner/office arm — the gate passes
+      // and the valid payload produces 201 (or 422 if a validator
+      // tightens); 5xx must be a failure.
+      expect([201, 422]).toContain(res.statusCode);
     });
   });
 
@@ -198,16 +204,19 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
       expect(res.json().code).toBe('NOT_PERMITTED');
     });
 
-    it('owner deletes any attachment — returns 200/204', async () => {
+    it('owner deletes any attachment — returns 204', async () => {
       const id = await seedReadyAttachment(projectId, null);
       const res = await authDelete(ownerToken, `/api/projects/${projectId}/attachments/${id}`);
-      expect(res.statusCode).toBeLessThan(300);
+      // Route returns 204 No Content on success (src/server/routes/attachments.ts).
+      // Pinning the exact code catches a 200 or 5xx regression that the
+      // old `< 300` check would accept.
+      expect(res.statusCode).toBe(204);
     });
 
-    it('office deletes any attachment — returns 200/204', async () => {
+    it('office deletes any attachment — returns 204', async () => {
       const id = await seedReadyAttachment(projectId, null);
       const res = await authDelete(officeToken, `/api/projects/${projectId}/attachments/${id}`);
-      expect(res.statusCode).toBeLessThan(300);
+      expect(res.statusCode).toBe(204);
     });
 
     it('worker deleting their own attachment within the grace window succeeds (AC-215)', async () => {
@@ -216,7 +225,7 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
       // architecture.md §12.2; freshly created rows are well within it.
       const id = await seedReadyAttachment(projectId, workerUserId);
       const res = await authDelete(workerToken, `/api/projects/${projectId}/attachments/${id}`);
-      expect(res.statusCode).toBeLessThan(300);
+      expect(res.statusCode).toBe(204);
     });
 
     it("worker deleting another's attachment is rejected with 403 NOT_PERMITTED (AC-215)", async () => {
@@ -228,25 +237,59 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
       expect(res.json().code).toBe('NOT_PERMITTED');
     });
 
-    it('worker deleting their own attachment AFTER the grace window is rejected with 403 (AC-215)', async () => {
-      // Backdate createdAt beyond the 15-minute default grace — the
-      // worker authored the row but the service must refuse. 24 hours
-      // in the past is safely outside any reasonable deployment's
-      // self-delete grace window.
-      const id = await seedReadyAttachment(projectId, workerUserId);
-      const { db, pool } = createDatabase();
-      try {
-        await db.execute(sql`
-          UPDATE attachments
-          SET created_at = NOW() - INTERVAL '24 hours'
-          WHERE id = ${id}
-        `);
-      } finally {
-        await pool.end();
-      }
-      const res = await authDelete(workerToken, `/api/projects/${projectId}/attachments/${id}`);
-      expect(res.statusCode).toBe(403);
-      expect(res.json().code).toBe('NOT_PERMITTED');
+    // -----------------------------------------------------------------
+    // AC-215 boundary — just-inside / just-outside the grace window.
+    //
+    // The previous single "24 h in the past → 403" arm wasn't a boundary
+    // test: 24 h sits beyond any conceivable grace, so a bug that mis-
+    // calculated by minutes would still pass. These two arms pin the
+    // exact minute the service flips from "author can still delete" to
+    // "author is locked out", by backdating the row just past (expect
+    // 403) and just before (expect 204) the configured grace.
+    //
+    // `ATTACHMENT_CONFIG.workerSelfDeleteGraceMinutes` is the
+    // build-time default; the in-process test app uses no env override,
+    // so it matches the server-side value the service reads.
+    // -----------------------------------------------------------------
+    describe('AC-215 grace-window boundary', () => {
+      const graceMinutes = ATTACHMENT_CONFIG.workerSelfDeleteGraceMinutes;
+
+      it('worker self-delete JUST OUTSIDE the grace window → 403 NOT_PERMITTED', async () => {
+        const id = await seedReadyAttachment(projectId, workerUserId);
+        const { db, pool } = createDatabase();
+        try {
+          // grace + 1 s — first second past the window.
+          await db.execute(sql`
+            UPDATE attachments
+            SET created_at = NOW() - (${graceMinutes} * INTERVAL '1 minute' + INTERVAL '1 second')
+            WHERE id = ${id}
+          `);
+        } finally {
+          await pool.end();
+        }
+        const res = await authDelete(workerToken, `/api/projects/${projectId}/attachments/${id}`);
+        expect(res.statusCode).toBe(403);
+        expect(res.json().code).toBe('NOT_PERMITTED');
+      });
+
+      it('worker self-delete JUST INSIDE the grace window → 204', async () => {
+        const id = await seedReadyAttachment(projectId, workerUserId);
+        const { db, pool } = createDatabase();
+        try {
+          // grace - 5 s — five seconds left in the window. A small
+          // buffer absorbs wall-clock drift between the DB NOW() used
+          // here and the service's Date.now() comparison.
+          await db.execute(sql`
+            UPDATE attachments
+            SET created_at = NOW() - (${graceMinutes} * INTERVAL '1 minute' - INTERVAL '5 seconds')
+            WHERE id = ${id}
+          `);
+        } finally {
+          await pool.end();
+        }
+        const res = await authDelete(workerToken, `/api/projects/${projectId}/attachments/${id}`);
+        expect(res.statusCode).toBe(204);
+      });
     });
   });
 });

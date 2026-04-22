@@ -311,11 +311,12 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(status).toBe('pending');
     });
 
-    it('returns 409 CONFLICT when the stored size exceeds the cap', async () => {
-      // Init an attachment whose claimed size is within cap, but upload
-      // an object whose actual size reports OVER cap via HEAD. The
-      // spec says complete must verify the HEAD-reported size against
-      // the cap (not just against the row's claimed size).
+    it('returns 409 CONFLICT when the stored size differs from the declared sizeBytes', async () => {
+      // AC-212 / spec §14.2.11 error paths: complete verifies the
+      // HEAD-reported size against the row's DECLARED size, not just the
+      // global cap. A size-substitution upload — e.g. 2 MB bytes under
+      // a key whose row claims 100 B — must land as 409 even if the
+      // actual size is within the global cap.
       const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
         ...photoInit(projectId),
         sizeBytes: 100,
@@ -323,15 +324,53 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(initRes.statusCode).toBe(201);
       const body = initRes.json();
       const s = storage();
-      // Upload 2 MB under the issued key — HEAD will report it, and
-      // the complete path must detect the cap breach even though the
-      // row's claimed size is small.
+      // Upload 2 MB under the issued key (note: the presigned POST
+      // policy would reject this via `content-length-range`; we bypass
+      // that by direct-storage upload to exercise the complete-side
+      // guard). HEAD reports 2 MB, row says 100 → declared-size
+      // mismatch → 409.
       await s.upload(body.attachment.originalKey, Buffer.alloc(2 * 1024 * 1024, 1), 'image/jpeg');
       await s.upload(body.attachment.thumbKey, Buffer.from('t'), 'image/webp');
 
       const res = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/${body.attachment.id}/complete`,
+      );
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('CONFLICT');
+    });
+
+    it('returns 409 CONFLICT when the stored size matches the row but exceeds the global cap (defence in depth)', async () => {
+      // Normal init rejects sizeBytes > cap up-front, so this branch is
+      // only reachable if the cap dropped between init and complete.
+      // Seed a pending row directly with an over-cap `size_bytes`
+      // matching the bytes we'll upload, then call complete() — the
+      // global-cap guard (in addition to the declared-size guard) must
+      // fire.
+      const attId = crypto.randomUUID();
+      const originalKey = `attachments/${projectId}/${attId}.orig`;
+      const thumbKey = `attachments/${projectId}/${attId}.thumb`;
+      const oversize = 2 * 1024 * 1024;
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             original_key, thumb_key, has_thumbnail)
+          VALUES (${attId}, ${projectId}, 'pending', 'photo', 'foto',
+                  'oversize.jpg', 'image/jpeg', ${oversize},
+                  ${originalKey}, ${thumbKey}, TRUE)
+        `);
+      } finally {
+        await pool.end();
+      }
+      const s = storage();
+      await s.upload(originalKey, Buffer.alloc(oversize, 3), 'image/jpeg');
+      await s.upload(thumbKey, Buffer.from('t'), 'image/webp');
+
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/complete`,
       );
       expect(res.statusCode).toBe(409);
       expect(res.json().code).toBe('CONFLICT');
@@ -622,6 +661,131 @@ describe('Attachment routes — integration (issue #108)', () => {
       );
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('VALIDATION_ERROR');
+    });
+
+    // -----------------------------------------------------------------
+    // Pending-row invisibility (review H6). `listByProject` only
+    // surfaces ready rows; `issueDownloadUrl` must mirror that, or a
+    // caller could fetch a presigned GET for partially-uploaded bytes
+    // before the HEAD-verify gate ran. 404 matches the reaper-removed
+    // branch from the caller's point of view.
+    // -----------------------------------------------------------------
+    it('returns 404 NOT_FOUND when variant=original and the row is pending', async () => {
+      const initRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        photoInit(projectId),
+      );
+      expect(initRes.statusCode).toBe(201);
+      const pendingId = initRes.json().attachment.id;
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${pendingId}/download-url?variant=original`,
+      );
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('NOT_FOUND');
+    });
+
+    it('returns 404 NOT_FOUND when variant=thumbnail and the row is pending', async () => {
+      const initRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        photoInit(projectId),
+      );
+      expect(initRes.statusCode).toBe(201);
+      const pendingId = initRes.json().attachment.id;
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${pendingId}/download-url?variant=thumbnail`,
+      );
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('NOT_FOUND');
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Filename validation + Content-Disposition — review of Fix 4.
+  //
+  // The service-boundary validator rejects control chars + path
+  // separators so malicious bytes never land in the DB. The
+  // Content-Disposition header is the second line of defence: even if
+  // something bypassed the validator, header injection is prevented by
+  // the ASCII-fallback sanitize and the UTF-8 extended form keeps
+  // non-ASCII filenames (German umlauts, the common case) legible.
+  // -------------------------------------------------------------------
+  describe('Filename validation + Content-Disposition encoding', () => {
+    it.each([
+      ['CR', 'evil\r.pdf'],
+      ['LF', 'evil\n.pdf'],
+      ['null', 'evil\x00.pdf'],
+      ['forward slash', 'evil/path.pdf'],
+      ['backslash', 'evil\\path.pdf'],
+    ])('rejects fileName containing %s with 422 VALIDATION_ERROR', async (_label, fileName) => {
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        fileName,
+        mimeType: 'application/pdf',
+        sizeBytes: 100,
+        label: 'sonstiges',
+        hasThumbnail: false,
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+    });
+
+    it('accepts non-ASCII filenames and emits an RFC 5987 Content-Disposition on download', async () => {
+      // German umlauts are the common case — any sanitizer that strips
+      // them here would break half the customer's filenames. Init
+      // must accept the name, complete must preserve it, and the
+      // download-url's presigned GET must carry a `filename*=UTF-8''`
+      // parameter (or at minimum the percent-encoded bytes) so the
+      // browser's Save-As dialog shows the original characters.
+      //
+      // S3 presigned URLs deliver the disposition via the
+      // `response-content-disposition` query param, which the signer
+      // percent-encodes once on its own. A single `decodeURIComponent`
+      // therefore yields the disposition we built — further characters
+      // in the disposition's UTF-8 form (e.g. `%C3%BC`) stay encoded
+      // because they belong to the header body, not the URL envelope.
+      const umlautName = 'Angebot Müller.pdf';
+      const bytes = Buffer.from('test-bytes', 'utf-8');
+      const ids = await seedReadyAttachmentsWithBytes(projectId, [
+        { bytes, filename: umlautName, mimeType: 'application/pdf' },
+      ]);
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${ids[0]}/download-url?variant=original`,
+      );
+      expect(res.statusCode).toBe(200);
+      const url = res.json().url as string;
+      // The disposition value itself — after one round of URL decoding —
+      // must carry the RFC 5987 extended parameter so browsers pick up
+      // the non-ASCII characters.
+      const decoded = decodeURIComponent(url);
+      expect(decoded).toContain("filename*=UTF-8''");
+      // The UTF-8 bytes of `ü` (U+00FC) are `0xC3 0xBC`. Because
+      // `encodeURIComponent('ü')` produces `%C3%BC`, and the URL
+      // envelope then encodes each `%` as `%25`, the raw URL contains
+      // `%25C3%25BC` (percent-of-percent). The once-decoded string
+      // reveals the original `%C3%BC` form.
+      expect(decoded).toContain('%C3%BC');
+    });
+
+    it('accepts a non-ASCII filename at init and round-trips it to the row', async () => {
+      // Only control chars + path separators are rejected; German
+      // umlauts are legitimate input and must survive init unchanged.
+      // Complete() would need backing bytes to flip to ready, which is
+      // out of scope for this arm — the download-side Content-Disposition
+      // assertion is covered by the previous test via
+      // `seedReadyAttachmentsWithBytes`.
+      const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        fileName: 'Angebot Müller.pdf',
+        mimeType: 'application/pdf',
+        sizeBytes: 100,
+        label: 'angebot',
+        hasThumbnail: false,
+      });
+      expect(initRes.statusCode).toBe(201);
+      expect(initRes.json().attachment.fileName).toBe('Angebot Müller.pdf');
     });
   });
 });
