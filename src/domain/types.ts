@@ -134,5 +134,5 @@ export interface Attachment {
   thumbKey: string | null;
   hasThumbnail: boolean;
   createdAt: string;
-  createdBy: string | null;
+  createdBy: { id: string; displayName: string } | null;
 }

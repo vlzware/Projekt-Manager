@@ -72,7 +72,7 @@ function makeAttachment(): Attachment {
     thumbKey: 'proj/p-42/att-new/thumb.webp',
     hasThumbnail: true,
     createdAt: '2026-04-20T10:00:00Z',
-    createdBy: 'u-1',
+    createdBy: { id: 'u-1', displayName: 'Test User' },
   };
 }
 

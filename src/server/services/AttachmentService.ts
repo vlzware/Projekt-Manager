@@ -37,6 +37,7 @@ import {
   listByProject,
   markReady,
   type AttachmentRow,
+  type AttachmentRowWithUploader,
 } from '../repositories/attachment.js';
 import { getProjectRowById } from '../repositories/project.js';
 import { mutate } from './mutate.js';
@@ -126,7 +127,7 @@ function callerIsWorkerOnly(user: AuthUser): boolean {
   return !isOwnerOrOffice(user);
 }
 
-function toAttachment(row: AttachmentRow): Attachment {
+function toAttachment(row: AttachmentRowWithUploader): Attachment {
   return {
     id: row.id,
     projectId: row.projectId,
@@ -140,7 +141,10 @@ function toAttachment(row: AttachmentRow): Attachment {
     thumbKey: row.thumbKey,
     hasThumbnail: row.hasThumbnail,
     createdAt: row.createdAt.toISOString(),
-    createdBy: row.createdBy,
+    createdBy:
+      row.createdBy && row.uploaderDisplayName
+        ? { id: row.createdBy, displayName: row.uploaderDisplayName }
+        : null,
   };
 }
 
@@ -290,7 +294,10 @@ export class AttachmentService {
       : undefined;
 
     return {
-      attachment: toAttachment(row),
+      // Newly created row — uploader display name comes from the live
+      // caller; saves a follow-up read since `createPending` returns the
+      // base row and we already know who acted.
+      attachment: toAttachment({ ...row, uploaderDisplayName: caller.displayName }),
       originalUpload,
       ...(thumbnailUpload ? { thumbnailUpload } : {}),
     };

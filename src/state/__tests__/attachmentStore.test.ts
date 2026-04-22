@@ -112,7 +112,7 @@ function makeAttachment(overrides: Partial<Attachment>): Attachment {
     thumbKey: 'attachments/proj-1/att-1/thumb.webp',
     hasThumbnail: true,
     createdAt: '2026-04-20T10:00:00Z',
-    createdBy: 'u-1',
+    createdBy: { id: 'u-1', displayName: 'Test User' },
     ...overrides,
   };
 }

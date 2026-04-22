@@ -13,12 +13,10 @@ import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import { ATTACHMENT_CONFIG } from '@/config/attachmentConfig';
 import { ATTACHMENT_LABELS, canDeleteAttachment } from '@/domain/attachments';
-import type { Attachment, AttachmentLabel, User } from '@/domain/types';
-import { usePermission } from '@/hooks/usePermission';
+import type { Attachment, AttachmentLabel } from '@/domain/types';
 import { useAttachmentStore } from '@/state/attachmentStore';
 import { useAuthStore } from '@/state/authStore';
 import { useConfirmStore } from '@/state/confirmStore';
-import { useUserStore } from '@/state/userStore';
 import { formatDateDE } from '@/domain/dateFormat';
 import styles from './ProjectDetail.module.css';
 
@@ -75,24 +73,10 @@ export function BinaryList({ projectId }: BinaryListProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [missing, setMissing] = useState<Set<string>>(new Set());
   const [capError, setCapError] = useState<string | null>(null);
-  const users = useUserStore((s) => s.users);
-  const fetchUsers = useUserStore((s) => s.fetchUsers);
-  const canReadUsers = usePermission('user:read');
 
   useEffect(() => {
     void fetchForProject(projectId);
   }, [fetchForProject, projectId]);
-
-  useEffect(() => {
-    if (!canReadUsers) return;
-    void fetchUsers();
-  }, [canReadUsers, fetchUsers]);
-
-  const userById = useMemo(() => {
-    const map = new Map<string, User>();
-    for (const u of users) map.set(u.id, u);
-    return map;
-  }, [users]);
 
   // Intersect the user's `selected` set with rows that are still
   // eligible (present + not missing). Derived on render so the set
@@ -266,7 +250,7 @@ export function BinaryList({ projectId }: BinaryListProps) {
             <tbody>
               {binaries.map((bin) => {
                 const isMissing = missing.has(bin.id);
-                const uploader = bin.createdBy ? userById.get(bin.createdBy)?.displayName : null;
+                const uploader = bin.createdBy?.displayName ?? null;
                 const canDelete =
                   authUser !== null &&
                   canDeleteAttachment(
@@ -300,7 +284,7 @@ export function BinaryList({ projectId }: BinaryListProps) {
                     </td>
                     <td>{bin.fileName}</td>
                     <td>{LABEL_BY_VALUE.get(bin.label) ?? bin.label}</td>
-                    <td>{uploader ?? bin.createdBy ?? ''}</td>
+                    <td>{uploader ?? ''}</td>
                     <td>{formatDateDE(bin.createdAt)}</td>
                     <td>
                       <div className={styles.rowActions}>

@@ -123,6 +123,12 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(typeof body.attachment.originalKey).toBe('string');
       expect(body.attachment.originalKey.length).toBeGreaterThan(0);
       expect(typeof body.attachment.thumbKey).toBe('string');
+      // Uploader expansion: createdBy is `{ id, displayName }` so the
+      // frontend doesn't need a privileged user-directory fetch (#125).
+      expect(body.attachment.createdBy).toMatchObject({
+        id: expect.any(String),
+        displayName: expect.any(String),
+      });
 
       expect(body.originalUpload).toBeDefined();
       expect(typeof body.originalUpload.url).toBe('string');

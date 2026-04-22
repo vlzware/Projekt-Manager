@@ -18,11 +18,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ApiResult, AttachmentDownloadUrlResponse } from '@/api/client';
-import type { Attachment, User } from '@/domain/types';
+import type { Attachment } from '@/domain/types';
 
 type ListResult = ApiResult<{ data: Attachment[] }>;
 type DownloadUrlResult = ApiResult<AttachmentDownloadUrlResponse>;
-type UserListResult = ApiResult<{ users: User[]; total: number }>;
 
 const listMock = vi.fn<(projectId: string) => Promise<ListResult>>();
 const downloadUrlMock =
@@ -35,8 +34,6 @@ const downloadUrlMock =
   >();
 const bulkDownloadUrlMock =
   vi.fn<(projectId: string, attachmentIds: string[]) => Promise<DownloadUrlResult>>();
-const userListMock =
-  vi.fn<(params?: { offset?: number; limit?: number }) => Promise<UserListResult>>();
 
 vi.mock('@/api/client', async (importActual) => {
   const actual = (await importActual()) as Record<string, unknown>;
@@ -51,9 +48,6 @@ vi.mock('@/api/client', async (importActual) => {
       initUpload: vi.fn(),
       completeUpload: vi.fn(),
       delete: vi.fn(),
-    },
-    userApi: {
-      list: (...args: unknown[]) => userListMock(...(args as Parameters<typeof userListMock>)),
     },
     authApi: {
       login: vi.fn(),
@@ -81,7 +75,7 @@ function makeBinary(overrides: Partial<Attachment>): Attachment {
     thumbKey: null,
     hasThumbnail: false,
     createdAt: '2026-04-20T10:00:00Z',
-    createdBy: 'u-w1',
+    createdBy: { id: 'u-w1', displayName: 'Anna Arbeiter' },
     ...overrides,
   };
 }
@@ -94,7 +88,6 @@ beforeEach(() => {
   listMock.mockReset();
   downloadUrlMock.mockReset();
   bulkDownloadUrlMock.mockReset();
-  userListMock.mockReset();
 
   useAttachmentStore.setState({ byProject: {}, pendingUploads: {}, error: null });
   useAuthStore.setState({
@@ -121,7 +114,7 @@ beforeEach(() => {
           fileName: 'angebot.pdf',
           label: 'angebot',
           sizeBytes: 120_000,
-          createdBy: 'u-w1',
+          createdBy: { id: 'u-w1', displayName: 'Anna Arbeiter' },
         }),
         makeBinary({
           id: 'bin-docx',
@@ -129,7 +122,7 @@ beforeEach(() => {
           label: 'auftragsbestaetigung',
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
           sizeBytes: 80_000,
-          createdBy: 'u-w2',
+          createdBy: { id: 'u-w2', displayName: 'Bernd Bauer' },
         }),
         makeBinary({
           id: 'ph-1',
@@ -150,15 +143,6 @@ beforeEach(() => {
   );
   bulkDownloadUrlMock.mockResolvedValue(
     ok({ url: 'https://storage/zip', expiresAt: '2026-04-20T10:05:00Z' }),
-  );
-  userListMock.mockResolvedValue(
-    ok({
-      users: [
-        { id: 'u-w1', username: 'anna', displayName: 'Anna Arbeiter', roles: ['worker'] } as User,
-        { id: 'u-w2', username: 'bernd', displayName: 'Bernd Bauer', roles: ['worker'] } as User,
-      ],
-      total: 2,
-    }),
   );
 });
 

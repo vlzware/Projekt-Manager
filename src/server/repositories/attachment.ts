@@ -14,12 +14,35 @@
 
 import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
-import { attachments } from '../db/schema.js';
+import { attachments, users } from '../db/schema.js';
 import type { AttachmentKind, AttachmentLabel, AttachmentStatus } from '../../domain/types.js';
 import type { AuthUser } from '../middleware/auth.js';
 import { attachmentScopeForCaller } from './scope.js';
 
 export type AttachmentRow = typeof attachments.$inferSelect;
+
+/**
+ * Read-side row shape: the attachment columns plus the uploader's display
+ * name resolved via FK. `uploaderDisplayName` is null when the uploader
+ * row is absent (FK was set null on user delete) or when the attachment
+ * has no uploader (system-created — none today, but the column nullability
+ * is preserved). Service layer reshapes this into the wire `Attachment`.
+ */
+export type AttachmentRowWithUploader = AttachmentRow & {
+  uploaderDisplayName: string | null;
+};
+
+/**
+ * Drizzle's leftJoin returns a nested `{ attachments: ..., users: ... }`
+ * shape; flatten it into the read-row contract before returning so
+ * downstream code stays unaware of the join.
+ */
+function flattenWithUploader(row: {
+  attachments: AttachmentRow;
+  users: { displayName: string } | null;
+}): AttachmentRowWithUploader {
+  return { ...row.attachments, uploaderDisplayName: row.users?.displayName ?? null };
+}
 
 export interface CreatePendingAttachmentInput {
   id?: string;
@@ -46,15 +69,17 @@ export async function listByProject(
   db: Database,
   projectId: string,
   caller: AuthUser,
-): Promise<AttachmentRow[]> {
+): Promise<AttachmentRowWithUploader[]> {
   const scope = attachmentScopeForCaller(caller);
   const conditions = [eq(attachments.projectId, projectId), eq(attachments.status, 'ready')];
   if (scope) conditions.push(scope);
-  return db
-    .select()
+  const rows = await db
+    .select({ attachments, users: { displayName: users.displayName } })
     .from(attachments)
+    .leftJoin(users, eq(attachments.createdBy, users.id))
     .where(and(...conditions))
     .orderBy(desc(attachments.createdAt), desc(attachments.id));
+  return rows.map(flattenWithUploader);
 }
 
 /**
@@ -65,9 +90,15 @@ export async function listByProject(
 export async function getById(
   db: TransactionalDatabase,
   id: string,
-): Promise<AttachmentRow | null> {
-  const rows = await db.select().from(attachments).where(eq(attachments.id, id)).limit(1);
-  return rows[0] ?? null;
+): Promise<AttachmentRowWithUploader | null> {
+  const rows = await db
+    .select({ attachments, users: { displayName: users.displayName } })
+    .from(attachments)
+    .leftJoin(users, eq(attachments.createdBy, users.id))
+    .where(eq(attachments.id, id))
+    .limit(1);
+  const row = rows[0];
+  return row ? flattenWithUploader(row) : null;
 }
 
 export async function createPending(
@@ -103,13 +134,19 @@ export async function createPending(
  * The WHERE predicate on `status = 'pending'` is the atomic guard that
  * turns the two-call flow (read → write) into a single CAS.
  */
-export async function markReady(db: MutatingDatabase, id: string): Promise<AttachmentRow | null> {
+export async function markReady(
+  db: MutatingDatabase,
+  id: string,
+): Promise<AttachmentRowWithUploader | null> {
   const rows = await db
     .update(attachments)
     .set({ status: 'ready' })
     .where(and(eq(attachments.id, id), eq(attachments.status, 'pending')))
     .returning();
-  return rows[0] ?? null;
+  if (!rows[0]) return null;
+  // Re-read inside the same tx to pick up the uploader display name via
+  // the JOIN; UPDATE...RETURNING cannot select joined columns directly.
+  return getById(db, id);
 }
 
 /**

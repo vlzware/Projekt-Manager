@@ -109,14 +109,14 @@ export function isSafeFileName(fileName: string): boolean {
  * is UX gating per the hidden-control pattern (AC-121).
  */
 export function canDeleteAttachment(
-  row: { createdBy: string | null; createdAt: string },
+  row: { createdBy: { id: string; displayName: string } | null; createdAt: string },
   caller: { id: string; roles: string[] },
   graceWindowMinutes: number,
   now: Date = new Date(),
 ): boolean {
   if (caller.roles.includes('owner') || caller.roles.includes('office')) return true;
   if (caller.roles.includes('worker')) {
-    if (row.createdBy !== caller.id) return false;
+    if (row.createdBy?.id !== caller.id) return false;
     const ageMs = now.getTime() - new Date(row.createdAt).getTime();
     return ageMs <= graceWindowMinutes * 60_000;
   }
