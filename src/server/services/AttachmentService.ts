@@ -28,6 +28,7 @@ import {
   ATTACHMENT_LABELS,
   ATTACHMENT_MIME_WHITELIST,
   classifyKind,
+  isSafeFileName,
 } from '../../domain/attachments.js';
 import { type AttachmentStorageClient, StorageObjectNotFoundError } from '../storage/client.js';
 import { isProjectInScope } from '../repositories/scope.js';
@@ -243,6 +244,14 @@ export class AttachmentService {
     if (input.fileName.length > FILE_NAME_MAX) {
       throw validationError(STRINGS.validation.maxLength('fileName', FILE_NAME_MAX));
     }
+    // Reject control chars + path separators. Keeps header injection out
+    // of the presigned-GET Content-Disposition (defence-in-depth; the
+    // storage client ALSO sanitizes), and matches the spec's "sanitized
+    // filename" intent by never letting a path-traversal-style name
+    // reach the DB.
+    if (!isSafeFileName(input.fileName)) {
+      throw validationError(STRINGS.errors.invalidInput);
+    }
     if (!LABEL_VALUES.has(input.label)) {
       throw validationError(STRINGS.errors.invalidInput);
     }
@@ -305,13 +314,19 @@ export class AttachmentService {
 
     log.info({ attachmentId: row.id, projectId }, 'attachment_init');
 
-    const originalUpload = await this.storage.createPresignedPost(
-      originalKey,
-      input.mimeType,
-      caps.perFileCapBytes,
-    );
+    // Main upload: pin content-length-range to the declared size exactly
+    // so storage rejects any size-substitution attempt before the
+    // complete() HEAD runs. Thumbnail upload: the true size is not
+    // declared at init, so leave a [1, cap] range.
+    const originalUpload = await this.storage.createPresignedPost(originalKey, input.mimeType, {
+      minBytes: input.sizeBytes,
+      maxBytes: input.sizeBytes,
+    });
     const thumbnailUpload = thumbKey
-      ? await this.storage.createPresignedPost(thumbKey, 'image/webp', caps.perFileCapBytes)
+      ? await this.storage.createPresignedPost(thumbKey, 'image/webp', {
+          minBytes: 1,
+          maxBytes: caps.perFileCapBytes,
+        })
       : undefined;
 
     return {
@@ -352,6 +367,16 @@ export class AttachmentService {
     // HEAD the original first.
     try {
       const head = await this.storage.headObject(row.originalKey);
+      // Declared-size pin first (AC-212, spec §14.2.11 error paths).
+      // The presigned POST's content-length-range already rejects this
+      // at storage, so reaching this branch means a policy bypass —
+      // refuse the flip so a size-substitution upload cannot become
+      // canonical.
+      if (head.size !== row.sizeBytes) {
+        throw conflict(STRINGS.errors.invalidInput);
+      }
+      // Defence in depth: a global cap breach is still a conflict even
+      // if the declared size matched (e.g., cap dropped since init).
       if (head.size > caps.perFileCapBytes) {
         throw conflict(STRINGS.errors.invalidInput);
       }
@@ -513,6 +538,14 @@ export class AttachmentService {
       throw notPermitted();
     }
 
+    // Pending rows are invisible to consumers — matches `listByProject`
+    // which only surfaces ready rows. Issuing a download URL for an
+    // unverified upload would leak partially-uploaded bytes past the
+    // HEAD-verify gate. 404 mirrors the reaper-removed branch.
+    if (row.status !== 'ready') {
+      throw notFound(STRINGS.entities.resource);
+    }
+
     if (variant === 'thumbnail') {
       if (row.kind !== 'photo' || !row.thumbKey) {
         throw validationError(STRINGS.errors.invalidInput);
@@ -672,7 +705,10 @@ export class AttachmentService {
         {
           event: 'attachment_storage_delete_failed',
           key,
-          error_message: err instanceof Error ? err.message : String(err),
+          // `error_hint` matches the orphan-reaper / bulk-download-reaper
+          // contract (AC-213, data-model.md §6.11) so a single log-field
+          // name works across every attachment storage-cleanup path.
+          error_hint: err instanceof Error ? err.message : String(err),
         },
         'attachment_storage_delete_failed',
       );
@@ -698,7 +734,7 @@ export async function bestEffortDeleteStorageKeys(
         {
           event: 'attachment_storage_delete_failed',
           key: entry.originalKey,
-          error_message: err instanceof Error ? err.message : String(err),
+          error_hint: err instanceof Error ? err.message : String(err),
         },
         'attachment_storage_delete_failed',
       );
@@ -711,7 +747,7 @@ export async function bestEffortDeleteStorageKeys(
           {
             event: 'attachment_storage_delete_failed',
             key: entry.thumbKey,
-            error_message: err instanceof Error ? err.message : String(err),
+            error_hint: err instanceof Error ? err.message : String(err),
           },
           'attachment_storage_delete_failed',
         );

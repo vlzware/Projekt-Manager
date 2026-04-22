@@ -82,6 +82,32 @@ export function validateMime(mime: string): AttachmentMime {
 }
 
 /**
+ * Server- and client-side predicate for "safe" attachment filenames.
+ *
+ * Rejects:
+ *   - control chars (`\x00-\x1f`, `\x7f`) — header-injection vector on
+ *     the presigned-GET `Content-Disposition`, and a source of broken
+ *     UI strings in the browser.
+ *   - path separators (`/`, `\`) — callers have no business supplying
+ *     a directory traversal; the server owns the storage key and the
+ *     filename is for display / download only.
+ *
+ * Length and emptiness are intentionally NOT checked here — those are
+ * separate concerns with their own error messages at the service
+ * boundary (`requiredString`, `maxLength`). The point of this helper is
+ * a single definition of "malicious / malformed bytes" that both the
+ * domain validator and future client-side checks can share.
+ */
+export function isSafeFileName(fileName: string): boolean {
+  // Rejecting these control bytes is the whole point: they're the
+  // CR/LF/null payloads a header-injection attack would smuggle into a
+  // Content-Disposition string.
+  // eslint-disable-next-line no-control-regex
+  const UNSAFE_BYTES = /[\x00-\x1f\x7f/\\]/;
+  return typeof fileName === 'string' && !UNSAFE_BYTES.test(fileName);
+}
+
+/**
  * Client-side rule for showing the delete affordance on a row. Mirrors
  * the server-side check (AC-215): owner + office can delete any
  * attachment; a worker only if they authored it AND the grace window has

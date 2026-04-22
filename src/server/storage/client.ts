@@ -98,13 +98,21 @@ export interface StorageClient {
 
   /**
    * Issue a presigned POST descriptor pinning the exact key, content type
-   * prefix, and size ceiling. See api.md §14.2.11 "Presigned-POST policy
+   * prefix, and size range. See api.md §14.2.11 "Presigned-POST policy
    * conditions".
+   *
+   * `size.minBytes` / `size.maxBytes` map 1:1 to the S3
+   * `content-length-range` policy. The main-upload call site pins
+   * `minBytes === maxBytes` to the client's declared `sizeBytes` so a
+   * size mismatch is rejected by storage before a complete() HEAD ever
+   * runs. The thumbnail call site leaves the range liberal
+   * (`[1, perFileCap]`) because the thumb's true size is not known at
+   * init time.
    */
   createPresignedPost?: (
     key: string,
     contentType: string,
-    sizeBytes: number,
+    size: { minBytes: number; maxBytes: number },
     expirySeconds?: number,
   ) => Promise<PresignedPostDescriptor>;
 
@@ -166,7 +174,7 @@ export interface AttachmentStorageClient extends StorageClient {
   createPresignedPost: (
     key: string,
     contentType: string,
-    sizeBytes: number,
+    size: { minBytes: number; maxBytes: number },
     expirySeconds?: number,
   ) => Promise<PresignedPostDescriptor>;
   createPresignedGet: (
@@ -204,6 +212,36 @@ export function validateKey(key: string): void {
 
 export const MIN_SIGNED_URL_EXPIRY_SECONDS = STORAGE_CONFIG.minSignedUrlExpirySec;
 export const MAX_SIGNED_URL_EXPIRY_SECONDS = STORAGE_CONFIG.maxSignedUrlExpirySec;
+
+/**
+ * Build a safe `Content-Disposition` value for a presigned GET download.
+ *
+ * RFC 6266 + RFC 5987: emit both an ASCII `filename="…"` fallback (for
+ * ancient clients that ignore `filename*`) and a UTF-8 percent-encoded
+ * `filename*=UTF-8''…` parameter (for modern browsers). The ASCII
+ * fallback replaces any byte outside the printable-ASCII range — plus
+ * control chars, backslash and double-quote — with `_` so header
+ * injection is impossible and the quoted-string grammar of the header
+ * is never broken.
+ *
+ * The server-side filename validator at the service boundary already
+ * rejects control chars and path separators; this helper is the final
+ * defence-in-depth layer that keeps the storage surface safe even if a
+ * hostile filename were to slip past earlier validation.
+ */
+export function buildContentDisposition(fileName: string): string {
+  // Stripping these control bytes is precisely the sanitizer's job;
+  // without them the ASCII-fallback path would allow header injection
+  // via a CR/LF smuggled into the Content-Disposition string.
+  // eslint-disable-next-line no-control-regex
+  const STRIP_TO_UNDERSCORE = /[\x00-\x1f\x7f"\\]/g;
+  const NON_PRINTABLE_ASCII = /[^\x20-\x7e]/g;
+  const asciiFallback = fileName
+    .replace(STRIP_TO_UNDERSCORE, '_')
+    .replace(NON_PRINTABLE_ASCII, '_');
+  const utf8Encoded = encodeURIComponent(fileName);
+  return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+}
 
 export function createStorageClient(config: StorageConfig): AttachmentStorageClient {
   const s3 = new S3Client({
@@ -296,16 +334,30 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     async createPresignedPost(
       key: string,
       contentType: string,
-      sizeBytes: number,
+      size: { minBytes: number; maxBytes: number },
       expirySeconds: number = 60,
     ): Promise<PresignedPostDescriptor> {
       validateKey(key);
       // Policy conditions — the load-bearing pins of AC-211:
       //  * exact key (no wildcards),
-      //  * content-length-range upper bound = size ceiling,
+      //  * content-length-range [minBytes, maxBytes] — the main-upload
+      //    path pins min === max to the declared size so storage
+      //    rejects any deviation (size-substitution upload attack). The
+      //    thumbnail path supplies a liberal [1, cap] range because the
+      //    thumb's true size is not known at init time.
       //  * content-type starts-with the requested MIME (the POST form
       //    echoes `Content-Type` verbatim, so the prefix match pins the
       //    exact type without tripping clients that also send a charset).
+      if (!Number.isInteger(size.minBytes) || size.minBytes < 0) {
+        throw new Error(
+          `createPresignedPost: size.minBytes must be a non-negative integer, got ${size.minBytes}`,
+        );
+      }
+      if (!Number.isInteger(size.maxBytes) || size.maxBytes < size.minBytes) {
+        throw new Error(
+          `createPresignedPost: size.maxBytes must be an integer >= minBytes, got ${size.maxBytes}`,
+        );
+      }
       const expiresIn = Math.max(1, expirySeconds);
       const result = await awsCreatePresignedPost(s3, {
         Bucket: bucket,
@@ -313,7 +365,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         Conditions: [
           { bucket },
           ['eq', '$key', key],
-          ['content-length-range', 0, sizeBytes],
+          ['content-length-range', size.minBytes, size.maxBytes],
           ['starts-with', '$Content-Type', contentType],
         ],
         Fields: {
@@ -344,9 +396,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         Bucket: bucket,
         Key: key,
         ...(attachmentFileName
-          ? {
-              ResponseContentDisposition: `attachment; filename="${attachmentFileName.replace(/"/g, '')}"`,
-            }
+          ? { ResponseContentDisposition: buildContentDisposition(attachmentFileName) }
           : {}),
       });
       const url = await getSignedUrl(s3, command, { expiresIn: clamped });
