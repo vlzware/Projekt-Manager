@@ -27,6 +27,11 @@
  * imports these constants freely.
  */
 
+import {
+  BULK_DOWNLOAD_MAX_BYTES_DEFAULT,
+  BULK_DOWNLOAD_MAX_FILES_DEFAULT,
+} from './attachmentDefaults';
+
 export interface AttachmentPipelineConfig {
   /** Longest edge (pixels) applied to the re-encoded original. [C] */
   imageMaxDimension: number;
@@ -51,6 +56,6 @@ export const ATTACHMENT_PIPELINE: AttachmentPipelineConfig = {
   thumbnailMaxDimension: 320,
   thumbnailQuality: 0.72,
   perFileSizeCapBytes: 1 * 1024 * 1024,
-  bulkDownloadMaxFiles: 20,
-  bulkDownloadMaxBytes: 20 * 1024 * 1024,
+  bulkDownloadMaxFiles: BULK_DOWNLOAD_MAX_FILES_DEFAULT,
+  bulkDownloadMaxBytes: BULK_DOWNLOAD_MAX_BYTES_DEFAULT,
 };

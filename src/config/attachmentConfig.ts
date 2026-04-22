@@ -13,6 +13,11 @@
  * and the service layer receives the resolved value as an explicit arg.
  */
 
+import {
+  BULK_DOWNLOAD_MAX_BYTES_DEFAULT,
+  BULK_DOWNLOAD_MAX_FILES_DEFAULT,
+} from './attachmentDefaults';
+
 export interface AttachmentConfig {
   /** Maximum sizeBytes of a single attachment original. [C] */
   perFileCapBytes: number;
@@ -29,8 +34,8 @@ export interface AttachmentConfig {
 /** [C] — defaults pinned by data-model.md §5.13 and architecture.md §12.2. */
 export const ATTACHMENT_CONFIG: AttachmentConfig = {
   perFileCapBytes: 1 * 1024 * 1024,
-  bulkDownloadMaxFiles: 20,
-  bulkDownloadMaxBytes: 20 * 1024 * 1024,
+  bulkDownloadMaxFiles: BULK_DOWNLOAD_MAX_FILES_DEFAULT,
+  bulkDownloadMaxBytes: BULK_DOWNLOAD_MAX_BYTES_DEFAULT,
   orphanReaperTtlMinutes: 15,
   workerSelfDeleteGraceMinutes: 15,
 };
