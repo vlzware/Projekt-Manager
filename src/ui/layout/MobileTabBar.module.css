@@ -1,0 +1,74 @@
+/*
+ * Mobile bottom tab bar. Hidden at >= md; the desktop keeps the top
+ * nav pill. Sits inside `.app`'s flex column at the bottom (after
+ * Footer) so it claims its own height — no fixed-position math, no
+ * padding-bottom on the scroll container.
+ */
+
+.tabBar {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .tabBar {
+    display: flex;
+    align-items: stretch;
+    justify-content: space-around;
+    background: var(--color-surface-inverse);
+    color: var(--color-text-on-inverse);
+    border-top: 1px solid var(--color-surface-inverse-raised);
+    flex-shrink: 0;
+    /* Slight bottom padding for Android gesture-bar clearance — Android
+       does not expose env(safe-area-inset-bottom) the way iOS does, so
+       a fixed 4 px keeps the tap target above the home indicator
+       without crowding it. */
+    padding: 4px 0 6px;
+  }
+}
+
+.tab {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 6px 4px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-on-inverse-subtle);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    background 0.15s;
+  /* Material guidance puts a tab at >= 56 dp; the icon (24 px) plus
+     label (~14 px) plus padding lands here naturally. */
+  min-height: 56px;
+}
+
+.tab:hover {
+  color: var(--color-text-on-inverse);
+  background: var(--color-surface-inverse-hover);
+}
+
+.tabActive {
+  color: var(--color-accent);
+}
+
+.tabActive:hover {
+  color: var(--color-accent-hover);
+}
+
+.icon {
+  width: 24px;
+  height: 24px;
+}
+
+.label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}

@@ -234,10 +234,10 @@
   right: auto;
 }
 
-/* Below ~768px the nav pill + badges can't fit in one row; let the
-   nav group wrap and shrink instead of forcing a viewport-wide header.
-   Segmented-pill end caps degrade gracefully on wrap because each
-   button already carries its own border. */
+/* Below ~768px the primary destinations move to the bottom tab bar
+   (`MobileTabBar`), so the header collapses to admin/status
+   affordances only — Verwaltung dropdown, email-extract, backup
+   badge, user menu. The remaining nav group can wrap if needed. */
 @media (max-width: 768px) {
   .header {
     padding: 10px 12px;
@@ -253,5 +253,12 @@
   .viewToggle {
     flex-wrap: wrap;
     flex-shrink: 1;
+  }
+
+  /* Hide primary destination buttons (rendered with `.viewButton`)
+     since the bottom tab bar carries them. The `.adminTrigger`
+     (Verwaltung dropdown) keeps its own class and stays visible. */
+  .viewButton {
+    display: none;
   }
 }

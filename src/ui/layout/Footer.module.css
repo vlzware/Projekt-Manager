@@ -6,3 +6,12 @@
   font-size: 0.8rem;
   border-top: 1px solid var(--color-surface-inverse-raised);
 }
+
+/* Hide on phones — the bottom tab bar replaces it as the bottom
+   surface and the brand line is decorative. Reclaiming the height
+   matters more on a phone than the footer's contribution. */
+@media (max-width: 768px) {
+  .footer {
+    display: none;
+  }
+}

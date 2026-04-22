@@ -9,6 +9,7 @@ import { ROUTES, routeByPath, landingPathForUser } from '@/config/routes';
 import { isInsecureConnection } from '@/config/insecureConnection';
 import { Header } from '@/ui/layout/Header';
 import { Footer } from '@/ui/layout/Footer';
+import { MobileTabBar } from '@/ui/layout/MobileTabBar';
 import { MyProjectsView } from '@/ui/myprojects/MyProjectsView';
 import { KanbanBoard } from '@/ui/kanban/KanbanBoard';
 import { CalendarView } from '@/ui/calendar/CalendarView';
@@ -212,6 +213,7 @@ export function App() {
           {viewContent}
         </main>
         <Footer />
+        <MobileTabBar />
         {selectedProject && (
           <ProjectDetailPanel project={selectedProject} onClose={() => selectProject(null)} />
         )}
