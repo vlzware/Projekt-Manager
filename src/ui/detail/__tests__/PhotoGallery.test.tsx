@@ -178,6 +178,150 @@ describe('PhotoGallery — lightbox requests the original variant (AC-222)', () 
   });
 });
 
+describe('PhotoGallery — lightbox a11y', () => {
+  it('closes the lightbox on Escape', async () => {
+    downloadUrlMock.mockImplementationOnce(async () =>
+      ok({ url: 'https://storage.example/thumb-url', expiresAt: '2026-04-20T10:05:00Z' }),
+    );
+
+    render(<PhotoGallery projectId="p-42" />);
+
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    downloadUrlMock.mockResolvedValueOnce(
+      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
+    );
+    await userEvent.click(thumb);
+
+    expect(await screen.findByTestId('photo-lightbox')).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
+    });
+  });
+
+  it('closes the lightbox when the backdrop is clicked', async () => {
+    render(<PhotoGallery projectId="p-42" />);
+
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    downloadUrlMock.mockResolvedValueOnce(
+      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
+    );
+    await userEvent.click(thumb);
+
+    const lightbox = await screen.findByTestId('photo-lightbox');
+    await userEvent.click(lightbox);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps the lightbox open when the photo itself is clicked (propagation stopped)', async () => {
+    render(<PhotoGallery projectId="p-42" />);
+
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    downloadUrlMock.mockResolvedValueOnce(
+      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
+    );
+    await userEvent.click(thumb);
+
+    const lightbox = await screen.findByTestId('photo-lightbox');
+    const innerImg = lightbox.querySelector('img');
+    expect(innerImg).not.toBeNull();
+
+    await userEvent.click(innerImg!);
+
+    // Lightbox stays open — the backdrop's onClick did not receive the
+    // event because the inner <img> stops propagation.
+    expect(screen.getByTestId('photo-lightbox')).toBeInTheDocument();
+  });
+
+  it('restores focus to the thumbnail that opened the lightbox on close', async () => {
+    render(<PhotoGallery projectId="p-42" />);
+
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    downloadUrlMock.mockResolvedValueOnce(
+      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
+    );
+    await userEvent.click(thumb);
+
+    await screen.findByTestId('photo-lightbox');
+
+    await userEvent.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
+    });
+    // Focus returns to the thumbnail that opened the lightbox so keyboard
+    // users stay anchored to their point of entry instead of dropping to
+    // document root.
+    expect(document.activeElement).toBe(thumb);
+  });
+});
+
+describe('PhotoGallery — missing-thumbnail re-fetch on list refresh', () => {
+  it('re-attempts the thumbnail fetch when a list refresh re-emits a previously-missing row', async () => {
+    // First list fetch returns the photo; the thumbnail URL resolves to
+    // null (verdict: missing). Spec §8.15.7 forbids caching that verdict
+    // — a later list refetch that re-emits the same row must re-probe.
+    downloadUrlMock.mockImplementation(async (_projectId: unknown, attId: unknown) => {
+      if (attId === 'ph-ready') {
+        return {
+          ok: false as const,
+          error: { code: 'NOT_FOUND', message: 'Datei nicht gefunden.' },
+          category: 'not_found' as const,
+          sessionExpired: false,
+        };
+      }
+      return ok({ url: 'https://x', expiresAt: '2026-04-20T10:05:00Z' });
+    });
+
+    render(<PhotoGallery projectId="p-42" />);
+
+    // Placeholder appears => first probe landed as "missing".
+    await screen.findByTestId('photo-missing-ph-ready');
+    const firstCount = downloadUrlMock.mock.calls.filter(
+      (c) => (c as unknown as [string, string, string])[1] === 'ph-ready',
+    ).length;
+    expect(firstCount).toBeGreaterThanOrEqual(1);
+
+    // Flip the mock to return a working URL on the next probe so a
+    // successful refetch is observable as the row leaving the placeholder
+    // state. Then simulate a list refresh — the store replaces the
+    // per-project slice with a new array reference, which re-runs the
+    // gallery's effect.
+    downloadUrlMock.mockImplementation(async (_projectId: unknown, attId: unknown) => {
+      if (attId === 'ph-ready') {
+        return ok({
+          url: 'https://storage.example/thumb-refreshed',
+          expiresAt: '2026-04-20T10:05:00Z',
+        });
+      }
+      return ok({ url: 'https://x', expiresAt: '2026-04-20T10:05:00Z' });
+    });
+
+    // Trigger a list-refresh by re-writing the per-project slice with a
+    // fresh object identity. The existing `photos` filter produces a new
+    // array, re-running the thumbnail-request effect for any row whose
+    // cached entry is `null` (missing verdict).
+    useAttachmentStore.setState((s) => ({
+      byProject: {
+        ...s.byProject,
+        'p-42': (s.byProject['p-42'] ?? []).map((a) => ({ ...a })),
+      },
+    }));
+
+    await waitFor(() => {
+      const calls = downloadUrlMock.mock.calls.filter(
+        (c) => (c as unknown as [string, string, string])[1] === 'ph-ready',
+      );
+      expect(calls.length).toBeGreaterThan(firstCount);
+    });
+  });
+});
+
 describe('PhotoGallery — "Datei fehlt" on thumbnail 404 (AC-224 photo side)', () => {
   it('renders the placeholder when the thumbnail fetch returns NOT_FOUND', async () => {
     // Lazy detection: the list endpoint does not probe storage. The UI
