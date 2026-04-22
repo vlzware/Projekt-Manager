@@ -26,6 +26,17 @@
   white-space: nowrap;
 }
 
+/* Compact variant — used for the silent green state. Drops the chip
+   chrome to a bare dot so the badge stops competing with the
+   navigation. The container's `title` attribute carries the label for
+   hover discovery. */
+.badgeCompact {
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: help;
+}
+
 /*
  * Inverted-surface variant — applied by the Header consumer only. Keeps
  * the badge legible when placed on the dark header frame without

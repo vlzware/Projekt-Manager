@@ -2,47 +2,23 @@ import { test, expect } from '@playwright/test';
 import { STORAGE_STATES } from './storage-states';
 
 /**
- * Structural E2E for the backup-freshness badge surfaces (AC-170 [vis]).
+ * Structural E2E for the backup-freshness badge surface (AC-170 [vis]).
  *
- * AC-170 pins three visibility claims:
+ * AC-170 pins two visibility claims:
  *
- *   1. The badge is rendered on the login screen regardless of auth
- *      state. Network reach to the login screen is VPN-gated per
- *      ADR-0008; the unauthenticated surface is the operator's only
- *      read path when the app DB is also down.
+ *   1. The badge is NOT rendered on the unauthenticated login screen.
+ *      The earlier login-screen surface was layout noise on a screen
+ *      whose only purpose is auth — the operator can see the badge
+ *      after logging in. The public `/api/backup/status` endpoint that
+ *      backed it has been removed.
  *   2. On the authenticated admin landing view, the badge is visible
- *      only to callers with role `owner`.
- *   3. On any other authenticated surface — other roles' landings,
- *      non-landing routes — the badge is not rendered.
+ *      only to callers with role `owner`. On any other authenticated
+ *      surface — other roles' landings, non-landing routes — the
+ *      badge is not rendered.
  *
  * Verified structurally (presence / absence of `[data-testid="backup-badge"]`),
  * never by pixel-diff. Structural assertions are the project convention
- * for `[vis]` ACs — screenshot baselines were dropped as brittle friction
- * (see playwright.config.ts comment on `trace: 'retain-on-failure'`).
- *
- * Runs under the shared `chromium` read-only project. The unauth test
- * uses an empty storage state; per-role tests use the pre-authenticated
- * storage states saved by `e2e/auth.setup.ts` so there is no per-test
- * login burning through the rate limit.
- *
- * ---------------------------------------------------------------------
- * Test-id inventory (this spec's contract with the UI)
- * ---------------------------------------------------------------------
- *
- * Already implemented (verified against the current tree):
- *   - login-form         src/ui/auth/LoginForm.tsx
- *   - login-username     src/ui/auth/LoginForm.tsx
- *   - login-password     src/ui/auth/LoginForm.tsx
- *   - login-submit       src/ui/auth/LoginForm.tsx
- *   - header             src/ui/layout/Header.tsx
- *   - view-toggle-kunden src/ui/layout/Header.tsx (generated from routes)
- *   - customer-table     src/ui/management/CustomerManagement.tsx
- *
- * Phase 3 UI must add these as data-testid attributes:
- *   - backup-badge       The freshness-badge component (login screen +
- *                        owner landing). `toHaveCount(0 | 1)` is used in
- *                        this spec to distinguish "not rendered" from
- *                        "CSS-hidden" per AC-170 wording.
+ * for `[vis]` ACs.
  */
 
 type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
@@ -62,16 +38,10 @@ const BADGE_ON_LANDING: Record<Role, boolean> = {
 test.describe('AC-170: backup-freshness badge — unauthenticated', () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test('login screen renders the badge for an unauthenticated visitor', async ({ page }) => {
+  test('login screen does not render the badge', async ({ page }) => {
     await page.goto('/');
-
-    // Login form is visible — we are on the unauth surface.
     await expect(page.getByTestId('login-form')).toBeVisible();
-
-    // Badge is rendered here regardless of auth — VPN is the
-    // threat-model anchor per ADR-0008, so the login screen is a
-    // trusted read surface even without an active session.
-    await expect(page.getByTestId('backup-badge')).toBeVisible();
+    await expect(page.getByTestId('backup-badge')).toHaveCount(0);
   });
 });
 

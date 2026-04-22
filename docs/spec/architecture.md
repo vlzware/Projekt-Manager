@@ -172,9 +172,9 @@ The Layer 2 implementation of [§11.9](#119-data-persistence-and-recovery) is a 
 
 **Status surface (dual-write).**
 
-- Primary: the `meta_backup_status` row ([data-model.md §5.9](data-model.md#59-backup-status-entity)), read by the backend on the authenticated admin landing view and on the login screen.
-- Mirror: an unencrypted status mirror object in the off-site object store carrying the same fields, readable without the application. This exists so backup health is inspectable during a database outage.
-- On the authenticated admin landing view, the badge is visible only to callers with role `owner`. On the login screen, the badge is visible to anyone who reaches the screen — network reach is VPN-gated per [ADR-0008](../adr/0008-vpn-first-network-access.md), which is the threat-model anchor. Amber and red thresholds are configurable **[C]** (see [§12.2](#122-company-configurable-settings)).
+- Primary: the `meta_backup_status` row ([data-model.md §5.9](data-model.md#59-backup-status-entity)), read by the backend on the authenticated admin landing view.
+- Mirror: an unencrypted status mirror object in the off-site object store carrying the same fields, readable without the application. This exists so backup health is inspectable during a database outage (operator inspects directly; no application surface required).
+- On the authenticated admin landing view, the badge is visible only to callers with role `owner`. The badge surface scales by severity — green is a bare dot with a tooltip; amber, red, and unknown render the full pill with label. Amber and red thresholds are configurable **[C]** (see [§12.2](#122-company-configurable-settings)).
 - When the status source is unreachable, the rendering surface MUST display a neutral "status unknown" state — silent absence is a misleading-state defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)).
 
 ### 11.11 Notification Publisher and Dispatch

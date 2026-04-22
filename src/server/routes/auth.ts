@@ -81,18 +81,8 @@ export function authRoutes(db: Database) {
     // Returns the authenticated user profile. For callers with role
     // `owner`, the response also carries the current `backupStatus`
     // (verification.md AC-170 — badge visible only to owner on the
-    // authenticated surface; other roles get no `backupStatus` key).
-    // This reuses the existing `/api/auth/me` endpoint rather than
-    // adding a new REST surface (per ADR-0020 / architecture.md §11.10).
-    //
-    // Design note — login-screen badge: AC-170 also requires the badge
-    // to render on the unauthenticated login screen. The project's
-    // login is a SPA view (not a server-rendered template), so the
-    // "server-render into HTML + inline JSON" approach in the task
-    // description does not match this codebase. Stream 3 (UI) owns the
-    // login-screen wiring; if an unauthenticated status endpoint is
-    // needed, that is a separate piece of work — it is not added here
-    // so the route surface stays within the "no new endpoints" rule.
+    // authenticated landing surface; other roles get no `backupStatus`
+    // key, and absence drives the client's "no badge here" branch).
     // ---------------------------------------------------------------
     app.get('/api/auth/me', { preHandler: authenticate }, async (request, reply) => {
       const { id, username, displayName, roles, email, themePreference, pushMuted } = request.user!;

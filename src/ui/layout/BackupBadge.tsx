@@ -8,7 +8,10 @@
  * — it just maps a kind+reason to a visible label and a color cue.
  *
  * Spec pins ([verification.md §15.22](../../../docs/spec/verification.md#1522-backup-and-recovery)):
- *   - AC-170 — rendered on the login screen and on the owner landing only.
+ *   - AC-170 — rendered on the owner's landing view only (not on the
+ *     login screen, not on other roles' surfaces). Severity-scaled
+ *     presentation: green is a bare dot with a tooltip; amber, red,
+ *     and unknown render as a full pill with label.
  *   - AC-171 — never silently hidden; `unknown` surfaces as "Status
  *     unbekannt" so an unreachable status source is explicit.
  *
@@ -26,10 +29,10 @@ import styles from './BackupBadge.module.css';
 interface BackupBadgeProps {
   state: BackupBadgeState;
   /**
-   * Surface context. The owner landing header sits on the dark
-   * inverse-surface frame; the login screen sits on the light
-   * raised-surface frame. The default matches the login surface so a
-   * caller that forgets the prop still paints legibly.
+   * Surface context. Today the only consumer is the owner's landing
+   * header (dark inverse-surface frame). The light variant is kept as
+   * a default so a future caller on a light surface paints legibly
+   * without a prop.
    */
   variant?: 'default' | 'inverse';
 }
@@ -102,16 +105,23 @@ export function BackupBadge({ state, variant = 'default' }: BackupBadgeProps) {
   const label = labelFor(state);
   const indicatorClass = indicatorClassFor(state);
   const surfaceClass = variant === 'inverse' ? styles.badgeInverse : '';
+  // Severity-scaled presentation: green is the silent default — render
+  // only the dot + tooltip so it doesn't compete with active surfaces
+  // for attention. Amber / red / unknown stay loud (full pill with
+  // label) because those states require operator action.
+  const compact = state.kind === 'green';
 
   return (
     <div
-      className={`${styles.badge} ${surfaceClass}`.trim()}
+      className={`${styles.badge} ${compact ? styles.badgeCompact : ''} ${surfaceClass}`.trim()}
       data-testid="backup-badge"
       data-badge-kind={state.kind}
       role="status"
+      title={label}
+      aria-label={label}
     >
       <span className={`${styles.indicator} ${indicatorClass}`} aria-hidden="true" />
-      <span className={styles.label}>{label}</span>
+      {!compact && <span className={styles.label}>{label}</span>}
     </div>
   );
 }

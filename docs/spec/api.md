@@ -155,16 +155,12 @@ Design notes:
 
 #### 14.2.7 Backup Status
 
-The Layer 2 backup-freshness badge ([verification.md §15.22](verification.md#1522-backup-and-recovery), [ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) needs a read surface on the unauthenticated login screen. This endpoint publishes the [`BackupStatus`](data-model.md#59-backup-status-entity) fields and nothing else; the network reach of the app is VPN-gated ([ADR-0008](../adr/0008-vpn-first-network-access.md)), which is the threat-model anchor for exposing it publicly.
-
-| Operation             | Input | Output                                                                                                                                      | Notes                                                                                                                                                                                             |
-| --------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Get backup status** | —     | `{ available: true, status: BackupStatus }` on success; `{ available: false }` when the row is unreachable (DB down and mirror unavailable) | No authentication required. Returns only the fields defined in [data-model.md §5.9](data-model.md#59-backup-status-entity). Rate-limited to protect the DB path on a flood of login-screen loads. |
+The Layer 2 backup-freshness badge ([verification.md §15.22](verification.md#1522-backup-and-recovery), [ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) is consumed only by the authenticated owner. The status fields piggyback on the existing `GET /api/auth/me` response (see [§14.2.1](#1421-authentication--user-profile)) — no dedicated route. The earlier unauthenticated `GET /api/backup/status` endpoint was removed together with the login-screen badge surface.
 
 Design notes:
 
-- **Response contract is an explicit allowlist.** The server returns only the badge-visible fields from [data-model.md §5.9](data-model.md#59-backup-status-entity) (`lastBackupAt`, `lastBackupOk`, `lastDrillAt`, `lastDrillOk`, `lastError`, `updatedAt`). Any future sensitive column on the `meta_backup_status` row does not leak through this surface unless it is explicitly added.
-- **Unreachable source → `{ available: false }`, not silence.** Misleading state is a critical defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)). An unreachable DB yields an explicit response the client renders as "Status unbekannt" ([AC-171](verification.md#1522-backup-and-recovery)) rather than a 404 or a silent empty payload.
+- **Owner-only payload.** `/api/auth/me` includes the `backupStatus` field for callers with role `owner`; the field is omitted for every other role. Absence drives the client's "no badge on this surface" branch.
+- **Unreachable source → field omitted, not silence.** Misleading state is a critical defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)). When the status row is unreachable, the server omits the field; the client maps `undefined` to the explicit "Status unbekannt" badge state ([AC-171](verification.md#1522-backup-and-recovery)).
 - **No errors on absence of prior runs.** The pre-seed row from the baseline migration is always present. The service reports `lastBackupOk=false` with `lastBackupAt=null` for a DB that has never run a backup; the client derives the `backup-never-run` badge reason from that shape.
 
 #### 14.2.8 Audit Log

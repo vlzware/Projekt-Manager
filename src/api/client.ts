@@ -231,9 +231,6 @@ interface LoginResponse {
   backupStatus?: BackupStatus;
 }
 
-/** Response shape for the public GET /api/backup/status surface. */
-export type BackupStatusResponse = { available: true; status: BackupStatus } | { available: false };
-
 interface ProjectListResponse {
   data: Project[];
   total: number;
@@ -508,19 +505,6 @@ export const notificationRuleApi = {
     apiCall<NotificationRule>(`/api/notification-rules/${id}`, { method: 'PATCH', body: data }),
 
   delete: (id: string) => apiCall<null>(`/api/notification-rules/${id}`, { method: 'DELETE' }),
-};
-
-/**
- * Public backup-status endpoint — no authentication required.
- *
- * Rendered on the login screen for operator visibility when the app
- * DB is also down (ADR-0008 VPN-gate is the threat-model anchor, see
- * api.md §14.2.7). The authenticated `/api/auth/me` flow carries the
- * same status as an embedded `backupStatus` field for owner callers,
- * so this endpoint is only consumed from the unauth login screen.
- */
-export const backupApi = {
-  status: () => apiCall<BackupStatusResponse>('/api/backup/status'),
 };
 
 /**

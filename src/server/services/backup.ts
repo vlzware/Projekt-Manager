@@ -380,10 +380,10 @@ function firstDivergingTable(source: Manifest, restore: Manifest): string | null
 /**
  * Extract a string message from an unknown throwable and scrub any
  * credential-shaped substrings. Every call site that writes to
- * `meta_backup_status.lastError` (which is returned by the public
- * `GET /api/backup/status` endpoint) goes through this — defense in
- * depth against a future throw path that includes a connection string
- * or similar.
+ * `meta_backup_status.lastError` (which is returned to the owner via
+ * the `backupStatus` field on `GET /api/auth/me`) goes through this —
+ * defense in depth against a future throw path that includes a
+ * connection string or similar.
  */
 function errorMessage(err: unknown): string {
   const raw = err instanceof Error ? err.message : typeof err === 'string' ? err : 'unknown';
