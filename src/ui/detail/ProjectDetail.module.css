@@ -221,6 +221,25 @@
   box-shadow: 0 6px 16px rgba(var(--color-overlay-rgb), 0.2);
 }
 
+/* On phones the bottom tab bar (`MobileTabBar`) sits at the viewport's
+   bottom edge, ~66 px tall. A fixed FAB at `bottom: 32px` would land
+   on top of the right-most tab ("Kunden" / "Projekte" depending on
+   role). Lift it above the tab bar and shrink it to the standard
+   Material mini-FAB size so it doesn't crowd the viewport. */
+@media (max-width: 768px) {
+  .cameraFab {
+    bottom: 80px;
+    right: 16px;
+    width: 56px;
+    height: 56px;
+  }
+
+  .cameraFabIcon {
+    width: 24px;
+    height: 24px;
+  }
+}
+
 .cameraFabIcon {
   width: 32px;
   height: 32px;

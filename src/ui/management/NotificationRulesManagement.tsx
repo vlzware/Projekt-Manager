@@ -121,10 +121,19 @@ export function NotificationRulesManagement() {
         <tbody>
           {rules.map((rule) => (
             <tr key={rule.id} data-testid={`notification-rule-row-${rule.id}`}>
-              <td>{NOTIFICATION_EVENT_LABELS[rule.eventClass] ?? rule.eventClass}</td>
-              <td>{stateFilterLabel(rule.stateFilter)}</td>
-              <td className={localStyles.recipientCell}>{recipientSummary(rule)}</td>
-              <td>
+              <td data-label={STRINGS.notifications.rules.colEvent}>
+                {NOTIFICATION_EVENT_LABELS[rule.eventClass] ?? rule.eventClass}
+              </td>
+              <td data-label={STRINGS.notifications.rules.colFilter}>
+                {stateFilterLabel(rule.stateFilter)}
+              </td>
+              <td
+                data-label={STRINGS.notifications.rules.colRecipients}
+                className={localStyles.recipientCell}
+              >
+                {recipientSummary(rule)}
+              </td>
+              <td data-label={STRINGS.notifications.rules.colEnabled}>
                 <span
                   className={`${styles.badge} ${rule.enabled ? styles.badgeActive : styles.badgeInactive}`}
                   data-testid="notification-rule-enabled-indicator"

@@ -482,3 +482,68 @@
   padding-left: 20px;
   font-size: 0.875rem;
 }
+
+/* Below ~768px the dense management tables collapse to a vertical stack
+   of card-like rows. Each `<td>` shows its column label (via
+   `data-label`) above the value so the header context survives the
+   loss of the thead. Cells without `data-label` (e.g. the actions cell)
+   render without a label. This removes the horizontal overflow that
+   forced the whole view to scroll sideways on phones. */
+@media (max-width: 768px) {
+  .container {
+    padding: 12px;
+    overflow-x: hidden;
+  }
+
+  .searchInput {
+    margin-left: 0;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .table,
+  .table thead,
+  .table tbody,
+  .table tr,
+  .table th,
+  .table td {
+    display: block;
+  }
+
+  .table thead {
+    /* Column labels live in each cell via `::before` on mobile — the
+       table header would duplicate them and waste vertical space. */
+    display: none;
+  }
+
+  .table tr {
+    background: var(--color-surface-raised);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+
+  .table tbody tr:hover {
+    /* The wide-screen hover swap reads as a row highlight, but on a
+       stacked-card mobile it looks like a filled tile — leave the
+       card background alone. */
+    background: var(--color-surface-raised);
+  }
+
+  .table td {
+    padding: 4px 0;
+    border-bottom: none;
+  }
+
+  .table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-text-subtle);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 2px;
+  }
+}

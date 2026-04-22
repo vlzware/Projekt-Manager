@@ -101,10 +101,10 @@ export function CustomerManagement() {
         <tbody>
           {customers.map((c) => (
             <tr key={c.id} className={styles.clickableRow} onClick={() => handleRowClick(c)}>
-              <td>{c.name}</td>
-              <td>{c.phone ?? '—'}</td>
-              <td>{c.email ?? '—'}</td>
-              <td>{c.address?.city ?? '—'}</td>
+              <td data-label={STRINGS.ui.name}>{c.name}</td>
+              <td data-label={STRINGS.ui.phone}>{c.phone ?? '—'}</td>
+              <td data-label={STRINGS.ui.email}>{c.email ?? '—'}</td>
+              <td data-label={STRINGS.ui.city}>{c.address?.city ?? '—'}</td>
               {canDelete && (
                 <td>
                   <button className={styles.dangerButton} onClick={(e) => handleDelete(e, c)}>

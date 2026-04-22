@@ -161,10 +161,10 @@ export function ProjectManagement() {
             const renderActionsCell = showArchiveBtn || showPurgeBtn;
             return (
               <tr key={p.id} className={rowClassName} onClick={() => handleRowClick(p)}>
-                <td>{p.number}</td>
-                <td>{p.title}</td>
-                <td>{p.customer?.name ?? '—'}</td>
-                <td>
+                <td data-label={STRINGS.ui.number}>{p.number}</td>
+                <td data-label={STRINGS.ui.title}>{p.title}</td>
+                <td data-label={STRINGS.ui.customer}>{p.customer?.name ?? '—'}</td>
+                <td data-label={STRINGS.ui.status}>
                   <span className={styles.badge} style={{ backgroundColor: stateColor(p.status) }}>
                     {stateLabel(p.status)}
                   </span>
@@ -180,12 +180,12 @@ export function ProjectManagement() {
                     </>
                   )}
                 </td>
-                <td>
+                <td data-label={STRINGS.ui.dates}>
                   {p.plannedStart
                     ? `${new Date(p.plannedStart).toLocaleDateString('de-DE')}${p.plannedEnd ? ' – ' + new Date(p.plannedEnd).toLocaleDateString('de-DE') : ''}`
                     : STRINGS.projects.noDate}
                 </td>
-                <td>
+                <td data-label={STRINGS.ui.value}>
                   {p.estimatedValue != null
                     ? p.estimatedValue.toLocaleString('de-DE', {
                         style: 'currency',
