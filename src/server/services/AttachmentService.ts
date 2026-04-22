@@ -645,7 +645,11 @@ export class AttachmentService {
     });
 
     // Collect the zip into a buffer. S3 PutObject needs a known length;
-    // we already enforce the 20 MB cap so bounded buffering is safe.
+    // we already enforce the 20 MB cap so bounded buffering is safe per
+    // request. Peak memory = cap × concurrent bulk-downloads (e.g.,
+    // 20 MB × N concurrent). Acceptable under current SLA; revisit
+    // (e.g., switch to @aws-sdk/lib-storage streaming multipart) if
+    // concurrency scales.
     // Note: archiver emits 'warning' for non-fatal issues (missing stat,
     // etc.) — we surface them via the logger channel the caller scopes.
     const chunks: Buffer[] = [];
