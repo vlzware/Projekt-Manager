@@ -13,7 +13,7 @@ export function LoginForm() {
   const authError = useAuthStore((s) => s.authError);
   const fetchProjects = useProjectStore((s) => s.fetchProjects);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (isSubmitting) return;
     setIsSubmitting(true);
@@ -47,6 +47,7 @@ export function LoginForm() {
             data-testid="login-username"
             id="login-username"
             type="text"
+            autoComplete="username"
             className={styles.input}
             value={username}
             onChange={(e) => setUsername(e.target.value)}
@@ -62,6 +63,7 @@ export function LoginForm() {
             data-testid="login-password"
             id="login-password"
             type="password"
+            autoComplete="current-password"
             className={styles.input}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
