@@ -179,36 +179,53 @@
 /* Floating camera capture — fixed to the viewport's top-right corner so
    a worker on-site can reach it without hunting the layout. Stays
    visible across scroll; the detail shell is the only page that mounts
-   it (wrapped in `{canWrite && …}` on the caller side). */
+   it (wrapped in `{canWrite && …}` on the caller side).
+
+   The FAB uses the raised-surface token (not accent) so it blends with
+   the page chrome and adjusts with the active theme. An inline SVG icon
+   with `fill: currentColor` lets the icon colour follow `--color-text`
+   — emoji glyphs are OS-coloured and would stay the same across light
+   and dark themes, so they were a poor fit here. */
 .cameraFab {
+  /* Bottom-right is the standard FAB position in modern UI — stays
+     clear of the header action row (Alle herunterladen / Archivieren)
+     which anchors to the top-right of the content area, and lands
+     exactly where thumbs go on a phone so on-site workers reach it
+     one-handed. Fixed to the viewport so it remains visible across
+     the detail page's own scroll. */
   position: fixed;
-  top: 84px;
-  right: 24px;
-  width: 56px;
-  height: 56px;
+  bottom: 32px;
+  right: 32px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(var(--color-overlay-rgb), 0.2);
+  box-shadow: 0 4px 12px rgba(var(--color-overlay-rgb), 0.15);
   cursor: pointer;
   z-index: 90;
   transition:
     transform 0.15s,
-    box-shadow 0.15s;
+    box-shadow 0.15s,
+    background 0.15s;
 }
 
 .cameraFab:hover,
 .cameraFab:focus-within {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(var(--color-overlay-rgb), 0.25);
+  background: var(--color-surface-sunken);
+  box-shadow: 0 6px 16px rgba(var(--color-overlay-rgb), 0.2);
 }
 
 .cameraFabIcon {
-  font-size: 1.5rem;
-  line-height: 1;
+  width: 32px;
+  height: 32px;
+  display: block;
+  fill: currentColor;
 }
 
 .cameraFabInput {
