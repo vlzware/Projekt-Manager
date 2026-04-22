@@ -183,7 +183,7 @@
         },
         "attachments_valid_mime_type": {
           "name": "attachments_valid_mime_type",
-          "value": "\"attachments\".\"mime_type\" IN ('image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')"
+          "value": "\"attachments\".\"mime_type\" IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')"
         }
       },
       "isRLSEnabled": false

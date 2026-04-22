@@ -60,15 +60,16 @@ describe('ATTACHMENT_LABELS', () => {
 });
 
 describe('ATTACHMENT_MIME_WHITELIST', () => {
-  it('enumerates exactly the six MIME types from data-model.md §5.13', () => {
+  it('enumerates exactly the five MIME types from data-model.md §5.13', () => {
     // Closed set — "Values outside the set are rejected at init". A
     // change here is a schema + validator change and must stay in lock
-    // step with the server's init route.
+    // step with the server's init route. HEIC is deliberately NOT on
+    // the list (Apple-only format, transcoding overhead was not worth
+    // the narrow user base — see kickoff).
     expect([...ATTACHMENT_MIME_WHITELIST]).toEqual([
       'image/jpeg',
       'image/png',
       'image/webp',
-      'image/heic',
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     ]);
@@ -88,7 +89,6 @@ describe('classifyKind', () => {
     ['image/jpeg', 'photo'],
     ['image/png', 'photo'],
     ['image/webp', 'photo'],
-    ['image/heic', 'photo'],
   ] as const)('classifies %s as a photo', (mime, expected) => {
     expect(classifyKind(mime)).toBe(expected);
   });
@@ -135,7 +135,6 @@ describe('validateMime', () => {
     'image/jpeg',
     'image/png',
     'image/webp',
-    'image/heic',
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   ] as const)('accepts %s and returns it typed', (mime) => {
@@ -146,7 +145,9 @@ describe('validateMime', () => {
     // AC-211: "a `mimeType` outside the whitelist … returns `422
     // VALIDATION_ERROR`". The helper is the load-bearing client-side
     // gate referenced by ui/project-detail.md §8.15.5 ("Dateityp nicht
-    // erlaubt") — a miss here is a silently-accepted upload.
+    // unterstützt") — a miss here is a silently-accepted upload. HEIC
+    // is in this rejection set by design.
+    expect(() => validateMime('image/heic')).toThrow();
     expect(() => validateMime('image/gif')).toThrow();
     expect(() => validateMime('application/zip')).toThrow();
     expect(() => validateMime('text/plain')).toThrow();

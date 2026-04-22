@@ -25,19 +25,13 @@ export const ATTACHMENT_MIME_WHITELIST = [
   'image/jpeg',
   'image/png',
   'image/webp',
-  'image/heic',
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ] as const;
 
 export type AttachmentMime = (typeof ATTACHMENT_MIME_WHITELIST)[number];
 
-const PHOTO_MIMES: ReadonlySet<string> = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/heic',
-]);
+const PHOTO_MIMES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const LABEL_VALUES: ReadonlySet<string> = new Set(ATTACHMENT_LABELS.map((entry) => entry.value));
 

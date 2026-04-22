@@ -56,6 +56,11 @@ export function UploadCta({ projectId }: UploadCtaProps) {
   // re-surfaces the banner — the previous behaviour of a permanent ack
   // silently swallowed repeated failures.
   const [ackedClientIds, setAckedClientIds] = useState<Set<string>>(new Set());
+  // Validation banner — set when the user picks / drops an unsupported
+  // MIME (e.g., HEIC from an iPhone camera roll). The banner names the
+  // supported set so the user knows how to proceed. Cleared on a fresh
+  // pick or via explicit dismiss.
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   const myPending = useMemo(() => {
     return Object.values(pendingUploads).filter((p) => p.projectId === projectId);
@@ -63,7 +68,19 @@ export function UploadCta({ projectId }: UploadCtaProps) {
 
   const failed = myPending.find((p) => p.status === 'failed' && !ackedClientIds.has(p.clientId));
 
+  const isAllowedMime = (mime: string): boolean =>
+    (ATTACHMENT_MIME_WHITELIST as readonly string[]).includes(mime);
+
   const dispatchUpload = (file: File): void => {
+    if (!isAllowedMime(file.type)) {
+      // Server enforces the same whitelist, but the UX goal is to tell
+      // the user *before* a round-trip why their file was refused — in
+      // particular HEIC needs an explicit nudge since iPhone cameras
+      // save HEIC by default and the user may not know.
+      setValidationError(STRINGS.attachments.uploadMimeNotAllowed);
+      return;
+    }
+    setValidationError(null);
     const pickedLabel = mimeIsPhoto(file.type) ? label : defaultLabelFor(file.type);
     void uploadFile(projectId, file, {
       label: pickedLabel,
@@ -77,14 +94,6 @@ export function UploadCta({ projectId }: UploadCtaProps) {
     dispatchUpload(file);
     e.target.value = '';
   };
-
-  // Drag-drop entry point (spec §8.15.4 — two upload affordances). The
-  // MIME whitelist is enforced by validating `file.type` against the
-  // same list the file picker uses; anything else is silently ignored
-  // (a toast for every rejected drop would be noisy on multi-file
-  // drags, which aren't yet supported — one file at a time).
-  const isAllowedMime = (mime: string): boolean =>
-    (ATTACHMENT_MIME_WHITELIST as readonly string[]).includes(mime);
 
   const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -110,7 +119,9 @@ export function UploadCta({ projectId }: UploadCtaProps) {
     setDragActive(false);
     const file = e.dataTransfer.files?.[0];
     if (!file) return;
-    if (!isAllowedMime(file.type)) return;
+    // Let `dispatchUpload` handle MIME validation so the drag-drop path
+    // and the picker path surface the same German banner instead of
+    // silently swallowing unsupported files.
     dispatchUpload(file);
   };
 
@@ -227,6 +238,20 @@ export function UploadCta({ projectId }: UploadCtaProps) {
             </div>
           ))}
       </div>
+
+      {validationError && (
+        <div className={styles.errorBanner} data-testid="upload-validation-banner" role="alert">
+          <span>{validationError}</span>
+          <button
+            type="button"
+            className={styles.dismissButton}
+            onClick={() => setValidationError(null)}
+            aria-label={STRINGS.attachments.uploadDismiss}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {bannerMessage && (
         <div className={styles.errorBanner} data-testid="upload-error-banner" role="alert">

@@ -635,7 +635,7 @@ export class AttachmentService {
 
     const archive = archiver('zip', {
       // Store-only — attachment originals are already compressed for
-      // the photo case (JPEG/WebP/HEIC) and PDFs compress poorly. Pay
+      // the photo case (JPEG/PNG/WebP) and PDFs compress poorly. Pay
       // the CPU cost only when there's upside. Level 0 keeps the 20 MB
       // cap honest: summed entry sizes are a strict upper bound.
       zlib: { level: 0 },

@@ -474,7 +474,15 @@ export const STRINGS = {
     uploadProgressUpload: 'Hochladen…',
     uploadProgressComplete: 'Fertigstellen…',
     uploadFileTooLarge: 'Datei zu groß.',
-    uploadMimeNotAllowed: 'Dateityp nicht erlaubt.',
+    /**
+     * MIME-rejection copy — names the supported formats explicitly so a
+     * user picking a HEIC / GIF / etc. has a concrete answer on what to
+     * do instead. HEIC is the canonical miss (Apple camera default); the
+     * list-the-supported approach future-proofs the message against any
+     * other format drift.
+     */
+    uploadMimeNotAllowed:
+      'Dateityp nicht unterstützt. Bitte als JPEG, PNG oder WebP (Fotos) oder als PDF oder DOCX (Dokumente) hochladen.',
 
     // Missing-file placeholder (AC-224)
     fileMissing: 'Datei fehlt',

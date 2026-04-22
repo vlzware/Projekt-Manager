@@ -402,7 +402,7 @@ export const attachments = pgTable(
     ),
     check(
       'attachments_valid_mime_type',
-      sql`${table.mimeType} IN ('image/jpeg', 'image/png', 'image/webp', 'image/heic', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')`,
+      sql`${table.mimeType} IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')`,
     ),
   ],
 );
