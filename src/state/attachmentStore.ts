@@ -24,7 +24,7 @@ import { attachmentApi, type PresignedPost } from '@/api/client';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
-import { runImagePipeline } from '@/domain/imagePipeline';
+import { runImagePipeline, exceedsRawCap } from '@/domain/imagePipeline';
 import { handleSessionExpired } from './sessionExpired';
 
 export interface PendingUpload {
@@ -195,6 +195,16 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
     const { file, hasThumbnail } = slot;
     const label = pending.label;
+
+    // Fast-fail obviously-oversized inputs before any decode / re-encode
+    // work. The post-pipeline check against `perFileSizeCapBytes` below
+    // still guards the hard cap — photos under the liberal raw cap may
+    // still compress to above the per-file limit.
+    if (exceedsRawCap(file)) {
+      markFailed(clientId, STRINGS.attachments.uploadFileTooLarge);
+      return;
+    }
+
     // Abort any prior controller for this clientId (a retry that starts
     // while a previous attempt's transport is still unwinding) then
     // install a fresh one.
@@ -207,10 +217,6 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
     try {
       // Step 1 — client image pipeline.
-      // TODO(PR-C coord w/ PR-B): if imagePipeline exposes
-      //   `exceedsRawCap(file, liberalCap)`, call it before `runImagePipeline`
-      //   to fail fast on obviously-too-large inputs and skip the
-      //   decode-and-reencode work entirely. Review finding: frontend.
       const processed = await runImagePipeline(file, { hasThumbnail });
       if (wasAborted()) return;
 
