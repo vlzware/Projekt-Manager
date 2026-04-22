@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,6 +35,22 @@ const E2E_DATABASE_URL =
   process.env.E2E_DATABASE_URL ||
   `postgresql://pm:${process.env.POSTGRES_PASSWORD || 'changeme'}@localhost:5432/projekt_manager_e2e`;
 process.env.DATABASE_URL = E2E_DATABASE_URL;
+
+// Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1` blocks
+// Chromium's namespace sandbox. Without this, Playwright injects
+// `--no-sandbox` as a fallback and Chromium renders an "unsupported flag"
+// infobar on every headed run. Pointing at Google Chrome's SUID helper
+// (installed via the google-chrome-stable .deb) restores the sandbox —
+// Chromium's docs rank this as the safest of the three workarounds
+// (https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
+// Only applied when the helper is actually present; CI images and
+// workstations without google-chrome-stable fall through to Playwright's
+// default `--no-sandbox` launch, where the infobar is irrelevant (headless).
+const SUID_SANDBOX = '/opt/google/chrome/chrome-sandbox';
+const USE_SUID_SANDBOX = fs.existsSync(SUID_SANDBOX);
+if (USE_SUID_SANDBOX) {
+  process.env.CHROME_DEVEL_SANDBOX = SUID_SANDBOX;
+}
 
 /**
  * Default auth storage path — owner role. Must match
@@ -76,6 +93,10 @@ export default defineConfig({
     // full trace on any failing run so the failure can be inspected via
     // `npx playwright show-trace <zip>` without needing a retry to trigger.
     trace: 'retain-on-failure',
+    // Re-enable Chromium's sandbox only when the SUID helper is available
+    // (Playwright disables it by default). See the CHROME_DEVEL_SANDBOX
+    // block above for the Ubuntu 24.04 AppArmor context.
+    launchOptions: { chromiumSandbox: USE_SUID_SANDBOX },
   },
   projects: [
     // 1. Setup — reseed database, authenticate once per role, save four
