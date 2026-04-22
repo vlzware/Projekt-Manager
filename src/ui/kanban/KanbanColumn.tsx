@@ -1,5 +1,6 @@
-import type { StateConfig } from '@/config/stateConfig';
+import type { StateConfig, WorkflowState } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
+import { STRINGS } from '@/config/strings';
 import { ProjectCard } from './ProjectCard';
 import styles from './KanbanColumn.module.css';
 
@@ -7,6 +8,8 @@ interface KanbanColumnProps {
   config: StateConfig;
   projects: Project[];
   collapsed?: boolean;
+  /** Aged-buffer summary for THIS column, or null when no rows exceed the threshold. */
+  agedBuffer?: { state: WorkflowState; count: number; thresholdDays: number } | null;
   onToggleExpand?: () => void;
 }
 
@@ -17,7 +20,13 @@ const typeClassMap: Record<string, string> = {
   done: styles.columnDone,
 };
 
-export function KanbanColumn({ config, projects, collapsed, onToggleExpand }: KanbanColumnProps) {
+export function KanbanColumn({
+  config,
+  projects,
+  collapsed,
+  agedBuffer,
+  onToggleExpand,
+}: KanbanColumnProps) {
   if (collapsed) {
     return (
       <div
@@ -35,6 +44,14 @@ export function KanbanColumn({ config, projects, collapsed, onToggleExpand }: Ka
           <span className={styles.collapsedCount} data-testid={`column-count-${config.key}`}>
             {projects.length}
           </span>
+          {agedBuffer && (
+            <span
+              className={styles.collapsedAgedDot}
+              data-testid={`column-aged-${config.key}`}
+              aria-label={STRINGS.aging.agedBufferShort(agedBuffer.count, agedBuffer.thresholdDays)}
+              title={STRINGS.aging.agedBufferShort(agedBuffer.count, agedBuffer.thresholdDays)}
+            />
+          )}
         </div>
       </div>
     );
@@ -63,6 +80,11 @@ export function KanbanColumn({ config, projects, collapsed, onToggleExpand }: Ka
         <span className={styles.label}>
           {config.label} (<span data-testid={`column-count-${config.key}`}>{projects.length}</span>)
         </span>
+        {agedBuffer && (
+          <span className={styles.agedWarning} data-testid={`column-aged-${config.key}`}>
+            ⚠ {STRINGS.aging.agedBufferShort(agedBuffer.count, agedBuffer.thresholdDays)}
+          </span>
+        )}
         {onToggleExpand && (
           <span className={styles.collapseChevron} aria-hidden="true">
             <svg

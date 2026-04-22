@@ -89,7 +89,6 @@ export interface AuthUserProfile {
 }
 
 export interface SummaryData {
-  actionCounts: Partial<Record<WorkflowState, number>>;
   agedBufferCounts: { state: WorkflowState; count: number; thresholdDays: number }[];
   projectsWithoutDates: number;
 }

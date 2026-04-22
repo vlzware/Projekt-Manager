@@ -4,23 +4,22 @@
  * Local-only state that never touches the API.
  * Separated so view concerns don't trigger project refetches.
  *
- * Filters are mutually exclusive: a workflow-state filter and a "no dates"
- * filter cannot both be active. Setting one clears the other. Switching
- * views clears every filter.
+ * The only persistent filter is `filterNoDates`, set from CalendarView's
+ * "projects without dates" jump and cleared on view change. Workflow-state
+ * filters used to live here too; they were dropped together with the
+ * summary-action chips that drove them — Kanban column headers already
+ * carry the state-level counts (and aged-buffer warnings), so a global
+ * filter on top added noise rather than information.
  */
 
 import { create } from 'zustand';
-import type { WorkflowState } from '@/config/stateConfig';
 import type { ViewMode } from '@/domain/types';
 
 interface UIState {
-  activeFilter: WorkflowState | null;
-  filterAgedOnly: boolean;
   filterNoDates: boolean;
   activeView: ViewMode;
   selectedProjectId: string | null;
 
-  setFilter: (state: WorkflowState | null, agedOnly?: boolean) => void;
   setFilterNoDates: (value: boolean) => void;
   clearFilters: () => void;
   setView: (view: ViewMode) => void;
@@ -28,26 +27,20 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>((set) => ({
-  activeFilter: null,
-  filterAgedOnly: false,
   filterNoDates: false,
   activeView: 'kanban',
   selectedProjectId: null,
 
-  setFilter: (filterState: WorkflowState | null, agedOnly = false) => {
-    set({ activeFilter: filterState, filterAgedOnly: agedOnly, filterNoDates: false });
-  },
-
   setFilterNoDates: (value: boolean) => {
-    set({ filterNoDates: value, activeFilter: null, filterAgedOnly: false });
+    set({ filterNoDates: value });
   },
 
   clearFilters: () => {
-    set({ activeFilter: null, filterAgedOnly: false, filterNoDates: false });
+    set({ filterNoDates: false });
   },
 
   setView: (view: ViewMode) => {
-    set({ activeView: view, activeFilter: null, filterAgedOnly: false, filterNoDates: false });
+    set({ activeView: view, filterNoDates: false });
   },
 
   selectProject: (projectId: string | null) => {

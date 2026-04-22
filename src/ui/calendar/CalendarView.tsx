@@ -14,7 +14,6 @@ export function CalendarView() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
   const projects = useProjectStore((s) => s.projects);
-  const activeFilter = useUIStore((s) => s.activeFilter);
   const getSummary = useProjectStore((s) => s.getSummary);
   const { navigateTo } = useRouterNav();
 
@@ -32,12 +31,8 @@ export function CalendarView() {
     navigationLabel = label.charAt(0).toUpperCase() + label.slice(1);
   }
 
-  const filteredProjects = activeFilter
-    ? projects.filter((p) => p.status === activeFilter)
-    : projects;
-
-  // Only show projects with at least plannedStart
-  const calendarProjects = filteredProjects.filter((p) => p.plannedStart);
+  // Only show projects with at least plannedStart.
+  const calendarProjects = projects.filter((p) => p.plannedStart);
 
   const setFilterNoDates = useUIStore((s) => s.setFilterNoDates);
 

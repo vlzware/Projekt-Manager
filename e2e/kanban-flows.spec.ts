@@ -112,77 +112,6 @@ test.describe('Kanban board flows', () => {
     });
   });
 
-  test.describe('Summary filter', () => {
-    test('applies the filter when a summary indicator is clicked', async ({ page }) => {
-      // AC-8: Summary area counts for action states
-      const summaryArea = page.getByTestId('summary-area');
-      await expect(summaryArea).toBeVisible();
-      const rechnungIndicator = page.getByTestId('summary-action-rechnung_faellig');
-      await expect(rechnungIndicator).toHaveText('3× Rechnung fällig');
-
-      // AC-9: Clicking indicator filters to affected projects
-      await rechnungIndicator.click();
-
-      await expect(page.getByTestId('column-count-rechnung_faellig')).toContainText('3');
-      // Filtered: other columns show 0 cards
-      await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
-    });
-
-    test('clears the filter via "Filter aufheben"', async ({ page }) => {
-      // Apply the filter first so there is something to clear.
-      await page.getByTestId('summary-action-rechnung_faellig').click();
-      await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
-
-      const clearFilter = page.getByTestId('clear-filter');
-      await expect(clearFilter).toBeVisible();
-      await clearFilter.click();
-      // After clearing, anfrage should show its original count
-      await expect(page.getByTestId('column-count-anfrage')).toContainText('2');
-    });
-
-    test('switches to Kanban and applies the filter when chip is clicked from another view', async ({
-      page,
-    }) => {
-      // AC-9 cross-view navigation: indicators are visible across all
-      // views; activating one from a non-Kanban view jumps to Kanban
-      // with the filter applied.
-      await page.getByTestId('view-toggle-kalender').click();
-      await expect(page.getByTestId('calendar-view')).toBeVisible();
-
-      // The summary indicators are still in the header on the calendar view.
-      await page.getByTestId('summary-action-rechnung_faellig').click();
-
-      // Now back on Kanban with the filter active.
-      await expect(page.getByTestId('kanban-board')).toBeVisible();
-      await expect(page.getByTestId('column-count-rechnung_faellig')).toContainText('3');
-      await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
-
-      // Clear filter to leave seed state intact for later tests.
-      await page.getByTestId('clear-filter').click();
-      await expect(page.getByTestId('column-count-anfrage')).toContainText('2');
-    });
-
-    test('toggles off when the same active chip is clicked, without navigating', async ({
-      page,
-    }) => {
-      // Apply filter on Kanban.
-      await page.getByTestId('summary-action-rechnung_faellig').click();
-      await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
-
-      // Switch to calendar — switching views clears filters per spec §8.7.1,
-      // so re-apply the filter from the calendar to set up the toggle.
-      await page.getByTestId('view-toggle-kalender').click();
-      await page.getByTestId('summary-action-rechnung_faellig').click();
-      await expect(page.getByTestId('kanban-board')).toBeVisible();
-      await expect(page.getByTestId('column-count-anfrage')).toContainText('0');
-
-      // Click the same chip again — should clear the filter and stay on Kanban.
-      await page.getByTestId('summary-action-rechnung_faellig').click();
-      await expect(page.getByTestId('kanban-board')).toBeVisible();
-      await expect(page.getByTestId('column-count-anfrage')).toContainText('2');
-    });
-  });
-
   test.describe('State transitions', () => {
     // Net-zero teardown note: the kanban-flows suite has no DB reset
     // between tests (playwright.config.ts has no globalSetup, and the
@@ -264,9 +193,9 @@ test.describe('Kanban board flows', () => {
       // Geplant count restored
       await expect(page.getByTestId('column-count-geplant')).toContainText('2');
 
-      // Cross-feature invariance: an unrelated state transition must not
-      // touch the rechnung_faellig summary counter.
-      await expect(page.getByTestId('summary-action-rechnung_faellig')).toContainText('3');
+      // Cross-feature invariance: an unrelated state transition must
+      // leave the rechnung_faellig column count untouched.
+      await expect(page.getByTestId('column-count-rechnung_faellig')).toContainText('3');
     });
   });
 

@@ -7,3 +7,35 @@
   min-height: 0;
   align-items: stretch;
 }
+
+/* Inline banner shown above the board when a non-default filter is
+   active. Currently only `filterNoDates`; the dismiss button clears it
+   and returns the board to the unfiltered view. Kept inline rather than
+   in the header so the affordance stays at the surface it controls. */
+.filterBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  margin: 8px 12px 0;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+  border: 1px solid var(--color-warning);
+  border-radius: 6px;
+  font-size: 0.875rem;
+}
+
+.filterBanner button {
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.filterBanner button:hover {
+  opacity: 0.8;
+}

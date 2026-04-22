@@ -112,8 +112,6 @@ function clearDownstreamState(): void {
   });
   useUIStore.setState({
     selectedProjectId: null,
-    activeFilter: null,
-    filterAgedOnly: false,
     filterNoDates: false,
     activeView: 'kanban',
   });

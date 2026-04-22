@@ -141,14 +141,8 @@
   color: var(--color-text-on-inverse);
 }
 
-.summaryWrapper {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  justify-content: flex-end;
-}
-
 .userMenu {
+  margin-left: auto;
   position: relative;
   flex-shrink: 0;
 }
@@ -238,13 +232,6 @@
 .dropdownAlignLeft {
   left: 0;
   right: auto;
-}
-
-@media (max-width: 1200px) {
-  .summaryWrapper {
-    flex-basis: 100%;
-    justify-content: flex-start;
-  }
 }
 
 /* Below ~768px the nav pill + badges can't fit in one row; let the

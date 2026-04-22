@@ -9,7 +9,6 @@ import { STRINGS } from '@/config/strings';
 import { BACKUP_THRESHOLDS } from '@/config/backupThresholds';
 import { deriveBadgeState } from '@/domain/backupBadge';
 import type { ThemePreference } from '@/config/themeStorage';
-import { SummaryArea } from './SummaryArea';
 import { BackupBadge } from './BackupBadge';
 import { EmailExtractModal } from '../extraction/EmailExtractModal';
 import { PasswordChangeModal } from './PasswordChangeModal';
@@ -250,9 +249,6 @@ export function Header() {
           </button>
         )}
         {backupBadgeState && <BackupBadge state={backupBadgeState} variant="inverse" />}
-      </div>
-      <div className={styles.summaryWrapper}>
-        <SummaryArea />
       </div>
       {authUser && (
         <div className={styles.userMenu} ref={menuRef}>
