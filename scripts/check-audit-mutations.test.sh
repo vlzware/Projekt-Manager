@@ -29,8 +29,18 @@
 #      `src/server/routes/src/server/repositories/weird.ts` previously
 #      got a false allowlist hit because `src/server/repositories/` was
 #      matched as a substring anywhere in the path. Expected: exit 1.
-#   (Scenarios 8–9 covered notification_rule as an audited entity; removed
-#    when ADR-0023 carved it out of the audit coupling.)
+#   8. Attachments negative — raw `INSERT INTO attachments …` in a
+#      non-allowlisted file must be flagged (the scanner derives the
+#      audited-table set from schema.ts; `attachments` is in it).
+#      Expected: exit 1.
+#   9. Attachments positive — the same raw INSERT placed inside the
+#      allowlisted reaper (`src/server/services/attachment-orphan-reaper.ts`,
+#      the only legitimate `attachments` deleter per ADR-0023/AC-213)
+#      must NOT be flagged. Expected: exit 0.
+#   (Previous scenarios 8–9 covered notification_rule as an audited
+#    entity; removed when ADR-0023 carved it out of the audit coupling.
+#    The numbers are reused here for attachments now that attachments is
+#    a first-class audited entity — data-model.md §5.10.)
 #
 # Usage:
 #   bash scripts/check-audit-mutations.test.sh
@@ -199,6 +209,47 @@ export async function evilWrite() {
 }
 EOF
 assert_exit 1 "substring-bypass path is not allowlisted (M4)" \
+  env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
+
+# -------------------------------------------------------------
+# Scenario 8 — attachments table, non-allowlisted path, expect fail.
+# -------------------------------------------------------------
+# `attachments` is a first-class audited table (data-model.md §5.10,
+# AuditEntityType includes 'attachment'). The scanner derives the
+# audited-table set from schema.ts, so a raw INSERT against the
+# attachments table from a non-allowlisted path must be flagged.
+echo ""
+echo "Scenario 8: attachments raw INSERT in non-allowlisted path → expect exit 1"
+tmp="$(mktmp)"
+mkdir -p "$tmp/src/server/rogue"
+cat > "$tmp/src/server/rogue/attachments-leak.ts" <<'EOF'
+import { db } from '../db.js';
+export async function leakAttachment(id: string, projectId: string) {
+  await db.execute(sql`INSERT INTO attachments (id, project_id) VALUES (${id}, ${projectId})`);
+}
+EOF
+assert_exit 1 "attachments raw INSERT in non-allowlisted file is flagged" \
+  env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
+
+# -------------------------------------------------------------
+# Scenario 9 — attachments table, allowlisted reaper, expect pass.
+# -------------------------------------------------------------
+# The orphan reaper (src/server/services/attachment-orphan-reaper.ts)
+# is allowlisted — it's the only legitimate deleter of orphaned
+# `attachments` rows (housekeeping sweep past TTL, pre-domain rows
+# that never produced an audit entry; AC-213). The same INSERT that
+# Scenario 8 flags must NOT fire here.
+echo ""
+echo "Scenario 9: attachments raw INSERT inside allowlisted reaper → expect exit 0"
+tmp="$(mktmp)"
+mkdir -p "$tmp/src/server/services"
+cat > "$tmp/src/server/services/attachment-orphan-reaper.ts" <<'EOF'
+import { db } from '../db.js';
+export async function reapOrphan(id: string, projectId: string) {
+  await db.execute(sql`INSERT INTO attachments (id, project_id) VALUES (${id}, ${projectId})`);
+}
+EOF
+assert_exit 0 "attachments raw INSERT inside allowlisted reaper passes" \
   env AUDIT_PROJECT_ROOT="$tmp" bash "$CHECK_SCRIPT"
 
 echo ""
