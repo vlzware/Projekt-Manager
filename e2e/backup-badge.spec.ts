@@ -7,10 +7,8 @@ import { STORAGE_STATES } from './storage-states';
  * AC-170 pins two visibility claims:
  *
  *   1. The badge is NOT rendered on the unauthenticated login screen.
- *      The earlier login-screen surface was layout noise on a screen
- *      whose only purpose is auth — the operator can see the badge
- *      after logging in. The public `/api/backup/status` endpoint that
- *      backed it has been removed.
+ *      The login surface is auth-only — health affordances belong on
+ *      authenticated views where the operator can act on them.
  *   2. On the authenticated admin landing view, the badge is visible
  *      only to callers with role `owner`. On any other authenticated
  *      surface — other roles' landings, non-landing routes — the
