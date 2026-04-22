@@ -38,3 +38,9 @@ docs/wip/
 
 # Server-side runtime data (dev-generated VAPID key, etc.) — never committed.
 data/
+
+# Scratch screenshots (Playwright MCP saves to repo root by default).
+# Repo-root only — keeps any deliberate `assets/*.png` etc. unaffected.
+/*.png
+/*.jpg
+/*.jpeg
