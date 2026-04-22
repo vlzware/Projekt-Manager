@@ -19,10 +19,12 @@ import { STORAGE_STATES } from './storage-states';
  * in `geplant`, so the worker can open the quick-glance panel, hit the
  * `Öffnen` affordance, and land on `/projects/:id`.
  *
- * Fixture bytes live under `e2e/fixtures/` — a 135-byte JPEG and a
- * 594-byte PDF, both comfortably under the 1 MB per-file cap
- * (architecture.md §12.2) so the upload itself cannot trip the size
- * validation gate.
+ * Fixture bytes live under `e2e/fixtures/` — a ~28 KB 3840×2160 JPEG
+ * with EXIF (including synthetic GPS) and a 594-byte PDF. The JPEG is
+ * sized so the client-side resize branch is exercised end-to-end
+ * (longest edge > `imageMaxDimension`), while staying well under the
+ * 1 MB per-file cap (architecture.md §12.2) so the upload itself cannot
+ * trip the size validation gate.
  */
 
 const __filename = fileURLToPath(import.meta.url);
