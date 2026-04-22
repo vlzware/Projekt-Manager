@@ -16,7 +16,7 @@ import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { useRouterNav } from '@/hooks/useRouterNav';
 import { visibleRoutesForUser, type RouteView } from '@/config/routes';
-import { TAB_BAR_ICONS } from './tabBarIcons';
+import { TAB_BAR_ICONS } from './tabBarIconMap';
 import styles from './MobileTabBar.module.css';
 
 const SECONDARY_VIEWS: readonly RouteView[] = [
