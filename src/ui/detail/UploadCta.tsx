@@ -137,6 +137,11 @@ export function UploadCta({ projectId }: UploadCtaProps) {
   };
 
   const bannerMessage = failed?.errorMessage ?? null;
+  // Retry is only actionable for transient errors. A size-cap failure
+  // will fail again for the same file, so we drop the retry button
+  // and leave only the dismiss affordance — the user has to pick a
+  // smaller file, there is nothing to retry.
+  const retryActionable = bannerMessage !== STRINGS.attachments.uploadFileTooLarge;
 
   return (
     <section
@@ -242,14 +247,16 @@ export function UploadCta({ projectId }: UploadCtaProps) {
       {bannerMessage && (
         <div className={styles.errorBanner} data-testid="upload-error-banner" role="alert">
           <span>{bannerMessage}</span>
-          <button
-            type="button"
-            className={styles.retryButton}
-            data-testid="upload-retry"
-            onClick={handleRetry}
-          >
-            {STRINGS.attachments.uploadRetry}
-          </button>
+          {retryActionable && (
+            <button
+              type="button"
+              className={styles.retryButton}
+              data-testid="upload-retry"
+              onClick={handleRetry}
+            >
+              {STRINGS.attachments.uploadRetry}
+            </button>
+          )}
           <button
             type="button"
             className={styles.dismissButton}
