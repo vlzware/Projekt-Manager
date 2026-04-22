@@ -2,23 +2,25 @@
  * API integration tests — attachment audit contract (AC-219).
  *
  * Pins the single-write-path invariant (AC-177, ADR-0021) as it
- * applies to the attachment sub-entity:
+ * applies to the attachment entity:
  *
  *   - Init writes exactly one `attachment:add` audit row with
- *     `entityType='project'`, `entityId=projectId`, and a payload
- *     `after` naming attachmentId, label, mimeType, sizeBytes.
+ *     `entityType='attachment'`, `entityId=attachmentId`, and a payload
+ *     `after` naming projectId, attachmentId, label, mimeType, sizeBytes.
  *   - Delete writes exactly one `attachment:remove` audit row with
- *     `entityType='project'`, `entityId=projectId`, and a payload
+ *     `entityType='attachment'`, `entityId=attachmentId`, and a payload
  *     `before` naming the same fields.
  *   - Complete is a state-machine finalize — it produces NO audit
  *     row. The `attachment:add` entry is the authoritative record.
  *
- * Attachment is audited as a sub-entity under the owning project
- * (data-model.md §5.10, verification.md AC-179 Part 2): there is no
- * `attachment` member on `AuditEntityType`, so every attachment audit
- * row carries `entityType='project'`. The architecture check
- * (scripts/check-audit-mutations.sh) asserts the `attachment` table
- * is included in its audited-table set — covered in
+ * Attachment is a first-class member of `AuditEntityType` (data-model.md
+ * §5.10), symmetric with `project_worker`. Every attachment audit row
+ * carries `entityType='attachment'` and `entityId=<attachmentId>`; the
+ * owning project id lives in the payload (`after.projectId` on add,
+ * `before.projectId` on remove) so the activity feed can link back to
+ * the project. The architecture check
+ * (scripts/check-audit-mutations.sh) picks up the `attachments` table
+ * via the `AuditEntityType` derivation — covered in
  * attachments-architecture.test.ts.
  *
  * Raw-SQL attachment-row seeding is permitted here — the `__tests__/`
@@ -89,7 +91,7 @@ describe('Attachment audit contract (AC-219)', () => {
   // -------------------------------------------------------------------
   // init → exactly one `attachment:add` audit row
   // -------------------------------------------------------------------
-  it('init writes exactly one attachment:add row with entityType=project and expected payload fields', async () => {
+  it('init writes exactly one attachment:add row with entityType=attachment and expected payload fields', async () => {
     const before = await countAuditRows();
 
     const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
@@ -105,16 +107,17 @@ describe('Attachment audit contract (AC-219)', () => {
     const after = await countAuditRows();
     expect(after - before).toBe(1);
 
-    const row = await fetchLatestAuditRow(projectId, 'attachment:add');
+    const row = await fetchLatestAuditRow(attachmentId, 'attachment:add');
     expect(row).not.toBeNull();
-    expect(row!.entity_type).toBe('project');
-    expect(row!.entity_id).toBe(projectId);
+    expect(row!.entity_type).toBe('attachment');
+    expect(row!.entity_id).toBe(attachmentId);
     expect(row!.action).toBe('attachment:add');
     expect(row!.actor_kind).toBe('user');
     expect(row!.actor_id).not.toBeNull();
 
     const payload = row!.payload as { after?: Record<string, unknown> };
     expect(payload.after).toBeDefined();
+    expect(payload.after!.projectId).toBe(projectId);
     expect(payload.after!.attachmentId).toBe(attachmentId);
     expect(payload.after!.label).toBe('rechnung');
     expect(payload.after!.mimeType).toBe('application/pdf');
@@ -197,15 +200,16 @@ describe('Attachment audit contract (AC-219)', () => {
     const after = await countAuditRows();
     expect(after - before).toBe(1);
 
-    const row = await fetchLatestAuditRow(projectId, 'attachment:remove');
+    const row = await fetchLatestAuditRow(attachmentId, 'attachment:remove');
     expect(row).not.toBeNull();
-    expect(row!.entity_type).toBe('project');
-    expect(row!.entity_id).toBe(projectId);
+    expect(row!.entity_type).toBe('attachment');
+    expect(row!.entity_id).toBe(attachmentId);
     expect(row!.action).toBe('attachment:remove');
     expect(row!.actor_kind).toBe('user');
 
     const payload = row!.payload as { before?: Record<string, unknown> };
     expect(payload.before).toBeDefined();
+    expect(payload.before!.projectId).toBe(projectId);
     expect(payload.before!.attachmentId).toBe(attachmentId);
     expect(payload.before!.label).toBe('angebot');
     expect(payload.before!.mimeType).toBe('application/pdf');

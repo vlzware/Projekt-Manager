@@ -44,6 +44,7 @@ const ENTITY_TYPE_OPTIONS: { value: AuditEntityType; label: string }[] = [
   { value: 'customer', label: STRINGS.audit.entityCustomer },
   { value: 'user', label: STRINGS.audit.entityUser },
   { value: 'project_worker', label: STRINGS.audit.entityProjectWorker },
+  { value: 'attachment', label: STRINGS.audit.entityAttachment },
 ];
 
 /**

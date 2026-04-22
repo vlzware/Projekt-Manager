@@ -363,6 +363,7 @@ export const STRINGS = {
     entityCustomer: 'Kunde',
     entityUser: 'Benutzer',
     entityProjectWorker: 'Zuweisung',
+    entityAttachment: 'Anhang',
     /** Before/after panel labels in the payload drawer. */
     drawerBefore: 'Vorher',
     drawerAfter: 'Nachher',

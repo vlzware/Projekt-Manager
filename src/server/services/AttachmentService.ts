@@ -270,7 +270,7 @@ export class AttachmentService {
       this.db,
       { actorKind: 'user', actorId: caller.id, correlationId: correlationId ?? null },
       {
-        entityType: 'project',
+        entityType: 'attachment',
         action: 'attachment:add',
         run: async (tx) => {
           const inserted = await createPending(tx, {
@@ -287,11 +287,12 @@ export class AttachmentService {
             createdBy: caller.id,
           });
           return {
-            entityId: projectId,
+            entityId: attachmentId,
             entityLabel: attachmentAuditLabel(inserted),
             value: inserted,
             before: {},
             after: {
+              projectId,
               attachmentId,
               label: input.label,
               mimeType: input.mimeType,
@@ -445,15 +446,16 @@ export class AttachmentService {
       this.db,
       { actorKind: 'user', actorId: caller.id, correlationId: correlationId ?? null },
       {
-        entityType: 'project',
+        entityType: 'attachment',
         action: 'attachment:remove',
         run: async (tx) => {
           const deleted = await deleteById(tx, attachmentId);
           return {
-            entityId: projectId,
+            entityId: attachmentId,
             entityLabel: deleted ? attachmentAuditLabel(deleted) : null,
             value: null,
             before: {
+              projectId,
               attachmentId: row.id,
               label: row.label,
               mimeType: row.mimeType,

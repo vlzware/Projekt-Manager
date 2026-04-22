@@ -40,6 +40,8 @@ function entityTypeLabel(entityType: AuditEntry['entityType']): string {
       return STRINGS.audit.entityUser;
     case 'project_worker':
       return STRINGS.audit.entityProjectWorker;
+    case 'attachment':
+      return STRINGS.audit.entityAttachment;
   }
 }
 

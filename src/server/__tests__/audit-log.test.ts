@@ -81,7 +81,7 @@ interface AuditLogRow {
   actor_id: string | null;
   actor_kind: 'user' | 'system';
   actor_reason: string | null;
-  entity_type: 'project' | 'customer' | 'user' | 'project_worker';
+  entity_type: 'project' | 'customer' | 'user' | 'project_worker' | 'attachment';
   entity_id: string;
   entity_label: string | null;
   action: string;
@@ -102,7 +102,7 @@ interface AuditApiEntry {
   actorKind: 'user' | 'system';
   actorReason: string | null;
   actorDisplayName: string | null;
-  entityType: 'project' | 'customer' | 'user' | 'project_worker';
+  entityType: 'project' | 'customer' | 'user' | 'project_worker' | 'attachment';
   entityId: string;
   entityLabel: string | null;
   action: string;

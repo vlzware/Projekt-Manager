@@ -18,7 +18,7 @@
  * imported from the server module to respect the layering rule — the
  * domain layer must not depend on server internals.
  */
-export type AuditEntityType = 'project' | 'customer' | 'user' | 'project_worker';
+export type AuditEntityType = 'project' | 'customer' | 'user' | 'project_worker' | 'attachment';
 
 export type AuditActorKind = 'user' | 'system';
 

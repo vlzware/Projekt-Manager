@@ -71,15 +71,6 @@ if [ "${#AUDITED_TABLE_SQL_NAMES[@]}" -eq 0 ] || [ "${#AUDITED_DRIZZLE_EXPORTS[@
   exit 2
 fi
 
-# AC-179 carries an explicit `attachments` entry on top of the
-# AuditEntityType-derived set: attachment rows are audited as sub-
-# entities of the owning project (entityType='project', action in
-# attachment:add/attachment:remove), so `attachment` is deliberately
-# NOT a member of `AuditEntityType`. Append by hand here so a new
-# audited table whose entity type is suppressed still gets scanned.
-AUDITED_TABLE_SQL_NAMES+=("attachments")
-AUDITED_DRIZZLE_EXPORTS+=("attachments")
-
 # Scan covers three surfaces:
 #   1. Drizzle builder calls:  `.insert(projects)` / `.update(projects)` / `.delete(projects)`
 #      — receiver-agnostic (`db.`, `tx.`, `this.db.`, `client.` all match).

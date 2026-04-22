@@ -3,11 +3,11 @@
  *
  *   - AC-179 Part 2: the attachment table is in the audited-table set
  *     the CI check (`scripts/check-audit-mutations.sh`) scans. The
- *     check derives its set from `AUDIT_ENTITY_TO_TABLE` — because the
- *     spec places the attachment table on the audited-set alongside
- *     the `AuditEntityType`-derived entries (without adding an
- *     `attachment` member to the enum), the wiring must carry the
- *     `attachment` table explicitly. A new audited table that ships
+ *     check derives its set from `AUDIT_ENTITY_TO_TABLE` via
+ *     `scripts/print-audited-tables.ts`. `attachment` is a first-class
+ *     member of `AuditEntityType` (data-model.md §5.10), so the map
+ *     entry + derivation carry the table into the scan automatically —
+ *     no special-case append needed. A new audited table that ships
  *     without observing the mutation surface is exactly the fail-open
  *     that AC-179 forbids.
  *
@@ -40,14 +40,22 @@ function readSource(relativePath: string): string {
 // ---------------------------------------------------------------------
 
 describe('AC-179: attachment table wired into the audit-mutation architecture check', () => {
+  it('the AuditEntityType enum includes `attachment` as a first-class member', async () => {
+    // Promoting `attachment` into the enum is what drives the audited-
+    // table derivation in scripts/print-audited-tables.ts. Prior to this
+    // promotion the table was appended by hand in check-audit-mutations.sh —
+    // a workaround the enum change eliminates.
+    const schemaModule = (await import('../db/schema.js')) as Record<string, unknown>;
+    const entityTypes = schemaModule.AUDIT_ENTITY_TYPES as readonly string[];
+    expect(entityTypes).toContain('attachment');
+  });
+
   it('the audited-table set exposed to scripts/check-audit-mutations.sh includes `attachments`', async () => {
     // The audit check derives its scan set from the AUDIT_ENTITY_TO_TABLE
-    // map. Per verification.md AC-179 Part 2, `attachments` ships on the
-    // audited surface alongside the `AuditEntityType`-derived entries
-    // (without adding `attachment` to the enum itself). Importing the
-    // map and asserting the attachment entry is present pins the
-    // wire-through — a new audited table that ships without observing
-    // its mutation surface is the fail-open this check forbids.
+    // map. With `attachment` in AuditEntityType, the Record<AuditEntityType, …>
+    // satisfies clause forces the map entry — the `attachments` table is
+    // picked up automatically. A new audited table that ships without
+    // observing its mutation surface is the fail-open this check forbids.
     const schemaModule = (await import('../db/schema.js')) as Record<string, unknown>;
     const map = schemaModule.AUDIT_ENTITY_TO_TABLE as Record<
       string,
@@ -65,6 +73,16 @@ describe('AC-179: attachment table wired into the audit-mutation architecture ch
     >;
     const drizzleExports = Object.values(map).map((v) => v.drizzleExport);
     expect(drizzleExports).toContain('attachments');
+  });
+
+  it('check-audit-mutations.sh carries no manual append for `attachments` — derivation is the sole source', () => {
+    // Regression guard against the pre-promotion workaround: the shell
+    // script appended `attachments` to AUDITED_TABLE_SQL_NAMES /
+    // AUDITED_DRIZZLE_EXPORTS by hand because `attachment` was outside
+    // the enum. With enum promotion the append must be gone.
+    const scriptSrc = readSource('scripts/check-audit-mutations.sh');
+    expect(scriptSrc).not.toMatch(/AUDITED_TABLE_SQL_NAMES\+=\("attachments"\)/);
+    expect(scriptSrc).not.toMatch(/AUDITED_DRIZZLE_EXPORTS\+=\("attachments"\)/);
   });
 
   it('the reaper path (src/server/services/attachment-orphan-reaper.ts) is allowlisted in check-audit-mutations.sh', () => {

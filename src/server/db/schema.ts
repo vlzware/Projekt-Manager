@@ -33,7 +33,13 @@ import {
  * so the architecture check (scripts/check-audit-mutations.sh) can
  * derive its audited-tables list from a single source (AC-179).
  */
-export const AUDIT_ENTITY_TYPES = ['project', 'customer', 'user', 'project_worker'] as const;
+export const AUDIT_ENTITY_TYPES = [
+  'project',
+  'customer',
+  'user',
+  'project_worker',
+  'attachment',
+] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
 /**
@@ -47,29 +53,14 @@ export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
  * `Record<AuditEntityType, …>` + `satisfies` forces a tsc error when a
  * new `AuditEntityType` value lands without a corresponding mapping:
  * that is the build-time seam AC-179 Part 2 pins.
- *
- * AC-179 Part 2 also pins `attachment` as an audited table even though
- * `attachment` is NOT a member of `AuditEntityType`: attachment rows are
- * audited as sub-entities of the owning project (entityType = 'project',
- * action in `attachment:add` / `attachment:remove`). The explicit
- * `attachment` key is tracked separately below so the arch-check sees
- * the table while the enum stays the authoritative one-audit-row-per-
- * entity catalog.
  */
 export const AUDIT_ENTITY_TO_TABLE = {
   project: { sqlName: 'projects', drizzleExport: 'projects' },
   customer: { sqlName: 'customers', drizzleExport: 'customers' },
   user: { sqlName: 'users', drizzleExport: 'users' },
   project_worker: { sqlName: 'project_workers', drizzleExport: 'projectWorkers' },
-  // Sub-entity surface — AC-179 Part 2. Not a member of `AuditEntityType`;
-  // rows are audited as `entityType = 'project'`. Listed here so the CI
-  // architecture check observes the table; `scripts/print-audited-tables.ts`
-  // uses only the value names, so no satisfies-type drift.
   attachment: { sqlName: 'attachments', drizzleExport: 'attachments' },
-} as const satisfies Record<
-  AuditEntityType | 'attachment',
-  { sqlName: string; drizzleExport: string }
->;
+} as const satisfies Record<AuditEntityType, { sqlName: string; drizzleExport: string }>;
 
 // ---------------------------------------------------------------
 // Users (data-model.md §5.3, §5.7)
@@ -295,7 +286,7 @@ export const auditLog = pgTable(
     check('audit_log_actor_kind_valid', sql`${table.actorKind} IN ('user', 'system')`),
     check(
       'audit_log_entity_type_valid',
-      sql`${table.entityType} IN ('project', 'customer', 'user', 'project_worker')`,
+      sql`${table.entityType} IN ('project', 'customer', 'user', 'project_worker', 'attachment')`,
     ),
     // Compound invariant — AC-178 defense in depth. Missing this CHECK
     // would let a bootstrap write land with actor_reason=NULL, making

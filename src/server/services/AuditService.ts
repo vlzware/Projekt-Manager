@@ -27,7 +27,7 @@ import {
   type ListAuditOpts,
 } from '../repositories/audit.js';
 import { isOutOfScope } from '../repositories/scope.js';
-import { AUDIT_ENTITY_TYPES } from '../db/schema.js';
+import { AUDIT_ENTITY_TYPES, type AuditEntityType } from '../db/schema.js';
 import { AUDIT_ACTION_KEYS, type AuditAction } from '../../config/auditActionLabels.js';
 
 // Re-exported from the service module so route-layer schema validation
@@ -63,7 +63,7 @@ export interface AuditEntry {
   actorKind: 'user' | 'system';
   actorReason: string | null;
   actorDisplayName: string | null;
-  entityType: 'project' | 'customer' | 'user' | 'project_worker';
+  entityType: AuditEntityType;
   entityId: string;
   /** Snapshot of the entity's human-readable label at write time. */
   entityLabel: string | null;

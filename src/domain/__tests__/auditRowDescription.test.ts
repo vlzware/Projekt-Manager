@@ -144,6 +144,43 @@ describe('describeAuditRow', () => {
     expect(out).toBe('Endgültig gelöscht');
   });
 
+  it('renders an attachment:add row via the config-layer label', () => {
+    // Attachment is a first-class member of AuditEntityType (data-model.md
+    // §5.10). No enriched rendering is wired for attachment yet, so the
+    // generic label from auditActionLabels carries the copy.
+    const out = describeAuditRow({
+      action: 'attachment:add',
+      entityType: 'attachment',
+      payload: {
+        after: {
+          projectId: 'p-1',
+          attachmentId: 'a-1',
+          label: 'rechnung',
+          mimeType: 'application/pdf',
+          sizeBytes: 1234,
+        },
+      },
+    });
+    expect(out).toBe('Datei hinzugefügt');
+  });
+
+  it('renders an attachment:remove row via the config-layer label', () => {
+    const out = describeAuditRow({
+      action: 'attachment:remove',
+      entityType: 'attachment',
+      payload: {
+        before: {
+          projectId: 'p-1',
+          attachmentId: 'a-1',
+          label: 'rechnung',
+          mimeType: 'application/pdf',
+          sizeBytes: 1234,
+        },
+      },
+    });
+    expect(out).toBe('Datei entfernt');
+  });
+
   it('returns the raw action string for unknown actions (forward-compat)', () => {
     // data-model.md §5.10 pins action as free-text; the UI must render
     // something for an action it has not learned yet. Sample action is

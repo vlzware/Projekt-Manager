@@ -37,7 +37,7 @@ CREATE TABLE "audit_log" (
 	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"correlation_id" text,
 	CONSTRAINT "audit_log_actor_kind_valid" CHECK ("audit_log"."actor_kind" IN ('user', 'system')),
-	CONSTRAINT "audit_log_entity_type_valid" CHECK ("audit_log"."entity_type" IN ('project', 'customer', 'user', 'project_worker')),
+	CONSTRAINT "audit_log_entity_type_valid" CHECK ("audit_log"."entity_type" IN ('project', 'customer', 'user', 'project_worker', 'attachment')),
 	CONSTRAINT "audit_log_actor_shape" CHECK ((
         ("audit_log"."actor_kind" = 'user'
           AND "audit_log"."actor_reason" IS NULL)
