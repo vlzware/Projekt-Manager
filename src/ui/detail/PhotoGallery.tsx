@@ -50,7 +50,6 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
   // "Datei fehlt" placeholder.
   const [thumbUrls, setThumbUrls] = useState<Record<string, string | null>>({});
   const [lightbox, setLightbox] = useState<{ attachmentId: string; url: string } | null>(null);
-  const loadedRef = useRef<Set<string>>(new Set());
   // Focus-restore target: the thumbnail button that opened the lightbox.
   // Captured at open-time; restored when the lightbox closes so keyboard
   // users don't get dropped at document root.
@@ -62,18 +61,26 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
   }, [fetchForProject, projectId]);
 
   useEffect(() => {
-    // Request a thumbnail presigned URL for each ready photo once. A
-    // subsequent list refetch that adds new rows triggers fresh fetches;
-    // already-observed rows keep their cached URL (or their null missing-
-    // file verdict, which is re-checked lazily on the next click).
+    // Request a thumbnail presigned URL for each ready photo that does
+    // not already have a working URL cached. Rows with a `null` verdict
+    // (previously observed missing) are re-attempted on the next effect
+    // run — spec §8.15.7 forbids caching the missing verdict, so a list
+    // refetch that re-emits the same row must re-probe storage. HTTP-
+    // layer caching absorbs the cost for thumbnails that still exist.
     for (const p of photos) {
-      if (loadedRef.current.has(p.id)) continue;
-      loadedRef.current.add(p.id);
+      if (thumbUrls[p.id]) continue;
       void (async () => {
         const url = await requestDownloadUrl(projectId, p.id, 'thumbnail');
         setThumbUrls((prev) => ({ ...prev, [p.id]: url }));
       })();
     }
+    // `thumbUrls` is intentionally omitted from the dep array: including
+    // it would re-run the effect after each per-row setState and fire
+    // parallel fetches for still-pending rows. The effect's trigger is
+    // `photos` changing (list refetch), which is the spec's re-observe
+    // point; within a single run, the local `thumbUrls` read above
+    // prevents duplicate work for rows whose URL is already cached.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photos, projectId, requestDownloadUrl]);
 
   const handleOpenLightbox = async (
