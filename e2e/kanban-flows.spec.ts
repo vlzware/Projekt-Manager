@@ -192,79 +192,69 @@ test.describe('Kanban board flows', () => {
     // card than the seed promises, cascading into count-assertion
     // failures that look unrelated to the real cause.
     test('advances a card via the forward button and confirmation', async ({ page }) => {
-      // AC-4: Clicking a project opens the detail panel
+      // AC-4 / AC-5 / AC-6: Transitions now live on the Kanban card
+      // itself — the detail panel no longer carries forward / backward
+      // buttons (the card is the single place to organize projects).
       const geplantColumn = page.getByTestId('kanban-column-geplant');
       const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
-      await geplantCard.click();
-
       const cardTestId = await geplantCard.getAttribute('data-testid');
       const projectId = cardTestId!.replace('project-card-', '');
 
-      const detailPanel = page.getByTestId('detail-panel');
-      await expect(detailPanel).toBeVisible();
-
-      // AC-5: Forward transition with German confirmation dialog
-      await page.getByTestId('detail-forward-button').click();
+      // Forward transition with German confirmation dialog.
+      await geplantCard.getByTestId(`forward-button-${projectId}`).click();
       const forwardDialog = page.getByTestId('confirm-dialog');
       await expect(forwardDialog).toBeVisible();
       await expect(forwardDialog).toContainText('Geplant → In Arbeit');
       await page.getByTestId('confirm-ok').click();
       await expect(forwardDialog).not.toBeVisible();
-      await expect(page.getByTestId('detail-status-badge')).toContainText('In Arbeit');
 
-      // Verify the card is now in the "In Arbeit" column
-      await expect(
-        page.getByTestId('kanban-column-in_arbeit').getByTestId(`project-card-${projectId}`),
-      ).toBeVisible();
-
-      // Summary counts reflect the intermediate state: geplant has
-      // dropped by one. This pins the transition before teardown.
+      // Verify the card is now in the "In Arbeit" column.
+      const movedCard = page
+        .getByTestId('kanban-column-in_arbeit')
+        .getByTestId(`project-card-${projectId}`);
+      await expect(movedCard).toBeVisible();
       await expect(page.getByTestId('column-count-geplant')).toContainText('1');
 
-      // Net-zero teardown: move the card back to geplant so the seed
-      // state is restored for later tests in this file. See the
-      // describe-block comment above for why this matters.
-      await page.getByTestId('detail-backward-button').click();
+      // Net-zero teardown: move the card back to geplant via the backward
+      // arrow so later tests see the seed column counts restored.
+      await movedCard.getByTestId(`backward-button-${projectId}`).click();
       const backwardDialog = page.getByTestId('confirm-dialog');
       await expect(backwardDialog).toBeVisible();
       await expect(backwardDialog).toContainText('In Arbeit → Geplant');
       await page.getByTestId('confirm-ok').click();
       await expect(backwardDialog).not.toBeVisible();
-      await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
       await expect(
         page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
       ).toBeVisible();
       await expect(page.getByTestId('column-count-geplant')).toContainText('2');
     });
 
-    test('moves a card backward from the detail panel', async ({ page }) => {
+    test('moves a card backward from the Kanban card', async ({ page }) => {
       // Net-zero by construction: this test forwards then backs the
       // SAME card, so it restores the seed regardless of execution
-      // order. The forward-test above also cleans up after itself —
-      // see the describe-block comment for the rationale.
+      // order.
 
       // Set up: advance a geplant card so we have something to move back.
       const geplantColumn = page.getByTestId('kanban-column-geplant');
       const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
-      await geplantCard.click();
-
       const cardTestId = await geplantCard.getAttribute('data-testid');
       const projectId = cardTestId!.replace('project-card-', '');
 
-      await expect(page.getByTestId('detail-panel')).toBeVisible();
-      await page.getByTestId('detail-forward-button').click();
+      await geplantCard.getByTestId(`forward-button-${projectId}`).click();
       await expect(page.getByTestId('confirm-dialog')).toBeVisible();
       await page.getByTestId('confirm-ok').click();
-      await expect(page.getByTestId('detail-status-badge')).toContainText('In Arbeit');
+      const movedCard = page
+        .getByTestId('kanban-column-in_arbeit')
+        .getByTestId(`project-card-${projectId}`);
+      await expect(movedCard).toBeVisible();
 
-      // AC-6: Backward transition
-      await page.getByTestId('detail-backward-button').click();
+      // AC-6: Backward transition from the card.
+      await movedCard.getByTestId(`backward-button-${projectId}`).click();
       const backwardDialog = page.getByTestId('confirm-dialog');
       await expect(backwardDialog).toBeVisible();
       await expect(backwardDialog).toContainText('In Arbeit → Geplant');
       await page.getByTestId('confirm-ok').click();
       await expect(backwardDialog).not.toBeVisible();
-      await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
 
       // Verify the card is back in the "Geplant" column
       await expect(
@@ -275,9 +265,7 @@ test.describe('Kanban board flows', () => {
       await expect(page.getByTestId('column-count-geplant')).toContainText('2');
 
       // Cross-feature invariance: an unrelated state transition must not
-      // touch the rechnung_faellig summary counter. (Preserved from the
-      // original smoke Step 14 — Wave 2E verification flagged this as a
-      // dropped assertion during the smoke/kanban-flows split.)
+      // touch the rechnung_faellig summary counter.
       await expect(page.getByTestId('summary-action-rechnung_faellig')).toContainText('3');
     });
   });
@@ -299,11 +287,16 @@ test.describe('Kanban board flows', () => {
       // and stall the `waitForResponse` below).
       const plannedEndDate = pickPlannedEndDate(5);
       const endDateInput = page.getByTestId('detail-date-end');
+      // Dates commit on blur (not change) — intermediate empty values
+      // emitted by native `<input type="date">` during keyboard edits
+      // would otherwise clobber the other date. fill() + blur()
+      // matches a real user leaving the field.
+      await endDateInput.fill(plannedEndDate.iso);
       await Promise.all([
         page.waitForResponse(
           (r) => /\/api\/projects\/[^/]+\/dates$/.test(r.url()) && r.request().method() === 'PATCH',
         ),
-        endDateInput.fill(plannedEndDate.iso),
+        endDateInput.blur(),
       ]);
 
       await expect(endDateInput).toHaveValue(plannedEndDate.iso);
@@ -329,11 +322,14 @@ test.describe('Kanban board flows', () => {
       // mutation test needs a unique offset.
       const plannedEndDate = pickPlannedEndDate(6);
       const endDateInput = page.getByTestId('detail-date-end');
+      // Dates commit on blur — fill sets the value, blur fires the
+      // PATCH the test is waiting on.
+      await endDateInput.fill(plannedEndDate.iso);
       await Promise.all([
         page.waitForResponse(
           (r) => /\/api\/projects\/[^/]+\/dates$/.test(r.url()) && r.request().method() === 'PATCH',
         ),
-        endDateInput.fill(plannedEndDate.iso),
+        endDateInput.blur(),
       ]);
 
       // AC-3: Calendar renders projects with planned dates as colored bars
@@ -387,33 +383,43 @@ test.describe('Kanban board flows', () => {
       // mutation have something to verify post-reload.
       const geplantColumn = page.getByTestId('kanban-column-geplant');
       const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
-      await geplantCard.click();
-
       const cardTestId = await geplantCard.getAttribute('data-testid');
       const projectId = cardTestId!.replace('project-card-', '');
 
-      await expect(page.getByTestId('detail-panel')).toBeVisible();
-
-      // Forward transition: geplant → in_arbeit
-      await page.getByTestId('detail-forward-button').click();
+      // Forward transition: geplant → in_arbeit (via the card arrow —
+      // transitions moved off the detail panel).
+      await geplantCard.getByTestId(`forward-button-${projectId}`).click();
       await expect(page.getByTestId('confirm-dialog')).toBeVisible();
       await page.getByTestId('confirm-ok').click();
-      await expect(page.getByTestId('detail-status-badge')).toContainText('In Arbeit');
+      const movedCard = page
+        .getByTestId('kanban-column-in_arbeit')
+        .getByTestId(`project-card-${projectId}`);
+      await expect(movedCard).toBeVisible();
 
       // Move back to geplant so we can edit its planned end date.
-      await page.getByTestId('detail-backward-button').click();
+      await movedCard.getByTestId(`backward-button-${projectId}`).click();
       await expect(page.getByTestId('confirm-dialog')).toBeVisible();
       await page.getByTestId('confirm-ok').click();
-      await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
+      const restoredCard = page
+        .getByTestId('kanban-column-geplant')
+        .getByTestId(`project-card-${projectId}`);
+      await expect(restoredCard).toBeVisible();
+
+      // Open the detail panel for the date-edit step.
+      await restoredCard.click();
+      await expect(page.getByTestId('detail-panel')).toBeVisible();
 
       // Edit the planned end date. Offset 7 — see `pickPlannedEndDate`
-      // for why each date-mutation test uses a unique offset.
+      // for why each date-mutation test uses a unique offset. Commit
+      // on blur, not on change (see the other detail-date-end test).
       const plannedEndDate = pickPlannedEndDate(7);
+      const endDateInput = page.getByTestId('detail-date-end');
+      await endDateInput.fill(plannedEndDate.iso);
       await Promise.all([
         page.waitForResponse(
           (r) => /\/api\/projects\/[^/]+\/dates$/.test(r.url()) && r.request().method() === 'PATCH',
         ),
-        page.getByTestId('detail-date-end').fill(plannedEndDate.iso),
+        endDateInput.blur(),
       ]);
       await page.getByTestId('detail-close').click();
 

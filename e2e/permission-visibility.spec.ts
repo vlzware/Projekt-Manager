@@ -175,29 +175,23 @@ test.describe('AC-121: permission-based UI visibility', () => {
         // otherwise and reports 0 before any card mounts.
         await page.locator('[data-testid^="project-card-"]').first().waitFor();
 
-        // Forward arrow on any card in a transitionable state.
+        // Transition arrows live on the Kanban cards now (not in the
+        // detail panel). The card renders `forward-button-*` /
+        // `backward-button-*` gated on both `canTransition` and the
+        // per-state eligibility; at least one direction is available in
+        // every workflow state, so the sum is ≥ 1 for permitted callers.
         const cardForwardCount = await page.locator('[data-testid^="forward-button-"]').count();
+        const cardBackwardCount = await page.locator('[data-testid^="backward-button-"]').count();
         if (c.canTransition) {
-          expect(cardForwardCount).toBeGreaterThan(0);
+          expect(cardForwardCount + cardBackwardCount).toBeGreaterThan(0);
         } else {
           expect(cardForwardCount).toBe(0);
+          expect(cardBackwardCount).toBe(0);
         }
 
         // Project detail panel (open first card).
         await page.locator('[data-testid^="project-card-"]').first().click();
         await page.getByTestId('detail-panel').waitFor();
-
-        const detailForward = await page.getByTestId('detail-forward-button').count();
-        const detailBackward = await page.getByTestId('detail-backward-button').count();
-        if (c.canTransition) {
-          // Anfrage hides backward, Erledigt hides forward — but every
-          // state allows at least one direction, so the sum is ≥ 1 when
-          // permitted.
-          expect(detailForward + detailBackward).toBeGreaterThan(0);
-        } else {
-          expect(detailForward).toBe(0);
-          expect(detailBackward).toBe(0);
-        }
 
         await expect(page.getByTestId('detail-date-start')).toHaveCount(c.canUpdateDates ? 1 : 0);
         await expect(page.getByTestId('detail-date-end')).toHaveCount(c.canUpdateDates ? 1 : 0);
