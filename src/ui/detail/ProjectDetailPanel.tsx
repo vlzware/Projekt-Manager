@@ -92,7 +92,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
               data-testid="detail-close"
               aria-label={STRINGS.ui.close}
             >
-              &times;
+              ×
             </button>
           </div>
         </div>
