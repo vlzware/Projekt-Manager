@@ -12,8 +12,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ReactElement } from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import type { ApiResult } from '@/api/client';
 import type { Customer, Project } from '@/domain/types';
 
@@ -106,6 +108,10 @@ beforeEach(() => {
   });
 });
 
+function renderWithRouter(ui: ReactElement): ReturnType<typeof render> {
+  return render(<MemoryRouter>{ui}</MemoryRouter>);
+}
+
 describe('ProjectManagement — number preflight', () => {
   it('shows "taken" on blur when the number already exists', async () => {
     projectListMock.mockImplementation(async (params?: { search?: string }) => {
@@ -115,7 +121,7 @@ describe('ProjectManagement — number preflight', () => {
       return ok({ data: [], total: 0 });
     });
 
-    render(<ProjectManagement />);
+    renderWithRouter(<ProjectManagement />);
 
     await userEvent.click(screen.getByTestId('project-create-button'));
     const numberInput = screen.getByTestId('project-number-input');
@@ -128,7 +134,7 @@ describe('ProjectManagement — number preflight', () => {
   });
 
   it('shows "available" on blur when the number is free', async () => {
-    render(<ProjectManagement />);
+    renderWithRouter(<ProjectManagement />);
 
     await userEvent.click(screen.getByTestId('project-create-button'));
     const numberInput = screen.getByTestId('project-number-input');
@@ -147,7 +153,7 @@ describe('ProjectManagement — number preflight', () => {
       return ok({ data: [], total: 0 });
     });
 
-    render(<ProjectManagement />);
+    renderWithRouter(<ProjectManagement />);
 
     await userEvent.click(screen.getByTestId('project-create-button'));
     const numberInput = screen.getByTestId('project-number-input');
@@ -178,7 +184,7 @@ describe('ProjectManagement — number preflight', () => {
       return Promise.resolve(ok({ data: [], total: 0 }));
     });
 
-    render(<ProjectManagement />);
+    renderWithRouter(<ProjectManagement />);
     await userEvent.click(screen.getByTestId('project-create-button'));
     const numberInput = screen.getByTestId('project-number-input');
 
