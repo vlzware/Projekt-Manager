@@ -19,7 +19,7 @@ Further constraints:
 - **"Data loss is inevitable"** — an unrestored backup is not a backup. Restore must be continuously verified.
 - **No backwards-compatibility work** — shims, format migrations, deprecated wrappers are tech debt.
 - **VPN-first threat model** (ADR-0008) — accidents and misconfiguration dominate; targeted attack is out of scope.
-- **R2 as planned binary store** (#45) — not yet integrated; this decision must not assume it.
+- **B2 as binary store** ([ADR-0022](0022-binary-storage-b2-compliance-object-lock.md), #45) — not yet integrated; this decision must not assume it.
 - **Existing per-entity bulk endpoints** — partial, ad-hoc, overlapping with the goals here.
 
 ## Decision
@@ -81,7 +81,7 @@ Versioned export with translation code bridging old formats. Ruled out: speculat
 - DB dump kept on the same VPS is a single-site risk — offsite replication is the deployment operator's responsibility.
 - Restore-only cannot update a live dataset in place. Partial-data updates remain the CRUD API's job; deliberate.
 - Removing per-entity endpoints is a breaking change on paper. No consumers, zero impact, but a large diff.
-- Binary-layer durability depends on a storage provider (R2 per #45) not yet integrated. Binary layer is aspirational until then; the decision stands but implementation is gated on that work.
+- Binary-layer durability depends on a storage provider (B2 per [ADR-0022](0022-binary-storage-b2-compliance-object-lock.md), #45) not yet integrated. Binary layer is aspirational until then; the decision stands but implementation is gated on that work.
 
 ## References
 
@@ -91,5 +91,5 @@ Versioned export with translation code bridging old formats. Ruled out: speculat
 - [ADR-0017](0017-soft-delete-as-board-archive.md) — archived rows are business data and must round-trip
 - Issue [#90](https://github.com/vlzware/Projekt-Manager/issues/90) — seed.ts replacement and the "export all" open question
 - Issue [#46](https://github.com/vlzware/Projekt-Manager/issues/46) — DB-level backup + monitoring (second-layer tracker)
-- Issue [#45](https://github.com/vlzware/Projekt-Manager/issues/45) — R2 / object storage integration (third-layer tracker)
+- Issue [#45](https://github.com/vlzware/Projekt-Manager/issues/45) — B2 binary storage integration (third-layer tracker); see [ADR-0022](0022-binary-storage-b2-compliance-object-lock.md)
 - Issue [#105](https://github.com/vlzware/Projekt-Manager/issues/105) — role-scoped views; this ADR commits to `data:export` and introduces `data:restore`
