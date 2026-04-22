@@ -213,18 +213,23 @@
   border: 1px solid var(--color-border-muted);
 }
 
-/* Activity section carries its own scroll so a long history does not
-   push the other sections out of reach. Capped to a reasonable slice
-   of viewport height; inside the container the ActivityFeed's rows
-   scroll. */
+/* Activity section fills the remaining panel height and carries its
+   own scroll, so a long history never pushes the other sections out
+   of reach and a short one never leaves dead space at the bottom.
+   `flex: 1; min-height: 0` is the idiomatic "grow + allow overflow"
+   pair — without min-height:0 the flex child refuses to shrink below
+   its content and the inner overflow-y:auto is never activated. */
 .activityBlock {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
+  min-height: 0;
 }
 
 .activityScroll {
-  max-height: 40vh;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
