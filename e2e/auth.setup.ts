@@ -2,6 +2,7 @@ import { test as setup, expect, type Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { createDatabase } from '../src/server/db/connection.js';
 import { seed } from '../src/server/seed.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../src/test/seedAssumptions.js';
@@ -76,8 +77,16 @@ setup('reseed database', async () => {
   // Force-reseed so every Playwright run starts from a known state. The
   // TRUNCATE CASCADE invalidates any pre-existing sessions, which is
   // why this runs BEFORE the login setups below.
+  //
+  // Runs migrations first so a fresh E2E database (created on-demand
+  // for the isolated `projekt_manager_e2e` target — see
+  // playwright.config.ts webServer) gets its schema before the seed's
+  // TRUNCATE reaches for tables that would not yet exist. Drizzle
+  // tracks applied migrations, so this is a no-op on subsequent runs.
+  const migrationsFolder = path.resolve(__dirname, '..', 'src/server/db/migrations');
   const { db, pool } = createDatabase();
   try {
+    await migrate(db, { migrationsFolder });
     await seed(db, { force: true });
   } finally {
     await pool.end();

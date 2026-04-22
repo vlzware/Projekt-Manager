@@ -42,8 +42,15 @@ export default defineConfig({
     // insecure-connection banner (which triggers on non-localhost HTTP).
     // Consistent with the Fastify backend which already binds to 0.0.0.0.
     host: true,
+    // `VITE_API_PROXY_TARGET` overrides the dev proxy target so
+    // Playwright can spawn an isolated backend on a non-default port
+    // without colliding with a developer's running dev server. Without
+    // isolation, `npx playwright test` and `npm run dev` share one
+    // database (and one API), producing races that show up as
+    // intermittent "visual regression" / "missing data" failures.
+    // See playwright.config.ts `webServer` for the paired override.
     proxy: {
-      '/api': 'http://localhost:3000',
+      '/api': process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000',
     },
   },
 });

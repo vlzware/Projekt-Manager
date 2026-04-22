@@ -42,7 +42,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:5174',
     // Design ACs are verified by running Playwright in UI mode and reviewing
     // by eye (see CONTRIBUTING.md § Testing) — stored-screenshot baselines
     // were dropped as brittle friction. `retain-on-failure` captures a
@@ -121,9 +121,31 @@ export default defineConfig({
       },
     },
   ],
+  /**
+   * Playwright spawns its own dev server + backend on ports separate
+   * from the developer's local `npm run dev`, and points the backend
+   * at a dedicated `projekt_manager_e2e` database. This prevents the
+   * long-standing flakiness that arose when the developer was browsing
+   * live data while Playwright's setup spec issued `TRUNCATE CASCADE`
+   * against the same database — race conditions there surfaced as
+   * sporadic visible-data drift and login failures.
+   *
+   * The E2E database must exist ahead of time. The auth.setup reseed
+   * creates the schema via `migrate(db, …)` before the first login.
+   *
+   * `reuseExistingServer: false` means the devex cost is one vite +
+   * one fastify per run; the gain is a reliable, deterministic suite.
+   */
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    command: 'npm run dev -- --port 5174',
+    url: 'http://localhost:5174',
+    reuseExistingServer: false,
+    env: {
+      PORT: '3100',
+      VITE_API_PROXY_TARGET: 'http://localhost:3100',
+      DATABASE_URL:
+        process.env.E2E_DATABASE_URL ||
+        `postgresql://pm:${process.env.POSTGRES_PASSWORD || 'changeme'}@localhost:5432/projekt_manager_e2e`,
+    },
   },
 });
