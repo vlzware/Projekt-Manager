@@ -83,7 +83,14 @@
   min-height: 24px;
 }
 
-.forwardButton {
+.transitionButtons {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.forwardButton,
+.backwardButton {
   width: 28px;
   height: 24px;
   border: 1px solid var(--color-border);
@@ -102,4 +109,9 @@
   background: var(--color-accent);
   color: var(--color-text-on-accent);
   border-color: var(--color-accent);
+}
+
+.backwardButton:hover {
+  background: var(--color-surface-sunken);
+  border-color: var(--color-border-strong, var(--color-border));
 }

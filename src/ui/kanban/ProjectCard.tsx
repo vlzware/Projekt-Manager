@@ -13,7 +13,7 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project }: ProjectCardProps) {
-  const { canForward, forward, inFlight } = useProjectTransition(project);
+  const { canForward, canBackward, forward, backward, inFlight } = useProjectTransition(project);
   const canTransition = usePermission('project:transition');
   const selectProject = useUIStore((s) => s.selectProject);
   const config = STATE_CONFIG_MAP[project.status];
@@ -32,6 +32,11 @@ export function ProjectCard({ project }: ProjectCardProps) {
   const handleForwardClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     forward();
+  };
+
+  const handleBackwardClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    backward();
   };
 
   return (
@@ -71,17 +76,30 @@ export function ProjectCard({ project }: ProjectCardProps) {
         ) : (
           <span />
         )}
-        {canTransition && canForward && (
-          <button
-            className={styles.forwardButton}
-            onClick={handleForwardClick}
-            data-testid={`forward-button-${project.id}`}
-            aria-label={STRINGS.ui.statusForward(config.label)}
-            disabled={inFlight}
-          >
-            &rarr;
-          </button>
-        )}
+        <div className={styles.transitionButtons}>
+          {canTransition && canBackward && (
+            <button
+              className={styles.backwardButton}
+              onClick={handleBackwardClick}
+              data-testid={`backward-button-${project.id}`}
+              aria-label={STRINGS.ui.prevStep}
+              disabled={inFlight}
+            >
+              &larr;
+            </button>
+          )}
+          {canTransition && canForward && (
+            <button
+              className={styles.forwardButton}
+              onClick={handleForwardClick}
+              data-testid={`forward-button-${project.id}`}
+              aria-label={STRINGS.ui.statusForward(config.label)}
+              disabled={inFlight}
+            >
+              &rarr;
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
