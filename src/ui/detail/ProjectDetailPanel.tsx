@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import { STRINGS } from '@/config/strings';
 import type { Project } from '@/domain/types';
@@ -19,7 +19,6 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
   const updateDates = useProjectStore((s) => s.updateDates);
   const projects = useProjectStore((s) => s.projects);
   const navigate = useNavigate();
-  const location = useLocation();
 
   // Always get fresh project data from store
   const currentProject = projects.find((p) => p.id === project.id) ?? project;
@@ -58,17 +57,15 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
 
   /**
    * Öffnen affordance (AC-207, spec §8.4). Navigates to the full detail
-   * page and encodes the originating path as `?from=<pathname>` so the
-   * page shell can offer a contextual back target. The pathname is the
-   * stable identifier for the back surface — `/kanban` or `/calendar`
-   * — and survives role-label renames that a view-key-based scheme
-   * would not.
+   * page. The spec's "preserves the originating view as the back
+   * target" is honoured by the browser's history stack — after Öffnen,
+   * the back button returns to the originating view. No URL param is
+   * needed: a prior `?from=<pathname>` plumbing was dropped because no
+   * consumer read it (frontend review finding).
    */
-  const originatingPath = location.pathname;
-  const openDetailPageHref = `/projects/${currentProject.id}?from=${encodeURIComponent(originatingPath.replace(/^\//, ''))}`;
   const handleOpenDetailPage = () => {
     onClose();
-    navigate(openDetailPageHref);
+    navigate(`/projects/${currentProject.id}`);
   };
 
   return (
@@ -103,7 +100,7 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
         <div className={styles.body}>
           {/* Status */}
           <div className={styles.section}>
-            <div className={styles.sectionLabel}>Status</div>
+            <div className={styles.sectionLabel}>{STRINGS.ui.status}</div>
             <span
               className={styles.badge}
               style={{ backgroundColor: config.color }}

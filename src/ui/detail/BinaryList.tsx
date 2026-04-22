@@ -29,6 +29,21 @@ const LABEL_BY_VALUE = new Map<AttachmentLabel, string>(
   ATTACHMENT_LABELS.map((l) => [l.value, l.label]),
 );
 
+/**
+ * Programmatically trigger a browser download for a remote URL using a
+ * transient `<a download>` anchor. Shared by the single-file and bulk
+ * paths so both use the same user-gesture-friendly approach.
+ */
+function triggerDownload(url: string, filename: string): void {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 export function BinaryList({ projectId }: BinaryListProps) {
   // Select the raw per-project slice then filter in useMemo so the
   // selector output is referentially stable across renders.
@@ -110,18 +125,15 @@ export function BinaryList({ projectId }: BinaryListProps) {
       setMissing((prev) => new Set(prev).add(attachmentId));
       return;
     }
-    // Force a download (attachment semantics) rather than inline display.
-    // A transient anchor with `download` triggers the browser's download
-    // event regardless of the object's content-disposition header —
-    // important since MinIO's presigned GETs do not set one.
+    // Cross-origin downloads rely on the storage backend to send
+    // `Content-Disposition: attachment` — the server does so (see
+    // `storage/client.ts`). The `<a download>` attribute is a UX hint:
+    // on same-origin it forces the download event; on cross-origin it
+    // is advisory and acts primarily as a filename fallback when the
+    // browser honours it. Either way, the server's header is the
+    // authoritative source for attachment semantics.
     const row = binaries.find((b) => b.id === attachmentId);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = row?.fileName ?? '';
-    anchor.rel = 'noopener';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
+    triggerDownload(url, row?.fileName ?? '');
   };
 
   const handleBulkDownload = async () => {
@@ -140,7 +152,11 @@ export function BinaryList({ projectId }: BinaryListProps) {
     }
     setCapError(null);
     const url = await requestBulkDownloadUrl(projectId, ids);
-    if (url) window.open(url, '_blank', 'noopener');
+    // Use the same `<a download>` pattern as the single-file path rather
+    // than `window.open` — popup blockers treat post-`await` opens as
+    // programmatic and frequently reject them. The anchor click is a
+    // direct user-gesture continuation that browsers let through.
+    if (url) triggerDownload(url, STRINGS.attachments.bulkZipFileName);
   };
 
   return (
