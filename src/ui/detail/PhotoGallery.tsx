@@ -7,7 +7,7 @@
  * store; this component is a thin renderer.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_CONFIG } from '@/config/attachmentConfig';
 import type { Attachment } from '@/domain/types';
@@ -15,6 +15,7 @@ import { canDeleteAttachment } from '@/domain/attachments';
 import { useAttachmentStore } from '@/state/attachmentStore';
 import { useAuthStore } from '@/state/authStore';
 import { useConfirmStore } from '@/state/confirmStore';
+import { formatDateDE } from '@/domain/dateFormat';
 import styles from './ProjectDetail.module.css';
 
 interface PhotoGalleryProps {
@@ -50,6 +51,11 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
   const [thumbUrls, setThumbUrls] = useState<Record<string, string | null>>({});
   const [lightbox, setLightbox] = useState<{ attachmentId: string; url: string } | null>(null);
   const loadedRef = useRef<Set<string>>(new Set());
+  // Focus-restore target: the thumbnail button that opened the lightbox.
+  // Captured at open-time; restored when the lightbox closes so keyboard
+  // users don't get dropped at document root.
+  const lightboxOpenerRef = useRef<HTMLElement | null>(null);
+  const lightboxRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     void fetchForProject(projectId);
@@ -70,7 +76,10 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
     }
   }, [photos, projectId, requestDownloadUrl]);
 
-  const handleOpenLightbox = async (photo: Attachment) => {
+  const handleOpenLightbox = async (
+    photo: Attachment,
+    trigger: HTMLElement | null,
+  ): Promise<void> => {
     const url = await requestDownloadUrl(projectId, photo.id, 'original');
     if (!url) {
       // A missing original flips the row to the placeholder, same as a
@@ -78,6 +87,8 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
       setThumbUrls((prev) => ({ ...prev, [photo.id]: null }));
       return;
     }
+    // Capture the trigger so focus can return on close.
+    lightboxOpenerRef.current = trigger;
     setLightbox({ attachmentId: photo.id, url });
   };
 
@@ -85,6 +96,48 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
     // Treat an <img> error event the same as a 404 — the backing object
     // was there at URL-request time but the provider refused the GET.
     setThumbUrls((prev) => ({ ...prev, [photoId]: null }));
+  };
+
+  const closeLightbox = useCallback((): void => {
+    setLightbox(null);
+  }, []);
+
+  // Esc-to-close + focus management. Document-level key listener is
+  // installed only while the lightbox is open, avoiding background
+  // interference with the rest of the page (form inputs, etc.).
+  useEffect(() => {
+    if (!lightbox) {
+      // Restore focus to the trigger on close.
+      const opener = lightboxOpenerRef.current;
+      if (opener && typeof opener.focus === 'function') {
+        opener.focus();
+      }
+      lightboxOpenerRef.current = null;
+      return;
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeLightbox();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    // Pull focus into the dialog so Tab and screen-reader cursors stay
+    // inside the modal surface.
+    lightboxRef.current?.focus();
+    return () => {
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [lightbox, closeLightbox]);
+
+  /**
+   * Accessible label for the thumbnail button. AC-image is the filename,
+   * which is noise for screen-reader users. Prefer the date (human-readable)
+   * and fall back to the German label; the filename is suppressed.
+   */
+  const thumbButtonLabel = (photo: Attachment): string => {
+    const dateText = formatDateDE(photo.createdAt);
+    return `${STRINGS.attachments.photoGallery} — ${dateText}`;
   };
 
   return (
@@ -121,10 +174,13 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
                   type="button"
                   className={styles.photoThumb}
                   data-testid={`photo-thumb-${photo.id}`}
-                  onClick={() => void handleOpenLightbox(photo)}
+                  aria-label={thumbButtonLabel(photo)}
+                  onClick={(e) => void handleOpenLightbox(photo, e.currentTarget as HTMLElement)}
                 >
                   {url ? (
-                    <img src={url} alt={photo.fileName} onError={() => handleImgError(photo.id)} />
+                    // alt="" because the button's aria-label carries the
+                    // accessible name; a non-empty alt would double-announce.
+                    <img src={url} alt="" onError={() => handleImgError(photo.id)} />
                   ) : (
                     <span className={styles.photoLoading}>{STRINGS.ui.loading}</span>
                   )}
@@ -148,13 +204,22 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
 
       {lightbox && (
         <div
+          ref={lightboxRef}
           className={styles.lightbox}
           data-testid="photo-lightbox"
-          onClick={() => setLightbox(null)}
+          // Backdrop click dismisses; the inner <img> stops propagation
+          // so a click on the photo itself does NOT close the modal.
+          onClick={closeLightbox}
           role="dialog"
+          aria-modal="true"
           aria-label={STRINGS.attachments.photoGallery}
+          // Negative-tab-index makes the container programmatically
+          // focusable so the open-effect can pull focus inside; Tab
+          // cycles through the (currently zero) interactive children
+          // and wraps within the container.
+          tabIndex={-1}
         >
-          <img src={lightbox.url} alt="" />
+          <img src={lightbox.url} alt="" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
     </section>

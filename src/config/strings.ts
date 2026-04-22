@@ -453,6 +453,12 @@ export const STRINGS = {
     // Worker editor
     addWorker: 'Mitarbeiter hinzufügen',
     removeWorker: 'Entfernen',
+    /**
+     * Disambiguated aria-label for the per-chip remove button so
+     * screen-reader users hear "Entfernen: Anna Arbeiter" instead of
+     * every chip reading identically.
+     */
+    removeWorkerNamed: (name: string) => `Entfernen: ${name}`,
     noUnassignedWorkers: 'Keine weiteren Mitarbeiter verfügbar.',
 
     // Upload surface

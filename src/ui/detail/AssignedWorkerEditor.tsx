@@ -91,7 +91,10 @@ export function AssignedWorkerEditor({ projectId }: AssignedWorkerEditorProps) {
                 data-testid={`worker-chip-remove-${w.userId}`}
                 onClick={() => handleRemove(w.userId)}
                 disabled={mutationInFlight}
-                aria-label={STRINGS.attachments.removeWorker}
+                // Disambiguate the action for screen-reader users:
+                // "Entfernen: Max Müller" instead of every chip reading
+                // "Entfernen" identically.
+                aria-label={STRINGS.attachments.removeWorkerNamed(w.displayName)}
               >
                 ×
               </button>
@@ -112,7 +115,12 @@ export function AssignedWorkerEditor({ projectId }: AssignedWorkerEditorProps) {
             {STRINGS.attachments.addWorker}
           </button>
           {pickerOpen && (
-            <ul className={styles.workerOptions} role="listbox">
+            // No ARIA role: a plain <ul> of <button>s announces as
+            // "list with N items, each a button" to screen readers —
+            // better than an incomplete `role="listbox"` without
+            // corresponding `role="option"` entries ("no ARIA > bad
+            // ARIA").
+            <ul className={styles.workerOptions}>
               {unassignedWorkers.length === 0 ? (
                 <li className={styles.emptyState}>{STRINGS.attachments.noUnassignedWorkers}</li>
               ) : (
