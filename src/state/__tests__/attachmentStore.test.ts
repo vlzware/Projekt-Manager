@@ -199,7 +199,6 @@ describe('attachmentStore — pending uploads keyed by client id', () => {
           label: 'foto',
           status: 'failed',
           attachmentId: null,
-          progress: 0,
           errorMessage: 'Netzwerkfehler.',
         },
       },

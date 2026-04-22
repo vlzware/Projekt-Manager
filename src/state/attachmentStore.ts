@@ -6,7 +6,7 @@
  *   - `byProject[projectId]` caches the `status = 'ready'` list the
  *     gallery and binary list render from.
  *   - `pendingUploads[clientId]` tracks in-flight or failed uploads so
- *     the UI can show per-row progress + the failure banner + retry.
+ *     the UI can show the failure banner + retry.
  *   - `error` carries the last mutation error as a German string so
  *     the page shell can surface it via the project-level banner
  *     (behavior.md §9.5).
@@ -24,7 +24,7 @@ import { attachmentApi, type PresignedPost } from '@/api/client';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
-import { runImagePipeline, exceedsRawCap } from '@/domain/imagePipeline';
+import { runImagePipeline, exceedsRawCap, type ProcessedUpload } from '@/domain/imagePipeline';
 import { handleSessionExpired } from './sessionExpired';
 
 export interface PendingUpload {
@@ -36,7 +36,6 @@ export interface PendingUpload {
   label: AttachmentLabel;
   status: 'initializing' | 'uploading' | 'completing' | 'failed';
   attachmentId: string | null;
-  progress: number;
   errorMessage: string | null;
 }
 
@@ -73,20 +72,25 @@ interface AttachmentState {
 }
 
 /**
- * Side-map from `clientId` → the original `File` object and the
- * thumbnail flag. Kept out of Zustand state because `File` is not
- * serialisable and the store must survive being JSON-stringified in
- * devtools / persistence adapters.
+ * Side-map from `clientId` → the original `File`, the thumbnail flag,
+ * and — once the client pipeline has run successfully — the cached
+ * `ProcessedUpload` result. Kept out of Zustand state because `File` /
+ * `Blob` are not serialisable and the store must survive being
+ * JSON-stringified in devtools / persistence adapters.
  *
- * Lifecycle: populated on `uploadFile`; cleared on successful complete
- * or `dismissUpload`. A page reload drops the map entirely, so
- * `retryUpload` without a backing file cannot resume — that's the
- * spec's expected behaviour ("A page reload cancels an in-flight
- * upload cleanly" — ui/project-detail.md §8.15.4).
+ * Lifecycle: populated on `uploadFile`; `processed` is filled in after
+ * the first successful `runImagePipeline` call so a later `retryUpload`
+ * (triggered by a network failure at init / POST / complete) reuses
+ * the already-encoded blobs instead of re-running the canvas work.
+ * Cleared entirely on successful complete or `dismissUpload`. A page
+ * reload drops the map, so `retryUpload` without a backing file cannot
+ * resume — that's the spec's expected behaviour ("A page reload cancels
+ * an in-flight upload cleanly" — ui/project-detail.md §8.15.4).
  */
 interface PendingFileSlot {
   file: File;
   hasThumbnail: boolean;
+  processed?: ProcessedUpload;
 }
 const FILES_BY_CLIENT_ID = new Map<string, PendingFileSlot>();
 
@@ -216,8 +220,16 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
     const wasAborted = (): boolean => signal.aborted;
 
     try {
-      // Step 1 — client image pipeline.
-      const processed = await runImagePipeline(file, { hasThumbnail });
+      // Step 1 — client image pipeline. Reuse the cached result from a
+      // prior successful pipeline run if one exists (a retry after a
+      // network failure at init / POST / complete shouldn't re-encode
+      // the photo), otherwise run it and cache the output for any
+      // subsequent retry.
+      let processed = slot.processed;
+      if (!processed) {
+        processed = await runImagePipeline(file, { hasThumbnail });
+        FILES_BY_CLIENT_ID.set(clientId, { ...slot, processed });
+      }
       if (wasAborted()) return;
 
       // Step 2 — per-file size cap. Enforced server-side by the
@@ -370,7 +382,6 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
             label: input.label,
             status: 'initializing',
             attachmentId: null,
-            progress: 0,
             errorMessage: null,
           },
         },
@@ -385,7 +396,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       // Clear the failed state synchronously so the UI's banner
       // disappears during the retry (spec §8.15.8 — retry restarts
       // from init).
-      updatePending(clientId, { status: 'initializing', errorMessage: null, progress: 0 });
+      updatePending(clientId, { status: 'initializing', errorMessage: null });
       await runUpload(clientId, pending.projectId);
     },
 
