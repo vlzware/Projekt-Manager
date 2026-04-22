@@ -124,17 +124,20 @@ test.describe('Management flows', () => {
     await page.getByTestId('project-search').fill(testProjectNumber);
     await expect(page.getByText(testProjectTitle)).toBeVisible();
 
-    // Click to edit
+    // Clicking the project navigates to the detail page — the primary
+    // edit surface. Notes live there as an editable textarea that
+    // saves on blur.
     await page.getByText(testProjectTitle).click();
 
-    // Edit notes
-    await page.getByTestId('project-notes-input').fill('Gerüst bestellt, Lieferung Montag');
-    await page.getByTestId('project-save').click();
+    const notes = page.getByTestId('project-notes-input');
+    await notes.waitFor({ state: 'visible' });
+    await notes.fill('Gerüst bestellt, Lieferung Montag');
+    // Save-on-blur: move focus off the field to trigger the PATCH.
+    await page.getByTestId('project-title-edit').focus();
 
-    // Wait for the edit panel to close (save completes, panel dismissed)
-    await page.getByTestId('project-notes-input').waitFor({ state: 'hidden' });
-
-    // Verify save succeeded (the updated notes should persist)
+    // Navigate away and back; the notes value must persist across the
+    // round-trip.
+    await page.getByTestId('view-toggle-projekte').click();
     await page.getByText(testProjectTitle).click();
     await expect(page.getByTestId('project-notes-input')).toHaveValue(
       'Gerüst bestellt, Lieferung Montag',

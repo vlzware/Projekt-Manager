@@ -226,13 +226,18 @@ test.describe('AC-121: permission-based UI visibility', () => {
           expect(await projectArchiveBtns.count()).toBe(0);
         }
 
-        // Edit-form Save button: click into first row to open the form.
-        // For bookkeeper the form opens but Save is hidden — no
-        // mutation trigger, so the "details view" is the intentional
-        // fallback.
+        // Click into the first row: navigation is to the detail page.
+        // The title input is read-only for callers without
+        // `project:update` (hidden-control parity).
         await page.getByTestId('project-table').locator('tbody tr').first().click();
-        await expect(page.getByTestId('project-save')).toHaveCount(c.canUpdateProject ? 1 : 0);
-        await page.getByRole('button', { name: 'Abbrechen' }).click();
+        const titleEdit = page.getByTestId('project-title-edit');
+        await titleEdit.waitFor({ state: 'visible' });
+        if (c.canUpdateProject) {
+          await expect(titleEdit).not.toHaveAttribute('readonly', '');
+        } else {
+          await expect(titleEdit).toHaveAttribute('readonly', '');
+        }
+        await clickView(page, 'projekte');
 
         // -- Kunden management view --------------------------------------
         await clickView(page, 'kunden');
