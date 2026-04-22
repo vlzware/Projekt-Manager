@@ -137,8 +137,14 @@ beforeEach(() => {
   });
 });
 
-function renderPanelAt(initialPath: string): Project {
+interface RenderedPanel {
+  project: Project;
+  onClose: ReturnType<typeof vi.fn>;
+}
+
+function renderPanelAt(initialPath: string): RenderedPanel {
   const project = makeProject();
+  const onClose = vi.fn();
   render(
     <MemoryRouter initialEntries={[initialPath]}>
       <Routes>
@@ -146,7 +152,7 @@ function renderPanelAt(initialPath: string): Project {
           path="*"
           element={
             <>
-              <ProjectDetailPanel project={project} onClose={() => {}} />
+              <ProjectDetailPanel project={project} onClose={onClose} />
               <LocationProbe />
             </>
           }
@@ -154,7 +160,7 @@ function renderPanelAt(initialPath: string): Project {
       </Routes>
     </MemoryRouter>,
   );
-  return project;
+  return { project, onClose };
 }
 
 describe('ProjectDetailPanel — Öffnen affordance (AC-207)', () => {
@@ -192,5 +198,19 @@ describe('ProjectDetailPanel — Öffnen affordance (AC-207)', () => {
 
     const pathAndSearch = screen.getByTestId('location-probe').textContent ?? '';
     expect(pathAndSearch).toBe('/projects/p-42');
+  });
+
+  it('invokes onClose so the panel overlay does not trap actions on the detail page', async () => {
+    // Regression guard for commit 4e8bbfe: the Öffnen handler must close
+    // the quick-glance panel before navigating, otherwise its overlay
+    // continues to cover the detail route and blocks clicks. The handler
+    // is wired to call `onClose()` ahead of `navigate()`; this test pins
+    // that observable contract so a regression that removes the call is
+    // caught at the test layer.
+    const { onClose } = renderPanelAt('/kanban');
+
+    await userEvent.click(screen.getByTestId('detail-open-page'));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
