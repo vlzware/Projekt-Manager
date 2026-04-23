@@ -186,7 +186,17 @@ export default defineConfig({
    */
   webServer: {
     command: 'npm run dev:e2e',
-    url: 'http://localhost:5174',
+    // Probe the backend via vite's /api proxy so readiness covers BOTH
+    // processes started by `concurrently` — vite on 5174 and fastify on
+    // 3100. Polling just `http://localhost:5174` only waits for vite:
+    // the proxy answers with a 502 while fastify is still migrating +
+    // seeding, and Playwright has happily started firing tests against a
+    // backend that is not yet listening. That raced the first login in
+    // auth.setup.ts (the others passed because fastify finished while
+    // owner's 15 s timeout was still running). `/api/health` returns
+    // 2xx only when the DB, MinIO, and fastify are all up, which is
+    // exactly the pre-test invariant the setup tests assume.
+    url: 'http://localhost:5174/api/health',
     reuseExistingServer: false,
     // 2-minute budget covers vite's first-time dep prebundle on a
     // cold node_modules/.vite cache; the default 60 s was tight enough
