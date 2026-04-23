@@ -158,7 +158,7 @@ The Layer 2 implementation of [§11.9](#119-data-persistence-and-recovery) is a 
 
 - The `backup` compose service is scheduled by in-container cron; the compose file is the source of truth ([ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)). The backup interval is configurable **[C]**.
 - Each run produces the backup artifact (a full-state database dump, encrypted) and its manifest sidecar (per-table row count and deterministic content checksum, encrypted). The manifest checksum is computed as specified in [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
-- Retention is linear: a 14-day bucket lock plus a 90-day lifecycle rule produce a 14–90 day rolling window of encrypted history — immutable for the first 14 days, deletable for the next 76. No in-container rotation, no weekly/monthly promotion, no object versioning. Scope rationale: [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
+- Retention is linear (provider-enforced bucket lock + lifecycle rule, canonical values at [ADR-0020 §Retention](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention)). No in-container rotation, no weekly/monthly promotion, no object versioning. Scope rationale in the same section.
 
 **Encryption surface.**
 

@@ -128,7 +128,7 @@ Two paths exist; this runbook supports **(a) only**. Path (b) — targeted table
 **(a) Rebuild the VPS DB volume (maintenance window, downtime).** You are about to destroy the current `pgdata` volume and replace it with the restored state. This is irreversible on the live volume.
 
 1. Announce the maintenance window.
-2. SSH to the VPS as the admin user. All subsequent VPS-side steps run via `sudo -u deploy`. Use `docker` directly, not `pm-compose.sh` — the wrapper re-parses `docker-compose.yml`, which requires the full set of interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; without them compose parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
+2. SSH to the VPS as the admin user. All subsequent VPS-side steps run via `sudo -u deploy`. Use `docker` directly, not `docker compose`. The compose path re-parses `docker-compose.yml`, which requires the full set of interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
    Stop every DB client — `app`, `caddy`, and `backup`. Leaving `backup` up would keep a live connection to `projekt_manager`, which makes the `DROP DATABASE` in step 4 fail with "database is being accessed by other users":
 

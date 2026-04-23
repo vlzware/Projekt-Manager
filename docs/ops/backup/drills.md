@@ -16,7 +16,7 @@ Tier 2 needs the private identity on the VPS. `load-drill-key.sh` writes it to a
 You are about to write private key material into RAM on the VPS; this is cleared on reboot or on container recreation, and can be overwritten by rerunning the script.
 
 1. Have `~/secrets/age-backup.key` open on the operator workstation. Copy its full contents (including the comment lines and the `AGE-SECRET-KEY-1...` body) to the clipboard.
-2. SSH to the VPS as the admin user. Use `docker exec` directly, not `pm-compose.sh exec` — the wrapper re-parses `docker-compose.yml`, which requires the full set of interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; without them compose parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903). `-it` allocates a pseudo-TTY so the script's `read -s` actually suppresses echo during the paste:
+2. SSH to the VPS as the admin user. Use `docker exec` directly, not `docker compose exec`. The compose path re-parses `docker-compose.yml`, which requires the full set of interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903). `-it` allocates a pseudo-TTY so the script's `read -s` actually suppresses echo during the paste:
 
    ```bash
    sudo -u deploy docker exec -it projekt-manager-backup-1 load-drill-key
@@ -39,6 +39,31 @@ You are about to write private key material into RAM on the VPS; this is cleared
 5. **After every VPS reboot or container recreate, the key is gone.** Reload by repeating steps 2–3. Until you do, Tier 2 is skipped (not failed — [AC-168](../../spec/verification.md#1522-backup-and-recovery)), but the badge turns amber ("Drill-Schlüssel neu laden") after the staleness threshold **[C]**.
 
 **Never** write the identity to any path other than `/run/drill-key/identity`. Specifically: not to a bind mount, not to `/opt/projekt-manager`, not to an env var in `secrets.env.age`, not to `docker compose exec backup sh -c 'echo ... >'`. A persisted copy on the VPS disk defeats the entire threat model ([AC-175](../../spec/verification.md#1522-backup-and-recovery)).
+
+## Triggering a drill manually
+
+The backup image ships `/usr/local/bin/run-drill.sh` — the same script the in-container cron fires — so an operator can trigger a one-shot drill without waiting for the next scheduled tick. Common reasons: verifying a freshly-loaded drill key, reproducing a failure seen in the cron logs, closing "Drill: noch nie ausgeführt" immediately after setup.
+
+From the admin ssh session:
+
+```bash
+sudo -u deploy docker exec projekt-manager-backup-1 /usr/local/bin/run-drill.sh
+```
+
+Expected one-liners on stdout:
+
+- `backup-runner: drill ok` — full Tier 2 round-trip succeeded. `meta_backup_status.lastDrillAt` advanced and `lastDrillOk` is true.
+- `backup-runner: drill skipped reason=key-absent` — no identity at `/run/drill-key/identity`. Load the key via [§Loading](#loading-the-drill-key-on-the-vps) and retry. Skip is not a failure ([AC-168](../../spec/verification.md#1522-backup-and-recovery)), so the status row is not mutated.
+- `backup-runner: drill failed reason=...` — something between download, decrypt, and verify broke. `lastDrillOk=false` and `lastError` carries the cue; see [troubleshooting.md](troubleshooting.md).
+
+The in-container `/tmp/drill.lock` serialises cron-triggered and manual runs — two drills never overlap. A manual drill while a scheduled tick is firing makes one of them exit 2 ("another drill is in flight").
+
+**Badge refresh caveat:** the login-screen freshness badge reads from `status/latest.json` in R2, which is written by the **backup** runner (not the drill). A successful drill updates `meta_backup_status` in the app DB but does NOT refresh the R2 mirror — the badge picks up the new `lastDrillAt` / `lastDrillOk` on the next scheduled backup tick, or sooner if you trigger a backup immediately after:
+
+```bash
+sudo -u deploy docker exec projekt-manager-backup-1 /usr/local/bin/run-drill.sh
+sudo -u deploy docker exec projekt-manager-backup-1 /usr/local/bin/run-backup.sh
+```
 
 ## Monthly operator-workstation drill
 

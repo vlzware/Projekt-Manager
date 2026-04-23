@@ -34,19 +34,25 @@ Runtime versions are not pinned here — [CONTRIBUTING.md § Runtime Requirement
 
 ### 1.2 Configure retention (bucket lock)
 
-R2 does not offer native object versioning or S3 Object Lock Compliance Mode. A bucket lock rule over timestamped filenames gives us the practical immutability window ([ADR-0020 §Alternatives](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#alternatives-considered)).
+R2 does not offer native object versioning or S3 Object Lock Compliance Mode. A bucket lock rule over timestamped filenames gives us the practical immutability window ([ADR-0020 §Alternatives](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#alternatives-considered)). Scope the rule to the `daily/` prefix — the `status/latest.json` mirror is overwritten every cycle and must stay outside the lock, or the badge freezes at its day-1 value.
+
+Let **D** be the immutable-window value from [ADR-0020 §Retention](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention).
 
 1. Open the bucket → **Settings** → **Object lock rules** → **Add rule**.
-2. Mode: **Compliance**. Retention: **14 days**. Prefix scope: all objects (leave empty).
+2. Mode: **Compliance**. Retention: D days. **Prefix: `daily/`** (not empty).
 3. **Save**.
 
 ### 1.3 Configure deletion (lifecycle rule)
 
+Lifecycle applies bucket-wide. The `status/latest.json` mirror is idempotent under delete — the next backup cycle rewrites it — so no narrower scope is needed.
+
+Let **N** be the total-retention value from [ADR-0020 §Retention](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention).
+
 1. Bucket → **Settings** → **Lifecycle rules** → **Add rule**.
-2. Name: `delete-after-90-days`. Prefix scope: all objects. Action: **Delete objects** 90 days after upload.
+2. Name: `delete-after-N-days` (substitute the actual N). Prefix scope: all objects. Action: **Delete objects** N days after upload.
 3. **Save**.
 
-Effective behaviour: every uploaded object is immutable for its first 14 days and is deleted on day 90. Retention is linear — there are no weekly or monthly prefixes and no promotion logic. See [ADR-0020 §Decision](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision) for the rationale.
+Effective behaviour: `daily/*` objects are immutable for the immutability window and are eventually deleted by the lifecycle rule; the `status/latest.json` mirror is overwritten every cycle and harmlessly re-created on the first run after any lifecycle delete. Retention is linear — no weekly or monthly prefixes, no promotion logic. Canonical values and rationale: [ADR-0020 §Retention](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention).
 
 ### 1.4 Create the API token
 
@@ -156,7 +162,7 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 
 `scripts/deploy.sh` decrypts `secrets.env.age`, exports all keys into the compose env, pulls the pinned image, `docker compose up -d` (which includes the `backup` service), and polls `/api/health` ([manual-deploy.md](../manual-deploy.md)).
 
-> Compose operations outside `scripts/deploy.sh` need both `APP_IMAGE_TAG` and the secrets from `secrets.env.age` in shell env — `app` and `backup` are gated by `${APP_IMAGE_TAG:?...}`, and every `${POSTGRES_PASSWORD}` / `${CLOUDFLARE_API_TOKEN}` / `${MINIO_ROOT_PASSWORD}` reference is interpolated eagerly during parse. `scripts/ops/pm-compose.sh` pins `APP_IMAGE_TAG` to HEAD but does NOT source secrets, so a bare `pm-compose.sh` call in a sudo shell fails with `CLOUDFLARE_API_TOKEN must be declared`. For the ops patterns in these runbooks, prefer `docker` directly (reads bypass compose parse entirely) or `scripts/deploy.sh` (sources secrets and pins SHA).
+> Compose operations outside `scripts/deploy.sh` need both `APP_IMAGE_TAG` and the secrets from `secrets.env.age` in shell env — `app` and `backup` are gated by `${APP_IMAGE_TAG:?...}`, and every `${POSTGRES_PASSWORD}` / `${CLOUDFLARE_API_TOKEN}` / `${MINIO_ROOT_PASSWORD}` reference is interpolated eagerly during parse. For the ops patterns in these runbooks, prefer `docker` directly (reads bypass compose parse entirely) or `scripts/deploy.sh` (sources secrets and pins SHA).
 
 After the deploy settles, verify the backup service is healthy. `docker logs` reads the container's log stream without touching compose, so it works from a bare sudo shell:
 

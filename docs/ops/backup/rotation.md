@@ -10,7 +10,7 @@ You are about to burn the current credentials; older encrypted backups in R2 rem
 
 **Before step 1 — quiesce the scheduler.** Stop the backup service so it does not accumulate `AccessDenied` errors against the dead token while the next steps are in flight. The badge will fall stale until the redeploy completes; that is expected.
 
-SSH to the VPS as the admin user, then run via `sudo -u deploy`. Use `docker stop` directly, not `pm-compose.sh stop` — the wrapper re-parses `docker-compose.yml`, which requires the full set of interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; without them compose parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
+SSH to the VPS as the admin user, then run via `sudo -u deploy`. Use `docker stop` directly, not `docker compose stop`. The compose path re-parses `docker-compose.yml`, which requires the full set of interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
 ```bash
 sudo -u deploy docker stop projekt-manager-backup-1
@@ -21,7 +21,7 @@ sudo -u deploy docker stop projekt-manager-backup-1
 3. **(Optional) Rotate the age key pair.** Do this if the private identity is suspected compromised, the operator workstation was lost, or on a slower cadence than the token rotation.
 
    Cost: older R2 objects encrypted to the old recipient become unreadable by the new identity. Options:
-   - **Accept the gap.** Old dumps age out under the 90-day lifecycle. For the 14-day immutability window, any restore must still use the old identity — keep it in the password manager, marked "retired, read-only".
+   - **Accept the gap.** Old dumps age out under the lifecycle rule. During the immutable window ([ADR-0020 §Retention](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention)), any restore from locked artifacts must still use the old identity — keep it in the password manager, marked "retired, read-only".
    - **Re-encrypt the lock window.** For each still-locked old object: download, `age -d -i ~/secrets/age-backup.key.old`, `age -r <new-recipient>`, re-upload under a new timestamped key. Labour-intensive; skip unless the old identity is confirmed compromised.
 
    To rotate: rerun [setup.md §2](setup.md#2-generate-the-age-key-pair) with `~/secrets/age-backup.key.new`, update the password-manager entries, move the old identity to a "retired" vault.

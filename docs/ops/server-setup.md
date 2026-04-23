@@ -280,7 +280,7 @@ Read-only Deploy Key scoped to this repo (outbound only).
    sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
    ```
 
-**Verify:** reads use `docker` directly, not `pm-compose.sh` — the wrapper re-parses the compose file, which requires secret interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts. Phase 8.1 step 2 already applies the same docker-direct workaround (established in commit 5484903).
+**Verify:** reads use `docker` directly, not `docker compose`. The compose path re-parses the compose file, which requires secret interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts. Phase 8.1 step 2 applies the same docker-direct workaround (established in commit 5484903).
 
 ```bash
 sudo -u deploy docker ps --filter name=projekt-manager-
@@ -296,7 +296,7 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 
 1. Confirm stack is running (Phase 8 verify).
 
-2. Verify empty users table. Use `docker exec` directly rather than `pm-compose.sh exec` — the latter re-parses the compose file, which in a sudo'd child shell lacks the secret interpolation vars (they live only in `secrets.env.age`, not `.env`) and aborts on `CLOUDFLARE_API_TOKEN must be declared`:
+2. Verify empty users table. Use `docker exec` directly rather than `docker compose exec` — the compose path re-parses the compose file, which in a sudo'd child shell lacks the secret interpolation vars (they live only in `secrets.env.age`, not `.env`) and aborts on `CLOUDFLARE_API_TOKEN must be declared`:
 
    ```bash
    sudo -u deploy docker exec projekt-manager-db-1 \
@@ -389,14 +389,15 @@ Unlike Phase 8.1 (which writes `BOOTSTRAP_ADMIN_*` to `.env` and relies on a lat
    echo "$BOOTSTRAP_ADMIN_PASSWORD"   # save to password manager NOW
    export BOOTSTRAP_ADMIN_PASSWORD
    export BOOTSTRAP_ADMIN_DISPLAY_NAME="Admin"
-   sudo -u deploy -H --preserve-env /opt/projekt-manager/scripts/ops/pm-compose.sh up -d
+   export APP_IMAGE_TAG="sha-$(git rev-parse HEAD)"
+   sudo -u deploy -H --preserve-env docker compose up -d
    ```
 
-   Both sudo flags are required. `--preserve-env` carries the decrypted-secret and `BOOTSTRAP_ADMIN_*` vars from the admin shell through to compose (pm-compose.sh pins `APP_IMAGE_TAG` itself from HEAD). `-H` resets `HOME` to `/home/deploy` so docker CLI finds its config and CLI-plugin dir under deploy's home — without it, `HOME` stays as the admin user's home, docker CLI warns `Error loading config file: … permission denied`, fails to register the `compose` plugin, and aborts with `unknown shorthand flag: 'f' in -f` (the cobra parser treating `compose` as a positional and `-f` as an unknown root flag).
+   Both sudo flags are required. `--preserve-env` carries the decrypted-secret, `BOOTSTRAP_ADMIN_*`, and `APP_IMAGE_TAG` vars from the admin shell through to compose. `-H` resets `HOME` to `/home/deploy` so docker CLI finds its config and CLI-plugin dir under deploy's home — without it, `HOME` stays as the admin user's home, docker CLI warns `Error loading config file: … permission denied`, fails to register the `compose` plugin, and aborts with `unknown shorthand flag: 'f' in -f` (the cobra parser treating `compose` as a positional and `-f` as an unknown root flag).
 
    The backup service is profile-gated (`profiles: [backup]` in docker-compose.yml). Without `--profile backup`, compose does not include it in this `up -d`'s managed set, so its current state is left unchanged — `Up` stays `Up`, `Exited` stays `Exited`. Pass `--profile backup` to reconcile it alongside app+db against the target SHA; stop it explicitly with `docker stop projekt-manager-backup-1` before step 1 if you want it quiesced during the reset.
 
-4. Confirm bootstrap ran. Use `docker logs` directly, not `pm-compose.sh logs` — the latter would re-parse the compose file, which in a sudo'd child shell without `--preserve-env` lacks the interpolation vars and aborts:
+4. Confirm bootstrap ran. Use `docker logs` directly, not `docker compose logs` — the compose path would re-parse the compose file, which in a sudo'd child shell without `--preserve-env` lacks the interpolation vars and aborts:
 
    ```bash
    sudo -u deploy docker logs projekt-manager-app-1 --tail=30 | grep -F 'Bootstrap admin user'
@@ -408,7 +409,8 @@ Unlike Phase 8.1 (which writes `BOOTSTRAP_ADMIN_*` to `.env` and relies on a lat
 
    ```bash
    unset BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD BOOTSTRAP_ADMIN_DISPLAY_NAME
-   sudo -u deploy -H --preserve-env /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate app
+   # APP_IMAGE_TAG + secrets are still in the admin shell from step 3.
+   sudo -u deploy -H --preserve-env docker compose up -d --force-recreate app
    sudo -u deploy docker inspect projekt-manager-app-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep BOOTSTRAP
    # expect: BOOTSTRAP_ADMIN_USERNAME=, BOOTSTRAP_ADMIN_PASSWORD=, BOOTSTRAP_ADMIN_DISPLAY_NAME= (all empty)
    ```
