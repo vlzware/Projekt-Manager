@@ -16,7 +16,12 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { STRINGS } from '../config/strings.js';
 import { buildApp } from './app.js';
 import { bootstrapAdminIfEmpty } from './bootstrap.js';
-import { assertAppServerEnv, assertProductionSafe, validateEnv } from './config/env.js';
+import {
+  assertAppServerEnv,
+  assertProductionSafe,
+  assertStoragePublicEndpointInProduction,
+  validateEnv,
+} from './config/env.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
@@ -94,6 +99,10 @@ async function start(): Promise<void> {
   // the same validator but doesn't use MinIO); the app server cannot run
   // without them, so enforce here.
   assertAppServerEnv(env);
+  // Refuse to start in production when the storage client would sign
+  // presigned URLs against a container-only hostname — the browser
+  // cannot resolve those, so every upload fails silently.
+  assertStoragePublicEndpointInProduction(env);
   if (isProduction) {
     rejectDevCredentials();
   }
@@ -192,6 +201,7 @@ async function start(): Promise<void> {
   // accretes.
   const attachmentStorageForReaper = createStorageClient({
     endpoint: env.STORAGE_ENDPOINT,
+    publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
     bucket: env.STORAGE_BUCKET,
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
@@ -233,6 +243,7 @@ async function start(): Promise<void> {
   // /api/health so operational outages show up before they cascade.
   const storageClient = createStorageClient({
     endpoint: env.STORAGE_ENDPOINT,
+    publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
     bucket: env.STORAGE_BUCKET,
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,

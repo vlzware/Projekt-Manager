@@ -37,6 +37,15 @@ services:
       # deploy-time pre-flight in `scripts/deploy.sh`.
       DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/projekt_manager
       STORAGE_ENDPOINT: http://storage:9000
+      # Public hostname the browser uses to reach MinIO. Caddy
+      # reverse-proxies `storage.${DOMAIN}` to the internal `storage:9000`
+      # (see Caddyfile) and the app signs presigned upload / download URLs
+      # against this host so they are actually resolvable from the
+      # browser. Derived from ${DOMAIN}; the startup guard
+      # `assertStoragePublicEndpointInProduction()` refuses to boot when
+      # STORAGE_ENDPOINT looks internal and this value is missing.
+      # See docs/ops/storage-subdomain.md.
+      STORAGE_PUBLIC_ENDPOINT: https://storage.${DOMAIN}
       STORAGE_BUCKET: projekt-manager
       STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
       STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
@@ -133,6 +142,12 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Allow only the app's own origin to POST uploads via presigned
+      # URLs. S3 presigned POSTs are "simple" CORS requests, so the
+      # browser still enforces the response's Access-Control-Allow-Origin
+      # before it lets JS read the result. `*` would work but is
+      # needlessly permissive — we know the sole legitimate caller.
+      MINIO_API_CORS_ALLOW_ORIGIN: https://${DOMAIN}
     restart: unless-stopped
     logging: *default-logging
 

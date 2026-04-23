@@ -21,6 +21,7 @@ export function attachmentRoutes(db: Database) {
     const env = getEnv();
     const storage = createStorageClient({
       endpoint: env.STORAGE_ENDPOINT!,
+      publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
       bucket: env.STORAGE_BUCKET,
       accessKey: env.STORAGE_ACCESS_KEY!,
       secretKey: env.STORAGE_SECRET_KEY!,

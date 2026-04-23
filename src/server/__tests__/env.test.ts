@@ -16,7 +16,12 @@ import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
-import { assertAppServerEnv, assertProductionSafe, envSchema } from '../config/env.js';
+import {
+  assertAppServerEnv,
+  assertProductionSafe,
+  assertStoragePublicEndpointInProduction,
+  envSchema,
+} from '../config/env.js';
 import type { Env } from '../config/env.js';
 
 /** Minimal Env shape with only the fields assertProductionSafe reads. */
@@ -26,6 +31,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     NODE_ENV: 'production',
     DATABASE_URL: 'postgres://unused',
     STORAGE_ENDPOINT: 'http://unused',
+    STORAGE_PUBLIC_ENDPOINT: undefined,
     STORAGE_BUCKET: 'unused',
     STORAGE_ACCESS_KEY: 'unused',
     STORAGE_SECRET_KEY: 'unused',
@@ -142,6 +148,75 @@ describe('assertAppServerEnv', () => {
 });
 
 /**
+ * `assertStoragePublicEndpointInProduction` — closes the infrastructure
+ * footgun where `STORAGE_ENDPOINT=http://storage:9000` (Docker-internal
+ * hostname) reaches the browser via presigned URLs the browser cannot
+ * resolve, silently breaking every upload until the orphan reaper
+ * sweeps it.
+ */
+describe('assertStoragePublicEndpointInProduction', () => {
+  it('throws in production when STORAGE_ENDPOINT is a container-only host and no public override is set', () => {
+    expect(() =>
+      assertStoragePublicEndpointInProduction(
+        makeEnv({
+          NODE_ENV: 'production',
+          STORAGE_ENDPOINT: 'http://storage:9000',
+          STORAGE_PUBLIC_ENDPOINT: undefined,
+        }),
+      ),
+    ).toThrow(/STORAGE_PUBLIC_ENDPOINT/);
+  });
+
+  it('passes in production when STORAGE_PUBLIC_ENDPOINT is set', () => {
+    expect(() =>
+      assertStoragePublicEndpointInProduction(
+        makeEnv({
+          NODE_ENV: 'production',
+          STORAGE_ENDPOINT: 'http://storage:9000',
+          STORAGE_PUBLIC_ENDPOINT: 'https://storage.example.com',
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('passes in production when STORAGE_ENDPOINT is a public hostname', () => {
+    expect(() =>
+      assertStoragePublicEndpointInProduction(
+        makeEnv({
+          NODE_ENV: 'production',
+          STORAGE_ENDPOINT: 'https://storage.example.com',
+          STORAGE_PUBLIC_ENDPOINT: undefined,
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('passes in production when STORAGE_ENDPOINT is an IP literal', () => {
+    expect(() =>
+      assertStoragePublicEndpointInProduction(
+        makeEnv({
+          NODE_ENV: 'production',
+          STORAGE_ENDPOINT: 'http://10.0.0.5:9000',
+          STORAGE_PUBLIC_ENDPOINT: undefined,
+        }),
+      ),
+    ).not.toThrow();
+  });
+
+  it('does not throw in development regardless of endpoint shape', () => {
+    expect(() =>
+      assertStoragePublicEndpointInProduction(
+        makeEnv({
+          NODE_ENV: 'development',
+          STORAGE_ENDPOINT: 'http://storage:9000',
+          STORAGE_PUBLIC_ENDPOINT: undefined,
+        }),
+      ),
+    ).not.toThrow();
+  });
+});
+
+/**
  * Schema-level regression pin for the `${VAR:-}` compose pattern. Docker
  * Compose substitutes an empty string for an unset variable referenced
  * with `:-`, so the container sees `AUDIT_RETENTION_WINDOW_DAYS=""`.
@@ -203,8 +278,10 @@ describe('start.ts call-site pin for assertProductionSafe', () => {
   it('imports assertProductionSafe from ./config/env.js', () => {
     // Match a named import of assertProductionSafe from the env module.
     // Tolerates other named imports on the same line and either quote style.
+    // Source is formatted multi-line by prettier, so `.` alone skips newlines —
+    // use the `s` flag so `.` matches across lines inside the braces.
     const importPattern =
-      /import\s*\{[^}]*\bassertProductionSafe\b[^}]*\}\s*from\s*['"]\.\/config\/env\.js['"]/;
+      /import\s*\{[^}]*\bassertProductionSafe\b[^}]*\}\s*from\s*['"]\.\/config\/env\.js['"]/s;
     expect(stripped).toMatch(importPattern);
   });
 
@@ -214,6 +291,15 @@ describe('start.ts call-site pin for assertProductionSafe', () => {
     // function call, expression) but strict that the guard is actually
     // invoked, not merely imported or referenced.
     const callPattern = /\bassertProductionSafe\s*\(\s*\S[^)]*\)/;
+    expect(stripped).toMatch(callPattern);
+  });
+
+  it('calls assertStoragePublicEndpointInProduction with a non-empty argument', () => {
+    // Parallel pin for the storage-endpoint guard. A regression that
+    // drops the call from start.ts would let a misconfigured deploy boot
+    // — uploads would silently fail against an unreachable presigned
+    // URL (the exact defect this guard exists to prevent).
+    const callPattern = /\bassertStoragePublicEndpointInProduction\s*\(\s*\S[^)]*\)/;
     expect(stripped).toMatch(callPattern);
   });
 

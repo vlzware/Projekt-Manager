@@ -365,6 +365,12 @@ The reaper TTL is intentionally longer than the presigned-URL TTL so a client th
 
 `src/server/storage/client.ts` exports an `AttachmentStorageClient` type that narrows the general `StorageClient` to the operations the attachment module uses: `createPresignedPost`, `createPresignedGet` (with optional attachment-disposition filename so the browser saves by `fileName`), `headObject`, `listObjects`, `deleteObject`. The narrower type lets the orphan reaper and bulk-download reaper fail at compile time against a mock that skips a required operation.
 
+### Internal vs public storage endpoint
+
+`createStorageClient({ endpoint, publicEndpoint })` takes two URLs. `endpoint` is the Docker-internal host (`http://storage:9000`) used for every call whose HTTP traffic actually leaves the process — `putObject`, `getObject`, `headObject`, `listObjects`, `deleteObject`, `ping`. `publicEndpoint` is the browser-reachable host (`https://storage.<DOMAIN>`) used ONLY when signing URLs that the app returns to the client: `createPresignedPost` (init upload), `createPresignedGet` (download / bulk-zip pickup), `getSignedUrl`. The two concerns split cleanly because the presigning helpers compute the URL locally — no network call — so pointing their SDK client at a host that resolves only from outside the container does not break.
+
+Why this exists: the Docker-internal hostname is unreachable from the browser. Earlier deployments signed presigned URLs against `http://storage:9000`, which the browser's POST could not resolve, so every upload failed silently at the transport layer and the `pending → ready` transition never fired. The orphan reaper then swept the stuck rows after its TTL. A startup guard — `assertStoragePublicEndpointInProduction()` in `src/server/config/env.ts` — now refuses to boot in production when `STORAGE_ENDPOINT` looks internal (no-dot hostname, non-IP) and `STORAGE_PUBLIC_ENDPOINT` is unset. Caddy reverse-proxies `storage.${DOMAIN}` to `storage:9000`; MinIO's `MINIO_API_CORS_ALLOW_ORIGIN=https://${DOMAIN}` narrows CORS to the app's own origin. See [docs/ops/storage-subdomain.md](docs/ops/storage-subdomain.md).
+
 ---
 
 ## Design Decisions (Not ADR-Worthy)

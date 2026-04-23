@@ -24,6 +24,23 @@ import { STORAGE_CONFIG } from '../config/index.js';
 
 export interface StorageConfig {
   endpoint: string;
+  /**
+   * Optional public endpoint used only when signing URLs returned to the
+   * browser (presigned POST for init uploads, presigned GET for downloads
+   * and bulk-zip pickup). When present, the signing client substitutes
+   * this URL so the browser receives a host it can actually resolve —
+   * typically a reverse-proxied subdomain (`https://storage.<domain>`)
+   * that forwards to the internal MinIO endpoint. When absent, signing
+   * reuses `endpoint` — correct for local dev where MinIO is exposed
+   * on the host, wrong for any deployment where `endpoint` is a
+   * container-only hostname.
+   *
+   * The signature's canonical request binds the host at signing time, so
+   * the browser's request to the public URL verifies correctly against
+   * MinIO behind the reverse proxy only when Caddy preserves the `Host`
+   * header (Caddy's default).
+   */
+  publicEndpoint?: string;
   bucket: string;
   accessKey: string;
   secretKey: string;
@@ -243,6 +260,18 @@ export function buildContentDisposition(fileName: string): string {
 }
 
 export function createStorageClient(config: StorageConfig): AttachmentStorageClient {
+  // Two clients on purpose:
+  //   - `s3` (internal endpoint) — used for every operation whose HTTP
+  //     request actually leaves this process: put/get/head/list/delete.
+  //   - `s3Signing` (public endpoint) — used only by the presigning helpers,
+  //     which compute the URL locally without making a network call. The
+  //     URL is returned to the browser and must carry a host the browser
+  //     can reach. In dev both endpoints collapse to the same host (MinIO
+  //     exposed on localhost); in prod `publicEndpoint` is the
+  //     reverse-proxied subdomain.
+  // Collapsing into one client when `publicEndpoint` is absent is
+  // intentional — keeps the code path identical for single-endpoint
+  // deployments and keeps existing tests passing unchanged.
   const s3 = new S3Client({
     endpoint: config.endpoint,
     region: config.region ?? 'us-east-1',
@@ -252,6 +281,17 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     },
     forcePathStyle: true,
   });
+  const s3Signing = config.publicEndpoint
+    ? new S3Client({
+        endpoint: config.publicEndpoint,
+        region: config.region ?? 'us-east-1',
+        credentials: {
+          accessKeyId: config.accessKey,
+          secretAccessKey: config.secretKey,
+        },
+        forcePathStyle: true,
+      })
+    : s3;
 
   const bucket = config.bucket;
 
@@ -321,7 +361,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         Bucket: bucket,
         Key: key,
       });
-      return getSignedUrl(s3, command, { expiresIn: clamped });
+      return getSignedUrl(s3Signing, command, { expiresIn: clamped });
     },
 
     async ping(): Promise<void> {
@@ -358,7 +398,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         );
       }
       const expiresIn = Math.max(1, expirySeconds);
-      const result = await awsCreatePresignedPost(s3, {
+      const result = await awsCreatePresignedPost(s3Signing, {
         Bucket: bucket,
         Key: key,
         Conditions: [
@@ -398,7 +438,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
           ? { ResponseContentDisposition: buildContentDisposition(attachmentFileName) }
           : {}),
       });
-      const url = await getSignedUrl(s3, command, { expiresIn: clamped });
+      const url = await getSignedUrl(s3Signing, command, { expiresIn: clamped });
       return {
         url,
         expiresAt: new Date(Date.now() + clamped * 1000).toISOString(),

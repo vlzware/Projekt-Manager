@@ -31,3 +31,20 @@
 		reverse_proxy app:3000
 	}
 }
+
+# Storage subdomain — reverse-proxies MinIO so presigned URLs signed by the
+# app (with STORAGE_PUBLIC_ENDPOINT=https://storage.${DOMAIN}) are actually
+# reachable from the browser. The internal `STORAGE_ENDPOINT=http://storage:9000`
+# is unreachable from outside the compose network; without this block the
+# browser's POST to the presigned URL fails DNS and every upload stalls at
+# `pending` until the orphan reaper sweeps it. See docs/ops/storage-subdomain.md.
+#
+# Host-header pass-through is Caddy's default — required for MinIO's SigV4
+# verification against the signed host to succeed.
+storage.{$DOMAIN:localhost} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+
+	reverse_proxy storage:9000
+}

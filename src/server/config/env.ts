@@ -24,6 +24,12 @@ export const envSchema = z.object({
   // reject for vars the backup path never reads; `assertAppServerEnv()`
   // below (called only from start.ts) enforces presence for the app path.
   STORAGE_ENDPOINT: z.string().optional(),
+  // Optional public hostname the browser uses to reach MinIO. The app
+  // signs presigned POST / GET URLs against this endpoint (not
+  // STORAGE_ENDPOINT, which points at the Docker-internal hostname).
+  // Required in production when STORAGE_ENDPOINT is a container-only
+  // host — enforced by `assertStoragePublicEndpointInProduction()`.
+  STORAGE_PUBLIC_ENDPOINT: z.string().optional(),
   STORAGE_BUCKET: z.string().min(1).default('projekt-manager'),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
@@ -170,6 +176,55 @@ export function assertProductionSafe(env: Env): void {
         'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.',
     );
   }
+}
+
+/**
+ * Hostname-looks-internal heuristic: no dot and not an IP literal. The
+ * Docker-internal hostnames used by compose (`storage`, `db`, `app`) all
+ * hit this, whereas a public URL (`storage.example.com`) does not. Used
+ * only by `assertStoragePublicEndpointInProduction()` — a literal IP
+ * (`http://10.0.0.5:9000`) is legitimate in self-hosted setups and is
+ * NOT treated as internal.
+ */
+function hostnameLooksInternal(endpoint: string): boolean {
+  let host: string;
+  try {
+    host = new URL(endpoint).hostname;
+  } catch {
+    // Malformed endpoint — let the storage client surface the real error
+    // at connect time rather than double-reporting it here.
+    return false;
+  }
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
+  return !host.includes('.');
+}
+
+/**
+ * Refuses to start in production when the storage client would sign
+ * presigned URLs against a container-only hostname. Without
+ * `STORAGE_PUBLIC_ENDPOINT`, the app signs URLs using `STORAGE_ENDPOINT`
+ * (e.g. `http://storage:9000`) and hands them to the browser — which
+ * cannot resolve the Docker-internal host, so every upload POST fails
+ * silently and the `pending → ready` transition never happens. That
+ * defect sat on the VPS undetected until an operator noticed attachments
+ * never saving.
+ *
+ * Dev (STORAGE_ENDPOINT = localhost or an IP) does not trip this guard
+ * because dev exposes MinIO on the host; the browser reaches the same
+ * endpoint the app reaches.
+ */
+export function assertStoragePublicEndpointInProduction(env: Env): void {
+  if (env.NODE_ENV !== 'production') return;
+  if (!env.STORAGE_ENDPOINT) return; // assertAppServerEnv already reports this
+  if (env.STORAGE_PUBLIC_ENDPOINT) return;
+  if (!hostnameLooksInternal(env.STORAGE_ENDPOINT)) return;
+  throw new Error(
+    `Refusing to start: STORAGE_ENDPOINT (${env.STORAGE_ENDPOINT}) is a container-only ` +
+      'hostname but STORAGE_PUBLIC_ENDPOINT is not set. Presigned URLs the browser ' +
+      'receives would be unreachable. Set STORAGE_PUBLIC_ENDPOINT to the public ' +
+      'URL that reverse-proxies to MinIO (e.g. https://storage.<your-domain>). ' +
+      'See docs/ops/storage-subdomain.md.',
+  );
 }
 
 /**
