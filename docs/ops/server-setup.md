@@ -296,11 +296,11 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 
 1. Confirm stack is running (Phase 8 verify).
 
-2. Verify empty users table:
+2. Verify empty users table. Use `docker exec` directly rather than `pm-compose.sh exec` — the latter re-parses the compose file, which in a sudo'd child shell lacks the secret interpolation vars (they live only in `secrets.env.age`, not `.env`) and aborts on `CLOUDFLARE_API_TOKEN must be declared`:
 
    ```bash
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     exec -T db psql -U pm -d projekt_manager -c 'SELECT count(*) FROM users;'
+   sudo -u deploy docker exec projekt-manager-db-1 \
+     psql -U pm -d projekt_manager -c 'SELECT count(*) FROM users;'
    # expect: 0
    ```
 
@@ -314,17 +314,16 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
    Set `BOOTSTRAP_ADMIN_USERNAME`, `BOOTSTRAP_ADMIN_PASSWORD`, `BOOTSTRAP_ADMIN_DISPLAY_NAME` (optional).
    Password policy: >=8 chars, <=72 UTF-8 bytes, not in common-password blocklist.
 
-4. Restart app:
+4. Re-run deploy to pick up the new `.env`. `compose up -d` (invoked by `deploy.sh`) detects the interpolated-config change for `app` and recreates it; `deploy.sh` sources `secrets.env.age` internally so nothing needs to be in the admin shell:
 
    ```bash
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate app
+   sudo -u deploy /opt/projekt-manager/scripts/deploy.sh   # same ref used in Phase 8 step 3
    ```
 
-5. Confirm bootstrap:
+5. Confirm bootstrap. Same rationale as step 2 — bypass compose with `docker logs`:
 
    ```bash
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     logs app --tail=30 | grep -F 'Bootstrap admin user'
+   sudo -u deploy docker logs projekt-manager-app-1 --tail=30 | grep -F 'Bootstrap admin user'
    ```
 
 6. From WireGuard client: log in at `https://${DOMAIN}`, then rotate password immediately:
@@ -348,33 +347,34 @@ Creates the first admin account on a fresh `pgdata` volume. The app's startup ho
 
 7. Scrub bootstrap vars from `.env` (delete or comment out all three `BOOTSTRAP_ADMIN_*` lines).
 
-8. Restart app, confirm no bootstrap warning:
+8. Re-run deploy to pick up the scrubbed `.env`, then confirm no bootstrap warning:
 
    ```bash
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate app
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     logs app --tail=30 | grep -F 'Bootstrap admin user' || echo 'ok -- no bootstrap'
+   sudo -u deploy /opt/projekt-manager/scripts/deploy.sh   # same ref used in Phase 8 step 3
+   sudo -u deploy docker logs projekt-manager-app-1 --tail=30 | grep -F 'Bootstrap admin user' || echo 'ok -- no bootstrap'
    ```
 
 9. Log in from WireGuard client with new password to confirm.
 
 ### Phase 8.2 -- Reset pgdata (test VPS only)
 
-Wipes the Postgres volume and re-runs the first-login ritual on a clean DB. **Do not run on a VPS that holds real data** — this deletes all users, customers, projects, and sessions. The test-VPS use case: a schema change or migration collapse has diverged from the deployed DB's ledger (see troubleshooting's `source <(age -d …)` entry and the 2026-04-18 session), and recreating is cheaper than reconciling.
+Wipes the Postgres and MinIO volumes, then re-runs the first-login ritual on a clean DB. **Do not run on a VPS that holds real data** — this deletes all users, customers, projects, sessions, and every attachment (both the `attachment` rows and the stored objects). The test-VPS use case: a schema change or migration collapse has diverged from the deployed DB's ledger (see troubleshooting's `source <(age -d …)` entry and the 2026-04-18 session), and recreating is cheaper than reconciling.
 
-The bootstrap env vars are injected inline (shell-only), not written to `.env`. The plaintext admin password never touches disk.
+The MinIO wipe matters because the attachment orphan reaper only handles `status='pending'` rows; once a row is gone, its backing object has no cleanup path and would accumulate forever (`src/server/services/AttachmentService.ts:468` comments aside — the "bucket lifecycle" safety net is only configured on the R2 backup bucket, not the primary MinIO bucket). Wiping `miniodata` keeps the dev environment aligned to the planned production pattern (soft-delete + provider lifecycle), where a full-DB reset can't happen in the first place.
 
-1. Stop and remove app + db containers. Use `docker` directly rather than `docker compose down` — the latter requires all secret vars to interpolate, which aren't sourced at this point:
+Unlike Phase 8.1 (which writes `BOOTSTRAP_ADMIN_*` to `.env` and relies on a later scrub step), 8.2 injects them as shell env on the admin account. The plaintext admin password never touches disk, removing the risk of a forgotten scrub leaving it in the repo.
+
+1. Stop and remove app, db, and storage containers. Use `docker` directly rather than `docker compose down` — the latter requires all secret vars to interpolate, which aren't sourced at this point:
 
    ```bash
-   sudo -u deploy docker stop projekt-manager-app-1 projekt-manager-db-1
-   sudo -u deploy docker rm   projekt-manager-app-1 projekt-manager-db-1
+   sudo -u deploy docker stop projekt-manager-app-1 projekt-manager-db-1 projekt-manager-storage-1
+   sudo -u deploy docker rm   projekt-manager-app-1 projekt-manager-db-1 projekt-manager-storage-1
    ```
 
-2. Remove the Postgres volume:
+2. Remove both data volumes. `storage-init` re-creates the MinIO bucket on the next `up`, so no separate bootstrap is needed for storage:
 
    ```bash
-   sudo -u deploy docker volume rm projekt-manager_pgdata
+   sudo -u deploy docker volume rm projekt-manager_pgdata projekt-manager_miniodata
    ```
 
 3. Bring the stack back up with inline bootstrap env. The `eval "$(age -d …)"` form avoids the process-substitution deadlock (troubleshooting.md):
@@ -389,15 +389,17 @@ The bootstrap env vars are injected inline (shell-only), not written to `.env`. 
    echo "$BOOTSTRAP_ADMIN_PASSWORD"   # save to password manager NOW
    export BOOTSTRAP_ADMIN_PASSWORD
    export BOOTSTRAP_ADMIN_DISPLAY_NAME="Admin"
-   sudo -u deploy --preserve-env /opt/projekt-manager/scripts/ops/pm-compose.sh up -d
+   sudo -u deploy -H --preserve-env /opt/projekt-manager/scripts/ops/pm-compose.sh up -d
    ```
 
-   `--preserve-env` is required so the inline `BOOTSTRAP_ADMIN_*` and decrypted-secret vars reach the compose process (pm-compose.sh pins APP_IMAGE_TAG itself from HEAD). Omit `--profile backup` (as shown) when you want the backup cron to stay idle — the previous backup container remains `Exited` and is untouched. Add `--profile backup` to start it alongside.
+   Both sudo flags are required. `--preserve-env` carries the decrypted-secret and `BOOTSTRAP_ADMIN_*` vars from the admin shell through to compose (pm-compose.sh pins `APP_IMAGE_TAG` itself from HEAD). `-H` resets `HOME` to `/home/deploy` so docker CLI finds its config and CLI-plugin dir under deploy's home — without it, `HOME` stays as the admin user's home, docker CLI warns `Error loading config file: … permission denied`, fails to register the `compose` plugin, and aborts with `unknown shorthand flag: 'f' in -f` (the cobra parser treating `compose` as a positional and `-f` as an unknown root flag).
 
-4. Confirm bootstrap ran:
+   The backup service is profile-gated (`profiles: [backup]` in docker-compose.yml). Without `--profile backup`, compose does not include it in this `up -d`'s managed set, so its current state is left unchanged — `Up` stays `Up`, `Exited` stays `Exited`. Pass `--profile backup` to reconcile it alongside app+db against the target SHA; stop it explicitly with `docker stop projekt-manager-backup-1` before step 1 if you want it quiesced during the reset.
+
+4. Confirm bootstrap ran. Use `docker logs` directly, not `pm-compose.sh logs` — the latter would re-parse the compose file, which in a sudo'd child shell without `--preserve-env` lacks the interpolation vars and aborts:
 
    ```bash
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh logs app --tail=30 | grep -F 'Bootstrap admin user'
+   sudo -u deploy docker logs projekt-manager-app-1 --tail=30 | grep -F 'Bootstrap admin user'
    ```
 
 5. Log in from a WireGuard client as `admin` with the generated password, then rotate via the UI (user menu → change password) or the `/api/auth/change-password` flow in Phase 8.1 step 6.
@@ -406,9 +408,12 @@ The bootstrap env vars are injected inline (shell-only), not written to `.env`. 
 
    ```bash
    unset BOOTSTRAP_ADMIN_USERNAME BOOTSTRAP_ADMIN_PASSWORD BOOTSTRAP_ADMIN_DISPLAY_NAME
-   sudo -u deploy --preserve-env /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate app
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh logs app --tail=30 | grep -F 'Bootstrap admin user' || echo 'ok -- no bootstrap'
+   sudo -u deploy -H --preserve-env /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate app
+   sudo -u deploy docker inspect projekt-manager-app-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | grep BOOTSTRAP
+   # expect: BOOTSTRAP_ADMIN_USERNAME=, BOOTSTRAP_ADMIN_PASSWORD=, BOOTSTRAP_ADMIN_DISPLAY_NAME= (all empty)
    ```
+
+   `--force-recreate app` is required: `BOOTSTRAP_ADMIN_*` flow through as compose-interpolated runtime env, not as part of the config hash compose compares, so a plain `up -d` would consider the existing container up-to-date and do nothing, leaving the password baked into the old container's docker metadata.
 
    Alternative: run `scripts/deploy.sh <ref>` — it sources `secrets.env.age` without bootstrap vars and recreates the app as part of the normal deploy flow.
 
