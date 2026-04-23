@@ -31,6 +31,18 @@ services:
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # MinIO console
+    environment:
+      # Override the prod-shaped `https://${DOMAIN}` from docker-compose.yml.
+      # Browsers running against the Vite dev server come from
+      # http://localhost:5173 (and variants on the host's network/WireGuard
+      # interfaces), which never matches the prod origin — so MinIO omits
+      # CORS headers on the preflight, the browser blocks the presigned
+      # POST, and uploads appear as "Änderung fehlgeschlagen" in the UI
+      # while the object has already landed in the bucket (orphan). `*` is
+      # safe here because presigned POSTs don't carry credentials (auth is
+      # in the form fields), and dev storage holds no real data. Prod stays
+      # strict via docker-compose.yml.
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
 
   caddy:
     # Caddy requires CLOUDFLARE_API_TOKEN for DNS-01 TLS — not available
