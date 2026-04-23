@@ -280,15 +280,15 @@ Read-only Deploy Key scoped to this repo (outbound only).
    sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
    ```
 
-**Verify:**
+**Verify:** reads use `docker` directly, not `pm-compose.sh` — the wrapper re-parses the compose file, which requires secret interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts. Phase 8.1 step 2 already applies the same docker-direct workaround (established in commit 5484903).
 
 ```bash
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh ps
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-  exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
+sudo -u deploy docker ps --filter name=projekt-manager-
+sudo -u deploy docker exec projekt-manager-app-1 \
+  node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
 ```
 
-Note: `curl https://localhost/api/health` does NOT work from the server -- Caddy binds to `${WG_BIND_IP}:443` only. Use the `docker compose exec` path above or test from a WireGuard client.
+Note: `curl https://localhost/api/health` does NOT work from the server -- Caddy binds to `${WG_BIND_IP}:443` only. Use the `docker exec` path above or test from a WireGuard client.
 
 ### Phase 8.1 -- First-login ritual (one-time)
 

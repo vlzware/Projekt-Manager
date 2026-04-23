@@ -21,19 +21,21 @@ Add a `ca` line inside the `tls` block:
 }
 ```
 
-### 2. Recreate Caddy
+### 2. Reload Caddy
+
+SSH to the VPS as the admin user, then:
 
 ```bash
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate caddy
+sudo -u deploy docker exec projekt-manager-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
 
-**Must use `--force-recreate`** -- Caddyfile is bind-mounted, not part of the compose config hash, so `up -d` alone sees "nothing changed."
+Caddy's admin API (listens on `localhost:2019` inside the container) re-reads the bind-mounted `/etc/caddy/Caddyfile` and diff-applies the new config — new CA directive, re-provision via the new issuer, no container restart. Prefer this over `docker compose up -d --force-recreate caddy`: `pm-compose.sh` / `docker compose` re-parse `docker-compose.yml` on every invocation, which requires `CLOUDFLARE_API_TOKEN`, `POSTGRES_PASSWORD`, and `MINIO_ROOT_PASSWORD` in shell env. Those live only in `secrets.env.age`; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
 ### 3. Verify staging cert
 
 ```bash
 # Watch logs for success
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh logs caddy --since 1m -f
+sudo -u deploy docker logs projekt-manager-caddy-1 --since 1m -f
 # Look for: "certificate obtained successfully","issuer":"acme-staging-v02..."
 
 # Test TLS from a WireGuard client (-k required for staging certs)
@@ -54,40 +56,40 @@ tls {
 }
 ```
 
-### 5. Recreate Caddy again
+### 5. Reload Caddy again
 
 ```bash
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate caddy
+sudo -u deploy docker exec projekt-manager-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
 
 ### 6. Verify production cert
 
 ```bash
 # Watch logs -- success line should show acme-v02 (no "staging")
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh logs caddy --since 1m -f
+sudo -u deploy docker logs projekt-manager-caddy-1 --since 1m -f
 
 # Test WITHOUT -k (production cert validates against standard CA bundle)
 curl -v --resolve "<domain>:443:10.213.17.1" "https://<domain>/api/health"
 # Expect: 200 OK, clean TLS handshake, no warnings
 ```
 
-## Container restart reference
+## Config change reference
 
-| Command                                       | Behavior                                                                                              |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `docker compose restart caddy`                | SIGTERM only. `.env` and bind-mount changes **ignored**. Never use after editing `.env`.              |
-| `docker compose up -d caddy`                  | Compares config hash. Recreates if `.env` or compose file changed. Does NOT detect Caddyfile changes. |
-| `docker compose up -d --force-recreate caddy` | Always recreates. **Use after Caddyfile edits.**                                                      |
+| Command                                                        | Behavior                                                                                                                                                                |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker exec caddy caddy reload --config /etc/caddy/Caddyfile` | **Canonical path.** Caddy's admin API diff-applies the new config, re-provisioning certs as needed. No compose parse, no secrets required in shell env.                 |
+| `docker compose restart caddy`                                 | SIGTERM only. `.env` changes **ignored** (compose file not re-parsed). Bind-mount changes ARE re-read on process restart, but `caddy reload` is cleaner.                |
+| `docker compose up -d --force-recreate caddy`                  | Always recreates the container. Requires the full set of compose interpolation vars in shell env; from a bare sudo shell, hits `CLOUDFLARE_API_TOKEN must be declared`. |
 
 ## Force re-issuance
 
 If a cert is broken or compromised:
 
 ```bash
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh exec caddy \
+sudo -u deploy docker exec projekt-manager-caddy-1 \
   rm -rf /data/caddy/certificates/acme-v02.api.letsencrypt.org-directory/<domain>
 
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh up -d --force-recreate caddy
+sudo -u deploy docker exec projekt-manager-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
 
 **Beware rate limits** -- 5 failed validations per identifier per account per hour.

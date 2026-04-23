@@ -128,30 +128,35 @@ Two paths exist; this runbook supports **(a) only**. Path (b) — targeted table
 **(a) Rebuild the VPS DB volume (maintenance window, downtime).** You are about to destroy the current `pgdata` volume and replace it with the restored state. This is irreversible on the live volume.
 
 1. Announce the maintenance window.
-2. On the VPS, stop every DB client — `app`, `caddy`, and `backup`. Leaving `backup` up would keep a live connection to `projekt_manager`, which makes the DROP DATABASE in step 4 fail with "database is being accessed by other users". `pm-compose.sh` pins `APP_IMAGE_TAG` so the gated `app` + `backup` services interpolate ([setup.md §4](setup.md#4-first-deploy)):
+2. SSH to the VPS as the admin user. All subsequent VPS-side steps run via `sudo -u deploy`. Use `docker` directly, not `pm-compose.sh` — the wrapper re-parses `docker-compose.yml`, which requires the full set of interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; without them compose parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
+
+   Stop every DB client — `app`, `caddy`, and `backup`. Leaving `backup` up would keep a live connection to `projekt_manager`, which makes the `DROP DATABASE` in step 4 fail with "database is being accessed by other users":
+
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     --profile backup stop app caddy backup"
+   sudo -u deploy docker stop projekt-manager-app-1 projekt-manager-caddy-1 projekt-manager-backup-1
    ```
-3. Copy the decrypted dump to the VPS:
+
+3. Copy the decrypted dump from the operator workstation to the VPS, then fix ownership on the VPS:
    ```bash
+   # workstation
    scp "${TS}.dump" <admin-username>@<vps-hostname>:/tmp/
-   ssh <admin-username>@<vps-hostname> "sudo chown deploy:deploy /tmp/${TS}.dump"
+   # VPS (back in the ssh session)
+   sudo chown deploy:deploy /tmp/${TS}.dump
    ```
-4. Drop and recreate the DB, then restore. `DROP DATABASE … WITH (FORCE)` (Postgres 13+) terminates any stray connection Postgres itself holds — defensive even after step 2, since an internal autovacuum or orphaned session can still hold a connection for a beat:
+4. On the VPS: drop and recreate the DB, then restore. `DROP DATABASE … WITH (FORCE)` (Postgres 13+) terminates any stray connection Postgres itself holds — defensive even after step 2, since an internal autovacuum or orphaned session can still hold a connection for a beat. `docker exec -i` pipes the local dump file into `pg_restore`'s stdin inside the container:
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     exec -T db psql -U pm -d postgres -c 'DROP DATABASE projekt_manager WITH (FORCE); CREATE DATABASE projekt_manager;'"
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     exec -T db pg_restore --clean --if-exists --no-owner --no-privileges -U pm -d projekt_manager < /tmp/${TS}.dump"
+   sudo -u deploy docker exec projekt-manager-db-1 \
+     psql -U pm -d postgres -c 'DROP DATABASE projekt_manager WITH (FORCE); CREATE DATABASE projekt_manager;'
+   sudo -u deploy docker exec -i projekt-manager-db-1 \
+     pg_restore --clean --if-exists --no-owner --no-privileges -U pm -d projekt_manager < /tmp/${TS}.dump
    ```
-5. Shred the plaintext dump from the VPS:
+5. On the VPS: shred the plaintext dump.
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo shred -u /tmp/${TS}.dump"
+   sudo shred -u /tmp/${TS}.dump
    ```
-6. Restart the stack and verify. `scripts/deploy.sh` already includes `--profile backup` so this also brings the backup service back up:
+6. On the VPS: restart the stack and verify. `scripts/deploy.sh` already includes `--profile backup` so this also brings the backup service back up:
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
+   sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
    ```
 
 **(b) Targeted restore.** Not in scope. If a partial restore is required, open an issue with the affected tables and timestamp; do not attempt without a new runbook entry.

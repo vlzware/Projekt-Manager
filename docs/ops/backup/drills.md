@@ -11,17 +11,15 @@ Concept map: [overview.md](overview.md). Design rationale: [ADR-0020 §Decision]
 
 Tier 2 needs the private identity on the VPS. `load-drill-key.sh` writes it to a tmpfs mount inside the `backup` container and never anywhere else ([AC-175](../../spec/verification.md#1522-backup-and-recovery)).
 
-**Location:** `scripts/backup/load-drill-key.sh` in the repo. `Dockerfile.backup` copies it into the image at `/usr/local/bin/load-drill-key` (no `.sh`) — that is the only path the operator ever invokes, via `docker compose --profile backup exec backup load-drill-key`. The tmpfs target inside the container is `/run/drill-key/identity` (file mode 0400, owned by root; the tmpfs mount itself is mode 0700 uid 0 — the container runs as root).
+**Location:** `scripts/backup/load-drill-key.sh` in the repo. `Dockerfile.backup` copies it into the image at `/usr/local/bin/load-drill-key` (no `.sh`) — that is the only path the operator ever invokes, via `docker exec` into the running backup container. The tmpfs target inside the container is `/run/drill-key/identity` (file mode 0400, owned by root; the tmpfs mount itself is mode 0700 uid 0 — the container runs as root).
 
 You are about to write private key material into RAM on the VPS; this is cleared on reboot or on container recreation, and can be overwritten by rerunning the script.
 
 1. Have `~/secrets/age-backup.key` open on the operator workstation. Copy its full contents (including the comment lines and the `AGE-SECRET-KEY-1...` body) to the clipboard.
-2. On the VPS. `pm-compose.sh` pins `APP_IMAGE_TAG` to the current HEAD so `app` + `backup` interpolate (see `scripts/ops/pm-compose.sh` header):
+2. SSH to the VPS as the admin user. Use `docker exec` directly, not `pm-compose.sh exec` — the wrapper re-parses `docker-compose.yml`, which requires the full set of interpolation vars (`POSTGRES_PASSWORD`, `CLOUDFLARE_API_TOKEN`, etc.) in shell env; without them compose parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903). `-it` allocates a pseudo-TTY so the script's `read -s` actually suppresses echo during the paste:
 
    ```bash
-   ssh <admin-username>@<vps-hostname>
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     --profile backup exec backup load-drill-key
+   sudo -u deploy docker exec -it projekt-manager-backup-1 load-drill-key
    ```
 
 3. The script prompts with `read -s` ("Paste age identity, end with Ctrl-D:"). Paste the clipboard contents, press Enter, then Ctrl-D. The script:
@@ -32,8 +30,8 @@ You are about to write private key material into RAM on the VPS; this is cleared
 4. Verify the key is loaded without exposing it:
 
    ```bash
-   sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     --profile backup exec backup test -s /run/drill-key/identity && echo "drill key loaded"
+   sudo -u deploy docker exec projekt-manager-backup-1 \
+     test -s /run/drill-key/identity && echo "drill key loaded"
    ```
 
    The next cron tick picks it up: `meta_backup_status.lastDrillAt` advances, `lastDrillOk = true`, the badge flips green.

@@ -88,9 +88,10 @@ The VPS needs the new keys in `secrets.env.age`. This reuses the rotation flow i
 
 You are about to replace the live backup credentials; this is reversible **only** if the previous `secrets.env.age` is still on hand. A fat-fingered edit with no prior copy overwrites the live file and leaves the VPS non-bootable.
 
-1. On the operator workstation, pull the current VPS copy as a typo-recovery snapshot; keep it until step 6 in §4 succeeds. Then open the SSH session used for the upload:
+1. On the operator workstation, pull the current VPS copy as a typo-recovery snapshot; keep it until step 6 in §4 succeeds. Then SSH to the VPS as the admin user — keep that session open; subsequent VPS-side commands run in it.
 
    ```bash
+   # workstation
    scp <admin-username>@<vps-hostname>:/opt/projekt-manager/secrets.env.age ./secrets.env.age.bak
    ssh <admin-username>@<vps-hostname>
    ```
@@ -120,20 +121,21 @@ You are about to replace the live backup credentials; this is reversible **only*
    shred -u /tmp/secrets.env
    ```
 
-4. Upload and move into place:
+4. Upload and move into place. `scp` runs on the workstation; the `sudo mv`/`chown`/`chmod` run on the VPS in the ssh session opened in step 1:
 
    ```bash
+   # workstation
    scp secrets.env.age <admin-username>@<vps-hostname>:/tmp/secrets.env.age
-   ssh <admin-username>@<vps-hostname> "\
-     sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age && \
-     sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age && \
-     sudo chmod 0600 /opt/projekt-manager/secrets.env.age"
+   # VPS
+   sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
+   sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
+   sudo chmod 0600 /opt/projekt-manager/secrets.env.age
    ```
 
-5. Verify the new values round-trip (`age -d` prompts once for the same passphrase):
+5. On the VPS: verify the new values round-trip (`age -d` prompts once for the same passphrase).
 
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy age -d /opt/projekt-manager/secrets.env.age | grep -E '^(R2_|AGE_RECIPIENT)'"
+   sudo -u deploy age -d /opt/projekt-manager/secrets.env.age | grep -E '^(R2_|AGE_RECIPIENT)'
    ```
 
    You should see the Layer 2 lines exactly as sent. If any value is missing or mangled, restore the pre-change snapshot (re-run the step-4 `scp` + `mv/chown/chmod` with `./secrets.env.age.bak` as the source) and repeat from step 2. Do not iterate against a broken file.
@@ -146,19 +148,20 @@ Pick up the new env values. This is a normal deploy; the backup service reads th
 
 You are about to cycle the running stack; the running app/db/storage containers survive the pull, the `backup` container is recreated.
 
+On the VPS (continuing in the ssh session from §3):
+
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 ```
 
 `scripts/deploy.sh` decrypts `secrets.env.age`, exports all keys into the compose env, pulls the pinned image, `docker compose up -d` (which includes the `backup` service), and polls `/api/health` ([manual-deploy.md](../manual-deploy.md)).
 
-> Any manual `docker compose` invocation outside `scripts/deploy.sh` must set `APP_IMAGE_TAG=<sha-or-tag>` — `app` and `backup` are both gated by `${APP_IMAGE_TAG:?...}` and refuse to start otherwise. Use `scripts/ops/pm-compose.sh` (pins `APP_IMAGE_TAG` to HEAD); `scripts/deploy.sh` pins it to the target SHA itself.
+> Compose operations outside `scripts/deploy.sh` need both `APP_IMAGE_TAG` and the secrets from `secrets.env.age` in shell env — `app` and `backup` are gated by `${APP_IMAGE_TAG:?...}`, and every `${POSTGRES_PASSWORD}` / `${CLOUDFLARE_API_TOKEN}` / `${MINIO_ROOT_PASSWORD}` reference is interpolated eagerly during parse. `scripts/ops/pm-compose.sh` pins `APP_IMAGE_TAG` to HEAD but does NOT source secrets, so a bare `pm-compose.sh` call in a sudo shell fails with `CLOUDFLARE_API_TOKEN must be declared`. For the ops patterns in these runbooks, prefer `docker` directly (reads bypass compose parse entirely) or `scripts/deploy.sh` (sources secrets and pins SHA).
 
-After the deploy settles, verify the backup service is healthy. Every `docker compose` call that targets the `backup` service must carry `--profile backup`, because the service is profile-gated (`docker-compose.yml` services.backup.profiles). Without the flag, `run --rm backup` hard-fails and `ps`/`logs`/`stop`/`start` behave inconsistently across compose versions:
+After the deploy settles, verify the backup service is healthy. `docker logs` reads the container's log stream without touching compose, so it works from a bare sudo shell:
 
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-  --profile backup logs --tail=50 backup"
+sudo -u deploy docker logs projekt-manager-backup-1 --tail=50
 ```
 
 First-run expectations, in order (next scheduled tick — see [overview.md § Cadence](overview.md#cadence)):

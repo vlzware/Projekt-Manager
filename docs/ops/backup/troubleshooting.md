@@ -17,33 +17,32 @@ Symptoms that appear during or right after [setup.md §4](setup.md#4-first-deplo
 
 ## First-line diagnostics (5 minutes)
 
-`pm-compose.sh` pins `APP_IMAGE_TAG` so the gated `app` + `backup` services interpolate ([setup.md §4](setup.md#4-first-deploy)).
+SSH to the VPS as the admin user, then run these via `sudo -u deploy`. Use `docker` directly, not `pm-compose.sh` — the wrapper re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) in shell env. Those live only in `secrets.env.age`; the admin's sudo shell doesn't have them sourced, so compose parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh --profile backup ps backup"
-ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh --profile backup logs backup --tail=200"
-ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh exec -T db psql -U pm -d projekt_manager -c 'SELECT * FROM meta_backup_status;'"
+sudo -u deploy docker ps -a --filter name=projekt-manager-backup
+sudo -u deploy docker logs projekt-manager-backup-1 --tail=200
+sudo -u deploy docker exec projekt-manager-db-1 psql -U pm -d projekt_manager -c 'SELECT * FROM meta_backup_status;'
 ```
 
 `lastError` is a short machine cue from the backup script — the log tail carries the detail.
 
-## Second-line (disable cron, deep-dive)
+## Second-line (manual one-shot, deep-dive)
 
-1. Stop the scheduled runs so you can iterate:
-   ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     --profile backup stop backup"
-   ```
-2. Run a one-shot manually and read the full output. `run --rm` spins up a fresh container, so `--profile backup` is mandatory — without it compose filters the service out and the command fails with "no such service":
-   ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-     --profile backup run --rm backup /usr/local/bin/run-backup.sh"
-   ```
-3. Common buckets:
-   - R2 credential drift — re-run [setup.md §3](setup.md#3-push-r2-credentials--recipient-to-the-vps).
-   - Age recipient mismatch — re-run [setup.md §3](setup.md#3-push-r2-credentials--recipient-to-the-vps) with `age-keygen -y`.
-   - PostgreSQL connectivity — check `db` container health.
-   - Manifest algorithm drift — check [AC-174](../../spec/verification.md#1522-backup-and-recovery) determinism; run the checksum query twice on the same snapshot and compare.
+Trigger a backup manually and read the full output. This `docker exec`s into the running backup container; the scheduled `crond` loop keeps running, but the in-container `/tmp/backup.lock` flock serialises cron-triggered and manual runs, so neither overlaps:
+
+```bash
+sudo -u deploy docker exec projekt-manager-backup-1 /usr/local/bin/run-backup.sh
+```
+
+If the container isn't running (e.g. crash-looping on the entrypoint's env validation), `docker logs` from First-line diagnostics is the starting point, not this — `docker exec` needs a live PID 1.
+
+Common buckets:
+
+- R2 credential drift — re-run [setup.md §3](setup.md#3-push-r2-credentials--recipient-to-the-vps).
+- Age recipient mismatch — re-run [setup.md §3](setup.md#3-push-r2-credentials--recipient-to-the-vps) with `age-keygen -y`.
+- PostgreSQL connectivity — check `db` container health.
+- Manifest algorithm drift — check [AC-174](../../spec/verification.md#1522-backup-and-recovery) determinism; run the checksum query twice on the same snapshot and compare.
 
 ## Escalation threshold
 

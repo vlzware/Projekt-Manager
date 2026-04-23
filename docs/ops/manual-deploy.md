@@ -52,18 +52,18 @@ The GHCR image must still exist. If pruned, use forward-rollback: `git revert` o
 
 ## Verify a deploy
 
-`scripts/ops/pm-compose.sh` pins `APP_IMAGE_TAG` to the current HEAD so the gated `app` + `backup` services interpolate — every manual `docker compose` call outside `scripts/deploy.sh` needs this (see the wrapper's header).
+Reads use `docker` directly rather than `scripts/ops/pm-compose.sh`. The wrapper re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) in shell env; a bare sudo shell doesn't have them, so compose parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. `docker ps` / `docker exec` / `docker logs` don't parse compose, so they work directly. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
 ```bash
 # Running commit
 sudo -u deploy git -C /opt/projekt-manager rev-parse --short HEAD
 
 # Container status
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh ps
+sudo -u deploy docker ps --filter name=projekt-manager-
 
 # Direct health check (bypasses Caddy)
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh \
-  exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
+sudo -u deploy docker exec projekt-manager-app-1 \
+  node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
 
 # From WireGuard client (end-to-end with TLS)
 curl -sS https://${DOMAIN}/api/health
@@ -101,19 +101,24 @@ Layer 2:
 `age` re-encrypts the whole file, so rotating one value means writing all of them back. The full setup procedure (including per-secret sources) lives in [backup/setup.md §3](backup/setup.md#3-push-r2-credentials--recipient-to-the-vps). Short form for rotating one existing value:
 
 ```bash
-# On workstation (age must be installed locally). Decrypt current file
-# to recover the non-rotated values, edit in place, re-encrypt.
-age -d secrets.env.age > /tmp/secrets.env   # enter passphrase
-$EDITOR /tmp/secrets.env                     # change the one value
+# Workstation (age must be installed locally). Decrypt the current
+# file to recover the non-rotated values, edit in place, re-encrypt.
+age -d secrets.env.age > /tmp/secrets.env        # enter passphrase
+$EDITOR /tmp/secrets.env                         # change the one value
 age -p -o secrets.env.age.new /tmp/secrets.env   # enter passphrase
 shred -u /tmp/secrets.env
 mv secrets.env.age.new secrets.env.age
 
+# Workstation: upload to the VPS
 scp secrets.env.age <sudo-user>@vps:/tmp/secrets.env.age
-ssh <sudo-user>@vps "sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age && sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age && sudo chmod 0600 /opt/projekt-manager/secrets.env.age"
 
-# Redeploy to pick up new values
-ssh <sudo-user>@vps "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
+# VPS: ssh in as <sudo-user>, then run
+sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
+sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
+sudo chmod 0600 /opt/projekt-manager/secrets.env.age
+
+# VPS: redeploy to pick up new values
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 ```
 
 ### Passphrase loss recovery
@@ -160,19 +165,21 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 sudo usermod -s /usr/sbin/nologin deploy
 sudo rm -f /home/deploy/.ssh/authorized_keys
 
-# 7. Prove locked-down flow works
-sudo -u deploy /opt/projekt-manager/scripts/ops/pm-compose.sh down
+# 7. Prove locked-down flow works: stop everything, redeploy from scratch.
+# `docker stop` bypasses the compose-parse path (no secret interpolation needed)
+# and is idempotent — missing/stopped containers just no-op with `|| true`.
+sudo -u deploy docker stop projekt-manager-app-1 projekt-manager-db-1 projekt-manager-storage-1 projekt-manager-caddy-1 projekt-manager-backup-1 2>/dev/null || true
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 ```
 
 ## Failure modes
 
-| Symptom                                | Cause                                               | Fix                                                                                   |
-| -------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `git checkout` fails                   | Uncommitted changes in working tree                 | `git status`, reset or stash                                                          |
-| `git checkout landed at X, expected Y` | Post-checkout SHA assertion                         | Inspect `git status`, clean up                                                        |
-| `age: failed to read identity`         | Wrong passphrase                                    | Retry; verify against password manager after 3 attempts                               |
-| `docker pull` unauthorized             | GHCR PAT expired                                    | `docker login ghcr.io` as `deploy` with fresh PAT                                     |
-| Smoke test timeout (60s)               | App container failed or `/api/health` returning 503 | `pm-compose.sh logs app db storage`                                                   |
-| `no such container` on exec            | `docker compose up -d` did not start `app`          | `pm-compose.sh ps`; confirm the resolved tag exists in GHCR (wrapper pins it to HEAD) |
-| `APP_IMAGE_TAG must be set`            | Manual `docker compose` invoked without the wrapper | Use `scripts/ops/pm-compose.sh` — it pins `APP_IMAGE_TAG` from the current `HEAD`.    |
+| Symptom                                                                | Cause                                                      | Fix                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `git checkout` fails                                                   | Uncommitted changes in working tree                        | `git status`, reset or stash                                                                                                                                                                                        |
+| `git checkout landed at X, expected Y`                                 | Post-checkout SHA assertion                                | Inspect `git status`, clean up                                                                                                                                                                                      |
+| `age: failed to read identity`                                         | Wrong passphrase                                           | Retry; verify against password manager after 3 attempts                                                                                                                                                             |
+| `docker pull` unauthorized                                             | GHCR PAT expired                                           | `docker login ghcr.io` as `deploy` with fresh PAT                                                                                                                                                                   |
+| Smoke test timeout (60s)                                               | App container failed or `/api/health` returning 503        | `docker logs projekt-manager-app-1 --tail=50` (also `-db-1`, `-storage-1`)                                                                                                                                          |
+| `no such container` on exec                                            | `docker compose up -d` did not start `app`                 | `docker ps --filter name=projekt-manager-`; confirm the resolved tag exists in GHCR                                                                                                                                 |
+| `APP_IMAGE_TAG must be set` or `CLOUDFLARE_API_TOKEN must be declared` | Compose operation without pinned tag and/or secrets in env | For reads use `docker` directly (no parse). For compose operations route through `scripts/deploy.sh` (pins SHA + sources secrets). `pm-compose.sh` only pins the tag — secrets still need to be sourced separately. |
