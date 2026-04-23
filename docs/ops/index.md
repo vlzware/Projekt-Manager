@@ -16,6 +16,7 @@
 | -------------------------------------------------- | ----------------------------------------------------------- |
 | [manual-deploy.md](manual-deploy.md)               | Deploy, rollback, secrets management                        |
 | [sync-dev-to-vps.md](sync-dev-to-vps.md)           | Destructive sync of dev DB + object storage to the VPS      |
+| [sync-vps-to-dev.md](sync-vps-to-dev.md)           | Destructive sync in reverse — VPS state back into dev       |
 | [backup/](backup/overview.md)                      | Layer 2 backup — setup, DR restore, drills, troubleshooting |
 | [local-dev.md](local-dev.md)                       | Local development environment                               |
 | [http-only-evaluation.md](http-only-evaluation.md) | Domain-less HTTP testing on a bare VPS                      |
