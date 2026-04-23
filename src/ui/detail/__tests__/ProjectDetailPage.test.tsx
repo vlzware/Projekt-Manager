@@ -14,6 +14,7 @@
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { render, screen, within, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import type { ApiResult } from '@/api/client';
 import type { Customer, Project } from '@/domain/types';
@@ -66,6 +67,8 @@ vi.mock('@/api/client', async (importActual) => {
 const { ProjectDetailPage } = await import('@/ui/detail/ProjectDetailPage');
 const { useAuthStore } = await import('@/state/authStore');
 const { useProjectStore } = await import('@/state/projectStore');
+const { useAttachmentStore } = await import('@/state/attachmentStore');
+const { useToastStore } = await import('@/state/toastStore');
 
 const CUSTOMER: Customer = {
   id: 'c-1',
@@ -271,5 +274,84 @@ describe('ProjectDetailPage — out-of-scope worker surface (AC-149 mirror)', ()
     renderAt('/projects/p-ghost');
 
     expect(await screen.findByTestId('project-detail-not-found')).toBeInTheDocument();
+  });
+});
+
+describe('ProjectDetailPage — camera FAB MIME gate', () => {
+  beforeEach(() => {
+    // Replace uploadFile with an observable no-op so the test can
+    // assert call-site behaviour without spinning up the full upload
+    // orchestrator (which would hit the `attachmentApi.initUpload`
+    // stub at `vi.fn()` and crash on an undefined response).
+    const uploadFileStub = vi.fn().mockResolvedValue(undefined);
+    useAttachmentStore.setState({
+      uploadFile: uploadFileStub as unknown as ReturnType<
+        typeof useAttachmentStore.getState
+      >['uploadFile'],
+      pendingUploads: {},
+      byProject: {},
+      error: null,
+    });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  it('rejects a non-whitelisted MIME (e.g. HEIC) with a toast and does not dispatch uploadFile', async () => {
+    // Mirror of UploadCta.dispatchUpload's whitelist gate. Without
+    // this check a HEIC from an exotic camera app reaches the upload
+    // orchestrator, trips the per-file size cap at the post-pipeline
+    // check, and surfaces the misleading "Datei zu groß" banner.
+    setAuthUser(['owner']);
+    renderAt('/projects/p-42');
+
+    const fab = await screen.findByTestId('detail-camera-capture');
+    const input = fab.querySelector('input[type="file"]') as HTMLInputElement;
+    expect(input).toBeTruthy();
+
+    const heic = new File([new Uint8Array([1, 2, 3])], 'photo.heic', { type: 'image/heic' });
+    // `applyAccept: false` — the browser's `accept` attribute is a
+    // hint, not a gate (this is exactly why we need the JS-level
+    // whitelist check). userEvent's default is to simulate the
+    // browser's hint and skip mismatched files, which would mean the
+    // onChange handler never fires in this test. Turning off the
+    // hint simulates a browser that let the file through, which is
+    // the behaviour the gate exists to defend against.
+    await userEvent.upload(input, heic, { applyAccept: false });
+
+    const uploadFileMock = useAttachmentStore.getState().uploadFile as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    expect(uploadFileMock).not.toHaveBeenCalled();
+
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe('error');
+    expect(toasts[0].message).toContain('Dateityp nicht unterstützt');
+  });
+
+  it('dispatches uploadFile for a whitelisted photo MIME (image/jpeg)', async () => {
+    // Happy path: a regular JPEG from the camera roll or phone camera
+    // reaches uploadFile with the `foto` label and `hasThumbnail: true`
+    // — the FAB's canonical contract.
+    setAuthUser(['owner']);
+    renderAt('/projects/p-42');
+
+    const fab = await screen.findByTestId('detail-camera-capture');
+    const input = fab.querySelector('input[type="file"]') as HTMLInputElement;
+
+    const jpeg = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', { type: 'image/jpeg' });
+    await userEvent.upload(input, jpeg);
+
+    const uploadFileMock = useAttachmentStore.getState().uploadFile as unknown as ReturnType<
+      typeof vi.fn
+    >;
+    await waitFor(() => {
+      expect(uploadFileMock).toHaveBeenCalledTimes(1);
+    });
+    expect(uploadFileMock).toHaveBeenCalledWith(
+      'p-42',
+      expect.any(File),
+      expect.objectContaining({ label: 'foto', hasThumbnail: true }),
+    );
+    expect(useToastStore.getState().toasts).toHaveLength(0);
   });
 });

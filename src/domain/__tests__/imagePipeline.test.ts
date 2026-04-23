@@ -184,6 +184,23 @@ describe('runImagePipeline — photo branch', () => {
     });
   });
 
+  it('passes maxSizeMB derived from the per-file cap so the library iterates to fit', async () => {
+    // Without maxSizeMB the library does one-shot q=0.82 compression,
+    // which for high-detail phone JPEGs commonly lands above the 1 MB
+    // cap. Iterating to the target is the fix for the "Datei zu groß"
+    // surfaced on otherwise-normal camera captures.
+    const compressed = new Blob([new Uint8Array(512)], { type: 'image/jpeg' });
+    vi.mocked(imageCompression).mockResolvedValue(compressed as unknown as File);
+
+    const file = syntheticFile('photo.jpg', 'image/jpeg', 4096);
+    await runImagePipeline(file, { hasThumbnail: false });
+
+    const [, opts] = vi.mocked(imageCompression).mock.calls[0];
+    expect(opts).toMatchObject({
+      maxSizeMB: ATTACHMENT_PIPELINE.perFileSizeCapBytes / (1024 * 1024),
+    });
+  });
+
   it('produces a WebP thumbnail at the configured dimensions when asked', async () => {
     // The pipeline makes two compression calls: one for the original,
     // one for the thumbnail. The thumbnail call must target image/webp
@@ -237,16 +254,19 @@ describe('runImagePipeline — photo branch', () => {
     expect(result.sizeBytes).toBe(321);
   });
 
-  it('falls back to the original file when compression throws', async () => {
-    // Mirrors the production resilience rule: a compression failure
-    // does not fail the upload — the raw bytes go to the server which
-    // enforces size + MIME.
+  it('throws IMAGE_PROCESSING_FAILED when original compression throws', async () => {
+    // A compression failure used to silently pass the raw file through,
+    // which then tripped the post-pipeline size cap and surfaced as
+    // "Datei zu groß" — a misleading diagnosis of a different failure
+    // (canvas OOM, worker crash, decode bug). The pipeline now throws
+    // a tagged error so the store can map it to
+    // `uploadImageProcessingFailed`, keeping the two causes
+    // distinguishable in logs and in the UI banner.
     vi.mocked(imageCompression).mockRejectedValueOnce(new Error('oom'));
 
     const file = syntheticFile('photo.jpg', 'image/jpeg', 4096);
-    const result = await runImagePipeline(file, { hasThumbnail: false });
-
-    expect(result.original).toBe(file);
-    expect(result.sizeBytes).toBe(file.size);
+    await expect(runImagePipeline(file, { hasThumbnail: false })).rejects.toThrow(
+      'IMAGE_PROCESSING_FAILED',
+    );
   });
 });

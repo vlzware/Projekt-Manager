@@ -19,7 +19,9 @@ import { useProjectStore, type FetchProjectOutcome } from '@/state/projectStore'
 import { useAttachmentStore } from '@/state/attachmentStore';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
+import { useToastStore } from '@/state/toastStore';
 import { usePermission } from '@/hooks/usePermission';
+import { ATTACHMENT_MIME_WHITELIST } from '@/domain/attachments';
 import { formatDateDE } from '@/domain/dateFormat';
 import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
@@ -31,6 +33,18 @@ import { dateInputValue } from './dateInputValue';
 import styles from './ProjectDetail.module.css';
 
 type LoadState = { kind: 'loading' } | FetchProjectOutcome;
+
+// The camera FAB is photo-only (a construction worker tapping it wants
+// to capture the scene, not attach a PDF). Gate on the whitelist's
+// image subset so an exotic MIME from a custom camera app — HEIC,
+// DNG, some vendor preview format — is rejected client-side with the
+// same "Dateityp nicht unterstützt" copy UploadCta shows for the
+// document picker. Without this gate the file reaches uploadFile and
+// trips the per-file size cap, surfacing the misleading
+// "Datei zu groß" banner.
+const CAMERA_ALLOWED_MIMES = new Set<string>(
+  ATTACHMENT_MIME_WHITELIST.filter((m) => m.startsWith('image/')),
+);
 
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -237,7 +251,12 @@ export function ProjectDetailPage() {
               const files = Array.from(e.target.files ?? []);
               if (files.length === 0) return;
               const store = useAttachmentStore.getState();
+              const toast = useToastStore.getState();
               for (const file of files) {
+                if (!CAMERA_ALLOWED_MIMES.has(file.type)) {
+                  toast.show('error', STRINGS.attachments.uploadMimeNotAllowed);
+                  continue;
+                }
                 void store.uploadFile(project.id, file, { label: 'foto', hasThumbnail: true });
               }
               e.target.value = '';

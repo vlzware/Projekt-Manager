@@ -484,6 +484,7 @@ export const STRINGS = {
     uploadProgressUpload: 'Hochladen…',
     uploadProgressComplete: 'Fertigstellen…',
     uploadFileTooLarge: 'Datei zu groß.',
+    uploadImageProcessingFailed: 'Bildbearbeitung fehlgeschlagen.',
     uploadSuccessToast: (fileName: string) => `Hochgeladen: ${fileName}`,
     uploadFailureToast: (fileName: string, reason: string) =>
       `Upload fehlgeschlagen: ${fileName} — ${reason}`,

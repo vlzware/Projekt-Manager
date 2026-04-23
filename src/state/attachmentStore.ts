@@ -342,7 +342,8 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
       // Step 7 — success. Fire a success toast with the file name (the
       // pending row is about to be dropped, so grab it before removal),
-      // remove the pending entry and refresh the list.
+      // remove the pending entry, sweep any stale failed rows for this
+      // project, and refresh the list.
       const succeeded = get().pendingUploads[clientId];
       if (succeeded) {
         useToastStore
@@ -350,12 +351,37 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
           .show('success', STRINGS.attachments.uploadSuccessToast(succeeded.fileName));
       }
       removePending(clientId);
+      // A successful upload means the user has moved on; any failed
+      // rows left from earlier attempts for the same project render a
+      // banner the user will never act on. Drop them here so the UI
+      // doesn't pin stale "Datei zu groß" / network-error surfaces
+      // indefinitely. Scoped to the same project so a failure on
+      // project A is not erased by a success on project B.
+      set((s) => {
+        const next: Record<string, PendingUpload> = {};
+        for (const [id, entry] of Object.entries(s.pendingUploads)) {
+          if (entry.projectId === projectId && entry.status === 'failed') {
+            FILES_BY_CLIENT_ID.delete(id);
+            ABORTERS_BY_CLIENT_ID.delete(id);
+            continue;
+          }
+          next[id] = entry;
+        }
+        return { pendingUploads: next };
+      });
       await get().fetchForProject(projectId);
     } catch (err) {
       // Ignore aborts — the caller intentionally tore the run down; no
       // user-visible failure banner. Everything else marks failed.
       const aborted = err instanceof DOMException ? err.name === 'AbortError' : signal.aborted;
       if (aborted) return;
+      // Tagged error from the pipeline — surface the specific cause so
+      // "compression crashed" is diagnosable from "compressed output too
+      // big", rather than collapsing both into the size-cap banner.
+      if (err instanceof Error && err.message === 'IMAGE_PROCESSING_FAILED') {
+        markFailed(clientId, STRINGS.attachments.uploadImageProcessingFailed);
+        return;
+      }
       markFailed(clientId, STRINGS.errors.mutationFailed);
     } finally {
       // Release the controller if it's still the one we installed. If a

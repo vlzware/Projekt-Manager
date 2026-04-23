@@ -143,11 +143,19 @@ export async function runImagePipeline(
   // Downscale + re-encode original. `preserveExif: true` copies the
   // APP1/EXIF segment from the source JPEG (GPS + orientation) into
   // the re-encoded blob — the camera's original metadata rides along.
+  //
+  // `maxSizeMB` makes the library iterate (quality + dimension knockdown,
+  // up to `maxIteration` rounds) until the output fits under the
+  // per-file cap. Without it, one-shot q=0.82 compression commonly
+  // lands at 1.2–2 MB for high-detail phone JPEGs and trips the 1 MB
+  // post-pipeline check — the exact symptom that previously surfaced
+  // as a misleading "Datei zu groß".
   const mimeType = file.type;
-  let original: Blob = file;
-  let originalSize = file.size;
+  let original: Blob;
+  let originalSize: number;
   try {
     const compressed = await imageCompression(file, {
+      maxSizeMB: ATTACHMENT_PIPELINE.perFileSizeCapBytes / (1024 * 1024),
       maxWidthOrHeight: ATTACHMENT_PIPELINE.imageMaxDimension,
       initialQuality: ATTACHMENT_PIPELINE.imageQuality,
       useWebWorker: true,
@@ -156,10 +164,15 @@ export async function runImagePipeline(
     });
     original = compressed;
     originalSize = compressed.size;
-  } catch {
-    // Compression failed — fall back to the raw file. The server still
-    // enforces the cap and the UI will surface "Datei zu groß" before
-    // init if the fallback exceeds it.
+  } catch (err) {
+    // Surface a tagged error so the store can mark the upload failed
+    // with a distinct "Bildbearbeitung fehlgeschlagen" message. The
+    // prior silent-fallback path handed the raw file to the store,
+    // which then tripped the per-file size cap and reported
+    // "Datei zu groß" — a misleading diagnosis of an entirely
+    // different failure mode (canvas OOM, worker crash, decode bug).
+    console.warn('[imagePipeline] original compression failed', err);
+    throw new Error('IMAGE_PROCESSING_FAILED');
   }
 
   // WebP thumbnail. Only generated when the caller asks for one

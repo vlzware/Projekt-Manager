@@ -487,3 +487,134 @@ describe('attachmentStore — cancellation', () => {
     await Promise.all(pending);
   });
 });
+
+describe('attachmentStore — image processing failures and stale-row sweep', () => {
+  it('marks the upload failed with uploadImageProcessingFailed when the pipeline throws the tagged error', async () => {
+    // The pipeline surfaces a distinct IMAGE_PROCESSING_FAILED tag for
+    // compression crashes (canvas OOM, worker crash, decoder bug) so
+    // they can be diagnosed separately from size-cap failures. The
+    // store must map it to the German "Bildbearbeitung fehlgeschlagen"
+    // message — collapsing it into mutationFailed would hide the
+    // specific cause from the user and from log triage.
+    runImagePipelineMock.mockImplementationOnce(async () => {
+      throw new Error('IMAGE_PROCESSING_FAILED');
+    });
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', { type: 'image/jpeg' });
+    await useAttachmentStore.getState().uploadFile('proj-1', file, {
+      label: 'foto',
+      hasThumbnail: true,
+    });
+
+    const rows = Object.values(useAttachmentStore.getState().pendingUploads);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('failed');
+    expect(rows[0].errorMessage).toBe('Bildbearbeitung fehlgeschlagen.');
+    // init must never have fired — the pipeline threw before the server
+    // round-trip, so no phantom attachment rows are created.
+    expect(initMock).not.toHaveBeenCalled();
+  });
+
+  it('a successful upload sweeps prior failed rows for the same project', async () => {
+    // Bug: a failed upload leaves a `status: 'failed'` row in the
+    // pending map that renders the inline "Datei zu groß" banner
+    // indefinitely. When the user successfully uploads a different
+    // file, the stale banner stays pinned. Fix: on success, drop any
+    // failed rows for the same project.
+    useAttachmentStore.setState({
+      pendingUploads: {
+        'stale-1': {
+          clientId: 'stale-1',
+          projectId: 'proj-1',
+          fileName: 'huge.jpg',
+          mimeType: 'image/jpeg',
+          sizeBytes: 10,
+          label: 'foto',
+          status: 'failed',
+          attachmentId: null,
+          errorMessage: 'Datei zu groß.',
+        },
+      },
+    });
+
+    // Drive a real success through the full orchestrator: init → POST
+    // original → complete. postPresignedForm is stubbed via fetch so
+    // the store sees a 2xx and completes cleanly.
+    initMock.mockResolvedValueOnce(
+      ok({
+        attachment: makeAttachment({ id: 'att-new', projectId: 'proj-1' }),
+        originalUpload: {
+          url: 'https://storage/orig',
+          fields: {},
+          expiresAt: '2026-04-23T10:05:00Z',
+        },
+      }),
+    );
+    completeMock.mockResolvedValueOnce(ok(makeAttachment({ id: 'att-new', projectId: 'proj-1' })));
+    listMock.mockResolvedValueOnce(ok({ data: [] }));
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'good.jpg', { type: 'image/jpeg' });
+    await useAttachmentStore.getState().uploadFile('proj-1', file, {
+      label: 'foto',
+      hasThumbnail: false,
+    });
+
+    // Success removes its own row AND the stale failed row.
+    expect(useAttachmentStore.getState().pendingUploads).toEqual({});
+
+    fetchSpy.mockRestore();
+  });
+
+  it('a successful upload does NOT sweep failed rows in unrelated projects', async () => {
+    // Scoping: a success on project A must not erase a failure on
+    // project B — those are independent user flows.
+    useAttachmentStore.setState({
+      pendingUploads: {
+        'other-proj-failed': {
+          clientId: 'other-proj-failed',
+          projectId: 'proj-other',
+          fileName: 'broken.jpg',
+          mimeType: 'image/jpeg',
+          sizeBytes: 10,
+          label: 'foto',
+          status: 'failed',
+          attachmentId: null,
+          errorMessage: 'Netzwerkfehler.',
+        },
+      },
+    });
+
+    initMock.mockResolvedValueOnce(
+      ok({
+        attachment: makeAttachment({ id: 'att-new', projectId: 'proj-1' }),
+        originalUpload: {
+          url: 'https://storage/orig',
+          fields: {},
+          expiresAt: '2026-04-23T10:05:00Z',
+        },
+      }),
+    );
+    completeMock.mockResolvedValueOnce(ok(makeAttachment({ id: 'att-new', projectId: 'proj-1' })));
+    listMock.mockResolvedValueOnce(ok({ data: [] }));
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 204 }));
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'good.jpg', { type: 'image/jpeg' });
+    await useAttachmentStore.getState().uploadFile('proj-1', file, {
+      label: 'foto',
+      hasThumbnail: false,
+    });
+
+    // The other-project failure is untouched.
+    const rows = Object.values(useAttachmentStore.getState().pendingUploads);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].projectId).toBe('proj-other');
+    expect(rows[0].status).toBe('failed');
+
+    fetchSpy.mockRestore();
+  });
+});
