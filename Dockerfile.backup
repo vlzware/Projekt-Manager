@@ -116,6 +116,7 @@ COPY scripts/backup/run-backup.sh       /usr/local/bin/run-backup.sh
 COPY scripts/backup/run-drill.sh        /usr/local/bin/run-drill.sh
 COPY scripts/backup/load-drill-key.sh   /usr/local/bin/load-drill-key
 COPY scripts/backup/entrypoint.sh       /usr/local/bin/backup-entrypoint
+COPY scripts/backup/probe-r2.mjs        /usr/local/bin/probe-r2.mjs
 COPY scripts/backup/crontab             /etc/crontabs/root
 
 RUN chmod +x \
