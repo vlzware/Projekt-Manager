@@ -16,7 +16,7 @@ SSH to the VPS as the admin user, then run via `sudo -u deploy`. Use `docker sto
 sudo -u deploy docker stop projekt-manager-backup-1
 ```
 
-1. **Burn the R2 token.** Cloudflare dashboard → R2 API Tokens → select the current token → **Delete**. Confirm. Every client using this token fails on its next call — the scheduler is already stopped, so the VPS side stays quiet.
+1. **Burn the R2 token.** Cloudflare dashboard → R2 Object Storage → **{ } API** → **Manage API tokens** → select the current token → **Delete**. Confirm. Every client using this token fails on its next call — the scheduler is already stopped, so the VPS side stays quiet.
 2. **Issue a fresh R2 token.** Re-run [setup.md §1.4](setup.md#14-create-the-api-token). Capture the new Access Key ID, Secret Access Key, Endpoint URL.
 3. **(Optional) Rotate the age key pair.** Do this if the private identity is suspected compromised, the operator workstation was lost, or on a slower cadence than the token rotation.
 

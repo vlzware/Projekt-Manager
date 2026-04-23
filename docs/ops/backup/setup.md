@@ -56,10 +56,12 @@ Effective behaviour: `daily/*` objects are immutable for the immutability window
 
 ### 1.4 Create the API token
 
-1. R2 landing page → **Manage R2 API Tokens** → **Create API token**.
+Must be created through the R2 dashboard — not Profile → API Tokens. Only the R2-dashboard flow emits S3-compatible Access Key ID + Secret Access Key; a general-purpose account token with R2 permissions added does not, and pasting anything else into `R2_SECRET_ACCESS_KEY` produces a `SignatureDoesNotMatch` at the next backup. Keep this token R2-only — do not co-locate zone/DNS permissions on it; those belong on `CLOUDFLARE_API_TOKEN` per [dns-setup.md](../dns-setup.md).
+
+1. Cloudflare dashboard → **R2 Object Storage** → **{ } API** (top-right) → **Manage API tokens** → **Create Account API token**.
 2. Permissions: **Object Read & Write**.
 3. Specify bucket: **Apply to specific buckets only** → select `projekt-manager-backups`. No token TTL.
-4. **Create API Token**. Capture immediately (these values appear once):
+4. **Create Account API Token**. Capture immediately (these values appear once):
    - Access Key ID
    - Secret Access Key
    - Endpoint URL (form: `https://<accountid>.r2.cloudflarestorage.com`)
