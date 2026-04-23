@@ -26,6 +26,7 @@ import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
 import { runImagePipeline, exceedsRawCap, type ProcessedUpload } from '@/domain/imagePipeline';
 import { handleSessionExpired } from './sessionExpired';
+import { useToastStore } from './toastStore';
 
 export interface PendingUpload {
   clientId: string;
@@ -179,6 +180,12 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
   function markFailed(clientId: string, message: string): void {
     updatePending(clientId, { status: 'failed', errorMessage: message });
+    const pending = get().pendingUploads[clientId];
+    if (pending) {
+      useToastStore
+        .getState()
+        .show('error', STRINGS.attachments.uploadFailureToast(pending.fileName, message));
+    }
   }
 
   function removePending(clientId: string): void {
@@ -333,7 +340,15 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         return;
       }
 
-      // Step 7 — success. Remove the pending entry and refresh the list.
+      // Step 7 — success. Fire a success toast with the file name (the
+      // pending row is about to be dropped, so grab it before removal),
+      // remove the pending entry and refresh the list.
+      const succeeded = get().pendingUploads[clientId];
+      if (succeeded) {
+        useToastStore
+          .getState()
+          .show('success', STRINGS.attachments.uploadSuccessToast(succeeded.fileName));
+      }
       removePending(clientId);
       await get().fetchForProject(projectId);
     } catch (err) {

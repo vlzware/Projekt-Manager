@@ -21,6 +21,7 @@ export function UserCreateForm({ onClose }: Props) {
 
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
@@ -46,11 +47,13 @@ export function UserCreateForm({ onClose }: Props) {
     if (!canSubmit) return;
     setSubmitting(true);
 
+    const trimmedEmail = email.trim();
     const ok = await createUser({
       username: username.trim(),
       displayName: displayName.trim(),
       password: password.trim(),
       roles: selectedRoles,
+      email: trimmedEmail ? trimmedEmail : null,
     });
 
     setSubmitting(false);
@@ -91,6 +94,19 @@ export function UserCreateForm({ onClose }: Props) {
             onChange={(e) => setDisplayName(e.target.value)}
             disabled={submitting}
             data-testid="user-displayname-input"
+          />
+        </div>
+
+        <div className={styles.formGroup}>
+          <label className={styles.formLabel}>{STRINGS.ui.email}</label>
+          <input
+            className={styles.formInput}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={submitting}
+            data-testid="user-email-input"
+            autoComplete="email"
           />
         </div>
 

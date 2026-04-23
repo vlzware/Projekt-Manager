@@ -23,6 +23,7 @@ import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { ProjectDetailPage } from '@/ui/detail/ProjectDetailPage';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
+import { ToastContainer } from '@/ui/common/ToastContainer';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
 import type { ViewMode } from '@/domain/types';
 import { STRINGS } from '@/config/strings';
@@ -218,6 +219,7 @@ export function App() {
           <ProjectDetailPanel project={selectedProject} onClose={() => selectProject(null)} />
         )}
         <ConfirmDialog />
+        <ToastContainer />
       </div>
     );
   }

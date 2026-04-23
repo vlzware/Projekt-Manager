@@ -501,6 +501,25 @@
     min-width: 0;
   }
 
+  .formPanel {
+    padding: 16px;
+  }
+
+  /* Modal footer actions stack vertically on narrow screens. The
+     desktop flex-end row overflows once more than two buttons are
+     present (UserDetailPanel: Schließen / Passwort zurücksetzen /
+     Deaktivieren / Löschen), pushing the leftmost button out of the
+     panel. Stacking gives each action a full-width touch target and
+     preserves visibility of every button. */
+  .formActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .formActions > button {
+    width: 100%;
+  }
+
   .table,
   .table thead,
   .table tbody,

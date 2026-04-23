@@ -47,6 +47,55 @@ import { STRINGS } from '../../config/strings.js';
  */
 export const BULK_DOWNLOAD_PREFIX = 'bulk-downloads/';
 
+/**
+ * Assemble the filename the browser saves the bulk-download zip as.
+ * Pattern: `<projectNumber>-<slugified-title>-<YYYY-MM-DD-HHmm>.zip`. The
+ * storage-side object key stays a UUID (collision-safe, unaffected by
+ * title edits); this filename rides in the `Content-Disposition` header
+ * of the presigned GET so users see a recognisable file on disk instead
+ * of a bare UUID.
+ *
+ * The title is slugified to the ASCII intersection — umlauts collapse
+ * (`ä`→`ae`, `ö`→`oe`, …), filesystem-forbidden characters become
+ * underscores, runs collapse. Empty results fall back to `projekt` so
+ * the name always has a usable body.
+ */
+export function buildBulkZipFileName(
+  projectNumber: string,
+  projectTitle: string,
+  at: Date,
+): string {
+  const slug = slugifyForFilename(projectTitle) || 'projekt';
+  const numberSlug = slugifyForFilename(projectNumber) || 'unbekannt';
+  const ts = formatTimestampForFilename(at);
+  return `${numberSlug}-${slug}-${ts}.zip`;
+}
+
+function slugifyForFilename(input: string): string {
+  return input
+    .replace(/ä/g, 'ae')
+    .replace(/ö/g, 'oe')
+    .replace(/ü/g, 'ue')
+    .replace(/Ä/g, 'Ae')
+    .replace(/Ö/g, 'Oe')
+    .replace(/Ü/g, 'Ue')
+    .replace(/ß/g, 'ss')
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_')
+    .slice(0, 64);
+}
+
+function formatTimestampForFilename(at: Date): string {
+  const pad = (n: number): string => n.toString().padStart(2, '0');
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+    `-${pad(at.getHours())}${pad(at.getMinutes())}`
+  );
+}
+
 export interface BulkDownloadCaps {
   bulkDownloadMaxFiles: number;
   bulkDownloadMaxBytes: number;
@@ -179,7 +228,8 @@ export class BulkDownloadOrchestrator {
     const zipKey = `${BULK_DOWNLOAD_PREFIX}${crypto.randomUUID()}.zip`;
     await this.storage.putObject(zipKey, zipBuffer, 'application/zip');
 
-    return this.storage.createPresignedGet(zipKey);
+    const downloadFileName = buildBulkZipFileName(projectRow.number, projectRow.title, new Date());
+    return this.storage.createPresignedGet(zipKey, undefined, downloadFileName);
   }
 
   /**

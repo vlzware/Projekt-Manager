@@ -56,11 +56,14 @@ export interface ProcessedUpload {
  * under the cap. This gate just short-circuits multi-hundred-MB inputs
  * that could never compress enough to be viable.
  *
- * Picked at 4× `perFileSizeCapBytes` — a large phone photo comfortably
- * fits, but a 20 GB upload is caught immediately.
+ * Picked at 30× `perFileSizeCapBytes` — modern phones (50 MP sensors
+ * on Pixel, Samsung) commonly emit 10–15 MB JPEGs; the earlier 4×
+ * ceiling was tripping on ordinary field captures and rejecting them
+ * before the compressor ever ran. 30× leaves plenty of headroom for
+ * those sources while still catching multi-GB mispicks.
  */
 export function exceedsRawCap(file: File): boolean {
-  return file.size > ATTACHMENT_PIPELINE.perFileSizeCapBytes * 4;
+  return file.size > ATTACHMENT_PIPELINE.perFileSizeCapBytes * 30;
 }
 
 /**

@@ -72,22 +72,25 @@ function uninstallCanvasDom(): void {
 // ---------------------------------------------------------------------------
 
 describe('exceedsRawCap', () => {
-  it('returns false for files at or below 4× the per-file cap', () => {
-    // 4× is the liberal cap picked to short-circuit obvious garbage
+  it('returns false for files at or below 30× the per-file cap', () => {
+    // 30× is the liberal cap picked to short-circuit obvious garbage
     // without rejecting sources that will compress under the cap.
+    // Modern 50 MP phone sensors emit 10–15 MB JPEGs; the earlier 4×
+    // ceiling tripped on ordinary field captures before the compressor
+    // ever ran.
     const justUnder = new File(
-      [new Uint8Array(ATTACHMENT_PIPELINE.perFileSizeCapBytes * 4)],
+      [new Uint8Array(ATTACHMENT_PIPELINE.perFileSizeCapBytes * 30)],
       'x.jpg',
       { type: 'image/jpeg' },
     );
     expect(exceedsRawCap(justUnder)).toBe(false);
   });
 
-  it('returns true when raw bytes exceed 4× the per-file cap', () => {
+  it('returns true when raw bytes exceed 30× the per-file cap', () => {
     // A file this size cannot compress under the 1 MB cap no matter
     // what the pipeline does — reject before any work happens.
     const oversized = new File(
-      [new Uint8Array(ATTACHMENT_PIPELINE.perFileSizeCapBytes * 4 + 1)],
+      [new Uint8Array(ATTACHMENT_PIPELINE.perFileSizeCapBytes * 30 + 1)],
       'x.jpg',
       { type: 'image/jpeg' },
     );

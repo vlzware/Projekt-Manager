@@ -26,6 +26,7 @@ export function UserDetailPanel({ user, onClose }: Props) {
   const deactivateUser = useUserStore((s) => s.deactivateUser);
   const reactivateUser = useUserStore((s) => s.reactivateUser);
   const deleteUser = useUserStore((s) => s.deleteUser);
+  const updateUser = useUserStore((s) => s.updateUser);
   const resetUserPassword = useUserStore((s) => s.resetPassword);
   const clearError = useUserStore((s) => s.clearError);
   const error = useUserStore((s) => s.error);
@@ -36,6 +37,7 @@ export function UserDetailPanel({ user, onClose }: Props) {
   const [resetPw, setResetPw] = useState('');
   const [resetPwConfirm, setResetPwConfirm] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
+  const [emailDraft, setEmailDraft] = useState(user.email ?? '');
 
   const resetPwMatch = resetPw === resetPwConfirm;
 
@@ -109,6 +111,29 @@ export function UserDetailPanel({ user, onClose }: Props) {
         <div className={styles.formGroup}>
           <label className={styles.formLabel}>{STRINGS.ui.roles}</label>
           <div>{user.roles.map((r) => STRINGS.roles[r] ?? r).join(', ')}</div>
+        </div>
+
+        <div className={styles.formGroup}>
+          <label className={styles.formLabel}>{STRINGS.ui.email}</label>
+          {canManage ? (
+            <input
+              className={styles.formInput}
+              type="email"
+              value={emailDraft}
+              onChange={(e) => setEmailDraft(e.target.value)}
+              onBlur={() => {
+                const trimmed = emailDraft.trim();
+                const next = trimmed ? trimmed : null;
+                if (next === (user.email ?? null)) return;
+                void updateUser(user.id, { email: next });
+              }}
+              disabled={submitting}
+              data-testid="user-email-input"
+              autoComplete="email"
+            />
+          ) : (
+            <div>{user.email ?? '—'}</div>
+          )}
         </div>
 
         <div className={styles.formGroup}>

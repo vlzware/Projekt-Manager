@@ -484,6 +484,9 @@ export const STRINGS = {
     uploadProgressUpload: 'Hochladen…',
     uploadProgressComplete: 'Fertigstellen…',
     uploadFileTooLarge: 'Datei zu groß.',
+    uploadSuccessToast: (fileName: string) => `Hochgeladen: ${fileName}`,
+    uploadFailureToast: (fileName: string, reason: string) =>
+      `Upload fehlgeschlagen: ${fileName} — ${reason}`,
     /**
      * MIME-rejection copy — names the supported formats explicitly so a
      * user picking a HEIC / GIF / etc. has a concrete answer on what to
