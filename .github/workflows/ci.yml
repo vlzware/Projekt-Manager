@@ -414,7 +414,11 @@ jobs:
           R2_ENDPOINT: http://storage:9000
           R2_BUCKET: projekt-manager-backup-smoke
           R2_REGION: auto
-          AGE_RECIPIENT: age1yhm5gr95llfetnxs0mp0f6klnlwra4xmyunqfkpcvw2xa2pxfckqx0wpmn
+          # Throwaway age recipient — must be a real Bech32-valid key so
+          # `age` accepts it during encrypt. The private half is discarded:
+          # smoke only exercises the forward path (encrypt + upload), never
+          # decryption, so nothing in the smoke can read what it wrote.
+          AGE_RECIPIENT: age15nf2qq4znfwup9khgjk0rdgp5wg9vx33fngc727m3zdkctq29djqyr9su6
           # App-side env vars normally sourced from .env on the VPS.
           DOMAIN: smoke.invalid
           WG_BIND_IP: 127.0.0.1
