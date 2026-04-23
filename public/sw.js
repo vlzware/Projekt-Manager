@@ -10,8 +10,6 @@
  * out of scope for iteration 8 and would need its own ADR.
  */
 
-/* global self */
-
 // Activate immediately on first install so the user does not need a
 // second page reload before push registration works.
 self.addEventListener('install', () => {
@@ -65,9 +63,7 @@ self.addEventListener('notificationclick', (event) => {
       // it — do not redirect other open tabs. If none exists, open a new
       // window pointing at the target URL.
       const targetPath = new URL(targetUrl, self.location.origin).pathname;
-      const match = allClients.find(
-        (c) => new URL(c.url).pathname === targetPath,
-      );
+      const match = allClients.find((c) => new URL(c.url).pathname === targetPath);
       if (match) {
         return match.focus();
       }

@@ -25,7 +25,7 @@
             ? 'dark'
             : 'light';
     if (scheme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
-  } catch (e) {
+  } catch {
     // localStorage can throw in private-browsing / sandboxed contexts;
     // falling through leaves the default (light) scheme in place.
   }
