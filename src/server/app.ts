@@ -47,6 +47,21 @@ function pickPushDispatcher(material: VapidKeyMaterial | null): PushDispatcher {
   return material ? new WebPushDispatcher(material) : noopPushDispatcher;
 }
 
+/**
+ * Return the scheme+host+port of `endpoint`, or `null` if it isn't a
+ * parseable URL. Used by the CSP assembly to whitelist the object-storage
+ * origin for presigned POST / GET traffic without hard-coding the
+ * hostname.
+ */
+function extractOrigin(endpoint: string | undefined): string | null {
+  if (!endpoint) return null;
+  try {
+    return new URL(endpoint).origin;
+  } catch {
+    return null;
+  }
+}
+
 export function buildApp(opts: AppOptions = {}): FastifyInstance {
   const app = Fastify({
     logger: opts.logger ?? false,
@@ -106,15 +121,33 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   // Reads from validated env (see env.ts) — not process.env — so ADR-0013
   // and the assertProductionSafe() guard in start.ts share a single source
   // of truth for ALLOW_INSECURE_HTTP. See consolidation review C-3.
-  const insecureHttp = getEnv().ALLOW_INSECURE_HTTP === 'true';
+  const env = getEnv();
+  const insecureHttp = env.ALLOW_INSECURE_HTTP === 'true';
+  // The browser talks to object storage on a DIFFERENT origin — presigned
+  // POST for uploads (`connect-src`) and presigned GET for thumbnails /
+  // lightbox originals (`img-src`). Derive the storage origin from the
+  // same env the client-side URL signer uses (STORAGE_PUBLIC_ENDPOINT in
+  // production, STORAGE_ENDPOINT in dev), so the CSP auto-tracks
+  // deployment topology. An unparseable / missing value collapses to
+  // an empty list — CSP stays as strict as before.
+  const storageOrigin = extractOrigin(env.STORAGE_PUBLIC_ENDPOINT ?? env.STORAGE_ENDPOINT);
+  const storageSources = storageOrigin ? [storageOrigin] : [];
   app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
+        // `browser-image-compression` spawns its downscale pipeline in a
+        // Web Worker from a blob: URL. Without explicit `worker-src`,
+        // CSP falls back to `script-src`, which forbids blob: — the
+        // worker is silently blocked and the library falls back to
+        // main-thread compression (slower + blocks UI during large
+        // photo uploads). The same-origin `'self'` preserves the rule
+        // that only our own bundle can author a worker script.
+        workerSrc: ["'self'", 'blob:'],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'"],
-        connectSrc: ["'self'"],
+        imgSrc: ["'self'", ...storageSources],
+        connectSrc: ["'self'", ...storageSources],
         fontSrc: ["'self'"],
         objectSrc: ["'none'"],
         frameAncestors: ["'none'"],
