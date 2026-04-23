@@ -126,7 +126,7 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 1. Regenerate or re-read each secret from its source:
    - `POSTGRES_PASSWORD` -- `ALTER USER` from superuser, or re-provision
    - `MINIO_ROOT_PASSWORD` -- MinIO admin console or `mc admin user`
-   - `CLOUDFLARE_API_TOKEN` -- Cloudflare dashboard, scope `Zone:DNS:Edit` + `Zone:Zone:Read`
+   - `CLOUDFLARE_API_TOKEN` -- Cloudflare dashboard, scope **DNS Write + Zone Read** on the managed zone (legacy names: `Zone:DNS:Edit` + `Zone:Zone:Read`). See [dns-setup.md § Cloudflare API token scope](dns-setup.md#cloudflare-api-token-scope).
    - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` -- issue a new R2 API token in the Cloudflare dashboard; the endpoint URL is listed alongside. Revoke the old token after the rotation deploy.
    - `R2_BUCKET`, `R2_REGION` -- read off the R2 dashboard (or fall back to the compose defaults).
    - `AGE_RECIPIENT` -- not affected by `secrets.env.age` passphrase loss. Derive from the existing identity on the operator workstation: `age-keygen -y ~/secrets/age-backup.key`.

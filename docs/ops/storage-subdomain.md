@@ -104,6 +104,12 @@ Typical causes:
 
 - **DNS record points at the wrong IP** — `dig +short storage.<DOMAIN>` should match the parent.
 
+### CSP blocks the upload POST (silent failure — nothing in server logs)
+
+Browser console shows `Refused to connect because it violates the document's Content Security Policy` or `Connecting to 'https://storage.<DOMAIN>/...' violates the following Content Security Policy directive: "connect-src 'self'"`. No request ever leaves the browser — Caddy access logs, MinIO logs, and app logs all show nothing for the upload attempt.
+
+The app's helmet CSP allows `connect-src` and `img-src` only for origins derived from `STORAGE_PUBLIC_ENDPOINT` (or `STORAGE_ENDPOINT` in dev; see [`src/server/app.ts`](../../src/server/app.ts)). If a deploy changes one of those envs without restarting the app container, or if the value is unparseable as a URL, the CSP collapses back to `'self'` only and every presigned-URL fetch is blocked. Re-deploy so the app picks up the new value; `assertStoragePublicEndpointInProduction()` fails fast if the public endpoint is unset against an internal `STORAGE_ENDPOINT`.
+
 ### CORS rejection on upload
 
 Browser console shows `Access-Control-Allow-Origin` errors. Check MinIO logs for the CORS preflight and confirm `MINIO_API_CORS_ALLOW_ORIGIN` matches the origin the browser is sending:
