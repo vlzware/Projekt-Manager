@@ -12,7 +12,7 @@ Attachments stall with "Änderung fehlgeschlagen — erneut versuchen" after "Vo
 
 - The base deployment from `server-setup.md` + `caddy-tls-bootstrap.md` is in place.
 - `${DOMAIN}` is set in `.env` on the VPS (e.g. `DOMAIN=prmng.org`).
-- The Cloudflare API token in `secrets.env.age` has `Zone:DNS:Edit` on the parent zone — same scope Caddy already uses for `${DOMAIN}`. No additional permission needed.
+- The Cloudflare API token in `secrets.env.age` has both `Zone → DNS → Edit` and `Zone → Zone → Read` on the parent zone — same scope Caddy already uses for `${DOMAIN}`. If only one is set (common pitfall: `Zone DNS Settings Write` is a different permission), DNS-01 cert issuance fails; see the [Troubleshooting](#troubleshooting) section below.
 
 ## One-time setup
 
@@ -47,6 +47,8 @@ Normal deploy procedure from [manual-deploy.md](manual-deploy.md):
 ```bash
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 ```
+
+The deploy script ends with a `caddy reload` call so Caddyfile changes take effect even when the Caddy container's compose stanza is unchanged. Without the reload step the bind-mounted Caddyfile would update on disk but the running Caddy process would keep serving its previously-parsed config. You do not need to run any Caddy-specific command yourself.
 
 Caddy requests a Let's Encrypt cert for `storage.<DOMAIN>` via DNS-01 on first hit. No cert bootstrap steps needed — DNS-01 works offline (no inbound HTTP challenge to answer).
 
@@ -92,7 +94,14 @@ docker logs projekt-manager-caddy-1 2>&1 | grep -i 'storage\|tls\|acme' | tail -
 Typical causes:
 
 - **DNS not propagated yet** — retry after a few minutes.
-- **`CLOUDFLARE_API_TOKEN` lacks DNS edit permission on the zone** — rotate the token with `Zone:DNS:Edit` on the `<DOMAIN>` zone.
+- **`CLOUDFLARE_API_TOKEN` has the wrong permissions.** The error looks like `expected 1 zone, got 0 for <DOMAIN>.` — Cloudflare returns an empty zone list rather than a 401, which makes this look like a zone-not-found error at first glance. The ACME DNS-01 challenge with Cloudflare requires BOTH:
+  - **Zone → DNS → Edit** — to create the `_acme-challenge` TXT record.
+  - **Zone → Zone → Read** — to list the zone so Caddy can resolve the zone ID. Without this the zone lookup returns zero results and Caddy has nowhere to write the TXT record.
+
+  The Cloudflare "Edit zone DNS" API-token template sets both. `Zone DNS Settings Write` is a different permission (zone-level DNSSEC/foundation DNS config, not DNS records) and is not what DNS-01 needs.
+
+  **Verifying the token** — the `/user/tokens/verify` endpoint 401s for _any_ scoped (zone- or account-level) token, because `/user/*` is a user-level endpoint scoped tokens cannot reach. Use `/client/v4/zones?name=<DOMAIN>` instead — a correctly-scoped token returns `{"result":[{…zone info…}]}`, a wrongly-scoped one returns `{"result":[]}`.
+
 - **DNS record points at the wrong IP** — `dig +short storage.<DOMAIN>` should match the parent.
 
 ### CORS rejection on upload

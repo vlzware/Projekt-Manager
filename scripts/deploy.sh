@@ -189,4 +189,29 @@ until docker compose exec -T app node -e "fetch('http://localhost:3000/api/healt
   fi
 done
 
+# Caddy graceful reload — re-reads the bind-mounted Caddyfile in place
+# so site-block additions (e.g. the `storage.${DOMAIN}` block introduced
+# when the storage subdomain wiring landed) take effect on the first
+# deploy that ships them.
+#
+# `docker compose up -d` above only recreates containers whose resolved
+# compose stanza differs from the running one; Caddy's stanza is stable
+# across most deploys even when its bind-mounted Caddyfile changes. On
+# top of that, a file bind-mount pins the container's inode at creation
+# time — replacing the on-host file (which is what `git checkout` does
+# for any tracked change) leaves the container's file descriptor open on
+# the old inode for the current Caddy process lifetime. A `docker restart`
+# re-mounts with the new inode but does NOT re-read compose env, so it
+# can swap Caddyfile content but keep stale secrets (e.g. CLOUDFLARE_API_TOKEN
+# after a rotation). Neither behaviour is obvious enough to remember at
+# deploy time.
+#
+# `caddy reload` sidesteps both by hitting the admin API (bound to
+# localhost:2019 inside the container) to re-parse /etc/caddy/Caddyfile
+# against the process's current env. Connections stay open across the
+# swap. Safe to call every deploy — Caddy exits 0 and logs "config is
+# unchanged" when nothing differs.
+echo "Reloading Caddy config..."
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --force
+
 echo "Deploy verified — healthy at $(git rev-parse --short HEAD)"
