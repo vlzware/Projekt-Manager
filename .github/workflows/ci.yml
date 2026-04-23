@@ -377,12 +377,15 @@ jobs:
       #   - seed fixture readFileSync at module load (since fixed to an
       #     inlined JSON import so the specific ENOENT can't recur)
       #
-      # Cheap defence: boot the full stack against fake R2 credentials
-      # and invoke one `run-backup.sh` cycle. Expected outcome is a
-      # failure at the R2 upload boundary (fake endpoint). Anything
-      # that fails EARLIER — env-schema, spawn-quoting, peer-auth,
-      # tmpfs-shadow — is a bug we want to catch here. Runtime cost is
-      # ~45–60s on GHA's hosted runners.
+      # Cheap defence: boot the full stack with the in-stack MinIO
+      # standing in as the R2 target, then run one `run-backup.sh`
+      # cycle end to end. MinIO is S3-compatible for every call the
+      # uploader makes (HeadBucket / PutObject / GetObject /
+      # ListObjectsV2), so this exercises the real pipeline including
+      # the entrypoint's authenticated R2 probe. An env-schema error,
+      # spawn-quoting crash, peer-auth failure, or probe regression
+      # all surface here before the image is picked up by a real
+      # deploy. Runtime cost is ~60–90s on GHA's hosted runners.
       # ---------------------------------------------------------------
       - name: Runtime smoke test
         env:
@@ -392,18 +395,24 @@ jobs:
           # the images.
           APP_IMAGE_TAG: ${{ steps.tags.outputs.app_image_tag }}
           # Placeholder secrets — the stack must start and run-backup.sh
-          # must reach the upload step before any of these are dereferenced.
+          # must complete one full cycle before any of these matter to
+          # anything outside the compose network.
           POSTGRES_PASSWORD: smoke
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: smoke123
           CLOUDFLARE_API_TOKEN: smoke
-          # Fake R2 target — unreachable endpoint makes the upload fail
-          # cleanly with a network error after every prior stage has
-          # succeeded.
-          R2_ACCESS_KEY_ID: smoke-access
-          R2_SECRET_ACCESS_KEY: smoke-secret
-          R2_ENDPOINT: http://127.0.0.1:1
-          R2_BUCKET: smoke-bucket
+          # R2 target points at the in-stack MinIO. The backup
+          # container's entrypoint probe (scripts/backup/probe-r2.mjs)
+          # runs a HeadBucket on startup and exits non-zero on any
+          # failure — an unreachable endpoint or a missing bucket
+          # would crash the container into a restart loop before
+          # run-backup could be exercised. A reachable, authenticated
+          # target lets both the probe and the upload pipeline run
+          # end to end.
+          R2_ACCESS_KEY_ID: minioadmin
+          R2_SECRET_ACCESS_KEY: smoke123
+          R2_ENDPOINT: http://storage:9000
+          R2_BUCKET: projekt-manager-backup-smoke
           R2_REGION: auto
           AGE_RECIPIENT: age1yhm5gr95llfetnxs0mp0f6klnlwra4xmyunqfkpcvw2xa2pxfckqx0wpmn
           # App-side env vars normally sourced from .env on the VPS.
@@ -420,11 +429,14 @@ jobs:
           }
           trap cleanup EXIT
 
-          echo "::group::Compose up"
+          echo "::group::Compose up (app stack, no backup yet)"
           # Explicit service list — caddy is skipped because it tries
           # to provision a TLS cert against the fake DOMAIN/token and
-          # would otherwise dominate the log with ACME retries.
-          docker compose --profile backup up -d db storage storage-init app backup
+          # would otherwise dominate the log with ACME retries. Backup
+          # is deferred until the R2 bucket exists on MinIO, otherwise
+          # the entrypoint probe's HeadBucket would 404 and the
+          # container would restart-loop.
+          docker compose up -d db storage storage-init app
           echo "::endgroup::"
 
           echo "::group::Wait for app health (up to 90s)"
@@ -442,10 +454,36 @@ jobs:
           fi
           echo "::endgroup::"
 
-          echo "::group::Backup container still running?"
-          running=$(docker inspect projekt-manager-backup-1 --format '{{.State.Running}}')
-          restarts=$(docker inspect projekt-manager-backup-1 --format '{{.RestartCount}}')
-          echo "  running=$running restarts=$restarts"
+          echo "::group::Create R2 smoke bucket on MinIO"
+          # One-off mc container attached to the compose network,
+          # reusing the storage-init service definition so no network-
+          # name lookup is needed. --no-deps skips depends_on resolution
+          # (storage is already up); -T disables TTY for cleaner logs.
+          docker compose run --rm --no-deps -T \
+            --entrypoint /bin/sh \
+            storage-init \
+            -c "mc alias set local http://storage:9000 \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" && mc mb --ignore-existing local/${R2_BUCKET}"
+          echo "::endgroup::"
+
+          echo "::group::Bring up backup container"
+          docker compose --profile backup up -d backup
+          echo "::endgroup::"
+
+          echo "::group::Backup container stable? (up to 20s)"
+          # Poll briefly so we don't race the probe — the probe runs
+          # early in entrypoint.sh and the container reports 'running'
+          # before the probe has had a chance to crash it. A stable
+          # container in this window passed the probe and exec'd crond.
+          for i in $(seq 1 10); do
+            running=$(docker inspect projekt-manager-backup-1 --format '{{.State.Running}}' 2>/dev/null || echo false)
+            restarts=$(docker inspect projekt-manager-backup-1 --format '{{.RestartCount}}' 2>/dev/null || echo 0)
+            echo "  attempt $i: running=$running restarts=$restarts"
+            if [ "$running" = "true" ] && [ "$restarts" = "0" ]; then
+              sleep 2
+              continue
+            fi
+            break
+          done
           if [ "$running" != "true" ] || [ "$restarts" -gt 0 ]; then
             echo "::error::Backup container is not healthy (running=$running restarts=$restarts)"
             exit 1
@@ -453,29 +491,22 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Run one backup cycle"
-          # The upload will fail (fake R2 endpoint), but every prior
-          # stage (env parse, pg_dump, ephemeral-pg verify) must
-          # succeed. An env-schema error, spawn-quoting crash, or
-          # peer-auth failure would show up as a non-R2 string in
-          # the error output.
+          # Full pipeline: env parse, pg_dump, ephemeral-pg verify,
+          # age encrypt, PutObject to MinIO. Expected rc=0 — MinIO
+          # is S3-compatible for every call the uploader makes. A
+          # non-zero rc here is a real runtime defect the image-build
+          # phase did not catch.
           set +e
           backup_out=$(docker exec projekt-manager-backup-1 /usr/local/bin/run-backup.sh 2>&1)
           backup_rc=$?
           set -e
           echo "$backup_out"
           echo "  exit code: $backup_rc"
-          if [ "$backup_rc" = "0" ]; then
-            echo "::error::run-backup succeeded with a fake R2 endpoint — this should not happen"
+          if [ "$backup_rc" != "0" ]; then
+            echo "::error::run-backup failed end-to-end against MinIO — see output above"
             exit 1
           fi
-          # The only legitimate failure at this point is an upload /
-          # network / DNS error. Anything that names env vars,
-          # postgres startup, or listen_addresses is a real defect.
-          if echo "$backup_out" | grep -qE 'invalid_type|listen_addresses|could not translate host name|role "root" does not exist|setpgid|STORAGE_|No such file or directory'; then
-            echo "::error::run-backup failed with a pre-upload error — a runtime defect the image-build phase did not catch"
-            exit 1
-          fi
-          echo "  run-backup failed at the expected (upload) stage — smoke OK"
+          echo "  run-backup completed end-to-end — smoke OK"
           echo "::endgroup::"
 
           echo "::group::Drill-key tmpfs reachable?"
