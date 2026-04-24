@@ -52,16 +52,18 @@ The GHCR image must still exist. If pruned, use forward-rollback: `git revert` o
 
 ## Verify a deploy
 
+Reads use `docker` directly rather than `docker compose`. The compose path re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. `docker ps` / `docker exec` / `docker logs` don't parse compose, so they work directly. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
+
 ```bash
 # Running commit
 sudo -u deploy git -C /opt/projekt-manager rev-parse --short HEAD
 
 # Container status
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml ps
+sudo -u deploy docker ps --filter name=projekt-manager-
 
 # Direct health check (bypasses Caddy)
-sudo -u deploy docker compose -f /opt/projekt-manager/docker-compose.yml \
-  exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
+sudo -u deploy docker exec projekt-manager-app-1 \
+  node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1))"
 
 # From WireGuard client (end-to-end with TLS)
 curl -sS https://${DOMAIN}/api/health
@@ -71,13 +73,17 @@ curl -sS https://${DOMAIN}/api/health
 
 ### Contents of `secrets.env.age`
 
-Shell `KEY='value'` format. Three Layer 1 secrets (app + TLS) and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
+Shell `KEY='value'` format. Three required Layer 1 secrets (app + TLS), one optional Layer 1 secret (push), and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
 
-Layer 1:
+Layer 1 (required):
 
 - `POSTGRES_PASSWORD`
 - `MINIO_ROOT_PASSWORD`
 - `CLOUDFLARE_API_TOKEN`
+
+Layer 1 (optional — push notifications, ADR-0023):
+
+- `VAPID_PRIVATE_KEY` -- Web Push signing key. Generate once with `npx web-push generate-vapid-keys --json` and keep the `privateKey` value stable across deploys (rotating invalidates every browser subscription). The matching public key is derived at startup. Unset = push dispatch is a no-op, UI shows "nicht konfiguriert". `VAPID_SUBJECT` (e.g. `mailto:admin@<your-domain>`) is non-secret and lives in the plain `.env` next to `DOMAIN`.
 
 Layer 2:
 
@@ -95,19 +101,24 @@ Layer 2:
 `age` re-encrypts the whole file, so rotating one value means writing all of them back. The full setup procedure (including per-secret sources) lives in [backup/setup.md §3](backup/setup.md#3-push-r2-credentials--recipient-to-the-vps). Short form for rotating one existing value:
 
 ```bash
-# On workstation (age must be installed locally). Decrypt current file
-# to recover the non-rotated values, edit in place, re-encrypt.
-age -d secrets.env.age > /tmp/secrets.env   # enter passphrase
-$EDITOR /tmp/secrets.env                     # change the one value
+# Workstation (age must be installed locally). Decrypt the current
+# file to recover the non-rotated values, edit in place, re-encrypt.
+age -d secrets.env.age > /tmp/secrets.env        # enter passphrase
+$EDITOR /tmp/secrets.env                         # change the one value
 age -p -o secrets.env.age.new /tmp/secrets.env   # enter passphrase
 shred -u /tmp/secrets.env
 mv secrets.env.age.new secrets.env.age
 
+# Workstation: upload to the VPS
 scp secrets.env.age <sudo-user>@vps:/tmp/secrets.env.age
-ssh <sudo-user>@vps "sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age && sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age && sudo chmod 0600 /opt/projekt-manager/secrets.env.age"
 
-# Redeploy to pick up new values
-ssh <sudo-user>@vps "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
+# VPS: ssh in as <sudo-user>, then run
+sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
+sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
+sudo chmod 0600 /opt/projekt-manager/secrets.env.age
+
+# VPS: redeploy to pick up new values
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 ```
 
 ### Passphrase loss recovery
@@ -115,7 +126,7 @@ ssh <sudo-user>@vps "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
 1. Regenerate or re-read each secret from its source:
    - `POSTGRES_PASSWORD` -- `ALTER USER` from superuser, or re-provision
    - `MINIO_ROOT_PASSWORD` -- MinIO admin console or `mc admin user`
-   - `CLOUDFLARE_API_TOKEN` -- Cloudflare dashboard, scope `Zone:DNS:Edit` + `Zone:Zone:Read`
+   - `CLOUDFLARE_API_TOKEN` -- Cloudflare dashboard, scope **DNS Write + Zone Read** on the managed zone (legacy names: `Zone:DNS:Edit` + `Zone:Zone:Read`). See [dns-setup.md § Cloudflare API token scope](dns-setup.md#cloudflare-api-token-scope).
    - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` -- issue a new R2 API token in the Cloudflare dashboard; the endpoint URL is listed alongside. Revoke the old token after the rotation deploy.
    - `R2_BUCKET`, `R2_REGION` -- read off the R2 dashboard (or fall back to the compose defaults).
    - `AGE_RECIPIENT` -- not affected by `secrets.env.age` passphrase loss. Derive from the existing identity on the operator workstation: `age-keygen -y ~/secrets/age-backup.key`.
@@ -154,18 +165,21 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 sudo usermod -s /usr/sbin/nologin deploy
 sudo rm -f /home/deploy/.ssh/authorized_keys
 
-# 7. Prove locked-down flow works
-sudo -u deploy bash -c 'cd /opt/projekt-manager && docker compose down'
+# 7. Prove locked-down flow works: stop everything, redeploy from scratch.
+# `docker stop` bypasses the compose-parse path (no secret interpolation needed)
+# and is idempotent — missing/stopped containers just no-op with `|| true`.
+sudo -u deploy docker stop projekt-manager-app-1 projekt-manager-db-1 projekt-manager-storage-1 projekt-manager-caddy-1 projekt-manager-backup-1 2>/dev/null || true
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 ```
 
 ## Failure modes
 
-| Symptom                                | Cause                                               | Fix                                                                  |
-| -------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------- |
-| `git checkout` fails                   | Uncommitted changes in working tree                 | `git status`, reset or stash                                         |
-| `git checkout landed at X, expected Y` | Post-checkout SHA assertion                         | Inspect `git status`, clean up                                       |
-| `age: failed to read identity`         | Wrong passphrase                                    | Retry; verify against password manager after 3 attempts              |
-| `docker pull` unauthorized             | GHCR PAT expired                                    | `docker login ghcr.io` as `deploy` with fresh PAT                    |
-| Smoke test timeout (60s)               | App container failed or `/api/health` returning 503 | Check `docker compose logs app db storage`                           |
-| `no such container` on exec            | `docker compose up -d` did not start `app`          | Check `docker compose ps`; verify `APP_IMAGE_TAG` matches a GHCR tag |
+| Symptom                                                                | Cause                                                      | Fix                                                                                                                                                                           |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `git checkout` fails                                                   | Uncommitted changes in working tree                        | `git status`, reset or stash                                                                                                                                                  |
+| `git checkout landed at X, expected Y`                                 | Post-checkout SHA assertion                                | Inspect `git status`, clean up                                                                                                                                                |
+| `age: failed to read identity`                                         | Wrong passphrase                                           | Retry; verify against password manager after 3 attempts                                                                                                                       |
+| `docker pull` unauthorized                                             | GHCR PAT expired                                           | `docker login ghcr.io` as `deploy` with fresh PAT                                                                                                                             |
+| Smoke test timeout (60s)                                               | App container failed or `/api/health` returning 503        | `docker logs projekt-manager-app-1 --tail=50` (also `-db-1`, `-storage-1`)                                                                                                    |
+| `no such container` on exec                                            | `docker compose up -d` did not start `app`                 | `docker ps --filter name=projekt-manager-`; confirm the resolved tag exists in GHCR                                                                                           |
+| `APP_IMAGE_TAG must be set` or `CLOUDFLARE_API_TOKEN must be declared` | Compose operation without pinned tag and/or secrets in env | For reads use `docker` directly (no parse). For compose operations route through `scripts/deploy.sh` — it pins the SHA and sources secrets from `secrets.env.age` internally. |

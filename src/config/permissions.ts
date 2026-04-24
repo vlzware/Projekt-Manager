@@ -14,6 +14,11 @@ export type Permission =
   | 'user:delete'
   | 'data:export'
   | 'data:restore'
+  | 'audit:read'
+  | 'notifications:manage'
+  | 'attachment:read'
+  | 'attachment:write'
+  | 'attachment:delete'
   | 'auth:change-password';
 
 export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
@@ -21,6 +26,14 @@ export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
 // data:export gates the unified business-data export (api.md §14.2.4).
 // data:restore gates the unified import — owner-only because a restore
 // replaces all business data in a single transaction (api.md §14.3).
+//
+// audit:read gates the audit surface (api.md §14.2.8). Owner and office
+// hold it; worker and bookkeeper do not. The destructive-action predicate
+// in scope.ts narrows office-visible rows further (purges, user deletes,
+// roles mutations are owner-only). The reachability predicate for workers
+// was dropped when workers lost audit:read — the audit surface is
+// administrative, not worker-facing, and a scoped-worker view never got
+// meaningful daily use.
 const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   owner: [
     'project:read',
@@ -38,6 +51,14 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'user:delete',
     'data:export',
     'data:restore',
+    'audit:read',
+    // notifications:manage aligns with user:manage as an admin-only gate
+    // (api.md §14.3, ADR-0023). Rule edits change who-sees-what platform-
+    // wide, so the least-privilege baseline is owner only.
+    'notifications:manage',
+    'attachment:read',
+    'attachment:write',
+    'attachment:delete',
     'auth:change-password',
   ],
   office: [
@@ -51,10 +72,21 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'customer:write',
     'user:read',
     'data:export',
+    'audit:read',
+    'attachment:read',
+    'attachment:write',
+    'attachment:delete',
     'auth:change-password',
   ],
-  worker: ['project:read', 'customer:read', 'auth:change-password'],
-  bookkeeper: ['project:read', 'customer:read', 'auth:change-password'],
+  worker: [
+    'project:read',
+    'customer:read',
+    'attachment:read',
+    'attachment:write',
+    'attachment:delete',
+    'auth:change-password',
+  ],
+  bookkeeper: ['project:read', 'customer:read', 'attachment:read', 'auth:change-password'],
 };
 
 export function hasPermission(roles: string[], permission: Permission): boolean {

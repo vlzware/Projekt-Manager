@@ -46,6 +46,9 @@ export const STRINGS = {
     project: 'Projekt',
     customer: 'Kunde',
     user: 'Benutzer',
+    audit: 'Audit-Eintrag',
+    notificationRule: 'Benachrichtigungsregel',
+    pushSubscription: 'Push-Abonnement',
     resource: 'Ressource',
   },
 
@@ -106,6 +109,7 @@ export const STRINGS = {
     mustBeUuidArray: (field: string) => `${field} muss ein Array von UUIDs sein.`,
     mustBeNumeric: (field: string) => `${field} muss eine Zahl oder ein numerischer String sein.`,
     mustBeUuid: (field: string) => `${field} muss eine gültige UUID sein.`,
+    minLength: (field: string, min: number) => `${field} muss mindestens ${min} Zeichen lang sein.`,
     maxLength: (field: string, max: number) => `${field} darf maximal ${max} Zeichen lang sein.`,
   },
 
@@ -163,6 +167,28 @@ export const STRINGS = {
     system: 'Systemstandard',
   },
 
+  /**
+   * Push-notifications group in the user menu (spec ui/index.md §8.7.2,
+   * ui/behavior.md §9.8). Labels pinned by the spec and the e2e contract
+   * in e2e/push-permission.spec.ts.
+   *
+   * The permission-denied copy intentionally does NOT offer an in-app
+   * remediation — a denied browser permission is near-irreversible and
+   * the user must clear it via browser settings.
+   */
+  push: {
+    section: 'Push-Benachrichtigungen',
+    enable: 'Push-Benachrichtigungen aktivieren',
+    mute: 'Stummschalten',
+    unsubscribe: 'Gerät abmelden',
+    subscribed: 'Dieses Gerät ist angemeldet.',
+    denied:
+      'Push-Benachrichtigungen wurden für diese Webseite blockiert. Bitte in den Browser-Einstellungen freigeben.',
+    unsupported: 'Dieser Browser unterstützt keine Push-Benachrichtigungen.',
+    notConfigured: 'Push-Benachrichtigungen sind auf diesem Server nicht konfiguriert.',
+    subscribeFailed: 'Anmeldung für Push-Benachrichtigungen fehlgeschlagen.',
+  },
+
   ui: {
     confirm: 'Bestätigen',
     ok: 'OK',
@@ -187,14 +213,23 @@ export const STRINGS = {
     updated: 'Aktualisiert:',
     statusSince: 'Status seit:',
     openMaps: 'In Google Maps öffnen',
+    viewMyProjects: 'Meine Projekte',
     viewKanban: 'Kanban',
     viewCalendar: 'Kalender',
     viewCustomers: 'Kunden',
     viewProjects: 'Projekte',
     viewUsers: 'Benutzer',
     viewData: 'Daten',
+    viewAudit: 'Aktivität',
+    viewNotifications: 'Benachrichtigungen',
+    myProjectsToday: 'Heute',
+    myProjectsUpcoming: 'Demnächst',
+    myProjectsOther: 'Weitere',
+    myProjectsEmpty: 'Keine zugewiesenen Projekte.',
     viewMonth: 'Monat',
     viewWeek: 'Woche',
+    navAdminMenu: 'Verwaltung',
+    navHome: 'Zur Startseite',
 
     // Management actions
     create: 'Erstellen',
@@ -285,15 +320,220 @@ export const STRINGS = {
     sinceNDays: (n: number) => `seit ${n} Tagen`,
     agedBuffer: (count: number, label: string, days: number) =>
       `${count} ${label} seit >${days} Tagen`,
+    /** Short form for use inside a column header where the state label is redundant. */
+    agedBufferShort: (count: number, days: number) => `${count}× seit >${days} Tagen`,
   },
 
   /**
-   * Backup-freshness badge copy (AC-170, AC-171). Centralized so the
-   * derivation layer's reason strings and the visible German label
-   * share a single source. `unknown` pins the exact wording named in
-   * AC-171; the others map to the reason union in
-   * `src/domain/backupBadge.ts` — labels must cover every member.
+   * Audit / Aktivität surface (spec ui/workflow-views.md §8.4.1,
+   * ui/management.md §8.13). The action-to-label map lives in a
+   * dedicated config (auditActionLabels.ts) — this section carries the
+   * labels that are shared between the activity feed and the global
+   * Aktivität view.
    */
+  audit: {
+    emptyState: 'Keine Aktivität',
+    /**
+     * Recipient-scoped empty-state copy on the global Aktivität view
+     * (AC-200). Rendered when the default (recipient-scoped) mode is
+     * active and the filtered set is empty because rules exist but
+     * none admit the caller as recipient. The plain "Keine Aktivität"
+     * fallback applies only under "Alles anzeigen".
+     */
+    emptyStateRecipient:
+      'Keine Benachrichtigungen für Sie. Alles anzeigen für den vollständigen Aktivitätsverlauf.',
+    /** Label on the "Alles anzeigen" toggle (AC-200, §8.13.1). */
+    toggleShowAll: 'Alles anzeigen',
+    detailsShow: 'Details anzeigen',
+    detailsHide: 'Details ausblenden',
+    loadOlder: 'Ältere anzeigen',
+    system: 'System',
+    /** Fallback label when a user-actor row's actorId is null — the
+     *  authoring user has been hard-deleted and AC-98's ON DELETE SET
+     *  NULL nullified the FK (data-model.md §5.10 "Referential
+     *  integrity"). Rendered in place of a resolved displayName. */
+    userNeutral: 'Benutzer',
+    /** Column / filter labels on the global Aktivität view. */
+    colTimestamp: 'Zeitpunkt',
+    colActor: 'Akteur',
+    colEntity: 'Objekt',
+    colAction: 'Aktion',
+    colPayload: 'Details',
+    filterEntityType: 'Objekttyp',
+    filterEntityLabel: 'Objektname',
+    filterEntityLabelPlaceholder: 'Name suchen…',
+    filterActor: 'Akteur',
+    filterAction: 'Aktion',
+    filterFrom: 'Von',
+    filterTo: 'Bis',
+    filterDateInverted: 'Das "Bis"-Datum darf nicht vor dem "Von"-Datum liegen.',
+    entityProject: 'Projekt',
+    entityCustomer: 'Kunde',
+    entityUser: 'Benutzer',
+    entityProjectWorker: 'Zuweisung',
+    entityAttachment: 'Anhang',
+    /** Before/after panel labels in the payload drawer. */
+    drawerBefore: 'Vorher',
+    drawerAfter: 'Nachher',
+    drawerField: 'Feld',
+    heading: 'Aktivität',
+    allActors: 'Alle Akteure',
+    allActions: 'Alle Aktionen',
+    allEntityTypes: 'Alle Objekttypen',
+  },
+
+  /**
+   * Notification rule editor + validation messages (api.md §14.2.9,
+   * data-model.md §5.11). Each message maps to one AC-190 rejection
+   * branch so a regression surfaces the specific validator that broke.
+   */
+  notifications: {
+    invalidEventClass: 'Unbekannte Ereignisklasse.',
+    stateFilterNotAllowed: 'Ziel-Status ist nur für Statuswechsel-Ereignisse zulässig.',
+    invalidStateFilter: 'Ziel-Status ist kein gültiger Workflow-Status.',
+    includeAssignedWorkersNotAllowed:
+      'Zugewiesene Mitarbeiter können nur für projektbezogene Ereignisse benachrichtigt werden.',
+    invalidRole: (role: string) => `Unbekannte Rolle: "${role}".`,
+    invalidUserId: 'Mindestens eine angegebene Benutzer-ID ist nicht gültig oder inaktiv.',
+    invalidRecipientSpec: 'Empfänger-Spezifikation ist ungültig.',
+    emptyRecipientSpec: 'Empfänger-Spezifikation darf nicht leer sein.',
+    invalidEnabled: '"enabled" muss ein Boolean sein.',
+    invalidPushSubscription: 'Push-Abonnement ist ungültig.',
+
+    /**
+     * Rule-editor surface (ui/management.md §8.14). Kept under the
+     * existing `notifications` key so the admin-surface copy lives next
+     * to the validator messages it pairs with.
+     */
+    rules: {
+      heading: 'Benachrichtigungsregeln',
+      createButton: 'Regel erstellen',
+      createTitle: 'Regel erstellen',
+      editTitle: 'Regel bearbeiten',
+      emptyList: 'Keine Regeln',
+      colEvent: 'Ereignis',
+      colFilter: 'Filter',
+      colRecipients: 'Empfänger',
+      colEnabled: 'Aktiv',
+      colActions: 'Aktionen',
+      event: 'Ereignis',
+      stateFilter: 'Ziel-Status',
+      stateFilterAny: 'Beliebig',
+      recipients: 'Empfänger',
+      recipientRoles: 'Rollen',
+      recipientAssignedWorkers: 'Zugewiesene Mitarbeiter benachrichtigen',
+      recipientUsers: 'Einzelne Benutzer',
+      userPickerPlaceholder: 'Benutzer suchen…',
+      userPickerEmpty: 'Keine Treffer.',
+      addUser: 'Hinzufügen',
+      removeUser: 'Entfernen',
+      enabled: 'Aktiv',
+      deleteConfirm: 'Regel wirklich löschen?',
+      /** Compact recipientSpec summary for the list's Empfänger cell. */
+      summaryRoles: (labels: string) => `Rollen: ${labels}`,
+      summaryAssignedWorkers: 'Zugewiesene Mitarbeiter',
+      summaryUsers: (count: number) => `${count} Benutzer`,
+      summaryEmpty: '—',
+    },
+  },
+
+  /**
+   * Project-detail / attachment surface (ui/project-detail.md §8.15).
+   * The dropdown labels for `AttachmentLabel` live in
+   * `src/domain/attachments.ts`'s `ATTACHMENT_LABELS` catalog — this
+   * block carries the page-chrome copy that isn't a closed-enum label.
+   */
+  attachments: {
+    /** Öffnen affordance on the quick-glance panel (spec §8.4, AC-207). */
+    openDetailPage: 'Öffnen',
+    /** Not-found surface — 404 on `GET /projects/:id`. */
+    notFoundHeading: 'Projekt nicht gefunden',
+    notFoundBody: 'Das angeforderte Projekt existiert nicht.',
+
+    // Region headings
+    coreFields: 'Kernfelder',
+    assignedWorkers: 'Zugewiesene Mitarbeiter',
+    photoGallery: 'Fotogalerie',
+    binaryList: 'Dateien',
+    upload: 'Hochladen',
+    activity: 'Aktivität',
+
+    // Worker editor
+    addWorker: 'Mitarbeiter hinzufügen',
+    removeWorker: 'Entfernen',
+    /**
+     * Disambiguated aria-label for the per-chip remove button so
+     * screen-reader users hear "Entfernen: Anna Arbeiter" instead of
+     * every chip reading identically.
+     */
+    removeWorkerNamed: (name: string) => `Entfernen: ${name}`,
+    noUnassignedWorkers: 'Keine weiteren Mitarbeiter verfügbar.',
+
+    // Upload surface
+    uploadDrop: 'Datei hier ablegen oder auswählen',
+    uploadPickFile: 'Datei auswählen',
+    uploadPickPhoto: 'Foto auswählen',
+    uploadPickPhotos: 'Fotos auswählen',
+    uploadPickBinary: 'Dokument auswählen',
+    takePhoto: 'Foto aufnehmen',
+    photoSectionTitle: 'Fotos',
+    binarySectionTitle: 'Dokument',
+    uploadLabel: 'Beschriftung',
+    uploadRetry: 'Erneut versuchen',
+    uploadDismiss: 'Verwerfen',
+    uploadProgressInit: 'Vorbereiten…',
+    uploadProgressUpload: 'Hochladen…',
+    uploadProgressComplete: 'Fertigstellen…',
+    uploadFileTooLarge: 'Datei zu groß.',
+    uploadImageProcessingFailed: 'Bildbearbeitung fehlgeschlagen.',
+    uploadSuccessToast: (fileName: string) => `Hochgeladen: ${fileName}`,
+    uploadFailureToast: (fileName: string, reason: string) =>
+      `Upload fehlgeschlagen: ${fileName} — ${reason}`,
+    /**
+     * MIME-rejection copy — names the supported formats explicitly so a
+     * user picking a HEIC / GIF / etc. has a concrete answer on what to
+     * do instead. HEIC is the canonical miss (Apple camera default); the
+     * list-the-supported approach future-proofs the message against any
+     * other format drift.
+     */
+    uploadMimeNotAllowed:
+      'Dateityp nicht unterstützt. Bitte als JPEG, PNG oder WebP (Fotos) oder als PDF oder DOCX (Dokumente) hochladen.',
+
+    // Missing-file placeholder (AC-224)
+    fileMissing: 'Datei fehlt',
+
+    // Deletion
+    deleteConfirmTitle: 'Datei löschen?',
+    deleteConfirmMessage: 'Diese Aktion kann nicht rückgängig gemacht werden.',
+
+    // Download actions
+    download: 'Herunterladen',
+    view: 'Ansehen',
+    bulkDownload: 'Auswahl als ZIP',
+    downloadAll: 'Alle herunterladen',
+    noAttachments: 'Keine Dateien zum Herunterladen.',
+    /**
+     * Fallback filename hinted to the browser when the bulk-download
+     * anchor is created. The server's Content-Disposition is still
+     * authoritative; this is the "filename the user sees if the
+     * browser honours the hint."
+     */
+    bulkZipFileName: 'Dateien.zip',
+    selectAll: 'Alle auswählen',
+    /**
+     * Bulk-download cap violation message (AC-223) — MUST name both caps
+     * (file count AND summed bytes) per ui/project-detail.md §8.15.5.
+     */
+    bulkLimitExceeded: (maxFiles: number, maxMb: number) =>
+      `Auswahl überschreitet das Limit: maximal ${maxFiles} Dateien und maximal ${maxMb} MB Gesamtgröße.`,
+
+    // Table headers for the binary list
+    colFileName: 'Dateiname',
+    colLabel: 'Beschriftung',
+    colUploader: 'Hochgeladen von',
+    colUploaded: 'Hochgeladen am',
+  },
+
   backup: {
     green: 'Backup: aktuell',
     drillStale: 'Backup: aktuell, Drill-Schlüssel neu laden',

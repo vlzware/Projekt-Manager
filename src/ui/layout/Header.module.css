@@ -18,24 +18,76 @@
   flex-shrink: 0;
 }
 
+/* Right-side icon cluster (extract + backup + user menu). Grouping
+   these into one flex row eliminates the "orphaned icon row" the old
+   layout produced on phones — backup badge + extract icon sat on a
+   line of their own with the user button on a third line, leaving
+   the top right corner of the navGroup row blank. All three sit
+   together now and only wrap as a unit when the navGroup itself
+   can't share the row. */
+.rightCluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .appName {
   font-size: 1.25rem;
   font-weight: 700;
   white-space: nowrap;
+  /* Button reset — element is a <button> so the wordmark can navigate
+     to the user's landing view; keep the visual identity of a heading. */
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: inherit;
 }
 
+.appName:hover {
+  opacity: 0.85;
+}
+
+.appName:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Wordmark / logo swap. Desktop shows the "Projekt-Manager" text;
+   mobile swaps to the favicon mark so the right-cluster (initials +
+   cog + backup + extract) fits on a single row down to 360px. */
+.appNameText {
+  display: inline;
+}
+
+.appNameLogo {
+  display: none;
+  width: 28px;
+  height: 28px;
+}
+
+/* Segmented nav pill. The primary view buttons and the Verwaltung
+   trigger share a single joined pill so all view-switching affordances
+   read as one cluster. Implemented via margin-overlap on per-segment
+   borders (rather than overflow:hidden + border-none) so the admin
+   dropdown can escape the pill without being clipped. */
 .viewToggle {
   display: flex;
-  gap: 0;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid var(--color-border-inverse);
   flex-shrink: 0;
 }
 
-.viewButton {
+.viewButton,
+.adminTrigger {
+  position: relative;
   padding: 6px 16px;
-  border: none;
+  border: 1px solid var(--color-border-inverse);
+  border-radius: 0;
   background: var(--color-surface-inverse-raised);
   color: var(--color-text-on-inverse-subtle);
   cursor: pointer;
@@ -44,51 +96,104 @@
   transition:
     background 0.15s,
     color 0.15s;
+  /* Overlap neighbor's border so the pill shows a single-pixel seam,
+     not a double border. Hover/active raises z-index so the full
+     border renders without being covered. */
+  margin-right: -1px;
 }
 
-.viewButton:hover {
+.viewButton:hover,
+.adminTrigger:hover {
   background: var(--color-surface-inverse-hover);
   color: var(--color-text-on-inverse-muted);
+  z-index: 1;
 }
 
-.viewButtonActive {
+.viewButtonActive,
+.adminTriggerActive {
   background: var(--color-accent);
   color: var(--color-text-on-accent);
+  border-color: var(--color-accent);
+  z-index: 1;
 }
 
-.viewButtonActive:hover {
+.viewButtonActive:hover,
+.adminTriggerActive:hover {
   background: var(--color-accent-hover);
 }
 
+/* End caps: round the first and last segment. Targets the inner
+   .adminTrigger when the admin wrapper sits at a pill edge. */
+.viewToggle > .viewButton:first-child,
+.viewToggle > .adminMenu:first-child .adminTrigger {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+
+.viewToggle > .viewButton:last-child,
+.viewToggle > .adminMenu:last-child .adminTrigger {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+.viewToggle > :last-child {
+  margin-right: 0;
+}
+
+.adminMenu {
+  position: relative;
+}
+
+.adminTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.adminDropdown {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 4px;
+  background: var(--color-surface-inverse);
+  border: 1px solid var(--color-border-inverse);
+  border-radius: 6px;
+  min-width: 160px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(var(--color-overlay-rgb), 0.3);
+}
+
+/* Action button (email extract). Neutral icon-button styling — same
+   size/radius as the nav segments but no joined border, because this
+   is a modal trigger, not a view switch. Keeping it visually lighter
+   than the nav pill preserves the semantic distinction without making
+   it feel "floating." */
 .extractButton {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 6px;
-  border: 1px solid var(--color-warning);
+  padding: 6px 8px;
+  border: 1px solid transparent;
   border-radius: 6px;
-  background: rgba(var(--color-warning-rgb), 0.15);
-  color: var(--color-warning-on-inverse-text);
+  background: transparent;
+  color: var(--color-text-on-inverse-subtle);
   cursor: pointer;
   flex-shrink: 0;
   transition:
     background 0.15s,
-    border-color 0.15s;
+    color 0.15s;
 }
 
 .extractButton:hover {
-  background: rgba(var(--color-warning-rgb), 0.3);
-  border-color: var(--color-warning-on-inverse-text);
-}
-
-.summaryWrapper {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  justify-content: flex-end;
+  background: var(--color-surface-inverse-hover);
+  color: var(--color-text-on-inverse);
 }
 
 .userMenu {
+  /* `margin-left: auto` moved to `.rightCluster`. The user menu is a
+     sibling of the extract button and backup badge inside that cluster;
+     the whole cluster gets pushed to the right, the user menu no
+     longer pushes itself. */
   position: relative;
   flex-shrink: 0;
 }
@@ -110,6 +215,19 @@
 .userButton:hover {
   background: rgba(var(--color-on-inverse-rgb), 0.1);
   border-color: var(--color-text-on-inverse-muted);
+}
+
+/* Display-name vs. initials — one of the two spans is shown at a
+   time. Desktop shows the full name; mobile collapses to initials
+   (see breakpoint below). Both spans stay in the DOM so the legacy
+   `user-indicator` test contract (`toContainText(displayName)`)
+   resolves regardless of viewport. */
+.userFullName {
+  display: inline;
+}
+
+.userInitials {
+  display: none;
 }
 
 .dropdown {
@@ -180,9 +298,75 @@
   right: auto;
 }
 
-@media (max-width: 1200px) {
-  .summaryWrapper {
-    flex-basis: 100%;
-    justify-content: flex-start;
+/* Below ~768px the primary destinations move to the bottom tab bar
+   (`MobileTabBar`), so the header collapses to admin/status
+   affordances only — Verwaltung dropdown, email-extract, backup
+   badge, user menu. The wordmark swaps to a logo, the admin trigger
+   drops its text, and the user button collapses to initials so the
+   whole row fits down to 360px without wrapping. */
+@media (max-width: 768px) {
+  .header {
+    padding: 10px 12px;
+    /* Keep everything on a single row; individual children shrink or
+       hide rather than wrap. */
+    flex-wrap: nowrap;
+    gap: 8px;
+  }
+
+  .navGroup {
+    flex-shrink: 1;
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .viewToggle {
+    flex-shrink: 1;
+  }
+
+  /* Hide primary destination buttons (rendered with `.viewButton`)
+     since the bottom tab bar carries them. The `.adminTrigger`
+     (Verwaltung dropdown) keeps its own class and stays visible. */
+  .viewButton {
+    display: none;
+  }
+
+  /* Swap wordmark → logo. */
+  .appNameText {
+    display: none;
+  }
+
+  .appNameLogo {
+    display: block;
+  }
+
+  /* Drop the "Verwaltung" label; keep the cog. */
+  .adminTriggerLabel {
+    display: none;
+  }
+
+  /* Admin trigger without its label becomes a square icon button —
+     override the pill's side padding so it reads as an icon-only
+     control. */
+  .adminTrigger {
+    padding: 6px 10px;
+    gap: 0;
+  }
+
+  /* User button collapses to initials; keep a comfortable hit area
+     so single-letter initials (e.g. "I" for Inhaber) don't become a
+     micro-target. */
+  .userFullName {
+    display: none;
+  }
+
+  .userInitials {
+    display: inline-block;
+    min-width: 1.5em;
+    text-align: center;
+  }
+
+  .userButton {
+    padding: 6px 10px;
+    min-width: 40px;
   }
 }

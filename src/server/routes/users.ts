@@ -88,7 +88,12 @@ export function userRoutes(db: Database) {
           roles: string[];
           email?: string | null;
         };
-        const user = await userService.createUser(body, request.user!.id, request.log);
+        const user = await userService.createUser(
+          body,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(201).send(user);
       },
     );
@@ -127,7 +132,13 @@ export function userRoutes(db: Database) {
           roles?: string[];
           email?: string | null;
         };
-        const user = await userService.updateUser(id, body, request.user!.id, request.log);
+        const user = await userService.updateUser(
+          id,
+          body,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(200).send(user);
       },
     );
@@ -147,7 +158,7 @@ export function userRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        await userService.deleteUser(id, request.user!.id, request.log);
+        await userService.deleteUser(id, request.user!.id, request.log, request.id ?? null);
         return reply.code(204).send();
       },
     );
@@ -167,7 +178,12 @@ export function userRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const user = await userService.deactivateUser(id, request.user!.id, request.log);
+        const user = await userService.deactivateUser(
+          id,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(200).send(user);
       },
     );
@@ -187,7 +203,12 @@ export function userRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const user = await userService.reactivateUser(id, request.user!.id, request.log);
+        const user = await userService.reactivateUser(
+          id,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(200).send(user);
       },
     );
@@ -216,7 +237,13 @@ export function userRoutes(db: Database) {
       async (request, reply) => {
         const { id } = request.params as { id: string };
         const { newPassword } = request.body as { newPassword: string };
-        await userService.resetPassword(id, newPassword, request.user!.id, request.log);
+        await userService.resetPassword(
+          id,
+          newPassword,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(200).send({ success: true });
       },
     );

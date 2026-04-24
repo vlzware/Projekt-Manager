@@ -9,15 +9,21 @@ import { ROUTES, routeByPath, landingPathForUser } from '@/config/routes';
 import { isInsecureConnection } from '@/config/insecureConnection';
 import { Header } from '@/ui/layout/Header';
 import { Footer } from '@/ui/layout/Footer';
+import { MobileTabBar } from '@/ui/layout/MobileTabBar';
+import { MyProjectsView } from '@/ui/myprojects/MyProjectsView';
 import { KanbanBoard } from '@/ui/kanban/KanbanBoard';
 import { CalendarView } from '@/ui/calendar/CalendarView';
 import { CustomerManagement } from '@/ui/management/CustomerManagement';
 import { ProjectManagement } from '@/ui/management/ProjectManagement';
 import { UserManagement } from '@/ui/management/UserManagement';
 import { DatenView } from '@/ui/management/DatenView';
+import { AuditManagement } from '@/ui/audit/AuditManagement';
+import { NotificationRulesManagement } from '@/ui/management/NotificationRulesManagement';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
+import { ProjectDetailPage } from '@/ui/detail/ProjectDetailPage';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
+import { ToastContainer } from '@/ui/common/ToastContainer';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
 import type { ViewMode } from '@/domain/types';
 import { STRINGS } from '@/config/strings';
@@ -95,12 +101,16 @@ function LandingRedirect() {
 }
 
 const VIEW_ELEMENTS: Record<ViewMode, ReactElement> = {
+  meineProjekte: <MyProjectsView />,
   kanban: <KanbanBoard />,
   kalender: <CalendarView />,
   kunden: <CustomerManagement />,
   projekte: <ProjectManagement />,
   benutzer: <UserManagement />,
   daten: <DatenView />,
+  aktivitaet: <AuditManagement />,
+  benachrichtigungen: <NotificationRulesManagement />,
+  projektDetail: <ProjectDetailPage />,
 };
 
 export function App() {
@@ -204,10 +214,12 @@ export function App() {
           {viewContent}
         </main>
         <Footer />
+        <MobileTabBar />
         {selectedProject && (
           <ProjectDetailPanel project={selectedProject} onClose={() => selectProject(null)} />
         )}
         <ConfirmDialog />
+        <ToastContainer />
       </div>
     );
   }

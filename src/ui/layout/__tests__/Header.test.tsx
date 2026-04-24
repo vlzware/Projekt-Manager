@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { fireEvent } from '@testing-library/react';
 import type { AuthUser } from '@/api/client';
 
 const { useAuthStore } = await import('@/state/authStore');
@@ -24,6 +25,7 @@ function setAuthUser(roles: string[]): void {
     roles,
     email: null,
     themePreference: 'system',
+    pushMuted: false,
   };
   useAuthStore.setState({
     authUser: user,
@@ -32,12 +34,32 @@ function setAuthUser(roles: string[]): void {
   });
 }
 
+// Expected nav affordances per role — primary + secondary combined.
+// Worker deliberately excludes `aktivitaet`: the permission is retained
+// (deep-link and server-side scoping still work), but the tab is not
+// surfaced because worker-visible rows are too narrow to justify the
+// nav slot (see Header.tsx comment + docs/spec/ui/index.md §8.7.1 note).
 const MATRIX: Record<string, readonly string[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten'],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten'],
+  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivitaet'],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
   worker: ['kanban', 'kalender'],
   bookkeeper: ['projekte', 'kunden'],
 };
+
+// Roles whose secondary bucket has ≥2 items — those get the "Verwaltung"
+// menu trigger. Others render their (zero or one) secondary routes
+// inline, so no trigger is rendered.
+const ROLES_WITH_ADMIN_MENU = new Set(['owner', 'office']);
+
+const ALL_VIEWS = [
+  'kanban',
+  'kalender',
+  'projekte',
+  'kunden',
+  'benutzer',
+  'daten',
+  'aktivitaet',
+] as const;
 
 beforeEach(() => {
   useAuthStore.setState({
@@ -53,14 +75,22 @@ describe('Header — per-role nav visibility (AC-75)', () => {
       setAuthUser([role]);
       render(<Header />);
 
-      // Every view in the matrix is rendered as a button.
+      // Open the admin menu if this role has one, so its menu items
+      // are mounted and queryable.
+      if (ROLES_WITH_ADMIN_MENU.has(role)) {
+        fireEvent.click(screen.getByTestId('nav-admin-trigger'));
+      } else {
+        expect(screen.queryByTestId('nav-admin-trigger')).not.toBeInTheDocument();
+      }
+
+      // Every view in the matrix is rendered as a button (either inline
+      // or inside the now-open admin menu).
       for (const view of MATRIX[role]) {
         expect(screen.queryByTestId(`view-toggle-${view}`)).toBeInTheDocument();
       }
 
       // No other view is rendered.
-      const allViews = ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten'];
-      const forbidden = allViews.filter((v) => !MATRIX[role].includes(v));
+      const forbidden = ALL_VIEWS.filter((v) => !MATRIX[role].includes(v));
       for (const view of forbidden) {
         expect(screen.queryByTestId(`view-toggle-${view}`)).not.toBeInTheDocument();
       }

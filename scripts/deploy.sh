@@ -84,6 +84,70 @@ set -a
 source <(age -d "$SECRETS_FILE")
 set +a
 
+# --- Pre-flight: env/secrets parity check --------------------------------
+# Catch operator-side drift: a new key was added to
+# `.env.production.example` or `secrets.manifest.txt` since the last
+# time the operator synced, but the deployed `.env` / `secrets.env.age`
+# was never updated to match. Without this check the deploy proceeds,
+# compose interpolates the missing var as an empty string (bare `${X}`
+# has no default), and the app either crash-loops on Zod validation or
+# — worse — silently runs misconfigured. Abort BEFORE touching the
+# running stack: no pull, no restart, no traffic shift until the
+# operator has synced.
+#
+# Two files, two sources of truth, one assertion each:
+#   - `.env.production.example` keys ⊆ `/opt/projekt-manager/.env`
+#   - `secrets.manifest.txt` keys  ⊆ (env vars exported above)
+#
+# The secrets check reads from the current process env (populated by
+# the `source <(age -d …)` above) rather than re-parsing the encrypted
+# file, so we don't prompt for the passphrase twice.
+
+env_example_keys=""
+if [ -f "$REPO_DIR/.env.production.example" ]; then
+  env_example_keys=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$REPO_DIR/.env.production.example" \
+    | sed 's/=.*$//' | sort -u)
+fi
+
+env_actual_keys=""
+if [ -f "$REPO_DIR/.env" ]; then
+  env_actual_keys=$(grep -E '^[A-Z_][A-Z0-9_]*=' "$REPO_DIR/.env" | sed 's/=.*$//' | sort -u)
+fi
+
+if [ -n "$env_example_keys" ]; then
+  missing_env=$(comm -23 <(echo "$env_example_keys") <(echo "$env_actual_keys") || true)
+  if [ -n "$missing_env" ]; then
+    echo "ERROR: $REPO_DIR/.env is missing keys declared in .env.production.example:" >&2
+    echo "$missing_env" | sed 's/^/  - /' >&2
+    echo "" >&2
+    echo "Sync the keys (preserving existing values) before deploying. See" >&2
+    echo "docs/ops/manual-deploy.md for the edit-in-place workflow." >&2
+    exit 1
+  fi
+fi
+
+missing_secrets=""
+if [ -f "$REPO_DIR/secrets.manifest.txt" ]; then
+  while IFS= read -r key; do
+    # `${!key+x}` is bash indirection: expands to 'x' when $key names a
+    # set variable (even set to empty), empty otherwise. We accept empty
+    # values — the manifest only asserts declaration; Zod still rejects
+    # malformed values at container start.
+    if [ -z "${!key+x}" ]; then
+      missing_secrets="${missing_secrets}${key}"$'\n'
+    fi
+  done < <(grep -E '^[A-Z_][A-Z0-9_]*$' "$REPO_DIR/secrets.manifest.txt")
+fi
+
+if [ -n "$missing_secrets" ]; then
+  echo "ERROR: secrets.env.age is missing keys declared in secrets.manifest.txt:" >&2
+  printf '%s' "$missing_secrets" | sed '/^$/d; s/^/  - /' >&2
+  echo "" >&2
+  echo "Rotate secrets.env.age to include the missing keys before deploying" >&2
+  echo "(docs/ops/manual-deploy.md § Rotate a secret)." >&2
+  exit 1
+fi
+
 # Pin the exact SHA-tagged image so this deploy is reproducible and a
 # rollback is just re-running with an older SHA. `docker compose pull`
 # only pulls services that declare an `image:` — `db`, `storage`, and
@@ -124,5 +188,30 @@ until docker compose exec -T app node -e "fetch('http://localhost:3000/api/healt
     exit 1
   fi
 done
+
+# Caddy graceful reload — re-reads the bind-mounted Caddyfile in place
+# so site-block additions (e.g. the `storage.${DOMAIN}` block introduced
+# when the storage subdomain wiring landed) take effect on the first
+# deploy that ships them.
+#
+# `docker compose up -d` above only recreates containers whose resolved
+# compose stanza differs from the running one; Caddy's stanza is stable
+# across most deploys even when its bind-mounted Caddyfile changes. On
+# top of that, a file bind-mount pins the container's inode at creation
+# time — replacing the on-host file (which is what `git checkout` does
+# for any tracked change) leaves the container's file descriptor open on
+# the old inode for the current Caddy process lifetime. A `docker restart`
+# re-mounts with the new inode but does NOT re-read compose env, so it
+# can swap Caddyfile content but keep stale secrets (e.g. CLOUDFLARE_API_TOKEN
+# after a rotation). Neither behaviour is obvious enough to remember at
+# deploy time.
+#
+# `caddy reload` sidesteps both by hitting the admin API (bound to
+# localhost:2019 inside the container) to re-parse /etc/caddy/Caddyfile
+# against the process's current env. Connections stay open across the
+# swap. Safe to call every deploy — Caddy exits 0 and logs "config is
+# unchanged" when nothing differs.
+echo "Reloading Caddy config..."
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --force
 
 echo "Deploy verified — healthy at $(git rev-parse --short HEAD)"

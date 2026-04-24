@@ -5,7 +5,7 @@ import { formatDateRange, formatDateDE } from '@/domain/dateFormat';
 import { isAgingBold, getAgingText } from '@/domain/aging';
 import { useProjectTransition } from '@/hooks/useProjectTransition';
 import { usePermission } from '@/hooks/usePermission';
-import { useUIStore } from '@/state/uiStore';
+import { useOpenProject } from '@/hooks/useOpenProject';
 import styles from './ProjectCard.module.css';
 
 interface ProjectCardProps {
@@ -13,9 +13,9 @@ interface ProjectCardProps {
 }
 
 export function ProjectCard({ project }: ProjectCardProps) {
-  const { canForward, forward, inFlight } = useProjectTransition(project);
+  const { canForward, canBackward, forward, backward, inFlight } = useProjectTransition(project);
   const canTransition = usePermission('project:transition');
-  const selectProject = useUIStore((s) => s.selectProject);
+  const openProject = useOpenProject();
   const config = STATE_CONFIG_MAP[project.status];
   const bold = isAgingBold(project.status, project.statusChangedAt);
   const agingText = getAgingText(project.status, project.statusChangedAt);
@@ -26,12 +26,17 @@ export function ProjectCard({ project }: ProjectCardProps) {
   const entryDate = formatDateDE(project.statusChangedAt);
 
   const handleCardClick = () => {
-    selectProject(project.id);
+    openProject(project.id);
   };
 
   const handleForwardClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     forward();
+  };
+
+  const handleBackwardClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    backward();
   };
 
   return (
@@ -71,17 +76,30 @@ export function ProjectCard({ project }: ProjectCardProps) {
         ) : (
           <span />
         )}
-        {canTransition && canForward && (
-          <button
-            className={styles.forwardButton}
-            onClick={handleForwardClick}
-            data-testid={`forward-button-${project.id}`}
-            aria-label={STRINGS.ui.statusForward(config.label)}
-            disabled={inFlight}
-          >
-            &rarr;
-          </button>
-        )}
+        <div className={styles.transitionButtons}>
+          {canTransition && canBackward && (
+            <button
+              className={styles.backwardButton}
+              onClick={handleBackwardClick}
+              data-testid={`backward-button-${project.id}`}
+              aria-label={STRINGS.ui.prevStep}
+              disabled={inFlight}
+            >
+              &larr;
+            </button>
+          )}
+          {canTransition && canForward && (
+            <button
+              className={styles.forwardButton}
+              onClick={handleForwardClick}
+              data-testid={`forward-button-${project.id}`}
+              aria-label={STRINGS.ui.statusForward(config.label)}
+              disabled={inFlight}
+            >
+              &rarr;
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

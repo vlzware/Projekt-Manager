@@ -6,58 +6,51 @@
 
 ## Context
 
-The initial implementation stored session tokens in `localStorage` and attached them as `Authorization: Bearer` headers on every fetch. This works but is vulnerable to XSS: any script running in the page (compromised dependency, browser extension, injected code) can read `localStorage.getItem('authToken')` and exfiltrate the session.
+The initial implementation stored session tokens in `localStorage` and attached them as `Authorization: Bearer` headers. Vulnerable to XSS: any script in the page (compromised dependency, extension, injection) can read `localStorage.getItem('authToken')` and exfiltrate the session.
 
-The application is a same-origin SPA — Fastify serves both the API and the static frontend from the same origin. There are no cross-origin API consumers.
+The application is a same-origin SPA — Fastify serves both API and static frontend from the same origin. No cross-origin API consumers.
 
 Key forces:
 
-- **XSS resilience.** `localStorage` is readable by any JavaScript in the page. `HttpOnly` cookies are invisible to JavaScript — the browser manages them automatically.
-- **CSRF prevention.** Moving to cookies introduces CSRF risk, since browsers auto-attach cookies to cross-origin requests. This must be mitigated simultaneously.
-- **Deployment context.** The system is an internal tool for Handwerker companies, accessed via VPN. External link → app navigation (the main downside of `SameSite=Strict`) is not a relevant use case.
+- **XSS resilience.** `localStorage` is readable by any JavaScript; `HttpOnly` cookies are not.
+- **CSRF prevention.** Cookies introduce CSRF risk (auto-attached cross-origin), which must be mitigated simultaneously.
+- **Deployment context.** Internal tool accessed via VPN. The main downside of `SameSite=Strict` (external link → logged-in navigation) is irrelevant here.
 
 ## Decision
 
-Session tokens are stored in an `HttpOnly; Secure; SameSite=Strict` cookie set by the server. The frontend never sees or manages the token.
+Session tokens live in an `HttpOnly; Secure; SameSite=Strict` cookie set by the server. The frontend never sees or manages the token.
 
-- **Login:** Server sets `Set-Cookie: session=<token>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`. Response body contains user info only, no token.
-- **All requests:** Frontend uses `credentials: 'same-origin'` on fetch calls. The browser attaches the cookie automatically.
-- **Logout:** Server clears the cookie and deletes the session from the database.
-- **CSRF protection:** `SameSite=Strict` prevents the browser from sending the cookie on any cross-origin request — including form submissions and top-level navigations. Combined with CORS `origin: false` and CSP `default-src 'self'`, this provides three independent CSRF barriers.
+- **Login:** Server sets `Set-Cookie: session=<token>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=86400`. Response body has user info only.
+- **Requests:** Frontend uses `credentials: 'same-origin'`; browser attaches the cookie automatically.
+- **Logout:** Server clears the cookie and deletes the session row.
+- **CSRF protection:** `SameSite=Strict` blocks the cookie on any cross-origin request (including form submissions and top-level navigations). Combined with CORS `origin: false` and CSP `default-src 'self'` — three independent CSRF barriers.
 
-No additional CSRF token (synchronizer pattern, double-submit cookie) is used.
+No additional CSRF token (synchronizer or double-submit) is used.
 
 ## Alternatives Considered
 
 ### HttpOnly cookie with SameSite=Lax + CSRF synchronizer token
 
-`Lax` allows the cookie on top-level GET navigations from external sites, preserving the "click link from email → arrive logged in" experience. Requires an explicit CSRF token for state-changing requests.
-
-Ruled out because:
-
-- The external-link benefit is irrelevant for a VPN-internal tool
-- The CSRF token adds complexity (token generation, storage, validation, frontend wiring) without proportional security benefit over `Strict`
+`Lax` allows the cookie on top-level GET navigations from external sites, preserving the "click link from email → arrive logged in" UX, but requires an explicit CSRF token for state-changing requests. Rejected: the external-link benefit is irrelevant for a VPN-internal tool, and a CSRF token adds generation/storage/validation/wiring complexity without material security benefit over `Strict`.
 
 ### Keep localStorage with Bearer tokens
 
-React's JSX escaping + `@fastify/helmet` CSP + no `dangerouslySetInnerHTML` + strict typing provide a strong XSS posture. The remaining risk vector is a compromised npm dependency reading `localStorage`.
-
-Ruled out because the cookie approach eliminates this risk class entirely with minimal implementation cost. Defense in depth: the token should not be accessible to JavaScript if it doesn't need to be.
+JSX escaping + `@fastify/helmet` CSP + no `dangerouslySetInnerHTML` + strict typing give a strong XSS posture; the remaining risk is a compromised npm dependency reading `localStorage`. Rejected: the cookie approach eliminates that risk class entirely at minimal cost — the token should not be JS-accessible if it doesn't need to be.
 
 ## Consequences
 
 ### Positive
 
-- Session tokens are invisible to client-side JavaScript — XSS cannot steal sessions
-- CSRF is blocked by three independent layers (SameSite=Strict, CORS, CSP)
-- Frontend code is simpler — no token management, no `Authorization` header construction, no `localStorage` synchronization
-- The `Secure` flag (in production) ensures the cookie is never sent over plain HTTP
+- Session tokens invisible to client-side JavaScript — XSS cannot steal sessions
+- CSRF blocked by three independent layers (SameSite=Strict, CORS, CSP)
+- Simpler frontend — no token management, no `Authorization` header, no `localStorage` sync
+- `Secure` flag (in production) keeps the cookie off plain HTTP
 
 ### Negative
 
-- Users arriving via external links (email, Slack) must log in again — `Strict` suppresses the cookie on cross-origin navigations. Acceptable for the VPN-internal context; would need reassessment if the app becomes publicly accessible.
-- Integration tests must pass cookies via `set-cookie` header extraction rather than reading the token from the response body — slightly more involved test setup
-- If the app ever needs cross-origin API consumers (mobile app, third-party integration), the cookie approach will need augmentation (e.g., a separate token-based auth path for API clients)
+- External-link arrivals (email, Slack) must log in again — `Strict` suppresses the cookie on cross-origin navigations. Acceptable for VPN-internal; reassess if public
+- Integration tests must extract cookies via `set-cookie` header rather than reading a token from the response body — slightly more setup
+- Future cross-origin API consumers (mobile app, third-party) would need an augmented auth path (e.g., separate token-based flow)
 
 ## References
 

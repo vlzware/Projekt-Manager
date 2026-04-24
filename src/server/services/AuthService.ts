@@ -13,10 +13,12 @@ import type { Database } from '../db/connection.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
 
 import {
+  findById,
   findByUsername,
   updateLastLogin,
   changePassword as changePasswordRepo,
   updateSelf as updateSelfRepo,
+  toUserResponse,
 } from '../repositories/user.js';
 import { createSession, deleteSession, deleteSessionsByUserId } from '../repositories/session.js';
 import { hashPassword, verifyPassword } from '../password.js';
@@ -25,6 +27,7 @@ import { STRINGS } from '../../config/strings.js';
 import { invalidCredentials, notFound, validationError } from '../errors.js';
 import { AUTH_CONFIG } from '../config/index.js';
 import type { ServiceLogger } from './Logger.js';
+import { mutate } from './mutate.js';
 
 export class AuthService {
   constructor(private db: Database) {}
@@ -74,6 +77,7 @@ export class AuthService {
         // Narrow the raw text column to the domain literal union; the
         // CHECK constraint in migration 0013 guarantees validity.
         themePreference: user.themePreference as ThemePreference,
+        pushMuted: user.pushMuted,
       },
     };
   }
@@ -82,16 +86,42 @@ export class AuthService {
    * Self-scope profile update — used by PATCH /api/auth/me (api.md §14.2.1).
    * Only fields the user themselves controls appear in `patch`; identity-
    * bearing fields stay administrative (see `UserService`).
+   *
+   * Audit behaviour: self-preference writes (themePreference, pushMuted)
+   * do not produce an audit row. See data-model.md §5.10 "Non-audited
+   * self-preference writes on UserAccount" — per-user UI/notification
+   * preferences have no cross-user or security consequence and would
+   * drown out the actor-on-entity traffic the activity feed is tuned
+   * for (ADR-0021 "high-signal activity feed"). A transaction is still
+   * opened so MutatingDatabase's type-gate on the repo write is satisfied
+   * (AC-179's carve-out is expressed as an allowlisted write site, not
+   * a general bypass of the single-write-path helper).
    */
   async updateSelfPreferences(
     actingUserId: string,
-    patch: { themePreference?: ThemePreference },
+    patch: { themePreference?: ThemePreference; pushMuted?: boolean },
     log: ServiceLogger,
   ) {
-    const updated = await updateSelfRepo(this.db, actingUserId, patch);
-    if (!updated) throw notFound(STRINGS.entities.user);
+    const updated = await this.db.transaction(async (tx) => {
+      const prior = await findById(tx, actingUserId);
+      if (!prior) throw notFound(STRINGS.entities.user);
+      const row = await updateSelfRepo(tx, actingUserId, patch);
+      if (!row) throw notFound(STRINGS.entities.user);
+      return row;
+    });
     log.info({ userId: actingUserId }, 'user_self_updated');
     return updated;
+  }
+
+  /**
+   * Read the authenticated user's full row for GET /api/auth/me responses.
+   * Present so routes do not need to repeat the `findById` + `toUserResponse`
+   * pattern when surfacing self-preference fields.
+   */
+  async getSelf(userId: string) {
+    const row = await findById(this.db, userId);
+    if (!row) throw notFound(STRINGS.entities.user);
+    return toUserResponse(row);
   }
 
   async logout(token: string, userId: string, ip: string, log: ServiceLogger) {
@@ -103,16 +133,24 @@ export class AuthService {
 
   async changePassword(
     userId: string,
-    username: string,
     currentPassword: string,
     newPassword: string,
     currentToken: string | undefined,
     ip: string,
     log: ServiceLogger,
+    correlationId?: string | null,
   ) {
-    const user = await findByUsername(this.db, username);
+    // The caller supplies `userId` only — the username is derived from
+    // the current user record. Passing both parameters was redundant and
+    // opened a trivial mismatch failure mode if a caller handed us a
+    // user id from one session and a username from another.
+    const user = await findById(this.db, userId);
     if (!user) {
-      // Timing side-channel mitigation: burn bcrypt time even when user is missing.
+      // Timing side-channel mitigation: burn bcrypt time even when the
+      // user disappeared between the session check and here (deleted
+      // mid-request). Lookup-by-id via the authenticated session makes
+      // this branch unreachable in practice; the defensive bcrypt call
+      // keeps the timing profile constant regardless.
       await verifyPassword(currentPassword, AUTH_CONFIG.dummyHash);
       throw invalidCredentials();
     }
@@ -137,19 +175,37 @@ export class AuthService {
       }
     }
 
-    // Hash and store — pass user.id as the actor so updatedBy reflects
-    // the self-service password change (data-model.md §5.5 audit
-    // metadata contract). A future admin-reset endpoint would pass the
-    // admin's id instead.
     // Hash before the transaction (CPU-bound, no DB needed)
     const newHash = await hashPassword(newPassword);
 
-    // Atomic: password change + session invalidation in one transaction.
-    // If session cleanup fails, the password change rolls back.
-    await this.db.transaction(async (tx) => {
-      await changePasswordRepo(tx, user.id, newHash, user.id);
-      await deleteSessionsByUserId(tx, user.id, currentToken);
-    });
+    // Atomic: password change + session invalidation + audit row in one
+    // transaction. Action is `password-change` for self-service (differs
+    // from UserService.resetPassword's `password-reset` which is admin-
+    // driven and invalidates ALL sessions). No hash in the payload.
+    await mutate(
+      this.db,
+      { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
+      {
+        entityType: 'user',
+        action: 'password-change',
+        run: async (tx) => {
+          // Re-read inside the tx so entityLabel is snapshotted atomically
+          // with the write — avoids capturing a stale displayName if an
+          // admin renames the user between the pre-tx verify and here.
+          const current = await findById(tx, userId);
+          if (!current) throw notFound(STRINGS.entities.user);
+          await changePasswordRepo(tx, userId, newHash, userId);
+          await deleteSessionsByUserId(tx, userId, currentToken);
+          return {
+            entityId: userId,
+            entityLabel: current.displayName,
+            value: null,
+            before: {},
+            after: {},
+          };
+        },
+      },
+    );
 
     log.info({ userId, ip }, 'password_change');
   }

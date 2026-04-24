@@ -90,3 +90,20 @@
   background: var(--color-surface-muted);
   color: var(--color-text-strong);
 }
+
+/* Narrow viewports: the prev/label/next row plus the Monat|Woche toggle
+   overflows ~410px of content, which is wider than a phone viewport
+   minus container padding. The parent `.main` has `overflow: hidden`,
+   so the toggle (which sits last in the row) gets clipped off-screen.
+   Wrap the row so the toggle drops to a second line, and drop its
+   left margin there so it sits flush with the new line's left edge. */
+@media (max-width: 640px) {
+  .navigation {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .viewToggle {
+    margin-left: 0;
+  }
+}

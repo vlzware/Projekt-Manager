@@ -41,10 +41,11 @@ test.describe('E2E failure paths', () => {
     const cardTestId = await geplantCard.getAttribute('data-testid');
     const projectId = cardTestId!.replace('project-card-', '');
 
-    // Open the detail panel and trigger forward.
-    await geplantCard.click();
-    await expect(page.getByTestId('detail-panel')).toBeVisible();
-    await page.getByTestId('detail-forward-button').click();
+    // Trigger the forward transition from the Kanban card — the detail
+    // panel no longer owns transition buttons; they moved to the card
+    // itself so the Kanban view is the single place to organize
+    // projects.
+    await geplantCard.getByTestId(`forward-button-${projectId}`).click();
     await page.getByTestId('confirm-ok').click();
 
     // The error banner appears (German, no stack trace). Use the dedicated
@@ -58,7 +59,6 @@ test.describe('E2E failure paths', () => {
     await expect(errorBanner).toBeVisible();
 
     // State is unchanged: the project is still in geplant, not in_arbeit.
-    await page.getByTestId('detail-close').click();
     await expect(
       page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
     ).toBeVisible();
@@ -82,12 +82,12 @@ test.describe('E2E failure paths', () => {
       });
     });
 
-    // Open a project and trigger a transition.
+    // Trigger the forward transition from the Kanban card.
     const geplantColumn = page.getByTestId('kanban-column-geplant');
     const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
-    await geplantCard.click();
-    await expect(page.getByTestId('detail-panel')).toBeVisible();
-    await page.getByTestId('detail-forward-button').click();
+    const cardTestId = await geplantCard.getAttribute('data-testid');
+    const projectId = cardTestId!.replace('project-card-', '');
+    await geplantCard.getByTestId(`forward-button-${projectId}`).click();
     await page.getByTestId('confirm-ok').click();
 
     // The login screen reappears with the German expiry message.
@@ -104,20 +104,14 @@ test.describe('E2E failure paths', () => {
     const cardTestId = await geplantCard.getAttribute('data-testid');
     const projectId = cardTestId!.replace('project-card-', '');
 
-    await geplantCard.click();
-    await expect(page.getByTestId('detail-panel')).toBeVisible();
-    await page.getByTestId('detail-forward-button').click();
+    await geplantCard.getByTestId(`forward-button-${projectId}`).click();
 
     // Modal opens — click Abbrechen.
     await expect(page.getByTestId('confirm-dialog')).toBeVisible();
     await page.getByTestId('confirm-cancel').click();
     await expect(page.getByTestId('confirm-dialog')).not.toBeVisible();
 
-    // Status badge unchanged — still Geplant.
-    await expect(page.getByTestId('detail-status-badge')).toContainText('Geplant');
-
-    // Card is still in geplant column after closing the panel.
-    await page.getByTestId('detail-close').click();
+    // Card is still in geplant column — never left.
     await expect(
       page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
     ).toBeVisible();

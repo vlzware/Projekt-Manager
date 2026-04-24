@@ -39,7 +39,7 @@ import {
 } from '../../test/backupTestHarness.js';
 
 // Phase 3 contract surface — unresolvable at import today.
-import { runBackup, computeManifest } from '../services/backup.js';
+import { runBackup, computeManifest, type Manifest } from '../services/backup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(__dirname, '../db/migrations');
@@ -93,6 +93,52 @@ describe('Layer 2 backup — status dual-write + manifest determinism', () => {
           sql`UPDATE projects SET title = regexp_replace(title, ' \\(perturbation-test\\)$', '') WHERE number = '2026-001'`,
         );
       }
+    });
+
+    // Regression: `md5(row(t.*)::text)` serializes `timestamptz`
+    // values through the session's TimeZone, so a drift between the
+    // source and ephemeral-verify sessions produces a false
+    // `tier-1-mismatch` on any populated `timestamptz` column. The
+    // production bug: live `db` container runs TimeZone=UTC, backup
+    // container runs TZ=Europe/Berlin, the ephemeral verify Postgres
+    // inherits the latter. `runBackup`'s source-manifest transaction
+    // pins `SET LOCAL TIME ZONE 'UTC'` to defuse the source side;
+    // `ephemeralPg.ts` pins the verify-pool connections (and the
+    // ephemeral cluster's `-c TimeZone=UTC`) for the verify side. This
+    // test exercises the source-side invariant directly: a source-path
+    // tx must produce the same manifest no matter what TimeZone the
+    // connection inherited before the tx started.
+    it('source-path pins UTC so the manifest is session-TZ-independent', async () => {
+      // Seed a non-midnight `timestamptz` whose text form differs
+      // across TimeZones (2026-04-20 is inside CEST and JST is +09).
+      await db.execute(sql`
+        INSERT INTO meta_backup_status (singleton, last_backup_ok, last_backup_at)
+        VALUES (TRUE, FALSE, '2026-04-20 15:30:45.123+00')
+        ON CONFLICT (singleton) DO UPDATE SET last_backup_at = EXCLUDED.last_backup_at
+      `);
+
+      // Mirrors services/backup.ts::runBackup. `setBefore` simulates a
+      // non-UTC session TimeZone that the tx inherits — the
+      // subsequent `SET LOCAL TIME ZONE 'UTC'` must override so the
+      // manifest is stable across all three calls.
+      const sourcePath = async (setBefore?: string): Promise<Manifest> =>
+        db.transaction(
+          async (tx) => {
+            if (setBefore) {
+              await tx.execute(sql.raw(`SET LOCAL TIME ZONE '${setBefore}'`));
+            }
+            await tx.execute(sql`SET LOCAL TIME ZONE 'UTC'`);
+            return computeManifest(tx);
+          },
+          { isolationLevel: 'repeatable read', accessMode: 'read only' },
+        );
+
+      const asDefault = await sourcePath();
+      const asBerlin = await sourcePath('Europe/Berlin');
+      const asTokyo = await sourcePath('Asia/Tokyo');
+
+      expect(asBerlin).toEqual(asDefault);
+      expect(asTokyo).toEqual(asDefault);
     });
   });
 

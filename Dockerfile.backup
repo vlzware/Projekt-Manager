@@ -42,6 +42,15 @@ FROM node:22.20.0-alpine
 #   postgresql17-client  — pg_restore, pg_dump, pg_isready, psql.
 #                          Used by the backend backup-runner for the
 #                          manifest + round-trip verify.
+#   postgresql17-contrib — contrib extensions (pg_trgm, etc.). The
+#                          Tier 1 verify path runs pg_restore against
+#                          the ephemeral Postgres, which executes the
+#                          dump's `CREATE EXTENSION pg_trgm` (backing
+#                          the audit_log.entity_label GIN trigram
+#                          index). Alpine's base postgresql17 package
+#                          does not carry contrib — it must be
+#                          installed separately or verify fails with
+#                          "extension pg_trgm is not available".
 #   age                  — envelope encryption (asymmetric recipient
 #                          in env; private identity operator-held).
 #   dcron                — foreground cron for the scheduled run loop.
@@ -73,6 +82,7 @@ FROM node:22.20.0-alpine
 RUN apk add --no-cache \
       postgresql17 \
       postgresql17-client \
+      postgresql17-contrib \
       age \
       dcron \
       tzdata \
@@ -106,6 +116,7 @@ COPY scripts/backup/run-backup.sh       /usr/local/bin/run-backup.sh
 COPY scripts/backup/run-drill.sh        /usr/local/bin/run-drill.sh
 COPY scripts/backup/load-drill-key.sh   /usr/local/bin/load-drill-key
 COPY scripts/backup/entrypoint.sh       /usr/local/bin/backup-entrypoint
+COPY scripts/backup/probe-r2.mjs        /usr/local/bin/probe-r2.mjs
 COPY scripts/backup/crontab             /etc/crontabs/root
 
 RUN chmod +x \

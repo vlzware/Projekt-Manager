@@ -14,17 +14,6 @@
   margin: 0 0 16px;
 }
 
-/*
- * Backup-badge row sits between the app name and the login form. It is
- * visible regardless of auth state per AC-170 and is the operator's
- * read surface on a degraded stack.
- */
-.badgeRow {
-  display: flex;
-  justify-content: center;
-  margin: 0 0 16px;
-}
-
 .form {
   display: flex;
   flex-direction: column;

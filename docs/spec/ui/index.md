@@ -4,14 +4,15 @@ Section 8 of the [product spec](../index.md): UI surface. Split into per-subsyst
 
 ## Structure
 
-| File                                       | Sections   | Contents                                                       |
-| ------------------------------------------ | ---------- | -------------------------------------------------------------- |
-| **index.md** (this file)                   | §8.1, §8.7 | Shell: top-level layout states, navigation matrix, user menu   |
-| **[workflow-views.md](workflow-views.md)** | §8.2–§8.6  | Kanban, Calendar, Project Detail Panel, Summary, Color Coding  |
-| **[management.md](management.md)**         | §8.8–§8.10 | Project, Customer, and User management tabular CRUD views      |
-| **[daten.md](daten.md)**                   | §8.11      | Daten view — unified business-data restore + export            |
-| **[email-intake.md](email-intake.md)**     | §8.12      | Email Data Intake — modal LLM extraction to customer + project |
-| **[behavior.md](behavior.md)**             | §9, §10    | Cross-cutting behavioral rules + responsive column collapse    |
+| File                                       | Sections          | Contents                                                                     |
+| ------------------------------------------ | ----------------- | ---------------------------------------------------------------------------- |
+| **index.md** (this file)                   | §8.1, §8.7        | Shell: top-level layout states, navigation matrix, user menu                 |
+| **[workflow-views.md](workflow-views.md)** | §8.2–§8.6         | Kanban, Calendar, Project Detail Panel, Summary, Color Coding                |
+| **[management.md](management.md)**         | §8.8–§8.10, §8.13 | Project, Customer, and User management tabular CRUD views; global Audit View |
+| **[daten.md](daten.md)**                   | §8.11             | Daten view — unified business-data restore + export                          |
+| **[email-intake.md](email-intake.md)**     | §8.12             | Email Data Intake — modal LLM extraction to customer + project               |
+| **[project-detail.md](project-detail.md)** | §8.15             | Project Detail Page — dedicated `/projects/:id` route with attachments       |
+| **[behavior.md](behavior.md)**             | §9, §10           | Cross-cutting behavioral rules + responsive column collapse                  |
 
 ---
 
@@ -66,7 +67,7 @@ The login screen is the **only** view available to unauthenticated users. No pro
 - **Header**: app name **[C]**, navigation ([§8.7](#87-navigation)), summary indicators.
 - **User indicator**: displays the authenticated user's `displayName`. Clicking reveals a dropdown — see [§8.7.2](#872-user-menu).
 - **Mutation error banner**: appears when the most recent mutation failed. German message from the API error category (see [behavior.md §9.5](behavior.md#95-asynchronous-mutation-behavior)), dismiss button. Cleared on next successful mutation or by dismissal.
-- **Default view**: Kanban for owner, office, worker; Projekte for bookkeeper (see [§8.7.1](#871-views)).
+- **Default view**: Meine Projekte for worker; Kanban for owner and office; Projekte for bookkeeper (see [§8.7.1](#871-views)).
 - **Footer**: text driven by branding config **[C]**.
 
 ---
@@ -77,18 +78,23 @@ The authenticated layout provides navigation between all available views. The na
 
 ### 8.7.1 Views
 
-| View      | Label      | Access                                                                                               | Default                                                  |
-| --------- | ---------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| Kanban    | "Kanban"   | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                      | Yes for owner, office, worker (landing view after login) |
-| Calendar  | "Kalender" | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                      | No                                                       |
-| Projects  | "Projekte" | Owner, office, bookkeeper. Worker: hidden.                                                           | Yes for bookkeeper (landing view after login)            |
-| Customers | "Kunden"   | Owner, office, bookkeeper. Worker: hidden.                                                           | No                                                       |
-| Users     | "Benutzer" | `user:manage` permission required (owner only under the default role set). Everyone else: hidden.    | No                                                       |
-| Daten     | "Daten"    | `data:export` permission required (owner, office under the default role set). Everyone else: hidden. | No                                                       |
+| View          | Label                | Access                                                                                                                                                                                                                                                                                                                  | Default                                          |
+| ------------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| My Projects   | "Meine Projekte"     | Worker only. Owner, office, bookkeeper: hidden. Shows the logged-in worker's assigned projects, grouped Heute / Demnächst / Weitere, each row a single tap target deep-linking to `/projects/:id`. Designed for phone-first field use.                                                                                  | Yes for worker (landing view after login)        |
+| Kanban        | "Kanban"             | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                                                                                                                                                                                                                                         | Yes for owner, office (landing view after login) |
+| Calendar      | "Kalender"           | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                                                                                                                                                                                                                                         | No                                               |
+| Projects      | "Projekte"           | Owner, office, bookkeeper. Worker: hidden.                                                                                                                                                                                                                                                                              | Yes for bookkeeper (landing view after login)    |
+| Customers     | "Kunden"             | Owner, office, bookkeeper. Worker: hidden.                                                                                                                                                                                                                                                                              | No                                               |
+| Users         | "Benutzer"           | `user:manage` permission required (owner only under the default role set). Everyone else: hidden.                                                                                                                                                                                                                       | No                                               |
+| Daten         | "Daten"              | `data:export` permission required (owner, office under the default role set). Everyone else: hidden.                                                                                                                                                                                                                    | No                                               |
+| Audit         | "Aktivität"          | `audit:read` permission required (owner, office under the default matrix). Worker and bookkeeper do not hold `audit:read` — the tab is hidden and `/audit` deep-link returns the not-permitted surface. Office visibility is narrowed by the destructive-action predicate ([api.md §14.2.8](../api.md#1428-audit-log)). | No                                               |
+| Notifications | "Benachrichtigungen" | `notifications:manage` required (owner only under the default matrix — see [api.md §14.3](../api.md#143-authorization-rules)). Everyone else: hidden; `/benachrichtigungen` deep-link returns the not-permitted surface.                                                                                                | No                                               |
+
+**Primary / secondary header grouping.** "Benutzer", "Daten", "Aktivität", and "Benachrichtigungen" are lower-frequency admin / observability surfaces. The header groups them under a secondary "Verwaltung" dropdown when a role sees two or more; a single secondary entry renders inline (dropdown chrome is reserved for real grouping). Bookkeeper sees no secondary entries.
 
 **Worker-scoped views.** For workers, the data presented in Kanban and Calendar is filtered to the projects the worker is assigned to — the same scoping rule that applies to the server-side list operation (see [index.md §4.2](../index.md#42-users) and [api.md §14.3](../api.md#143-authorization-rules)). The views render normally; only the row set is reduced. A project whose detail the worker is not authorized for is not reachable from a scoped Kanban or Calendar.
 
-**Landing view.** The default landing view is Kanban for owner, office, and worker (worker scoped to assigned projects; see [§8.1.2](#812-authenticated-state)). Bookkeeper lands on Projekte, because bookkeeper does not have Kanban access under the nav matrix. A bookkeeper arriving at `/kanban` via a manual URL entry is treated under the unpermitted-route rule below rather than silently redirected.
+**Landing view.** The default landing view is Kanban for owner and office. Worker lands on "Meine Projekte", a phone-first personal list of the worker's assigned projects (Kanban remains accessible as secondary nav — workers spend most of their app time on phones, where the kanban board's horizontal scroll and per-state columns are a poor fit). Bookkeeper lands on Projekte, because bookkeeper does not have Kanban access under the nav matrix. A bookkeeper arriving at `/kanban` via a manual URL entry is treated under the unpermitted-route rule below rather than silently redirected.
 
 Navigation between views preserves shared state (cached project list, customer list, authenticated user). Switching views clears any active filter.
 
@@ -100,6 +106,10 @@ The user menu (accessible from the header area) provides:
 
 - Display of the authenticated user's `displayName`
 - "Darstellung" — a 3-way theme selector with options "Hell" (light), "Dunkel" (dark), "Systemstandard" (system). Selecting an option applies immediately and persists server-side (see [behavior.md §9.6](behavior.md#96-theme-handling)).
+- "Push-Benachrichtigungen" — grouped control for browser push delivery (see [behavior.md §9.8](behavior.md#98-push-notifications)). Exposes:
+  - **Push-Benachrichtigungen aktivieren** — user-initiated opt-in affordance that requests browser permission and registers the current device. Rendered only when the device is unregistered AND the browser permission is not denied. The app MUST NOT auto-request on page load — every prompt is user-initiated from this affordance.
+  - **Stummschalten** — boolean toggle mirroring `UserAccount.pushMuted` ([data-model.md §5.3](../data-model.md#53-user-entity)). `true` suppresses push across every subscription the user owns; activity feed unaffected. Optimistic; reverts on failed mutation per [behavior.md §9.5](behavior.md#95-asynchronous-mutation-behavior).
+  - **Gerät abmelden** — shown when the current device has an active subscription. Removes the current device's subscription; other devices remain subscribed.
 - "Passwort ändern" — opens a password change form (current password, new password, confirmation)
 - "Abmelden" — logs out and returns to the login screen
 

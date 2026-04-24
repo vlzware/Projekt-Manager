@@ -1,68 +1,68 @@
 /*
- * Backup-freshness badge — login-screen and owner-landing surface.
+ * Backup-freshness badge — header affordance.
  *
- * Uses the existing semantic token chain (success / warning / danger /
- * text-subtle) so a theme override via tokens.css paints the indicator
- * without per-badge overrides. No inline styles; no hardcoded hex.
+ * Always the same size: a fixed-footprint icon button. Colour carries
+ * the state signal via `currentColor` on the SVG, driven by the status
+ * class (`stateGreen` / `stateAmber` / `stateRed` / `stateUnknown`).
  *
- * The container's own surface tokens (`--color-surface-raised` +
- * `--color-border`) follow the page background; the badge reads as a
- * raised chip on both the light login screen and the dark header frame
- * via the inverted-context override below.
+ * Sizing matches the header's other icon affordances (`.extractButton`
+ * in Header.module.css) — 32×32 outer, 18px glyph — so the three
+ * right-side icons (extract, backup, user) read as a single cluster on
+ * the dark header frame.
  */
 
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  background: var(--color-surface-raised);
-  color: var(--color-text);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  line-height: 1.2;
-  white-space: nowrap;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  flex-shrink: 0;
+  cursor: help;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 
 /*
- * Inverted-surface variant — applied by the Header consumer only. Keeps
- * the badge legible when placed on the dark header frame without
- * forcing the login-screen caller to pass a prop.
+ * Inverted-surface variant — applied by the Header consumer only.
+ * Keeps the icon legible on the dark header frame without forcing a
+ * prop on the (currently unused) light-surface caller.
  */
-.badgeInverse {
-  border-color: var(--color-border-inverse);
-  background: var(--color-surface-inverse-raised);
-  color: var(--color-text-on-inverse);
+.badgeInverse:hover {
+  background: var(--color-surface-inverse-hover);
 }
 
-.indicator {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
+.icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 0;
 }
 
-.indicatorGreen {
-  background: var(--color-success);
+/* Status tints — `color` drives the SVG's `currentColor` for both fill
+   and stroke. Semantic tokens keep dark/light theme overrides flowing
+   through tokens.css without touching this file. */
+.stateGreen {
+  color: var(--color-success);
 }
 
-.indicatorAmber {
-  background: var(--color-warning);
+.stateAmber {
+  color: var(--color-warning);
 }
 
-.indicatorRed {
-  background: var(--color-danger-strong);
+.stateRed {
+  color: var(--color-danger-strong);
 }
 
-.indicatorUnknown {
-  /* Neutral gray — the "we don't know" state. Uses a non-status token
-     so it does not read as success/warning/danger. */
-  background: var(--color-text-subtle);
-}
-
-.label {
-  display: inline-block;
+.stateUnknown {
+  /* Neutral — the "we don't know" state. Uses a non-status token so it
+     reads as muted, not as a silent pass. */
+  color: var(--color-text-on-inverse-subtle);
 }

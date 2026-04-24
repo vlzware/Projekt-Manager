@@ -2,8 +2,8 @@
  * Backup-freshness badge derivation — pure function layer.
  *
  * Given a `BackupStatus` (or `undefined` for "unreachable") and a set
- * of freshness thresholds, derives the owner-only badge state rendered
- * on the login screen and the authenticated admin landing view.
+ * of freshness thresholds, derives the badge state rendered on the
+ * owner's authenticated landing view.
  *
  * Mapping rules (verification.md §15.22, AC-170 / AC-171):
  *   - `status === undefined`         → { kind: 'unknown' }

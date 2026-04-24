@@ -218,6 +218,21 @@ async function computeManifestInInstance(instance: EphemeralInstance): Promise<M
     user: 'postgres',
     database: 'postgres',
   });
+  // Force every checked-out connection to UTC before the manifest
+  // SELECTs run. `md5(row(t.*)::text)` in computeManifest serializes
+  // `timestamptz` values through the session's TimeZone, so a drift
+  // between source and ephemeral sessions produces a false Tier 1
+  // mismatch. The live `db` container runs TimeZone=UTC by default;
+  // the backup container sets TZ=Europe/Berlin for human-readable
+  // cron log timestamps (see docker-compose.yml services.backup.TZ),
+  // which initdb inherits here unless we pin it explicitly. Belt-
+  // and-suspenders with the `-c TimeZone=UTC` pin in
+  // buildPostgresArgv — this hook covers the pool-level path this
+  // file owns; the postgres arg covers any future reader that opens
+  // its own pool against the ephemeral cluster.
+  pool.on('connect', (client) => {
+    void client.query("SET TIME ZONE 'UTC'");
+  });
   try {
     const db = drizzle(pool, { schema });
     return await computeManifest(db);
@@ -315,6 +330,17 @@ function buildPostgresArgv(
     'full_page_writes=off',
     '-c',
     'synchronous_commit=off',
+    // Force the ephemeral cluster's session TimeZone to UTC regardless
+    // of the parent process env (the backup container sets
+    // TZ=Europe/Berlin so cron log wakeups render in local time; initdb
+    // would otherwise pick that up and the ephemeral session would
+    // serialize `timestamptz` via `row(t.*)::text` as `+02` while the
+    // live `db` container — which runs TimeZone=UTC — renders `+00`,
+    // producing a false Tier 1 mismatch on any populated `timestamptz`
+    // column). Pairs with the `pool.on('connect', …UTC)` hook in
+    // computeManifestInInstance.
+    '-c',
+    'TimeZone=UTC',
   ];
   if (demoter) {
     return {

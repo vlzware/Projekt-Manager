@@ -1,5 +1,5 @@
 import type { Project } from '@/domain/types';
-import { useUIStore } from '@/state/uiStore';
+import { useOpenProject } from '@/hooks/useOpenProject';
 import styles from './ProjectBar.module.css';
 
 interface ProjectBarProps {
@@ -11,14 +11,14 @@ interface ProjectBarProps {
 }
 
 export function ProjectBar({ project, startCol, endCol, color, rowIndex }: ProjectBarProps) {
-  const selectProject = useUIStore((s) => s.selectProject);
+  const openProject = useOpenProject();
   const colWidth = 100 / 7;
   const left = `${startCol * colWidth}%`;
   const width = `${(endCol - startCol + 1) * colWidth}%`;
   const top = `${24 + rowIndex * 22}px`;
 
   const handleClick = () => {
-    selectProject(project.id);
+    openProject(project.id);
   };
 
   return (

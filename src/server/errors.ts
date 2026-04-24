@@ -21,6 +21,7 @@ export type ErrorCode =
   | 'TARGET_NOT_EMPTY'
   | 'RESTORE_CONFIRMATION_MISMATCH'
   | 'MISSING_USER_REFS'
+  | 'BULK_LIMIT_EXCEEDED'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
@@ -165,4 +166,17 @@ export function rateLimited(): AppError {
 
 export function serverError(): AppError {
   return new AppError('SERVER_ERROR', STRINGS.errors.serverError, 500);
+}
+
+/**
+ * Bulk-download cap exceeded — AC-216. Specialized validation error
+ * surfaced with its own code so the UI can render the "too many files /
+ * too large" copy without parsing the generic message.
+ */
+export interface BulkLimitDetails {
+  limits: { maxFiles: number; maxBytes: number };
+}
+
+export function bulkLimitExceeded(details: BulkLimitDetails): AppError {
+  return new AppError('BULK_LIMIT_EXCEEDED', STRINGS.errors.invalidInput, 422, details);
 }

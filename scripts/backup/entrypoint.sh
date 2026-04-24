@@ -44,7 +44,16 @@ if [[ "${AGE_RECIPIENT}" != age1* ]]; then
   exit 1
 fi
 
-echo "backup container: env OK, starting crond"
+echo "backup container: env OK"
+
+# Authenticated R2 reachability probe. Fails fast on stale creds (the
+# scenario a credential roll produces if only one of AKID/Secret was
+# captured) or a dead endpoint, rather than letting crond start and
+# emit SignatureDoesNotMatch at the next scheduled tick. See probe-r2.mjs
+# for rationale and symmetry with the app's MinIO HeadBucket gate.
+node /usr/local/bin/probe-r2.mjs
+
+echo "backup container: R2 reachable, starting crond"
 
 # dcron:
 #   -f  foreground (become PID 1 — no daemonise, no re-exec).

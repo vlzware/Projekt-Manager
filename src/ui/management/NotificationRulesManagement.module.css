@@ -1,0 +1,14 @@
+/* Notification rules view — layout tweaks specific to this surface.
+   Shared table / toolbar / form-overlay styles come from Management.module.css. */
+
+.recipientCell {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.actionsCell {
+  display: flex;
+  gap: 8px;
+}

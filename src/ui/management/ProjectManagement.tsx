@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import { STATE_CONFIGS, STATE_FALLBACK_COLOR } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
@@ -14,12 +15,10 @@ import { usePermission } from '@/hooks/usePermission';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
 import { ProjectCreateForm } from './ProjectCreateForm';
-import { ProjectEditForm } from './ProjectEditForm';
 import styles from './Management.module.css';
 
 export function ProjectManagement() {
   const canCreate = usePermission('project:create');
-  const canUpdate = usePermission('project:update');
   const canDelete = usePermission('project:delete');
   const canPurge = usePermission('project:purge');
   const projects = useProjectManagementStore((s) => s.projects);
@@ -33,10 +32,10 @@ export function ProjectManagement() {
   const purgeProject = useProjectManagementStore((s) => s.purgeProject);
   const clearError = useProjectManagementStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
+  const navigate = useNavigate();
 
   const [search, setSearch] = useState('');
   const [formOpen, setFormOpen] = useState(false);
-  const [editProject, setEditProject] = useState<Project | null>(null);
 
   useEffect(() => {
     fetchProjects();
@@ -84,12 +83,11 @@ export function ProjectManagement() {
 
   const handleRowClick = (project: Project) => {
     clearError();
-    setEditProject(project);
+    navigate(`/projects/${project.id}`);
   };
 
   const openCreateForm = () => {
     clearError();
-    setEditProject(null);
     setFormOpen(true);
   };
 
@@ -133,7 +131,7 @@ export function ProjectManagement() {
         />
       </div>
 
-      {error && !formOpen && !editProject && <div className={styles.error}>{error}</div>}
+      {error && !formOpen && <div className={styles.error}>{error}</div>}
 
       <table className={styles.table} data-testid="project-table">
         <thead>
@@ -163,10 +161,10 @@ export function ProjectManagement() {
             const renderActionsCell = showArchiveBtn || showPurgeBtn;
             return (
               <tr key={p.id} className={rowClassName} onClick={() => handleRowClick(p)}>
-                <td>{p.number}</td>
-                <td>{p.title}</td>
-                <td>{p.customer?.name ?? '—'}</td>
-                <td>
+                <td data-label={STRINGS.ui.number}>{p.number}</td>
+                <td data-label={STRINGS.ui.title}>{p.title}</td>
+                <td data-label={STRINGS.ui.customer}>{p.customer?.name ?? '—'}</td>
+                <td data-label={STRINGS.ui.status}>
                   <span className={styles.badge} style={{ backgroundColor: stateColor(p.status) }}>
                     {stateLabel(p.status)}
                   </span>
@@ -182,12 +180,12 @@ export function ProjectManagement() {
                     </>
                   )}
                 </td>
-                <td>
+                <td data-label={STRINGS.ui.dates}>
                   {p.plannedStart
                     ? `${new Date(p.plannedStart).toLocaleDateString('de-DE')}${p.plannedEnd ? ' – ' + new Date(p.plannedEnd).toLocaleDateString('de-DE') : ''}`
                     : STRINGS.projects.noDate}
                 </td>
-                <td>
+                <td data-label={STRINGS.ui.value}>
                   {p.estimatedValue != null
                     ? p.estimatedValue.toLocaleString('de-DE', {
                         style: 'currency',
@@ -228,14 +226,6 @@ export function ProjectManagement() {
       )}
 
       {formOpen && <ProjectCreateForm onClose={() => setFormOpen(false)} />}
-
-      {editProject && !formOpen && (
-        <ProjectEditForm
-          project={editProject}
-          canUpdate={canUpdate}
-          onClose={() => setEditProject(null)}
-        />
-      )}
     </div>
   );
 }

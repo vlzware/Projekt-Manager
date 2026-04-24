@@ -99,6 +99,15 @@ export function customerScopeForCaller(user: AuthUser): SQL | null {
   )`;
 }
 
+export function attachmentScopeForCaller(user: AuthUser): SQL | null {
+  if (isUnscoped(user)) return null;
+  return sql`EXISTS (
+    SELECT 1 FROM project_workers pw
+    WHERE pw.project_id = attachments.project_id
+      AND pw.user_id = ${user.id}
+  )`;
+}
+
 /**
  * Three-valued get-by-id result.
  *
@@ -166,4 +175,58 @@ export async function isCustomerInScope(
         LIMIT 1`,
   );
   return result.rows.length > 0;
+}
+
+// ---------------------------------------------------------------------
+// Audit-log scope predicate — destructive-action visibility (ADR-0019)
+// ---------------------------------------------------------------------
+//
+// The audit surface carries ONE scope predicate:
+//
+//   auditDestructiveScopeForCaller(user)
+//     Owner sees every audit entry. Office (the only other role that
+//     holds `audit:read` under the current matrix) does NOT see
+//     purges / user-deletes / user-role-mutations — those are owner-
+//     only per AC-182 / AC-187.
+//
+// The reachability predicate that used to carve out worker-visible
+// rows was removed when workers lost `audit:read`. Audit is an
+// administrative surface now; office + owner hold access, both
+// unscoped for reachability.
+//
+// The fragment AND-composes with `audit:read` — permissions stay
+// coarse; destructive visibility is orthogonal to capability
+// (ADR-0019 §Decision).
+
+/**
+ * Scope fragment for audit reads — destructive-action half.
+ *
+ * Owner → null (no destructive filter; owner sees every row).
+ * Every other role that somehow reaches this function (office under
+ * the current matrix) → SQL fragment EXCLUDING:
+ *   - `action = 'purge'` (any entity_type), AND
+ *   - `action = 'delete'` on `entity_type = 'user'`, AND
+ *   - `action = 'update'` on `entity_type = 'user'` where the payload diff
+ *     touches `roles`.
+ *
+ * The `?` operator is Postgres's jsonb key-existence test; it returns true
+ * when the key is present regardless of its value (including null).
+ *
+ * The predicate keys off the action + entity_type + payload shape, not on
+ * permissions — "destructive visibility" is orthogonal to `audit:read`
+ * (ADR-0019 reaffirmed in api.md §14.3 design notes).
+ */
+export function auditDestructiveScopeForCaller(user: AuthUser): SQL | null {
+  // Owner is the sole role that bypasses the destructive filter. Every
+  // other role — including unscoped office and bookkeeper — sees the
+  // destructive narrowing. We check role membership directly rather than
+  // reusing `isUnscoped()` because destructive-visibility is a role-axis
+  // concern, not a reachability one.
+  if (user.roles.some((role) => role === 'owner')) return null;
+  return sql`NOT (
+    audit_log.action = 'purge'
+    OR (audit_log.action = 'delete' AND audit_log.entity_type = 'user')
+    OR (audit_log.action = 'update' AND audit_log.entity_type = 'user'
+        AND (audit_log.payload->'before' ? 'roles' OR audit_log.payload->'after' ? 'roles'))
+  )`;
 }

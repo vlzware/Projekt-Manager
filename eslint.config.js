@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
 import reactRefresh from 'eslint-plugin-react-refresh';
+import globals from 'globals';
 
 // Layer boundary enforcement for the seven-layer architecture defined in
 // docs/spec/architecture.md §11.2. Each rule below reflects one dependency
@@ -37,7 +38,7 @@ const CONFIG_BANNED = [
 ];
 
 export default tseslint.config(
-  { ignores: ['dist/', '.claude/', 'node_modules/'] },
+  { ignores: ['dist/', '.claude/', 'node_modules/', 'coverage/'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -169,6 +170,48 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
       'no-restricted-imports': 'off',
+      // Mock signatures mirror real API params for readability; `_`-prefix
+      // marks them as intentionally unused. Matches the src/** convention
+      // (line 52-59) so the whole repo shares one rule.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        },
+      ],
+    },
+  },
+  // Node-runtime `.mjs` scripts (e2e/ bootstrappers, scripts/ tooling).
+  // These run under plain `node`, not tsx — no @types/node ambient
+  // globals, so ESLint needs the node globals list to resolve
+  // process/console/URL.
+  {
+    files: ['**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+    rules: {
+      'no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          destructuredArrayIgnorePattern: '^_',
+        },
+      ],
+    },
+  },
+  // Browser-runtime plain JS served from `public/`: service worker
+  // (sw.js) and the pre-paint theme restoration (theme-init.js). Kept
+  // out of the TypeScript build to dodge bundler transforms that would
+  // break CSP or the SW scope. Needs browser + serviceworker globals
+  // because one file uses window/document and the other uses self/clients.
+  {
+    files: ['public/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.serviceworker },
     },
   },
 );

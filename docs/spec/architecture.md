@@ -15,17 +15,17 @@
 
 ### 11.2 Responsibility Boundaries
 
-The system is organized into seven responsibility layers. The split between **Routes**, **Services**, and **Storage** on the server side is load-bearing — routes never reach into the database directly; they delegate to services, which orchestrate repositories and emit domain events.
+The system is organized into seven responsibility layers. The split between **Routes**, **Services**, and **Storage** on the server side is load-bearing — routes never reach into the database directly; they delegate to services, which orchestrate repositories and route every domain-entity mutation through the single-write-path helper (see [§11.3](#113-state-layer-behavioral-contract)).
 
-| Layer        | Responsibility                                                                                                                                                                                                                                                                                                                                                    |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Config**   | State definitions, thresholds, colors, company assumptions, role definitions, German strings, validated env. Imported by other layers, imports nothing application-internal.                                                                                                                                                                                      |
-| **Domain**   | Pure functions: transition rules, aging calculation, date/session validation, summary computation, types. Never imports from state, API, routes, services, storage, or UI.                                                                                                                                                                                        |
-| **Storage**  | Encapsulates all database and object storage operations. Repository modules expose typed query/mutation functions; the object storage client wraps the underlying object-storage SDK. Imported primarily by the Services layer. Exception: authentication middleware reads the session repository directly — architecturally this is part of the route auth hook. |
-| **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, domain event emission. Imports from domain, storage, config. Never imports from routes or middleware.                                                                                                             |
-| **Routes**   | Thin HTTP adapters: request schema validation, cookie handling, authentication and authorization pre-handlers, response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                             |
-| **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports.                                                                                                                                                                                                                      |
-| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared hooks are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                                        |
+| Layer        | Responsibility                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Config**   | State definitions, thresholds, colors, company assumptions, role definitions, German strings, validated env. Imported by other layers, imports nothing application-internal.                                                                                                                                                                                                                  |
+| **Domain**   | Pure functions: transition rules, aging calculation, date/session validation, summary computation, types. Never imports from state, API, routes, services, storage, or UI.                                                                                                                                                                                                                    |
+| **Storage**  | Encapsulates all database and object storage operations. Repository modules expose typed query/mutation functions; the object storage client wraps the underlying object-storage SDK. Imported primarily by the Services layer. Exception: authentication middleware reads the session repository directly — architecturally this is part of the route auth hook.                             |
+| **Services** | Server-side business logic. Sits between routes and storage: input validation beyond schema, domain-rule enforcement, multi-step orchestration, single-write-path mutation via the helper that commits domain-state change and `audit_log` row atomically (see [§11.3](#113-state-layer-behavioral-contract)). Imports from domain, storage, config. Never imports from routes or middleware. |
+| **Routes**   | Thin HTTP adapters: request schema validation, cookie handling, authentication and authorization pre-handlers, response formatting. Delegates all business logic to services. Imports from services, middleware, errors, config. Never imports repositories directly.                                                                                                                         |
+| **State**    | Client-side: fetches from and dispatches mutations to the API. Exposes queries for the UI. No direct storage access; no server-side imports.                                                                                                                                                                                                                                                  |
+| **UI**       | Presentation only. May import from domain for types. Dispatches actions to the state layer. Never calls the API client directly — only via state. Shared hooks are part of this layer; they wrap store and router primitives so components stay thin. Hooks follow the same import rules as UI components.                                                                                    |
 
 **Dependency direction** (no reverse imports):
 
@@ -75,24 +75,7 @@ The state layer is a client-side cache delegating to the API.
 - Summary: count of projects per action state, count of aged buffer items per state with threshold, count of projects without planned dates
 - Current authenticated user and permissions
 
-**Server-side event bus.** Events are emitted by the service layer so that subscribers (audit logger, notification sender, analytics) can attach without modifying the originating logic.
-
-| Event                   | Emitted when                                        |
-| ----------------------- | --------------------------------------------------- |
-| `project.created`       | A project is created (single or bulk)               |
-| `project.updated`       | A project's fields are updated                      |
-| `project.transitioned`  | A project changes workflow state                    |
-| `project.dates_changed` | A project's planned dates are modified              |
-| `project.deleted`       | A project is soft-deleted                           |
-| `customer.created`      | A customer is created (single or bulk)              |
-| `customer.updated`      | A customer's fields are updated                     |
-| `user.created`          | A user account is created                           |
-| `user.updated`          | A user account is updated (profile or role changes) |
-| `user.deactivated`      | A user account is deactivated                       |
-| `user.reactivated`      | A user account is reactivated                       |
-| `user.password_changed` | A user's password is changed (self or admin reset)  |
-
-Events carry the entity ID, the acting user ID, and a timestamp at minimum. Payload shape is an implementation decision.
+**Server-side mutation path.** Every domain-entity mutation routes through a single service-layer helper that commits the state change and an `audit_log` row in one database transaction ([data-model.md §5.10](data-model.md#510-audit-log-entity), [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md)). Subscribers — the notification publisher and any future projection — dispatch from the committed audit stream after the transaction commits, so subscriber failure cannot roll back domain state. Bypass is prevented at PR time by a CI-enforced architecture check ([AC-179](verification.md#1523-audit-log)) that rejects raw inserts, updates, or deletes on audited tables outside the helper. Allowlisted paths: migrations, the unified restore path ([api.md §14.2.4](api.md#1424-unified-data-exchange)), business-data seed loaders, and the retention cleanup ([data-model.md §6.10](data-model.md#610-audit-log-retention)). Each allowlist line is a reviewed PR.
 
 ### 11.4 Object Storage Module
 
@@ -109,17 +92,17 @@ Capabilities at minimum:
 
 Structural requirements for the system's documented extension paths. Each row states a contract the codebase must uphold and the failure mode that would close the door.
 
-| Door                                             | Contract                                                                                                          | Closed if...                                                                                                 |
-| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Adding/removing workflow states                  | States driven by a configuration array, not hardcoded logic                                                       | Column count or state names are hardcoded in components                                                      |
-| Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently                                                                | Kanban and Calendar are coupled to each other                                                                |
-| Adding fields to Project                         | Interface with optional fields; UI tolerates missing data                                                         | Components crash on undefined fields                                                                         |
-| Adding file uploads / attachments                | Object storage module exists at the infrastructure layer (§11.4); Project model accepts optional attachments      | Data layer assumes all project data fits in a single flat object                                             |
-| Adding authentication / roles                    | Authentication and a role-based permission matrix sit behind the API; identity never baked into components        | User identity baked into component logic                                                                     |
-| Adding notifications                             | Server-side event bus (§11.3) provides hooks for all CRUD operations so subscribers attach without touching flows | Transitions are handled inline in UI event handlers                                                          |
-| Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                    | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers)                |
-| Multi-language                                   | All user-facing strings are centralized in configuration; no inline literals in components                        | Inline literals in components; string configuration bypassed                                                 |
-| Adding management views for new entities         | Management views follow a uniform pattern (searchable table + CRUD forms) and consume the shared state layer      | Entity-specific CRUD logic is wired directly into view components instead of through the state layer and API |
+| Door                                             | Contract                                                                                                                                                                                                                                                                                                                                  | Closed if...                                                                                                          |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Adding/removing workflow states                  | States driven by a configuration array, not hardcoded logic                                                                                                                                                                                                                                                                               | Column count or state names are hardcoded in components                                                               |
+| Adding new views (worker, bookkeeper, dashboard) | Views consume the shared state layer independently                                                                                                                                                                                                                                                                                        | Kanban and Calendar are coupled to each other                                                                         |
+| Adding fields to Project                         | Interface with optional fields; UI tolerates missing data                                                                                                                                                                                                                                                                                 | Components crash on undefined fields                                                                                  |
+| Adding file uploads / attachments                | Object storage module exists at the infrastructure layer (§11.4); Project model accepts optional attachments                                                                                                                                                                                                                              | Data layer assumes all project data fits in a single flat object                                                      |
+| Adding authentication / roles                    | Authentication and a role-based permission matrix sit behind the API; identity never baked into components                                                                                                                                                                                                                                | User identity baked into component logic                                                                              |
+| Adding notifications                             | Post-commit subscribers attach via the single-write-path helper (§11.3); non-mutation events (`backup.failed`, `disk.threshold_reached`) publish to the same bus bypassing audit; rule-matching is data-driven over a closed, code-defined catalog (§11.11, [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md)) | Transitions handled inline in UI event handlers; event classes embedded in handler logic instead of a central catalog |
+| Adding a second authentication method            | Auth logic is behind the API; session model is method-agnostic                                                                                                                                                                                                                                                                            | Auth checks are tied to a specific mechanism (e.g., password hashing logic in route handlers)                         |
+| Multi-language                                   | All user-facing strings are centralized in configuration; no inline literals in components                                                                                                                                                                                                                                                | Inline literals in components; string configuration bypassed                                                          |
+| Adding management views for new entities         | Management views follow a uniform pattern (searchable table + CRUD forms) and consume the shared state layer                                                                                                                                                                                                                              | Entity-specific CRUD logic is wired directly into view components instead of through the state layer and API          |
 
 ### 11.6 Deployment Topology
 
@@ -175,7 +158,7 @@ The Layer 2 implementation of [§11.9](#119-data-persistence-and-recovery) is a 
 
 - The `backup` compose service is scheduled by in-container cron; the compose file is the source of truth ([ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)). The backup interval is configurable **[C]**.
 - Each run produces the backup artifact (a full-state database dump, encrypted) and its manifest sidecar (per-table row count and deterministic content checksum, encrypted). The manifest checksum is computed as specified in [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
-- Retention is linear: a 14-day bucket lock plus a 30-day lifecycle rule produce a 14–30 day rolling window of encrypted history — immutable for the first 14 days, deletable for the next 16. No in-container rotation, no weekly/monthly promotion, no object versioning. Scope rationale: [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
+- Retention is linear (provider-enforced bucket lock + lifecycle rule, canonical values at [ADR-0020 §Retention](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention)). No in-container rotation, no weekly/monthly promotion, no object versioning. Scope rationale in the same section.
 
 **Encryption surface.**
 
@@ -189,10 +172,39 @@ The Layer 2 implementation of [§11.9](#119-data-persistence-and-recovery) is a 
 
 **Status surface (dual-write).**
 
-- Primary: the `meta_backup_status` row ([data-model.md §5.9](data-model.md#59-backup-status-entity)), read by the backend on the authenticated admin landing view and on the login screen.
-- Mirror: an unencrypted status mirror object in the off-site object store carrying the same fields, readable without the application. This exists so backup health is inspectable during a database outage.
-- On the authenticated admin landing view, the badge is visible only to callers with role `owner`. On the login screen, the badge is visible to anyone who reaches the screen — network reach is VPN-gated per [ADR-0008](../adr/0008-vpn-first-network-access.md), which is the threat-model anchor. Amber and red thresholds are configurable **[C]** (see [§12.2](#122-company-configurable-settings)).
+- Primary: the `meta_backup_status` row ([data-model.md §5.9](data-model.md#59-backup-status-entity)), read by the backend on the authenticated admin landing view.
+- Mirror: an unencrypted status mirror object in the off-site object store carrying the same fields, readable without the application. This exists so backup health is inspectable during a database outage (operator inspects directly; no application surface required).
+- On the authenticated admin landing view, the badge is visible only to callers with role `owner`. The badge surface scales by severity — green is a bare dot with a tooltip; amber, red, and unknown render the full pill with label. Amber and red thresholds are configurable **[C]** (see [§12.2](#122-company-configurable-settings)).
 - When the status source is unreachable, the rendering surface MUST display a neutral "status unknown" state — silent absence is a misleading-state defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)).
+
+### 11.11 Notification Publisher and Dispatch
+
+Process-local projection over two feeds: the post-commit `audit_log` stream (mutation events) and the in-process domain-event bus (non-mutation system events — `backup.failed`, `disk.threshold_reached`). Rationale: [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md) (publisher-over-audit), [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md) (catalog and rule shape).
+
+**Event classification.** The publisher maps audit rows to `NotificationEventClass` ([data-model.md §5.11](data-model.md#511-notification-rule)) via `(entityType, action)` — and `after.status` for transitions. Rows outside the catalog are ignored; this is where the closed catalog is enforced at runtime alongside admin-write validation. Bus events carry their `NotificationEventClass` directly.
+
+**Rule resolution.** For each classified event, the publisher reads enabled rules for the matching `eventClass`, filters by `stateFilter`, and unions recipients across each matching rule's three additive `recipientSpec` parts, deduplicated by `UserAccount.id`. Missing or `active = false` users are dropped; zero live recipients is a no-op.
+
+**Channel selection.** The activity feed always receives the event (`audit_log` for mutations; bus events write a companion feed row so the Aktivität view stays uniform). Push is attempted for each resolved recipient whose `UserAccount.pushMuted` is `false`. Permanent-error responses remove the corresponding subscription ([data-model.md §5.12](data-model.md#512-push-subscription)).
+
+**Failure isolation.** Handlers run post-commit; a throwing handler does not roll back the mutation ([AC-183](verification.md#1523-audit-log)). Per-recipient push failures do not block remaining recipients.
+
+**Push transport.** The real dispatcher wraps the `web-push` npm package and is selected at app composition when VAPID credentials are configured; otherwise a no-op dispatcher is installed with a startup warning. The VAPID public key is derived from the private half at startup and served to the client via an unauthenticated endpoint ([api.md §14.2.10](api.md#14210-push-subscription)); the private key never leaves the server.
+
+### 11.12 Audit Ancestor Link
+
+Each `audit_log` row carries an optional `(ancestorEntityType, ancestorEntityId)` pair alongside its own `(entityType, entityId)`. The pair exists so a per-parent activity feed (project detail) can pull every row scoped to that parent in one indexed predicate — without JSON-path probes or bespoke `projectScope` carve-outs. Both columns are populated atomically with the audit row by the `mutate()` helper; the DB CHECK `audit_log_ancestor_pair` enforces both-or-neither.
+
+**Write-time convention.**
+
+- `entityType = 'project'` rows self-ancestor: `ancestor = ('project', entityId)`.
+- Nested entities (`entityType = 'project_worker'`, `entityType = 'attachment'`) set `ancestor = ('project', projectId)` — the id of the owning project is already in scope at every service call site.
+- Top-level entities (`entityType = 'customer'`, `entityType = 'user'`) leave the ancestor pair NULL.
+- New nested entity types extend the convention by setting their parent ancestor at the service layer; no schema change is required.
+
+**Read path.** The compound index `audit_log_ancestor_idx` on `(ancestor_entity_type, ancestor_entity_id, created_at DESC, id DESC)` serves the project-detail query shape — filter by ancestor pair, order by `createdAt DESC, id DESC` (the list endpoint's tiebreaker from [api.md §14.2.8](api.md#1428-audit-log)). The index key mirrors the ORDER BY so a page is served entirely from the index.
+
+**CHECK closure.** `audit_log_ancestor_type_valid` pins `ancestorEntityType` to the same closed `AuditEntityType` set as `entityType`, keeping the two columns in lock-step when a new entity type lands.
 
 ---
 
@@ -225,6 +237,19 @@ The following values are centralized as single-source constants and may vary per
 - Restore confirmation phrase — typed by the caller to confirm an override-restore into a non-empty database (see [api.md §14.2.4](api.md#1424-unified-data-exchange))
 - Layer 2 backup interval — cadence of the `backup` compose service ([§11.10](#1110-full-state-backup-layer-2))
 - Layer 2 freshness thresholds — age of `lastBackupAt` and `lastDrillAt` at which the owner-facing badge switches to amber and to red ([§11.10](#1110-full-state-backup-layer-2))
+- Audit log retention window — rolling age at which `audit_log` entries are removed by the scheduled cleanup (default 90 days; see [data-model.md §6.10](data-model.md#610-audit-log-retention))
+- Audit activity-feed rendering — mapping from audit entry (`action`, `payload`) ([data-model.md §5.10](data-model.md#510-audit-log-entity)) to the German display string in the activity feed ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed)) and global Aktivität view ([ui/management.md §8.13](ui/management.md#813-audit-view)). Covers each [`NotificationEventClass`](data-model.md#511-notification-rule) — every catalog event has an `(action, payload)` projection.
+- List page size — default row count for paginated list endpoints (projects, customers, users, audit) and their management views
+- Rate limit buckets — per-session mutation bucket ceiling for push-subscription mutations (`POST`, `DELETE`); exceeding returns `429 RATE_LIMITED` ([api.md §14.2.10](api.md#14210-push-subscription))
+- Attachment per-file size cap — maximum `sizeBytes` of a single attachment original (default 1 MB); enforced by the presigned policy's `content-length-range` and re-verified at complete ([data-model.md §5.13](data-model.md#513-attachment), [api.md §14.2.11](api.md#14211-attachments))
+- Attachment bulk-download caps — maximum attachment count and summed byte size per zip stream (default 20 files AND 20 MB); breach rejected with `BULK_LIMIT_EXCEEDED` ([api.md §14.2.11](api.md#14211-attachments), [verification.md AC-216](verification.md#1526-attachments))
+- Attachment orphan-reaper TTL — age of a `status = 'pending'` attachment row past which the scheduled reaper removes the row and its backing objects (default 15 minutes; [data-model.md §6.11](data-model.md#611-attachment-orphan-reaper))
+- Bulk-download zip TTL — age of a `bulk-downloads/<uuid>.zip` object past which the scheduled sweep removes it from object storage (default 15 minutes; [data-model.md §6.12](data-model.md#612-bulk-download-zip-reaper))
+- Attachment presigned-URL expiry — lifetime of upload (presigned-POST) and download (presigned-GET) URLs issued by the attachment surface (default 5 minutes; [api.md §14.2.11](api.md#14211-attachments))
+- Attachment worker self-delete grace — elapsed window since upload during which a worker may delete their own attachment (default 15 minutes; outside the window worker delete is rejected with `403 NOT_PERMITTED`; [verification.md AC-215](verification.md#1526-attachments))
+- Attachment label catalog — the closed enum `AttachmentLabel` ([data-model.md §5.13](data-model.md#513-attachment)) paired with its German display strings: `angebot` → `Angebot`, `auftragsbestaetigung` → `Auftragsbestätigung`, `rechnung` → `Rechnung`, `aufmass` → `Aufmaß`, `foto` → `Foto`, `sonstiges` → `Sonstiges`. Adding a label is a code change plus a migration (parity with the notification-event catalog).
+- Attachment upload CTA labels — German copy for the upload affordance on the project detail page ([ui/project-detail.md §8.15.4](ui/project-detail.md#8154-photo-gallery), [§8.15.5](ui/project-detail.md#8155-binary-list)): the camera-capture CTA (`Foto aufnehmen`), the drop-zone text, the explicit-browse labels, and the retry / dismiss actions. Kept alongside the other `German UI and error strings` — listed here because the CTAs are referenced by capability statements elsewhere in the spec.
+- Attachment client-encoding parameters — image-longest-edge, image-quality, thumbnail-longest-edge, thumbnail-quality; applied by the browser pipeline before upload ([ui/project-detail.md §8.15.4](ui/project-detail.md#8154-photo-gallery))
 
 ### 12.3 Configuration Requirements
 
@@ -236,6 +261,7 @@ The following values are centralized as single-source constants and may vary per
 Values controlled per user, independent of the deployment-level configuration in §12.2. Stored on the user record and updated via the self-update API operation.
 
 - Theme preference — `'light' | 'dark' | 'system'`, default `'system'` (see [data-model.md §5.7](data-model.md#57-user-theme-preference))
+- Push-mute toggle — boolean, default `false`. When `true`, suppresses push delivery to every subscription owned by the user; activity-feed inclusion is unaffected (see [data-model.md §5.3](data-model.md#53-user-entity), [§5.12](data-model.md#512-push-subscription)).
 
 ### 12.5 Theming Model
 
@@ -329,6 +355,7 @@ Every new API endpoint must satisfy:
 2. **Authorization**: role-based permission check on every protected route.
 3. **Input validation**: request schema validation on request body and params (see [api.md section 14.2](api.md#142-operations)). For endpoints accepting composite payloads (e.g., the unified import envelope), per-row semantic validation may live in the service layer per §11.2.
 4. **Error handling**: use application error types, no stack traces or DB field names leaked.
-5. **Rate limiting**: configured on authentication endpoints (login, password change). Mutation endpoints are not rate-limited — at current scale with VPN-only access ([ADR-0008](../adr/0008-vpn-first-network-access.md)), this is a known, accepted limitation.
+5. **Rate limiting**: configured on authentication endpoints (login, password change) and push-subscription mutations (see [api.md §14.2.10](api.md#14210-push-subscription) and §12.2 Rate limit buckets **[C]**). Other mutation endpoints are not rate-limited — at current scale with VPN-only access ([ADR-0008](../adr/0008-vpn-first-network-access.md)), this is a known, accepted limitation.
 6. **CSRF protection**: mechanism defined in [ADR-0005](../adr/0005-session-management-httponly-cookies.md).
 7. **Password handling**: never log or store plaintext (see [ADR-0006](../adr/0006-password-policy-nist-blocklist.md)).
+8. **Ownership derivation on self-scoped surfaces**: on caller-owned resources (e.g., push subscriptions — [api.md §14.2.10](api.md#14210-push-subscription)), the server derives the owning user id from the session; a client-supplied owner id is ignored.

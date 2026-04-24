@@ -15,14 +15,28 @@ const { Pool } = pg;
 export type Database = ReturnType<typeof drizzle<typeof schema>>;
 
 /**
- * A `Database` or a transaction handle. Repository functions that are
- * called from both top-level code and inside `db.transaction(tx => ...)`
- * accept this so the type system tracks the caller's context without
- * services having to cast.
+ * A transaction handle — the argument Drizzle passes to a
+ * `db.transaction(tx => ...)` callback.
  */
-export type TransactionalDatabase =
-  | Database
-  | Parameters<Parameters<Database['transaction']>[0]>[0];
+export type TxHandle = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+/**
+ * A `Database` or a transaction handle. Repository READ functions accept
+ * this — they are callable from top-level code (with `db`) and from
+ * inside a transaction (with `tx`).
+ */
+export type TransactionalDatabase = Database | TxHandle;
+
+/**
+ * Transaction handle ONLY — **not** a plain `Database`. Repository WRITE
+ * functions on audited tables accept this so the type system enforces
+ * AC-179: a mutation can only be authored from inside a transaction,
+ * i.e. from inside `mutate()` / `mutateInTx()` (ADR-0021). Attempting to
+ * call a write with a plain `Database` fails `tsc` — the bypass the
+ * static arch check can't reliably detect (the scan can't distinguish
+ * `db.insert(...)` from `tx.insert(...)`).
+ */
+export type MutatingDatabase = TxHandle;
 
 export interface ConnectionOptions {
   connectionString?: string;

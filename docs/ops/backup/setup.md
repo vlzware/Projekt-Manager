@@ -34,26 +34,34 @@ Runtime versions are not pinned here — [CONTRIBUTING.md § Runtime Requirement
 
 ### 1.2 Configure retention (bucket lock)
 
-R2 does not offer native object versioning or S3 Object Lock Compliance Mode. A bucket lock rule over timestamped filenames gives us the practical immutability window ([ADR-0020 §Alternatives](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#alternatives-considered)).
+R2 does not offer native object versioning or S3 Object Lock Compliance Mode. A bucket lock rule over timestamped filenames gives us the practical immutability window ([ADR-0020 §Alternatives](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#alternatives-considered)). Scope the rule to the `daily/` prefix — the `status/latest.json` mirror is overwritten every cycle and must stay outside the lock, or the badge freezes at its day-1 value.
+
+Let **D** be the immutable-window value from [ADR-0020 §Retention](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention).
 
 1. Open the bucket → **Settings** → **Object lock rules** → **Add rule**.
-2. Mode: **Compliance**. Retention: **14 days**. Prefix scope: all objects (leave empty).
+2. Mode: **Compliance**. Retention: D days. **Prefix: `daily/`** (not empty).
 3. **Save**.
 
 ### 1.3 Configure deletion (lifecycle rule)
 
+Lifecycle applies bucket-wide. The `status/latest.json` mirror is idempotent under delete — the next backup cycle rewrites it — so no narrower scope is needed.
+
+Let **N** be the total-retention value from [ADR-0020 §Retention](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention).
+
 1. Bucket → **Settings** → **Lifecycle rules** → **Add rule**.
-2. Name: `delete-after-30-days`. Prefix scope: all objects. Action: **Delete objects** 30 days after upload.
+2. Name: `delete-after-N-days` (substitute the actual N). Prefix scope: all objects. Action: **Delete objects** N days after upload.
 3. **Save**.
 
-Effective behaviour: every uploaded object is immutable for its first 14 days and is deleted on day 30. Retention is linear — there are no weekly or monthly prefixes and no promotion logic. See [ADR-0020 §Decision](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision) for the rationale.
+Effective behaviour: `daily/*` objects are immutable for the immutability window and are eventually deleted by the lifecycle rule; the `status/latest.json` mirror is overwritten every cycle and harmlessly re-created on the first run after any lifecycle delete. Retention is linear — no weekly or monthly prefixes, no promotion logic. Canonical values and rationale: [ADR-0020 §Retention](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention).
 
 ### 1.4 Create the API token
 
-1. R2 landing page → **Manage R2 API Tokens** → **Create API token**.
+Must be created through the R2 dashboard — not Profile → API Tokens. Only the R2-dashboard flow emits S3-compatible Access Key ID + Secret Access Key; a general-purpose account token with R2 permissions added does not, and pasting anything else into `R2_SECRET_ACCESS_KEY` produces a `SignatureDoesNotMatch` at the next backup. Keep this token R2-only — do not co-locate zone/DNS permissions on it; those belong on `CLOUDFLARE_API_TOKEN` per [dns-setup.md](../dns-setup.md).
+
+1. Cloudflare dashboard → **R2 Object Storage** → **{ } API** (top-right) → **Manage API tokens** → **Create Account API token**.
 2. Permissions: **Object Read & Write**.
 3. Specify bucket: **Apply to specific buckets only** → select `projekt-manager-backups`. No token TTL.
-4. **Create API Token**. Capture immediately (these values appear once):
+4. **Create Account API Token**. Capture immediately (these values appear once):
    - Access Key ID
    - Secret Access Key
    - Endpoint URL (form: `https://<accountid>.r2.cloudflarestorage.com`)
@@ -88,9 +96,10 @@ The VPS needs the new keys in `secrets.env.age`. This reuses the rotation flow i
 
 You are about to replace the live backup credentials; this is reversible **only** if the previous `secrets.env.age` is still on hand. A fat-fingered edit with no prior copy overwrites the live file and leaves the VPS non-bootable.
 
-1. On the operator workstation, pull the current VPS copy as a typo-recovery snapshot; keep it until step 6 in §4 succeeds. Then open the SSH session used for the upload:
+1. On the operator workstation, pull the current VPS copy as a typo-recovery snapshot; keep it until step 6 in §4 succeeds. Then SSH to the VPS as the admin user — keep that session open; subsequent VPS-side commands run in it.
 
    ```bash
+   # workstation
    scp <admin-username>@<vps-hostname>:/opt/projekt-manager/secrets.env.age ./secrets.env.age.bak
    ssh <admin-username>@<vps-hostname>
    ```
@@ -120,20 +129,21 @@ You are about to replace the live backup credentials; this is reversible **only*
    shred -u /tmp/secrets.env
    ```
 
-4. Upload and move into place:
+4. Upload and move into place. `scp` runs on the workstation; the `sudo mv`/`chown`/`chmod` run on the VPS in the ssh session opened in step 1:
 
    ```bash
+   # workstation
    scp secrets.env.age <admin-username>@<vps-hostname>:/tmp/secrets.env.age
-   ssh <admin-username>@<vps-hostname> "\
-     sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age && \
-     sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age && \
-     sudo chmod 0600 /opt/projekt-manager/secrets.env.age"
+   # VPS
+   sudo mv /tmp/secrets.env.age /opt/projekt-manager/secrets.env.age
+   sudo chown deploy:deploy /opt/projekt-manager/secrets.env.age
+   sudo chmod 0600 /opt/projekt-manager/secrets.env.age
    ```
 
-5. Verify the new values round-trip (`age -d` prompts once for the same passphrase):
+5. On the VPS: verify the new values round-trip (`age -d` prompts once for the same passphrase).
 
    ```bash
-   ssh <admin-username>@<vps-hostname> "sudo -u deploy age -d /opt/projekt-manager/secrets.env.age | grep -E '^(R2_|AGE_RECIPIENT)'"
+   sudo -u deploy age -d /opt/projekt-manager/secrets.env.age | grep -E '^(R2_|AGE_RECIPIENT)'
    ```
 
    You should see the Layer 2 lines exactly as sent. If any value is missing or mangled, restore the pre-change snapshot (re-run the step-4 `scp` + `mv/chown/chmod` with `./secrets.env.age.bak` as the source) and repeat from step 2. Do not iterate against a broken file.
@@ -146,18 +156,20 @@ Pick up the new env values. This is a normal deploy; the backup service reads th
 
 You are about to cycle the running stack; the running app/db/storage containers survive the pull, the `backup` container is recreated.
 
+On the VPS (continuing in the ssh session from §3):
+
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy /opt/projekt-manager/scripts/deploy.sh"
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 ```
 
 `scripts/deploy.sh` decrypts `secrets.env.age`, exports all keys into the compose env, pulls the pinned image, `docker compose up -d` (which includes the `backup` service), and polls `/api/health` ([manual-deploy.md](../manual-deploy.md)).
 
-> Any manual `docker compose` invocation outside `scripts/deploy.sh` must set `APP_IMAGE_TAG=<sha-or-tag>` — `app` and `backup` are both gated by `${APP_IMAGE_TAG:?...}` and refuse to start otherwise. `scripts/deploy.sh` already exports it.
+> Compose operations outside `scripts/deploy.sh` need both `APP_IMAGE_TAG` and the secrets from `secrets.env.age` in shell env — `app` and `backup` are gated by `${APP_IMAGE_TAG:?...}`, and every `${POSTGRES_PASSWORD}` / `${CLOUDFLARE_API_TOKEN}` / `${MINIO_ROOT_PASSWORD}` reference is interpolated eagerly during parse. For the ops patterns in these runbooks, prefer `docker` directly (reads bypass compose parse entirely) or `scripts/deploy.sh` (sources secrets and pins SHA).
 
-After the deploy settles, verify the backup service is healthy. Every `docker compose` call that targets the `backup` service must carry `--profile backup`, because the service is profile-gated (`docker-compose.yml` services.backup.profiles). Without the flag, `run --rm backup` hard-fails and `ps`/`logs`/`stop`/`start` behave inconsistently across compose versions:
+After the deploy settles, verify the backup service is healthy. `docker logs` reads the container's log stream without touching compose, so it works from a bare sudo shell:
 
 ```bash
-ssh <admin-username>@<vps-hostname> "sudo -u deploy docker compose --profile backup -f /opt/projekt-manager/docker-compose.yml logs --tail=50 backup"
+sudo -u deploy docker logs projekt-manager-backup-1 --tail=50
 ```
 
 First-run expectations, in order (next scheduled tick — see [overview.md § Cadence](overview.md#cadence)):

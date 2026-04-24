@@ -13,6 +13,8 @@ import { createDatabase } from '../server/db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../server/seed.js';
 import { deactivateUser as deactivateUserRepo } from '../server/repositories/user.js';
+import { __resetForTests as resetAuditPublisher } from '../server/services/audit-publisher.js';
+import { __resetForTests as resetNotificationPublisher } from '../server/services/notification-publisher.js';
 import { randomBytes } from 'node:crypto';
 import type { Database } from '../server/db/connection.js';
 import { sessions, users } from '../server/db/schema.js';
@@ -64,12 +66,16 @@ export async function startApp(): Promise<FastifyInstance> {
  * Shut down the test application. Call in `afterAll`.
  *
  * Closing order matters: Fastify first (stops accepting requests and
- * waits for in-flight handlers to finish), then drain the pg pool.
+ * waits for in-flight handlers to finish), reset module-scoped state on
+ * the audit + notification publishers so the next `startApp()` wires
+ * onto a clean bus, then drain the pg pool.
  */
 export async function stopApp(): Promise<void> {
   if (app) {
     await app.close();
   }
+  resetNotificationPublisher();
+  resetAuditPublisher();
   if (pool) {
     await pool.end();
   }
@@ -192,7 +198,13 @@ export async function createExpiredSession(userId: string): Promise<string> {
  * updatedBy to be null for system/test-fixture actions (data-model.md §5.5).
  */
 export async function deactivateUser(userId: string): Promise<void> {
-  await deactivateUserRepo(db, userId, null);
+  // The repo write requires a tx handle (AC-179 type gate — see
+  // connection.ts MutatingDatabase). Test fixtures may bypass the
+  // service-layer `mutate()` wrapper but still must execute inside a
+  // transaction for type safety.
+  await db.transaction(async (tx) => {
+    await deactivateUserRepo(tx, userId, null);
+  });
 }
 
 /**

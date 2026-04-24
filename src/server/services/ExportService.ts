@@ -2,15 +2,16 @@
  * Unified business-data export. See ADR-0018 and data-model.md §5.8.
  */
 
-import { asc } from 'drizzle-orm';
+import { asc, eq } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
-import { customers, projects, projectWorkers } from '../db/schema.js';
+import { attachments, customers, projects, projectWorkers } from '../db/schema.js';
 import { SCHEMA_VERSION, type Envelope } from '../../domain/dataExchange.js';
 import { toCustomerResponse } from '../repositories/customer.js';
 import { isUnscoped } from '../repositories/scope.js';
 import type { AuthUser } from '../middleware/auth.js';
 import { formatDateOnly } from '../../domain/dateFormat.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
+import type { AttachmentKind, AttachmentLabel } from '../../domain/types.js';
 
 export class ExportService {
   constructor(private db: Database) {}
@@ -35,7 +36,7 @@ export class ExportService {
       );
     }
 
-    const { customerRows, projectRows, assignmentRows } = await this.db.transaction(
+    const { customerRows, projectRows, assignmentRows, attachmentRows } = await this.db.transaction(
       async (tx) => {
         // Sequential — drizzle runs each tx query on the same pg client, so
         // Promise.all here would trigger pg's "concurrent query" deprecation
@@ -46,7 +47,14 @@ export class ExportService {
           .select()
           .from(projectWorkers)
           .orderBy(asc(projectWorkers.projectId), asc(projectWorkers.userId));
-        return { customerRows, projectRows, assignmentRows };
+        // AC-220: only ready rows travel in the envelope. Pending rows
+        // represent uncommitted uploads and are excluded by design.
+        const attachmentRows = await tx
+          .select()
+          .from(attachments)
+          .where(eq(attachments.status, 'ready'))
+          .orderBy(asc(attachments.id));
+        return { customerRows, projectRows, assignmentRows, attachmentRows };
       },
       { isolationLevel: 'repeatable read', accessMode: 'read only' },
     );
@@ -75,6 +83,21 @@ export class ExportService {
       project_workers: assignmentRows.map((a) => ({
         projectId: a.projectId,
         userId: a.userId,
+      })),
+      attachments: attachmentRows.map((a) => ({
+        id: a.id,
+        projectId: a.projectId,
+        status: 'ready' as const,
+        kind: a.kind as AttachmentKind,
+        label: a.label as AttachmentLabel,
+        fileName: a.filename,
+        mimeType: a.mimeType,
+        sizeBytes: a.sizeBytes,
+        originalKey: a.originalKey,
+        thumbKey: a.thumbKey,
+        hasThumbnail: a.hasThumbnail,
+        createdAt: a.createdAt.toISOString(),
+        createdBy: a.createdBy,
       })),
     };
   }

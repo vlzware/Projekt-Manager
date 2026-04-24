@@ -89,6 +89,35 @@
   color: var(--color-text);
 }
 
+/* Inline aged-buffer warning shown in the column header when the
+   summary surfaced rows past the column's aging threshold. Replaces
+   the old per-state chip in the header; living in the column keeps the
+   warning at the unit of work the user has to act on. */
+.agedWarning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+  border: 1px solid var(--color-warning);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Collapsed-column variant: a small dot rather than a pill, since the
+   collapsed layout has no horizontal room for the text. The tooltip
+   carries the full message. */
+.collapsedAgedDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-warning);
+  cursor: help;
+}
+
 .cards {
   padding: 4px 6px;
   overflow-y: auto;

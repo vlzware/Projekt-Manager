@@ -1,5 +1,7 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import { STRINGS } from '../src/config/strings';
+import { STORAGE_STATES } from './storage-states';
+import { clickView, expectViewReachable } from './nav-helpers';
 
 /**
  * Permission-based UI visibility (AC-121 [crit]) + per-role nav matrix
@@ -11,10 +13,10 @@ import { STRINGS } from '../src/config/strings';
  * authoritative, but rendering an affordance that always 403s is
  * misleading state (ADR-0014 Tier-1).
  *
- * Each role logs in fresh (storageState override) so the suite exercises
- * each role's derived `usePermission(...)` result in a real render,
- * not against a mock. Login round-trips stay well within the dev server
- * rate-limit (LOGIN_RATE_LIMIT_MAX=30 — see playwright.config.ts).
+ * Each role consumes a pre-authenticated storage state saved by
+ * `e2e/auth.setup.ts` — no per-test login, so the suite does not burn
+ * through the dev-mode login rate limit (30/min per IP,
+ * `src/server/config/index.ts`).
  *
  * Asserts with toHaveCount / toBeVisible / toHaveURL — NOT screenshots —
  * because AC-121 / AC-149 are critical-ish behavior, and the nav-matrix
@@ -45,6 +47,8 @@ interface RoleCase {
   canExportData: boolean;
   /** `data:restore` — gates the import form inside the Daten view. */
   canRestoreData: boolean;
+  /** `notifications:manage` — gates Benachrichtigungen tab visibility (AC-198). */
+  canManageNotifications: boolean;
 }
 
 /**
@@ -70,6 +74,7 @@ const roleCases: Record<Role, RoleCase> = {
     canDeleteCustomer: true,
     canExportData: true,
     canRestoreData: true,
+    canManageNotifications: true,
   },
   office: {
     username: 'buero',
@@ -93,6 +98,7 @@ const roleCases: Record<Role, RoleCase> = {
     canDeleteCustomer: false,
     canExportData: true,
     canRestoreData: false,
+    canManageNotifications: false,
   },
   worker: {
     username: 'arbeiter1',
@@ -111,6 +117,7 @@ const roleCases: Record<Role, RoleCase> = {
     canDeleteCustomer: false,
     canExportData: false,
     canRestoreData: false,
+    canManageNotifications: false,
   },
   bookkeeper: {
     username: 'buchhalter',
@@ -129,36 +136,31 @@ const roleCases: Record<Role, RoleCase> = {
     canDeleteCustomer: false,
     canExportData: false,
     canRestoreData: false,
+    canManageNotifications: false,
   },
 };
 
-async function loginAs(page: Page, username: string): Promise<void> {
-  await page.goto('/');
-  await page.getByTestId('login-username').fill(username);
-  await page.getByTestId('login-password').fill('changeme');
-  await page.getByTestId('login-submit').click();
-  // Wait for the authenticated layout — `header` mounts on every role's
-  // landing view. The previous wait on `kanban-board` hung for bookkeeper,
-  // whose landing is `/projects` per the central route table.
-  await page.getByTestId('header').waitFor();
-}
-
 test.describe('AC-121: permission-based UI visibility', () => {
-  // Each test logs in fresh — override the shared authenticated storage state.
-  test.use({ storageState: { cookies: [], origins: [] } });
-
   for (const [role, c] of Object.entries(roleCases) as [Role, RoleCase][]) {
-    test(`${role} — action controls match ROLE_PERMISSIONS`, async ({ page }) => {
-      await loginAs(page, c.username);
+    test.describe(role, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test('action controls match ROLE_PERMISSIONS', async ({ page }) => {
+        await page.goto('/');
 
       // -- Header navigation and extract button --------------------------
       // Nav visibility is driven by the central route table (§8.7.1).
-      await expect(page.getByTestId('view-toggle-kanban')).toHaveCount(c.canSeeKanban ? 1 : 0);
-      await expect(page.getByTestId('view-toggle-projekte')).toHaveCount(
-        c.canSeeManagement ? 1 : 0,
+      // `expectViewReachable` handles both inline and admin-menu renderings.
+      await expectViewReachable(page, 'kanban', c.canSeeKanban);
+      await expectViewReachable(page, 'projekte', c.canSeeManagement);
+      await expectViewReachable(page, 'kunden', c.canSeeManagement);
+      await expectViewReachable(page, 'benutzer', c.canReadUsers);
+      // AC-198 — Notification Rules view (Benachrichtigungen tab)
+      // gated on notifications:manage (owner only under default matrix).
+      await expectViewReachable(
+        page,
+        'benachrichtigungen',
+        c.canManageNotifications,
       );
-      await expect(page.getByTestId('view-toggle-kunden')).toHaveCount(c.canSeeManagement ? 1 : 0);
-      await expect(page.getByTestId('view-toggle-benutzer')).toHaveCount(c.canReadUsers ? 1 : 0);
       await expect(page.getByTestId('extract-button')).toHaveCount(c.canExtract ? 1 : 0);
 
       // -- Kanban view: transition controls on cards and detail panel ----
@@ -166,36 +168,30 @@ test.describe('AC-121: permission-based UI visibility', () => {
       // without Kanban access (bookkeeper) cannot navigate there at all;
       // the server-side scoping for transitions is covered by unit tests.
       if (c.canSeeKanban) {
-        await page.getByTestId('view-toggle-kanban').click();
+        await clickView(page, 'kanban');
         await page.getByTestId('kanban-board').waitFor();
         // Wait until at least one card has rendered — the subsequent
         // `forward-button-*` count assertion races the initial fetch
         // otherwise and reports 0 before any card mounts.
         await page.locator('[data-testid^="project-card-"]').first().waitFor();
 
-        // Forward arrow on any card in a transitionable state.
+        // Transition arrows live on the Kanban cards now (not in the
+        // detail panel). The card renders `forward-button-*` /
+        // `backward-button-*` gated on both `canTransition` and the
+        // per-state eligibility; at least one direction is available in
+        // every workflow state, so the sum is ≥ 1 for permitted callers.
         const cardForwardCount = await page.locator('[data-testid^="forward-button-"]').count();
+        const cardBackwardCount = await page.locator('[data-testid^="backward-button-"]').count();
         if (c.canTransition) {
-          expect(cardForwardCount).toBeGreaterThan(0);
+          expect(cardForwardCount + cardBackwardCount).toBeGreaterThan(0);
         } else {
           expect(cardForwardCount).toBe(0);
+          expect(cardBackwardCount).toBe(0);
         }
 
         // Project detail panel (open first card).
         await page.locator('[data-testid^="project-card-"]').first().click();
         await page.getByTestId('detail-panel').waitFor();
-
-        const detailForward = await page.getByTestId('detail-forward-button').count();
-        const detailBackward = await page.getByTestId('detail-backward-button').count();
-        if (c.canTransition) {
-          // Anfrage hides backward, Erledigt hides forward — but every
-          // state allows at least one direction, so the sum is ≥ 1 when
-          // permitted.
-          expect(detailForward + detailBackward).toBeGreaterThan(0);
-        } else {
-          expect(detailForward).toBe(0);
-          expect(detailBackward).toBe(0);
-        }
 
         await expect(page.getByTestId('detail-date-start')).toHaveCount(c.canUpdateDates ? 1 : 0);
         await expect(page.getByTestId('detail-date-end')).toHaveCount(c.canUpdateDates ? 1 : 0);
@@ -208,7 +204,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
       // §8.7.1 — worker is excluded). Skip the management assertions
       // entirely for worker since the view is not navigable.
       if (c.canSeeManagement) {
-        await page.getByTestId('view-toggle-projekte').click();
+        await clickView(page, 'projekte');
         await page.getByTestId('project-table').locator('tbody tr').first().waitFor();
 
         await expect(page.getByTestId('project-create-button')).toHaveCount(
@@ -224,16 +220,21 @@ test.describe('AC-121: permission-based UI visibility', () => {
           expect(await projectArchiveBtns.count()).toBe(0);
         }
 
-        // Edit-form Save button: click into first row to open the form.
-        // For bookkeeper the form opens but Save is hidden — no
-        // mutation trigger, so the "details view" is the intentional
-        // fallback.
+        // Click into the first row: navigation is to the detail page.
+        // The title input is read-only for callers without
+        // `project:update` (hidden-control parity).
         await page.getByTestId('project-table').locator('tbody tr').first().click();
-        await expect(page.getByTestId('project-save')).toHaveCount(c.canUpdateProject ? 1 : 0);
-        await page.getByRole('button', { name: 'Abbrechen' }).click();
+        const titleEdit = page.getByTestId('project-title-edit');
+        await titleEdit.waitFor({ state: 'visible' });
+        if (c.canUpdateProject) {
+          await expect(titleEdit).not.toHaveAttribute('readonly', '');
+        } else {
+          await expect(titleEdit).toHaveAttribute('readonly', '');
+        }
+        await clickView(page, 'projekte');
 
         // -- Kunden management view --------------------------------------
-        await page.getByTestId('view-toggle-kunden').click();
+        await clickView(page, 'kunden');
         await page.getByTestId('customer-table').locator('tbody tr').first().waitFor();
 
         await expect(page.getByTestId('customer-create-button')).toHaveCount(
@@ -254,9 +255,9 @@ test.describe('AC-121: permission-based UI visibility', () => {
       // AC-142: the Daten tab itself is gated on `data:export`. Roles
       // without it must not see the nav toggle at all. Inside the view,
       // the import sub-form is gated on `data:restore` (owner only).
-      await expect(page.getByTestId('view-toggle-daten')).toHaveCount(c.canExportData ? 1 : 0);
+      await expectViewReachable(page, 'daten', c.canExportData);
       if (c.canExportData) {
-        await page.getByTestId('view-toggle-daten').click();
+        await clickView(page, 'daten');
         await page.getByTestId('daten-view').waitFor();
 
         await expect(page.getByTestId('data-export-button')).toHaveCount(1);
@@ -267,7 +268,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
 
       // -- Benutzer management view (only if user:read) ------------------
       if (c.canReadUsers) {
-        await page.getByTestId('view-toggle-benutzer').click();
+        await clickView(page, 'benutzer');
         await page.getByTestId('user-table').locator('tbody tr').first().waitFor();
 
         await expect(page.getByTestId('user-create-button')).toHaveCount(c.canManageUsers ? 1 : 0);
@@ -294,6 +295,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
         );
         await expect(page.getByTestId('user-delete-button')).toHaveCount(c.canDeleteUsers ? 1 : 0);
       }
+      });
     });
   }
 });
@@ -321,11 +323,35 @@ test.describe('AC-121: permission-based UI visibility', () => {
 // `src/config/__tests__/routes.test.ts` pins the matrix against the
 // live route table, so drift between the table and this constant
 // surfaces there long before a browser run.
-type NavView = 'kanban' | 'kalender' | 'projekte' | 'kunden' | 'benutzer' | 'daten';
+type NavView =
+  | 'kanban'
+  | 'kalender'
+  | 'projekte'
+  | 'kunden'
+  | 'benutzer'
+  | 'daten'
+  | 'aktivitaet'
+  | 'benachrichtigungen';
 
+// Worker deliberately excludes `aktivitaet`: worker does not hold `audit:read`
+// (see src/config/permissions.ts) so the route guard and nav hide the tab.
+// Only kanban and kalender are in the worker matrix per AC-75
+// (docs/spec/ui/index.md §8.7.1).
+//
+// `benachrichtigungen` is owner-only per AC-75 + AC-198
+// (notifications:manage in the default matrix).
 const NAV_MATRIX: Record<Role, readonly NavView[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten'],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten'],
+  owner: [
+    'kanban',
+    'kalender',
+    'projekte',
+    'kunden',
+    'benutzer',
+    'daten',
+    'aktivitaet',
+    'benachrichtigungen',
+  ],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
   worker: ['kanban', 'kalender'],
   bookkeeper: ['projekte', 'kunden'],
 };
@@ -337,28 +363,29 @@ const ALL_VIEWS: readonly NavView[] = [
   'kunden',
   'benutzer',
   'daten',
+  'aktivitaet',
+  'benachrichtigungen',
 ];
 
 test.describe('AC-75: per-role nav visibility matrix', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
-
   for (const [role, expected] of Object.entries(NAV_MATRIX) as [Role, readonly NavView[]][]) {
-    test(`${role} — header nav set matches the ui/index.md §8.7.1 matrix exactly`, async ({ page }) => {
-      await loginAs(page, roleCases[role].username);
+    test.describe(role, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test('header nav set matches the ui/index.md §8.7.1 matrix exactly', async ({ page }) => {
+        await page.goto('/');
 
-      // Every matrix tab must be visible for this role.
-      for (const view of expected) {
-        await expect(page.getByTestId(`view-toggle-${view}`)).toBeVisible();
-      }
+        // Every matrix tab must be reachable for this role — inline or
+        // via the admin menu.
+        for (const view of expected) {
+          await expectViewReachable(page, view, true);
+        }
 
-      // Every non-matrix tab must be absent. toHaveCount(0) rather than
-      // toBeHidden() because the latter passes for elements that exist
-      // but are CSS-hidden; the nav renderer should not emit the tab at
-      // all for unauthorized views (AC-75 "hidden from navigation").
-      const forbidden = ALL_VIEWS.filter((v) => !expected.includes(v));
-      for (const view of forbidden) {
-        await expect(page.getByTestId(`view-toggle-${view}`)).toHaveCount(0);
-      }
+        // Every non-matrix tab must be absent from both renderings.
+        const forbidden = ALL_VIEWS.filter((v) => !expected.includes(v));
+        for (const view of forbidden) {
+          await expectViewReachable(page, view, false);
+        }
+      });
     });
   }
 });
@@ -393,6 +420,8 @@ const FORBIDDEN_PATHS: readonly ForbiddenCase[] = [
   { role: 'bookkeeper', path: '/calendar' },
   { role: 'bookkeeper', path: '/users' },
   { role: 'bookkeeper', path: '/data' },
+  // Bookkeeper lacks `audit:read`; the Aktivität route is forbidden.
+  { role: 'bookkeeper', path: '/audit' },
   { role: 'office', path: '/users' },
 ];
 
@@ -409,37 +438,35 @@ const VIEW_TESTIDS: readonly string[] = [
 ];
 
 test.describe('AC-149: forbidden URL probe → NotPermittedView, URL unchanged', () => {
-  test.use({ storageState: { cookies: [], origins: [] } });
-
   for (const { role, path } of FORBIDDEN_PATHS) {
-    test(`${role} navigating directly to ${path} sees not-permitted surface and URL stays`, async ({
-      page,
-    }) => {
-      // Log in first — the auth guard renders the login form for
-      // unauthenticated callers, which would mask the route-guard path.
-      await loginAs(page, roleCases[role].username);
+    test.describe(`${role} → ${path}`, () => {
+      test.use({ storageState: STORAGE_STATES[role] });
+      test(`navigating directly to ${path} sees not-permitted surface and URL stays`, async ({
+        page,
+      }) => {
+        // Storage state authenticates the caller (see auth.setup.ts);
+        // navigating directly to the forbidden path simulates a user
+        // typing a URL or following a bookmark to an off-matrix view.
+        await page.goto(path);
 
-      // Direct URL entry — simulates a user typing the path or
-      // following a bookmark to an off-matrix view.
-      await page.goto(path);
+        // The not-permitted surface renders with the German copy sourced
+        // from STRINGS (no hardcoded strings in the spec).
+        const surface = page.getByTestId('not-permitted-view');
+        await expect(surface).toBeVisible();
+        await expect(surface).toContainText(STRINGS.ui.notPermittedHeading);
+        await expect(surface).toContainText(STRINGS.ui.notPermittedBody);
 
-      // The not-permitted surface renders with the German copy sourced
-      // from STRINGS (no hardcoded strings in the spec).
-      const surface = page.getByTestId('not-permitted-view');
-      await expect(surface).toBeVisible();
-      await expect(surface).toContainText(STRINGS.ui.notPermittedHeading);
-      await expect(surface).toContainText(STRINGS.ui.notPermittedBody);
+        // AC-149 clause: "URL in the address bar remains unchanged".
+        // Playwright's auto-waiting toHaveURL handles the navigation
+        // settling; no raw waitForTimeout required.
+        await expect(page).toHaveURL(new RegExp(`${path}$`));
 
-      // AC-149 clause: "URL in the address bar remains unchanged".
-      // Playwright's auto-waiting toHaveURL handles the navigation
-      // settling; no raw waitForTimeout required.
-      await expect(page).toHaveURL(new RegExp(`${path}$`));
-
-      // No landing view mounts alongside the guard. Any of these
-      // testids appearing would indicate the guard leaked content.
-      for (const testid of VIEW_TESTIDS) {
-        await expect(page.getByTestId(testid)).toHaveCount(0);
-      }
+        // No landing view mounts alongside the guard. Any of these
+        // testids appearing would indicate the guard leaked content.
+        for (const testid of VIEW_TESTIDS) {
+          await expect(page.getByTestId(testid)).toHaveCount(0);
+        }
+      });
     });
   }
 });

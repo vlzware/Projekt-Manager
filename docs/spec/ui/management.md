@@ -1,6 +1,6 @@
 # UI: Management Views
 
-Section 8.8–8.10 of the [product spec](../index.md) — the tabular CRUD surfaces for Projects, Customers, and Users. Email Data Intake (§8.12) — a modal customer+project creation flow entered from a header button — is a sibling page at [email-intake.md](email-intake.md). Shell and navigation live in [index.md](index.md); cross-cutting behavioral rules (in-flight lock, error handling, mutation semantics) in [behavior.md](behavior.md).
+Sections 8.8–8.10 and 8.13 of the [product spec](../index.md) — the tabular CRUD surfaces for Projects, Customers, and Users, plus the global Audit View. Email Data Intake (§8.12) — a modal customer+project creation flow entered from a header button — is a sibling page at [email-intake.md](email-intake.md). Shell and navigation live in [index.md](index.md); cross-cutting behavioral rules (in-flight lock, error handling, mutation semantics) in [behavior.md](behavior.md).
 
 ---
 
@@ -175,3 +175,79 @@ Requires `user:manage` permission.
 Available within the user detail view. Confirmation dialog. Self-deletion is prevented (button hidden for the authenticated user's own record; API rejects if attempted). Hard-deletes the user and cascades related data (sessions, worker assignments).
 
 Requires `user:delete` permission (owner only).
+
+---
+
+## 8.13 Audit View
+
+A global, read-only tabular view of the `audit_log` ([data-model.md §5.10](../data-model.md#510-audit-log-entity)). Backed by [api.md §14.2.8](../api.md#1428-audit-log). Available to every caller holding `audit:read`; the per-role visible row set is narrowed server-side via the scope predicates — clients do not filter audit rows.
+
+Navigation: exposed via the shell navigation matrix ([index.md §8.7.1](index.md#871-views)) as the `Aktivität` tab. Access is gated on `audit:read`, held by owner and office under the default matrix. Worker and bookkeeper do not hold `audit:read` and do not see the tab. The tab is hidden for users without the permission.
+
+### 8.13.1 List
+
+- Default view shows only events the caller is a recipient of per the resolved notification-rule set ([data-model.md §5.11](../data-model.md#511-notification-rule)). A `"Alles anzeigen"` toggle switches to the full RBAC-scoped feed (governed by `audit:read` and the destructive-action predicate per §8.13.3). Toggle state is local-only; navigation or reload restores the default. RBAC scoping ([ADR-0019](../../adr/0019-worker-data-scoping-repository-layer-predicate.md)) remains authoritative under either state.
+- Columns: timestamp (`createdAt`, German locale `DD.MM.YYYY HH:mm`), actor, entity (type + human-readable label resolved server-side), action (German label derived from the action vocabulary), payload indicator.
+- Actor cell: `displayName` for user-actor entries. When the authoring user has been hard-deleted the API returns null `actorId` (per AC-98's SET NULL cascade); the UI renders the neutral German label `"Benutzer"` on those rows. System-actor entries render `"System"` with the `actorReason` as supporting text.
+- Payload indicator: a `Details` affordance opening a drawer that shows actor display-name, timestamp, and the payload diff (before/after for update; after for create; before for delete). Rendered only when the API response for the row includes a non-null `payload` ([api.md §14.2.8](../api.md#1428-audit-log)).
+- Default sort: `createdAt` descending, with `id` as a stable tiebreaker.
+- Pagination follows the configurable page size **[C]**.
+- Empty result: `"Keine Aktivität"`.
+
+### 8.13.2 Filters
+
+A filter bar AND-composing the following criteria, applied via the API:
+
+- Entity type — multi-select over the configured `AuditEntityType` set ([data-model.md §5.10](../data-model.md#510-audit-log-entity)).
+- Entity name — optional case-insensitive substring match against the frozen `entityLabel` snapshot ([data-model.md §5.10](../data-model.md#510-audit-log-entity)). Minimum three characters so the server's pg_trgm index can serve the query; below-minimum or empty input is ignored. Rows with a null `entityLabel` (import / retention paths) are not matchable by name.
+- Actor — optional single-select over users the caller may already list via `user:read` (owner and office under the default matrix).
+- Date range (`from` / `to`) — `to < from` is a client-side validation error; the form blocks submit.
+- Action — optional multi-select over the action vocabulary.
+- A `"Filter aufheben"` control clears every filter.
+
+### 8.13.3 Destructive-Action Visibility
+
+Rows whose `action` is `purge` (any entity type), `delete` on `user`, or `update` on `user` touching `roles` are admitted only to callers for whom the `auditDestructiveScopeForCaller` predicate ([api.md §14.2.8](../api.md#1428-audit-log)) returns null (owner under the default matrix). For every other role with `audit:read` the predicate contributes a `WHERE` fragment at the repository layer that excludes these entries — they are never returned by the API. The UI's role-aware rendering is a secondary surface; the server is authoritative.
+
+### 8.13.4 Cross-Links
+
+- Clicking an `entity` cell navigates to the referenced entity's detail view (project or customer) when it still exists, subject to the caller's own read permission on that entity. For purged targets, the cell renders the persisted identifier label without a link.
+- Clicking the `Details` affordance expands a drawer inline — no route change.
+
+---
+
+## 8.14 Notification Rules View
+
+Admin view over [`notification_rule`](../data-model.md#511-notification-rule). Backed by [api.md §14.2.9](../api.md#1429-notification-rules), gated on `notifications:manage`; edits are a direct repository write — rule configuration is not surfaced on the activity feed.
+
+Navigation: the `Benachrichtigungen` tab in the administration group ([index.md §8.7.1](index.md#871-views)). Hidden without `notifications:manage`.
+
+### 8.14.1 List
+
+- Columns: `Ereignis` (German label from event-class mapping **[C]**), `Filter` (`stateFilter` label or blank when null), `Empfänger` (compact `recipientSpec` summary — e.g. `"Rollen: Inhaber, Büro · Zugewiesene Mitarbeiter · 2 Benutzer"`), `Aktiv` (toggle indicator), `Aktionen` (edit + delete).
+- Pagination: configurable page size **[C]**.
+- Empty result: `"Keine Regeln"`.
+
+### 8.14.2 Create / Edit Rule
+
+Single form for both create and edit.
+
+Fields:
+
+- **Ereignis (event)** — required. Single-select over the catalog ([data-model.md §5.11](../data-model.md#511-notification-rule)), German labels via the event-class mapping **[C]**.
+- **Ziel-Status (state filter)** — single-select. Rendered only for `project.transition_forward` / `project.transition_backward`; otherwise hidden and sent as null. Values are workflow-state labels; empty = null.
+- **Empfänger (recipient spec)** — three additive sub-sections:
+  - **Rollen** — multi-select over the configured role set ([index.md §4.2](../index.md#42-users)).
+  - **Zugewiesene Mitarbeiter** — toggle `"Zugewiesene Mitarbeiter benachrichtigen"`. Disabled and forced `false` for `backup.failed` / `disk.threshold_reached`.
+  - **Einzelne Benutzer** — autocomplete over active users; selection adds a chip with a remove affordance.
+- **Aktiv** — boolean toggle.
+
+Validation errors follow [api.md §14.2.9](../api.md#1429-notification-rules); an empty recipient spec or a non-null state filter on a non-transition event is rejected via the mutation error banner ([index.md §8.1.2](index.md#812-authenticated-state)), and the form is restored.
+
+### 8.14.3 Delete Rule
+
+Row action or edit-form action. Yes / No confirmation. On success the rule disappears.
+
+### 8.14.4 Permission and Hiding
+
+Access is gated on `notifications:manage`. Users without it do not see the nav tab; manual URL entry presents the not-permitted surface per [AC-149](../verification.md#1521-role-scoping). All UI controls are hidden without the permission per [AC-121](../verification.md#1516-management-views).

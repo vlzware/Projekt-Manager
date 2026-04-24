@@ -4,7 +4,7 @@
  */
 import { z } from 'zod';
 
-const envSchema = z.object({
+export const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   // Default to 'production' so the production-safety checks (see
   // assertProductionSafe below) fire when NODE_ENV is unset. The previous
@@ -24,6 +24,12 @@ const envSchema = z.object({
   // reject for vars the backup path never reads; `assertAppServerEnv()`
   // below (called only from start.ts) enforces presence for the app path.
   STORAGE_ENDPOINT: z.string().optional(),
+  // Optional public hostname the browser uses to reach MinIO. The app
+  // signs presigned POST / GET URLs against this endpoint (not
+  // STORAGE_ENDPOINT, which points at the Docker-internal hostname).
+  // Required in production when STORAGE_ENDPOINT is a container-only
+  // host — enforced by `assertStoragePublicEndpointInProduction()`.
+  STORAGE_PUBLIC_ENDPOINT: z.string().optional(),
   STORAGE_BUCKET: z.string().min(1).default('projekt-manager'),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
@@ -49,6 +55,25 @@ const envSchema = z.object({
   // provide implicitly via server restarts; lower values are fine for
   // environments that want tighter revocation latency.
   SESSION_CLEANUP_INTERVAL_MINUTES: z.coerce.number().int().positive().default(60),
+  // Audit-log retention window in days — [C] per architecture.md §12.2
+  // and data-model.md §6.10. When unset, the build-time default in
+  // `src/config/auditRetention.ts` (90 d) applies. Coerced to integer
+  // because a fractional day window makes no sense for a rolling
+  // cleanup and the AC-184 log line types `window_days` as integer.
+  // preprocess: compose forwards this as `${AUDIT_RETENTION_WINDOW_DAYS:-}`,
+  // so an unset var arrives as "" — which `z.coerce.number()` turns into 0
+  // and `.positive()` then rejects. Map "" → undefined so .optional() takes
+  // over and start.ts falls back to the build-time default.
+  AUDIT_RETENTION_WINDOW_DAYS: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  // How often the audit-retention cleanup runs. One run is a single
+  // indexed DELETE against the `audit_log_created_at_idx`; daily (1440
+  // min) is the production default because retention is a cleanup, not
+  // a latency-sensitive sweep. Overridable per deployment — tests leave
+  // the scheduler untouched and call the service directly.
+  AUDIT_RETENTION_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
   // ---------------------------------------------------------------
   // Layer 2 backup (ADR-0020). Consumed by the `backup-runner` CLI,
   // not by the main app server — but declared here so the schema
@@ -68,6 +93,49 @@ const envSchema = z.object({
    * Default matches `scripts/backup/run-drill.sh` and the tmpfs mount
    * in Dockerfile.backup so operators don't need to set it. */
   AGE_IDENTITY_PATH: z.string().default('/run/drill-key/identity'),
+  // ---------------------------------------------------------------
+  // Web Push / VAPID (ADR-0023). The public key is derived from the
+  // private half at startup (P-256 ECDSA — `src/server/config/vapid.ts`),
+  // so the operator only maintains the private key. In production,
+  // missing `VAPID_PRIVATE_KEY` falls back to `noopPushDispatcher` with
+  // a startup warn. In dev/test the helper auto-generates a key into
+  // `data/.vapid/private-key` on first boot so push works zero-config.
+  // `VAPID_SUBJECT` must be either a `mailto:` URL or an `https:` URL
+  // per RFC 8292 §2.1 — format validated at WebPushDispatcher boot.
+  // ---------------------------------------------------------------
+  VAPID_PRIVATE_KEY: z.string().optional(),
+  VAPID_SUBJECT: z.string().optional(),
+  // ---------------------------------------------------------------
+  // Attachments (data-model.md §5.13, architecture.md §12.2).
+  // All four overrides follow the "empty string → undefined" pattern
+  // so docker-compose's `${VAR:-}` forward does not collapse an unset
+  // variable into 0 (which `.positive()` would then reject). Build-time
+  // defaults live in `src/config/attachmentConfig.ts`.
+  // ---------------------------------------------------------------
+  ATTACHMENT_PER_FILE_CAP_BYTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_BULK_MAX_FILES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_BULK_MAX_BYTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_WORKER_SELF_DELETE_GRACE_MINUTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -108,6 +176,55 @@ export function assertProductionSafe(env: Env): void {
         'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.',
     );
   }
+}
+
+/**
+ * Hostname-looks-internal heuristic: no dot and not an IP literal. The
+ * Docker-internal hostnames used by compose (`storage`, `db`, `app`) all
+ * hit this, whereas a public URL (`storage.example.com`) does not. Used
+ * only by `assertStoragePublicEndpointInProduction()` — a literal IP
+ * (`http://10.0.0.5:9000`) is legitimate in self-hosted setups and is
+ * NOT treated as internal.
+ */
+function hostnameLooksInternal(endpoint: string): boolean {
+  let host: string;
+  try {
+    host = new URL(endpoint).hostname;
+  } catch {
+    // Malformed endpoint — let the storage client surface the real error
+    // at connect time rather than double-reporting it here.
+    return false;
+  }
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return false;
+  return !host.includes('.');
+}
+
+/**
+ * Refuses to start in production when the storage client would sign
+ * presigned URLs against a container-only hostname. Without
+ * `STORAGE_PUBLIC_ENDPOINT`, the app signs URLs using `STORAGE_ENDPOINT`
+ * (e.g. `http://storage:9000`) and hands them to the browser — which
+ * cannot resolve the Docker-internal host, so every upload POST fails
+ * silently and the `pending → ready` transition never happens. That
+ * defect sat on the VPS undetected until an operator noticed attachments
+ * never saving.
+ *
+ * Dev (STORAGE_ENDPOINT = localhost or an IP) does not trip this guard
+ * because dev exposes MinIO on the host; the browser reaches the same
+ * endpoint the app reaches.
+ */
+export function assertStoragePublicEndpointInProduction(env: Env): void {
+  if (env.NODE_ENV !== 'production') return;
+  if (!env.STORAGE_ENDPOINT) return; // assertAppServerEnv already reports this
+  if (env.STORAGE_PUBLIC_ENDPOINT) return;
+  if (!hostnameLooksInternal(env.STORAGE_ENDPOINT)) return;
+  throw new Error(
+    `Refusing to start: STORAGE_ENDPOINT (${env.STORAGE_ENDPOINT}) is a container-only ` +
+      'hostname but STORAGE_PUBLIC_ENDPOINT is not set. Presigned URLs the browser ' +
+      'receives would be unreachable. Set STORAGE_PUBLIC_ENDPOINT to the public ' +
+      'URL that reverse-proxies to MinIO (e.g. https://storage.<your-domain>). ' +
+      'See docs/ops/storage-subdomain.md.',
+  );
 }
 
 /**

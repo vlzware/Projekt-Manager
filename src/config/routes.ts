@@ -23,6 +23,7 @@
  * union mirrored from `src/domain/types.ts`'s `ViewMode` — the
  * `ROUTE_VIEWS` const below asserts exact mirror at compile time.
  */
+import { matchPath } from 'react-router-dom';
 import type { Role } from '@/config/permissions';
 import { hasPermission } from '@/config/permissions';
 import { STRINGS } from '@/config/strings';
@@ -41,7 +42,17 @@ export interface RouteCaller {
  * A compile-time check in `src/hooks/useRouterNav.ts` guarantees the
  * two unions stay in sync; a drift there fails `tsc --noEmit`.
  */
-export type RouteView = 'kanban' | 'kalender' | 'kunden' | 'projekte' | 'benutzer' | 'daten';
+export type RouteView =
+  | 'meineProjekte'
+  | 'kanban'
+  | 'kalender'
+  | 'kunden'
+  | 'projekte'
+  | 'benutzer'
+  | 'daten'
+  | 'aktivitaet'
+  | 'benachrichtigungen'
+  | 'projektDetail';
 
 export interface RouteEntry {
   /** Stable view key. */
@@ -71,19 +82,32 @@ function hasRole(caller: RouteCaller, ...roles: Role[]): boolean {
 }
 
 /**
- * Worker / office / owner landing: Kanban (ui/index.md §8.1.2). Kept
+ * Owner / office landing: Kanban (ui/index.md §8.1.2). Worker has its
+ * own personal landing — see `landsOnMeineProjekte` below. Kept
  * explicit so a future role that also has Kanban access (e.g. a new
  * "supervisor") does not accidentally inherit the landing.
  */
 function landsOnKanban(caller: RouteCaller): boolean {
-  return hasRole(caller, 'owner', 'office', 'worker');
+  return hasRole(caller, 'owner', 'office');
+}
+
+/**
+ * Worker landing: a personal "Meine Projekte" list. Workers spend most
+ * of their app time on phones; the kanban board is a manager's view.
+ * The dedicated list is one tap away from any of their projects'
+ * detail pages, with no horizontal scroll and no per-state column
+ * collapse. Kanban + Kalender remain available as secondary nav.
+ */
+function landsOnMeineProjekte(caller: RouteCaller): boolean {
+  return hasRole(caller, 'worker');
 }
 
 function landsOnProjects(caller: RouteCaller): boolean {
-  // Bookkeeper doesn't have Kanban, so they land on Projekte. Checked
-  // by role rather than "no Kanban access" so a future bookkeeper-like
-  // role doesn't implicitly land on Projekte without a spec update.
-  return hasRole(caller, 'bookkeeper') && !landsOnKanban(caller);
+  // Bookkeeper doesn't have Kanban or Meine Projekte, so they land on
+  // Projekte. Checked by role rather than "no other landing" so a
+  // future bookkeeper-like role doesn't implicitly land on Projekte
+  // without a spec update.
+  return hasRole(caller, 'bookkeeper') && !landsOnKanban(caller) && !landsOnMeineProjekte(caller);
 }
 
 /**
@@ -91,6 +115,17 @@ function landsOnProjects(caller: RouteCaller): boolean {
  * §8.7.1`. The Header renders in this order.
  */
 export const ROUTES: readonly RouteEntry[] = [
+  {
+    view: 'meineProjekte',
+    path: '/meine-projekte',
+    label: STRINGS.ui.viewMyProjects,
+    // Worker-only surface — owner/office have richer tools and don't
+    // need a personal "what am I assigned to" view as their first
+    // screen. If office ever needs a personal view, gate via a new
+    // permission rather than widening this role check.
+    canAccess: (u) => hasRole(u, 'worker'),
+    isDefaultFor: landsOnMeineProjekte,
+  },
   {
     view: 'kanban',
     path: '/kanban',
@@ -137,6 +172,37 @@ export const ROUTES: readonly RouteEntry[] = [
     canAccess: (u) => hasPermission(u.roles, 'data:export'),
     isDefaultFor: () => false,
   },
+  {
+    // View gated on `audit:read` per ui/index.md §8.7.1 — owner and
+    // office under the default matrix. Worker and bookkeeper lack
+    // `audit:read` and do not see the tab. The per-role visible row set
+    // is narrowed server-side (api.md §14.2.8) by the destructive-action
+    // scope, so this gate is the nav-visibility concern; data exposure
+    // is authoritative on the server.
+    view: 'aktivitaet',
+    path: '/audit',
+    label: STRINGS.ui.viewAudit,
+    canAccess: (u) => hasPermission(u.roles, 'audit:read'),
+    isDefaultFor: () => false,
+  },
+  {
+    // Notification rules admin view (ui/management.md §8.14) — gated on
+    // `notifications:manage`. Owner-only under the default matrix per
+    // api.md §14.3 + ADR-0023. Server-side authorization remains
+    // authoritative; this is the nav-visibility concern only.
+    view: 'benachrichtigungen',
+    path: '/benachrichtigungen',
+    label: STRINGS.ui.viewNotifications,
+    canAccess: (u) => hasPermission(u.roles, 'notifications:manage'),
+    isDefaultFor: () => false,
+  },
+  {
+    view: 'projektDetail',
+    path: '/projects/:id',
+    label: STRINGS.ui.viewProjects,
+    canAccess: (u) => hasPermission(u.roles, 'project:read'),
+    isDefaultFor: () => false,
+  },
 ] as const;
 
 /**
@@ -165,9 +231,9 @@ export function assertSingleLanding(caller: RouteCaller): void {
   }
 }
 
-/** Route keyed by URL path. `undefined` for unknown paths. */
+/** Route keyed by URL path. Matches parametrized patterns (e.g. `/projects/:id`). `undefined` for unknown paths. */
 export function routeByPath(pathname: string): RouteEntry | undefined {
-  return ROUTES.find((r) => r.path === pathname);
+  return ROUTES.find((r) => matchPath({ path: r.path, end: true }, pathname) !== null);
 }
 
 /** Route keyed by view. Throws for unknown views (compile-time impossible today). */
@@ -189,19 +255,9 @@ export function pathFromView(view: RouteView): string {
   return routeByView(view).path;
 }
 
-/** The nav set this caller sees, in matrix order. */
+/** The nav set this caller sees, in matrix order. Parametrized paths are excluded — they're deep-linked, not nav entries. */
 export function visibleRoutesForUser(caller: RouteCaller): readonly RouteEntry[] {
-  return ROUTES.filter((r) => r.canAccess(caller));
-}
-
-/**
- * True iff the given view key is this caller's landing. Callers use
- * this to gate "landing-only" affordances (e.g., the backup-freshness
- * badge, AC-170 — visible on the owner's landing, not on `/customers`).
- */
-export function isLandingViewForUser(caller: RouteCaller, view: RouteView): boolean {
-  const match = ROUTES.find((r) => r.isDefaultFor(caller));
-  return match?.view === view;
+  return ROUTES.filter((r) => !r.path.includes('/:') && r.canAccess(caller));
 }
 
 /** The caller's default landing path — used on login and on `/` redirects. */

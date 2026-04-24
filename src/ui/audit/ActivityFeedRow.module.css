@@ -1,0 +1,122 @@
+.row {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 0.875rem;
+  gap: 4px;
+}
+
+.row:last-child {
+  border-bottom: none;
+}
+
+.headerLine {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.description {
+  font-weight: 500;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+}
+
+.timestamp {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+}
+
+.metaLine {
+  display: flex;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  flex-wrap: wrap;
+}
+
+.actor {
+  color: var(--color-text-secondary);
+}
+
+.actorSystem {
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+.actorReason {
+  color: var(--color-text-subtle);
+}
+
+.entity {
+  color: var(--color-text-subtle);
+}
+
+.entityLabel {
+  font-weight: 500;
+}
+
+.drawerToggle {
+  padding: 4px 10px;
+  margin-top: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  align-self: flex-start;
+  transition: background 0.15s;
+}
+
+.drawerToggle:hover {
+  background: var(--color-surface-muted);
+}
+
+.drawerContent {
+  margin-top: 6px;
+  padding: 10px;
+  background: var(--color-surface-base);
+  border: 1px solid var(--color-border-muted);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.drawerTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.drawerTable th {
+  text-align: left;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--color-border-muted);
+}
+
+.drawerTable td {
+  padding: 4px 8px;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.drawerValue {
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 0.7rem;
+  color: var(--color-text);
+}
+
+.drawerValueNull {
+  font-style: italic;
+  color: var(--color-text-subtle);
+}

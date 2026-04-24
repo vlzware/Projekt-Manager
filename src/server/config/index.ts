@@ -84,13 +84,27 @@ export function getRateLimit() {
 
     /** Password change endpoint. */
     passwordChange: { max: 5, timeWindow: '1 minute' as const },
+
+    /**
+     * Push subscription mutations (POST / DELETE). Enough headroom for
+     * normal browser behaviour (re-subscribe on rotation, a handful of
+     * devices) without allowing bulk enumeration.
+     */
+    subscriptionMutate: { max: 20, timeWindow: '1 minute' as const },
   };
 }
 
 // --- Storage -----------------------------------------------------------------
 
 export const STORAGE_CONFIG = {
-  /** Allowed pattern for object storage keys (prevents path traversal). */
+  /**
+   * Allowed pattern for object storage keys (prevents path traversal).
+   * Allowed: alphanumeric, `/`, `_`, `.`, `-`, length 1–1024.
+   * Additional structural rules (no `..` sequences, no leading `/` or `.`)
+   * are enforced by `validateKey()` in `server/storage/client.ts`.
+   * Single source of truth — do not inline this regex elsewhere; import
+   * it from here so the key-safety rule cannot drift between call sites.
+   */
   validKeyPattern: /^[a-zA-Z0-9/_.-]{1,1024}$/,
 
   /** Minimum signed URL expiry in seconds. */

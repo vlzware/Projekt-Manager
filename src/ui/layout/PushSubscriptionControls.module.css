@@ -1,0 +1,87 @@
+/**
+ * PushSubscriptionControls — visual layer for the push-notifications
+ * group in the user menu. Variables come from the theme runtime so the
+ * light/dark swap is handled centrally; colors here reference tokens
+ * that the parent Header.module.css already consumes in the dropdown.
+ */
+
+.section {
+  border-bottom: 1px solid var(--color-border-inverse);
+  padding: 4px 0;
+}
+
+.sectionLabel {
+  padding: 6px 14px 4px;
+  color: var(--color-text-on-inverse-subtle);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: none;
+  color: var(--color-text-on-inverse-muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  text-align: left;
+  transition: background 0.15s;
+}
+
+.item:hover:not(:disabled) {
+  background: var(--color-surface-inverse-raised);
+}
+
+.item:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* Toggle row has label + control; clicking anywhere on the row flips
+   the checkbox because the whole row is the <label>. */
+.toggleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 14px;
+  color: var(--color-text-on-inverse-muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: background 0.15s;
+}
+
+.toggleRow:hover {
+  background: var(--color-surface-inverse-raised);
+}
+
+.toggleInput {
+  /* Native checkbox styling — good enough for a settings pane and keeps
+     the component free of custom focus-ring choreography. The visual
+     weight is dominated by the surrounding text anyway. */
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+}
+
+/*
+ * Informational cue for the "no action available" branches
+ * (denied permission, unsupported browser, missing VAPID config).
+ * Italicised so a casual reader distinguishes it from actionable
+ * dropdown items at a glance.
+ */
+.hint {
+  padding: 6px 14px;
+  color: var(--color-text-on-inverse-subtle);
+  font-size: 0.75rem;
+  font-style: italic;
+  line-height: 1.4;
+}

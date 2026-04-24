@@ -84,6 +84,13 @@ function classifyCode(code: string): ErrorCategory {
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
+  /**
+   * Optional `AbortSignal`. When fired mid-flight the fetch rejects
+   * with an `AbortError`; the rejection is caught below and returned
+   * as a `network`-category ApiResult so callers see a consistent
+   * shape. Transport-level cancellation; no UI side effects here.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -107,6 +114,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       headers,
       credentials: 'same-origin',
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal,
     });
   } catch (err) {
     const isNetwork = err instanceof TypeError && /fetch|network/i.test(err.message);
@@ -187,10 +195,12 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 
 // --- Typed API functions -----------------------------------------------------
 
-import type { Project, Customer, User } from '@/domain/types';
+import type { Project, Customer, User, Attachment, AttachmentLabel } from '@/domain/types';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 import type { BackupStatus } from '@/domain/backupBadge';
+import type { AuditEntry, AuditListParams, AuditListResponse } from '@/domain/audit';
+import type { NotificationRule, NotificationRuleInput } from '@/domain/notifications';
 
 interface AuthUser {
   id: string;
@@ -199,6 +209,13 @@ interface AuthUser {
   roles: string[];
   email: string | null;
   themePreference: ThemePreference;
+  /**
+   * Server-authoritative push-mute flag (data-model.md §5.3). When true,
+   * the dispatcher skips every subscription the user owns but the row is
+   * retained — unmuting restores delivery without a re-subscribe.
+   * Updated via the self-update API (§14.2.1).
+   */
+  pushMuted: boolean;
 }
 
 /**
@@ -213,9 +230,6 @@ interface LoginResponse {
   user: AuthUser;
   backupStatus?: BackupStatus;
 }
-
-/** Response shape for the public GET /api/backup/status surface. */
-export type BackupStatusResponse = { available: true; status: BackupStatus } | { available: false };
 
 interface ProjectListResponse {
   data: Project[];
@@ -257,7 +271,7 @@ export const authApi = {
       body: { currentPassword, newPassword },
     }),
 
-  updateSelf: (patch: { themePreference?: ThemePreference }) =>
+  updateSelf: (patch: { themePreference?: ThemePreference; pushMuted?: boolean }) =>
     apiCall<LoginResponse>('/api/auth/me', { method: 'PATCH', body: patch }),
 };
 
@@ -453,16 +467,142 @@ export const extractApi = {
 };
 
 /**
- * Public backup-status endpoint — no authentication required.
+ * Audit read surface (api.md §14.2.8).
  *
- * Rendered on the login screen for operator visibility when the app
- * DB is also down (ADR-0008 VPN-gate is the threat-model anchor, see
- * api.md §14.2.7). The authenticated `/api/auth/me` flow carries the
- * same status as an embedded `backupStatus` field for owner callers,
- * so this endpoint is only consumed from the unauth login screen.
+ * Read-only: `list` and `get` only. The per-role response shaping and
+ * scope filtering happen server-side; the client receives the already-
+ * redacted entries.
  */
-export const backupApi = {
-  status: () => apiCall<BackupStatusResponse>('/api/backup/status'),
+export const auditApi = {
+  list: (params?: AuditListParams) =>
+    apiCall<AuditListResponse>(
+      '/api/audit' + toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
+
+  get: (id: string) => apiCall<AuditEntry>(`/api/audit/${id}`),
+};
+
+interface NotificationRuleListResponse {
+  data: NotificationRule[];
+  total: number;
+}
+
+/**
+ * Notification rules CRUD (api.md §14.2.9). Every endpoint is admin-only
+ * and gated server-side by `notifications:manage`; the UI layer mirrors
+ * the gate via `usePermission('notifications:manage')` for nav + surface
+ * hiding only.
+ */
+export const notificationRuleApi = {
+  list: () => apiCall<NotificationRuleListResponse>('/api/notification-rules'),
+
+  get: (id: string) => apiCall<NotificationRule>(`/api/notification-rules/${id}`),
+
+  create: (data: NotificationRuleInput) =>
+    apiCall<NotificationRule>('/api/notification-rules', { method: 'POST', body: data }),
+
+  update: (id: string, data: Partial<NotificationRuleInput>) =>
+    apiCall<NotificationRule>(`/api/notification-rules/${id}`, { method: 'PATCH', body: data }),
+
+  delete: (id: string) => apiCall<null>(`/api/notification-rules/${id}`, { method: 'DELETE' }),
+};
+
+/**
+ * Server response for a subscribe call. The transport-only fields
+ * (`p256dh`, `auth`) are never echoed back — they are stored server-
+ * side and are opaque to the client after registration (see
+ * data-model.md §5.12).
+ */
+export interface PushSubscriptionRecord {
+  id: string;
+  endpoint: string;
+  createdAt: string;
+}
+
+/**
+ * Push-subscription endpoints (api.md §14.2.10). Self-scope — the server
+ * derives `userId` from the session, so the client never sends one.
+ */
+export const pushApi = {
+  subscribe: (body: {
+    endpoint: string;
+    keys: { p256dh: string; auth: string };
+    userAgent?: string | null;
+  }) =>
+    apiCall<PushSubscriptionRecord>('/api/push-subscriptions', {
+      method: 'POST',
+      body,
+    }),
+
+  unsubscribeByEndpoint: (endpoint: string) => {
+    const qs = toQuery({ endpoint });
+    return apiCall<null>('/api/push-subscriptions' + qs, { method: 'DELETE' });
+  },
+};
+
+export interface PresignedPost {
+  url: string;
+  fields: Record<string, string>;
+  expiresAt: string;
+}
+
+export interface AttachmentInitResponse {
+  attachment: Attachment;
+  originalUpload: PresignedPost;
+  thumbnailUpload?: PresignedPost;
+}
+
+export interface AttachmentDownloadUrlResponse {
+  url: string;
+  expiresAt: string;
+}
+
+export interface AttachmentListResponse {
+  data: Attachment[];
+}
+
+export const attachmentApi = {
+  list: (projectId: string) =>
+    apiCall<AttachmentListResponse>(`/api/projects/${projectId}/attachments`),
+
+  initUpload: (
+    projectId: string,
+    input: {
+      fileName: string;
+      mimeType: string;
+      sizeBytes: number;
+      label: AttachmentLabel;
+      hasThumbnail: boolean;
+    },
+    signal?: AbortSignal,
+  ) =>
+    apiCall<AttachmentInitResponse>(`/api/projects/${projectId}/attachments/init`, {
+      method: 'POST',
+      body: input,
+      signal,
+    }),
+
+  completeUpload: (projectId: string, attachmentId: string, signal?: AbortSignal) =>
+    apiCall<Attachment>(`/api/projects/${projectId}/attachments/${attachmentId}/complete`, {
+      method: 'POST',
+      signal,
+    }),
+
+  delete: (projectId: string, attachmentId: string) =>
+    apiCall<null>(`/api/projects/${projectId}/attachments/${attachmentId}`, {
+      method: 'DELETE',
+    }),
+
+  downloadUrl: (projectId: string, attachmentId: string, variant: 'original' | 'thumbnail') =>
+    apiCall<AttachmentDownloadUrlResponse>(
+      `/api/projects/${projectId}/attachments/${attachmentId}/download-url` + toQuery({ variant }),
+    ),
+
+  bulkDownloadUrl: (projectId: string, attachmentIds: string[]) =>
+    apiCall<AttachmentDownloadUrlResponse>(`/api/projects/${projectId}/attachments/bulk-download`, {
+      method: 'POST',
+      body: { attachmentIds },
+    }),
 };
 
 export type { AuthUser };

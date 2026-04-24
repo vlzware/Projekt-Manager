@@ -98,6 +98,7 @@ interface UserAccount {
   email?: string;
   active: boolean; // soft-disable without deletion
   themePreference: ThemePreference; // default 'system' — see §5.7
+  pushMuted: boolean; // default false — mutes push delivery only; activity-feed inclusion unaffected (§5.12)
   createdAt: string; // ISO 8601
   updatedAt: string; // ISO 8601
   lastLoginAt?: string; // ISO 8601
@@ -112,6 +113,7 @@ Design notes:
 - `roles` is an array — supports multi-role assignment without schema changes. Role set is configurable **[C]**. Role labels are applied by configuration.
 - `passwordHash` is **never** included in API responses.
 - `themePreference` controls the rendered color scheme per user (see [§5.7](#57-user-theme-preference)). The value must be one of the allowed literals; the database enforces this via a CHECK constraint (defense in depth).
+- `pushMuted` is a self-settable boolean alongside `themePreference`. Default `false`. Updated via the self-update API ([api.md §14.2.1](api.md#1421-authentication)). Subscription-level semantics: [§5.12](#512-push-subscription); rationale for a single boolean vs. per-event matrix: [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md).
 - Users can be deactivated (`active = false`) or hard-deleted (owner only). See [§6.9](#69-soft-deletes).
 
 ### 5.4 Session
@@ -208,6 +210,7 @@ interface ExportEnvelope {
   customers: Customer[]; // every row, all fields from §5.6
   projects: Project[]; // every row, all fields from §5.1, including archived (deleted = true)
   project_workers: { projectId: string; userId: string }[]; // every row of the join
+  attachments: Attachment[]; // every row with status = 'ready', all fields from §5.13
 }
 ```
 
@@ -216,6 +219,7 @@ Design notes:
 - **Row-level fidelity.** Each entity in the envelope carries all persisted fields including `id`, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`, and `deleted`. Imports preserve IDs exactly (see [ADR-0018 §Decision](../adr/0018-data-persistence-and-recovery-layered-strategy.md#decision)).
 - **Archived rows are included.** Projects with `deleted = true` round-trip with their archive state intact (see [§6.9](#69-soft-deletes)).
 - **Users and sessions are not included.** Admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) handles fresh installs; seed-time loading of users uses a direct-DB helper, while seed-time business-data loading goes through the import code path (see [§7](#7-seed-data-specification)).
+- **Attachments: metadata only.** Only rows with `status = 'ready'` are exported; `pending` rows are excluded because they represent an uncommitted upload. Bytes live in object storage (Layer 3 per [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md)) and are not part of the envelope. On import, attachment rows are restored without their bytes; whether the backing objects exist depends on the storage layer's own recovery. A restored row whose original or thumbnail object is missing renders a "bytes missing" state in the UI ([ui/project-detail.md §8.15.7](ui/project-detail.md#8157-restored-rows-without-backing-bytes)).
 - **`schema_version` is monotonic.** Imports compare strictly and reject any mismatch — no format migration code.
 
 ### 5.9 Backup Status Entity
@@ -240,6 +244,162 @@ Design notes:
 - **Dual-write mirror.** Every backup run writes this row AND an unencrypted status mirror object in the off-site object store with the same fields. The mirror exists so backup health is readable when the database is unreachable ([ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)).
 - **`lastDrillOk` semantics.** `lastDrillOk` is `null` before any Tier 2 drill has succeeded OR failed. A null value is not equivalent to "skipped" — skipped runs leave both `lastDrillAt` and `lastDrillOk` unchanged from the previous run, so freshness is derived from `lastDrillAt` rather than coerced to a boolean.
 - **Cross-references.** Freshness thresholds for the owner-only badge are defined under [architecture.md §12.2](architecture.md#122-company-configurable-settings); acceptance criteria in [verification.md §15.22](verification.md#1522-backup-and-recovery).
+
+### 5.10 Audit Log Entity
+
+An append-only record of every domain-entity state change. Drives the user-facing activity view ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed), [ui/management.md §8.13](ui/management.md#813-audit-view)) and the notification publisher. Rationale and the single-write-path contract live in [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+
+```typescript
+type AuditActorKind = 'user' | 'system';
+
+type AuditEntityType = 'project' | 'customer' | 'user' | 'project_worker' | 'attachment';
+
+interface AuditLogEntry {
+  id: string; // UUID
+  createdAt: string; // ISO 8601 — set by the server at commit time
+  actorId?: string; // references UserAccount.id — null when actorKind = 'system'
+  actorKind: AuditActorKind; // 'user' for authenticated callers, 'system' for bootstrap and other unattended domain-entity writes
+  actorReason?: string; // required (non-empty) when actorKind = 'system'; null for 'user' entries
+  entityType: AuditEntityType; // the domain entity that changed
+  entityId: string; // identifier of the affected row
+  entityLabel?: string; // human-readable label captured at write time (see design notes)
+  action: string; // vocabulary defined below — free text for forward compatibility
+  payload: object; // JSON — before/after of changed fields only, not the full row
+  correlationId?: string; // request-scoped id threaded from the route layer, where available
+}
+```
+
+Design notes:
+
+- **Append-only from the application.** The application never updates an `audit_log` row and never deletes one through any API, service, or UI path. The retention cleanup job ([§6.10](#610-audit-log-retention)) is the only path that removes rows and operates as infrastructure, not as a domain mutation — it does not itself produce an `audit_log` row.
+- **Scope is domain-entity state changes.** `project`, `customer`, `user`, `project_worker`, and `attachment` are the audited types. Authentication and session events (login, logout, session reap) are security events and surface through the structured logger, not `audit_log` — per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+- **Actor kind semantics.**
+  - `user` — an authenticated caller performed the mutation. `actorId` references the `UserAccount.id`; `actorReason` is null.
+  - `system` — no authenticated caller is present. `actorId` is null; `actorReason` is required and carries a human-readable cue naming the code path (e.g., `"first-run-bootstrap"`). First-run admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) is the current domain-entity system-actor path. A system entry with an empty or missing `actorReason` is rejected by the database via a CHECK constraint (defense in depth) — else a system write would be invisible in the activity feed.
+- **Action vocabulary.** `action` is free text so new mutation shapes can record without a schema migration. The current vocabulary is `create`, `update`, `delete`, `archive`, `transition:forward`, `transition:backward`, `purge`, `reactivate`, `deactivate`, `password-reset`, `password-change`, `attachment:add`, `attachment:remove`. `archive` is the `entityType = 'project'` soft-delete action (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)); `delete` and `purge` remain distinct (generic delete for non-project entities, hard-delete on projects respectively). `attachment:add` and `attachment:remove` live on `entityType = 'attachment'`. A free-text field is chosen over an enum because the vocabulary is expected to grow with new features and an enum would churn the schema; uniqueness and casing are enforced by convention and reviewed at PR time. Each entry in the vocabulary maps to exactly one mutation shape.
+- **Payload shape.** `payload` carries the changed fields only, as `{ before, after }` field-keyed objects — not the full row. For a create, `before` is empty and `after` carries the persisted values for every non-server-managed field. For a delete or purge, `after` is empty. For a state transition, `before` and `after` carry `status` and `statusChangedAt`. Full-row snapshots are deliberately excluded (see [ADR-0021 — Alternatives Considered](../adr/0021-audit-log-and-notifications-single-write-path.md#alternatives-considered)).
+- **Entity label snapshot.** `entityLabel` is a nullable text column captured at write time (e.g. a project's `"2026-002 Innenraumgestaltung Weber"`, a customer's `"Firma Weber GmbH"`, a user's `displayName`). Frozen with the audit row so the activity feed stays readable after the target is renamed or purged. Write paths that do not have a natural label (import, retention cleanup) leave it null; the UI falls back to `entityId`. This is display metadata — it is not part of the `{ before, after }` diff contract. For `project_worker` rows specifically, `entityId` is the project's id (not the join-row's composite key) and `entityLabel` is the **worker's** displayName — the feed reads "Jan Nowak wurde zugewiesen" under the owning project's header, so the worker name is the meaningful label, while the project id remains the row's target. Pinned by [AC-188](verification.md#1523-audit-log).
+- **Correlation id.** `correlationId` is a nullable, per-request id set at the route layer and threaded through the service call chain. It groups every audit row produced by one request, enabling a future bulk-undo or one-request trace. Null is valid for entries produced outside a request (bootstrap and other unattended domain-entity writes).
+- **Referential integrity.** `actorId` is a nullable foreign key to `UserAccount.id`; when a user is hard-deleted, `actorId` is set to null rather than cascading the audit row (parity with [AC-98](verification.md#1517-data-integrity)). `entityId` is not foreign-keyed — a purge removes the target row while its audit trail remains.
+- **Transactional write.** Every domain-entity mutation and its audit row commit in a single database transaction. The application does not write the state change without the audit row, and it does not write the audit row without the state change. See [architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract) and [ADR-0021 — Decision](../adr/0021-audit-log-and-notifications-single-write-path.md#decision).
+- **Non-audited self-preference writes on `UserAccount`.** A narrow carve-out from the single-write-path invariant: a self-update API call ([api.md §14.2.1](api.md#1421-authentication)) whose patch touches only `themePreference`, `pushMuted`, or both writes the new values without producing an `audit_log` row. These are per-user UI/notification preferences with no cross-user or security consequence; auditing them would add rows to the activity feed that are not "who-did-what-to-whom" events and would drown out the actor-on-entity traffic the feed is optimized for (ADR-0021 "high-signal activity feed"). Any write that touches `roles`, `active`, `username`, `displayName`, `email`, or `passwordHash` (administrator paths, not self-update) goes through `mutate()` and produces an audit row unconditionally. The CI architecture check ([verification.md AC-179](verification.md#1523-audit-log)) remains authoritative for every non-carve-out mutation on `user_accounts`; the carve-out is expressed as an allowlisted write site, not a general bypass of the single-write-path helper.
+- **Post-commit notification dispatch.** Subscribers (notification publisher and any future projection) dispatch after the transaction commits, so a throwing subscriber cannot roll back domain state. The `audit_log` row is the event source; publishing is a read-over-audit projection.
+
+### 5.11 Notification Rule
+
+Admin-editable configuration mapping a closed event catalog to recipient specs. Rule writes are direct repository writes; rule configuration is not surfaced on the activity feed. Rationale and alternatives: [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md).
+
+```typescript
+type NotificationEventClass =
+  | 'project.transition_forward'
+  | 'project.transition_backward'
+  | 'project.archived'
+  | 'project.assignment_changed'
+  | 'backup.failed'
+  | 'disk.threshold_reached';
+
+interface NotificationRecipientSpec {
+  roles: AccountRole[]; // additive — every user holding any of these roles
+  includeAssignedWorkers: boolean; // additive — only meaningful for project-scoped events
+  userIds: string[]; // additive — UserAccount.id values
+}
+
+interface NotificationRule {
+  id: string; // UUID
+  eventClass: NotificationEventClass;
+  stateFilter?: WorkflowState | null; // only meaningful for transition events; null = no filter
+  recipientSpec: NotificationRecipientSpec;
+  enabled: boolean;
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+  createdBy?: string; // UserAccount.id
+  updatedBy?: string; // UserAccount.id
+}
+```
+
+Design notes:
+
+- **Closed event catalog.** `NotificationEventClass` is the shipping set. Adding a class is a code change plus a migration ([ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md)); users never author event classes. Upload-milestone classes ship with the upload-milestone surface.
+- **Event source mapping.** `project.transition_forward` / `project.transition_backward` → `entityType = 'project'` AND `action = 'transition:forward' | 'transition:backward'`. `project.archived` → `entityType = 'project'` AND `action = 'archive'` (soft-delete = archive — distinct from `purge` (hard-delete) and the generic `delete` used for other entity types, see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). `project.assignment_changed` → `entityType = 'project_worker'` with `action` in `create` or `delete`. `backup.failed` and `disk.threshold_reached` are non-mutation system events — they publish to the in-process bus without an `audit_log` row, per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+- **`stateFilter` semantics.** Non-null only on the two transition event classes. Matches when `after.status` equals the filter; null means match regardless of target state. A non-null filter on a non-transition class is rejected at validation time.
+- **`recipientSpec` is additive.** `roles`, `includeAssignedWorkers`, and `userIds` are unioned. An empty spec is rejected at validation so an enabled rule always has a non-empty candidate set before dedup.
+- **`includeAssignedWorkers` scope.** Only meaningful when the event carries a `projectId` (`project.transition_*`, `project.archived`, `project.assignment_changed`). Rejected at validation for `backup.failed` and `disk.threshold_reached`.
+- **No templates in the model.** Per-event German message templates are code-owned in the config layer. See [ADR-0023 Alternatives](../adr/0023-notification-rules-db-stored-closed-event-catalog.md#full-freeform-predicate-dsl-with-user-editable-message-templates).
+- **No priority / no override.** Multiple matches produce a recipient **union**, deduplicated by `UserAccount.id`. No priority field, override flag, or AND/OR tree — see [ADR-0023 Alternatives](../adr/0023-notification-rules-db-stored-closed-event-catalog.md#rule-matching-with-priority--override--and-or-trees).
+- **Invalid-recipient resilience.** A resolved recipient whose `UserAccount` is missing or `active = false` is skipped at dispatch; remaining recipients proceed. Zero live recipients completes without error.
+- **Rule take-effect.** A rule change affects the next event committed after the change; in-flight events use the rule set read at their own commit.
+- **Configuration layering.** Each `NotificationEventClass`'s German activity-feed description lives in the `[C]` catalogue ([architecture.md §12.2](architecture.md#122-company-configurable-settings)) under the audit activity-feed rendering entry — already keyed on `(action, payload)`, the per-event identity the publisher emits.
+
+### 5.12 Push Subscription
+
+Per-device push subscription. A user may register multiple devices (phone, desktop); unsubscribing one does not affect the others.
+
+```typescript
+interface PushSubscription {
+  id: string; // UUID
+  userId: string; // references UserAccount.id (ON DELETE CASCADE)
+  endpoint: string; // opaque browser-provided endpoint — unique within a user
+  p256dh: string; // opaque key material delivered by the browser push API
+  auth: string; // opaque key material delivered by the browser push API
+  userAgent?: string; // nullable — captured at subscribe time so the user can identify a device in their subscription list
+  createdAt: string; // ISO 8601
+}
+```
+
+Design notes:
+
+- **Per-device identity.** `endpoint` is unique within a user (`(userId, endpoint)` uniqueness); re-subscribing an existing endpoint updates the row. Rows are deleted either by the server on a permanent-error dispatch or by the user via unsubscribe.
+- **Ownership.** `userId` is set from the authenticated caller at subscribe time; a caller-supplied user id is ignored.
+- **Denormalized key material.** `p256dh` and `auth` are the two opaque tokens the browser push API returns at subscribe time. They are stored as two named text fields rather than a single JSONB blob so the dispatcher reads them directly without an additional unpacking step. The field names `p256dh` and `auth` are the browser push API's own externally-defined names — not implementation details — and round-trip verbatim between the client, the server, and the push service. Neither field is ever rendered in the UI.
+- **Mute interaction.** When the owner's `pushMuted` is `true`, the dispatcher skips every subscription they own. Rows are retained — mute is a delivery-time filter, so unmuting restores delivery without a re-subscribe.
+- **User deactivation / deletion.** Deactivation (`active = false`) suspends dispatch to the user's subscriptions. Hard-delete cascades `push_subscription` rows (parity with session cleanup; see [§6.9](#69-soft-deletes)).
+- **No retention window.** Rows live until unsubscribed or cascaded by user deletion; stale endpoints are pruned at dispatch time via permanent-error handling. There is no elapsed-time garbage collection — rows are removed only by unsubscribe, user cascade, or a permanent dispatch error (e.g., a gone-endpoint response from the push service).
+
+### 5.13 Attachment
+
+A file attached to a project. Metadata lives in the database (Layer 1 business data, round-trips with [§5.8](#58-export-envelope)); the bytes themselves live in object storage (Layer 3, [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md)).
+
+```typescript
+type AttachmentLabel =
+  | 'angebot'
+  | 'auftragsbestaetigung'
+  | 'rechnung'
+  | 'aufmass'
+  | 'foto'
+  | 'sonstiges';
+
+type AttachmentKind = 'photo' | 'binary';
+
+type AttachmentStatus = 'pending' | 'ready';
+
+interface Attachment {
+  id: string; // UUID
+  projectId: string; // references Project.id (ON DELETE CASCADE)
+  status: AttachmentStatus; // 'pending' after init; 'ready' after complete + HEAD
+  label: AttachmentLabel; // closed set — see below
+  kind: AttachmentKind; // 'photo' for image types rendered in the gallery; 'binary' otherwise
+  fileName: string; // client-supplied display name; sanitized — see design note "Filename sanitization"
+  mimeType: string; // from the MIME whitelist — see below
+  sizeBytes: number; // size of the original object (not the thumbnail)
+  originalKey: string; // opaque storage key for the original object
+  thumbKey?: string; // opaque storage key for the client-generated thumbnail; null for non-photo kinds
+  createdAt: string; // ISO 8601
+  createdBy?: string; // UserAccount.id — set from the session at init time
+}
+```
+
+Design notes:
+
+- **State machine.** `pending` on successful init (row + presigned-POST URLs issued). `ready` after the complete call verifies both objects exist via HEAD against object storage. No other states. A failed HEAD leaves the row at `pending`; the reaper ([§6.11](#611-attachment-orphan-reaper)) is the only path that removes a stuck `pending` row.
+- **Label is a closed set** — no free text, no per-deployment labels. German display labels are applied via configuration **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). Rationale: closed-catalog pattern mirrors [ADR-0023](../adr/0023-notification-rules-db-stored-closed-event-catalog.md) — labels are referenced by UI and filtering code; a user-authored taxonomy drifts.
+- **Kind is derived from `mimeType` at init time.** `image/jpeg`, `image/png`, `image/webp` → `'photo'`. `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document` → `'binary'`. Other types are rejected at init with a German message naming the supported set.
+- **MIME whitelist** — exactly: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`. Values outside the set are rejected at init. HEIC (`image/heic`) is deliberately not on the list — the kickoff scope excludes Apple users and the transcode complexity does not earn its keep against that user base; clients receive a validation message pointing at the supported formats.
+- **Size cap** — `sizeBytes` must not exceed the configured per-file cap **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). The server enforces this by constraining the presigned upload and by verifying the HEAD-reported size at complete.
+- **Filename sanitization.** `fileName` must be non-empty, at most 255 characters, with no control characters (`\x00`–`\x1F`, `\x7F`), no path separators (`/`, `\`), and no double-quote (`"`). The double-quote rule exists because `fileName` is interpolated into the storage `Content-Disposition: attachment; filename="…"` header on presigned-GET download responses — a stray quote would let a malicious uploader inject header content. The server rejects violating values at init with `422 VALIDATION_ERROR` and persists no row ([api.md §14.2.11](api.md#14211-attachments)).
+- **Storage keys are opaque.** `originalKey` and `thumbKey` are emitted by the server at init time. Clients treat them as opaque — only the server issues them, and only the server maps them to a download URL (see [api.md §14.2.11](api.md#14211-attachments)).
+- **Ownership.** `createdBy` is set from the session at init time; a client-supplied value is ignored.
+- **Cascade on project hard-delete.** When a project is purged (hard-delete via [api.md §14.2.2](api.md#1422-projects)), all `attachment` rows cascade via FK; the server also deletes the backing objects from storage as part of the purge. Soft-delete (archive) leaves attachments intact.
+- **Referential integrity with the export envelope.** Attachment rows round-trip with Layer 1 per [§5.8](#58-export-envelope); bytes remain storage-owned per [ADR-0018](../adr/0018-data-persistence-and-recovery-layered-strategy.md) and are not part of the envelope. A restored row whose backing objects are absent is excluded from the photo gallery and from bulk download; the metadata row stays intact — the mismatch is an operational condition, not a schema error. The exact UI rendering (German label, muted placeholder, disabled download action) lives in the SSOT: see [ui/project-detail.md §8.15.7](ui/project-detail.md#8157-restored-rows-without-backing-bytes).
 
 ---
 
@@ -303,6 +463,30 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
   - `project:purge` (owner-only) allows per-project hard-delete via `DELETE /api/projects/:id/purge`. Purge requires the project already be archived (`deleted = true`); the endpoint rejects with 409 Conflict otherwise. `project_workers` rows cascade via FK. See [AC-155](verification.md#1512-project-management) to [AC-158](verification.md#1512-project-management).
   - The API exposes an archived-project count on the customer GET response so the UI can warn before destructive customer deletion.
   - No restore path exists via the API. Recovery requires database access.
+
+### 6.10 Audit Log Retention
+
+- `audit_log` entries are retained for a rolling window of 90 days **[C]** (see [architecture.md §12.2](architecture.md#122-company-configurable-settings)), aligned with the Layer 2 backup window ([ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) and the cross-surface retention choice recorded in [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md).
+- A scheduled cleanup job removes entries older than the window. Removing entries via this job is the only delete path on the table; every other application path is append-only.
+- Each cleanup run is itself recorded — not in `audit_log` (the scope is domain entities only, per [§5.10](#510-audit-log-entity)), but in the structured operational logger, tagged as a system event. Rationale: keeping retention out of `audit_log` preserves the "append-only from the application" invariant for callers reading the activity feed; retention visibility lives in operational logs alongside other scheduled-job outputs.
+- **Operational-log contract.** Each run emits exactly one structured log line at `info` level with the following fields: `event = 'audit-retention-cleanup'` (fixed discriminator), `window_days` (integer — the configured retention window applied, from the `[C]` catalogue above), `removed_count` (non-negative integer — rows deleted in the run; `0` on a no-op run), `ran_at` (ISO 8601 timestamp of the run). An operator verifies retention by querying the operational log for `event = 'audit-retention-cleanup'`; the Aktivität UI ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed), [ui/management.md §8.13](ui/management.md#813-audit-view)) is _not_ the verification surface — it deliberately omits retention events to keep the domain-entity scope intact. The retention of the operational log line itself follows whatever operational-log retention the deployed environment enforces — this spec does not pin a separate retention for system log lines.
+- Retention applies uniformly to all entity types; there is no per-entity-type override.
+
+### 6.11 Attachment Orphan Reaper
+
+- A scheduled job removes `attachment` rows stuck at `status = 'pending'` longer than the configured orphan-reaper TTL **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). Rationale: the upload flow ([api.md §14.2.11](api.md#14211-attachments)) creates a `pending` row before the client uploads bytes; a client that aborts between init and complete leaves the row and any half-uploaded object behind.
+- Each pending row the reaper removes is accompanied by a delete of its `originalKey` and (if set) its `thumbKey` in object storage. The row and the bytes are the two halves of the same garbage; leaving either behind reintroduces the orphan class.
+- Each run emits exactly one structured operational log line at `info` level with fields `event = 'attachment-orphan-reaper'` (fixed discriminator), `ttl_minutes` (integer — the configured TTL applied, from the `[C]` catalogue above), `removed_count` (non-negative integer — rows deleted in the run; `0` on a no-op run), `ran_at` (ISO 8601 timestamp of the run). The run does not produce an `audit_log` row — attachments stuck at `pending` have never entered the domain (no `ready` ever observed), so removing them is housekeeping, not a domain event.
+- A storage object deletion that fails (object already gone, provider transient error) is logged under the same event with `error_hint` populated; the row is still removed. The goal is to keep the metadata table clean; an object delete that finds nothing is a no-op, not a failure.
+- An in-flight sweep is drained on graceful shutdown before the database pool closes — parity with the session reaper ([verification.md AC-132](verification.md#159-infrastructure)).
+
+### 6.12 Bulk-Download Zip Reaper
+
+- A scheduled job sweeps the object-storage `bulk-downloads/` prefix and removes objects whose `LastModified` age exceeds the configured bulk-zip TTL **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). Rationale: the bulk-download flow ([api.md §14.2.11](api.md#14211-attachments)) stages a per-request zip as `bulk-downloads/<uuid>.zip` so the client can pull it via a short-lived presigned GET; once the presigned URL expires, the zip is dead weight against storage quota.
+- No database row participates — these objects are ephemeral, storage-only artifacts. The reaper therefore operates entirely at the object-storage layer: list by prefix filtered by `LastModified` < cutoff, then `deleteObject` per key.
+- Each run emits exactly one structured operational log line at `info` level with fields `event = 'bulk-download-reaper'` (fixed discriminator), `ttl_minutes` (integer — the configured TTL applied, from the `[C]` catalogue above), `removed_count` (non-negative integer — objects deleted in the run; `0` on a no-op run), `ran_at` (ISO 8601 timestamp of the run). The run does not produce an `audit_log` row — bulk-download zips never entered the domain (no DB row, no `audit_log` event at creation), so removing them is housekeeping.
+- A storage object deletion that fails (object already gone, provider transient error) is logged under the same event with `error_hint` populated; the sweep continues with the next key. Partial progress is acceptable — the next sweep picks up anything left behind.
+- An in-flight sweep is drained on graceful shutdown before the database pool closes — parity with the attachment orphan reaper ([§6.11](#611-attachment-orphan-reaper)) and the session reaper ([verification.md AC-132](verification.md#159-infrastructure)).
 
 ---
 

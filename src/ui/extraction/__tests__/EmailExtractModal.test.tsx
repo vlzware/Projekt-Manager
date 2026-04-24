@@ -80,6 +80,7 @@ beforeEach(() => {
       roles: ['owner'],
       email: null,
       themePreference: 'system',
+      pushMuted: false,
     },
     authError: null,
     sessionChecked: true,

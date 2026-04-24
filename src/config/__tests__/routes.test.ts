@@ -29,17 +29,30 @@ const caller = (role: RoleName): RouteCaller => ({ roles: [role] });
 
 // Mirror of `docs/spec/ui/index.md §8.7.1`. Kept independent of the table
 // source so a regression in either has to be reconciled by hand.
+// Aktivität (audit:read) is visible to owner / office only under the
+// current matrix; worker and bookkeeper lack `audit:read` and do not
+// see the tab. Benachrichtigungen (notifications:manage) is owner-only
+// per api.md §14.3 + ADR-0023 + AC-198.
 const MATRIX: Record<RoleName, readonly string[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten'],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten'],
-  worker: ['kanban', 'kalender'],
+  owner: [
+    'kanban',
+    'kalender',
+    'projekte',
+    'kunden',
+    'benutzer',
+    'daten',
+    'aktivitaet',
+    'benachrichtigungen',
+  ],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
+  worker: ['meineProjekte', 'kanban', 'kalender'],
   bookkeeper: ['projekte', 'kunden'],
 };
 
 const LANDINGS: Record<RoleName, string> = {
   owner: '/kanban',
   office: '/kanban',
-  worker: '/kanban',
+  worker: '/meine-projekte',
   bookkeeper: '/projects',
 };
 
@@ -54,8 +67,11 @@ describe('ROUTES — per-role nav matrix (AC-75)', () => {
   it('preserves matrix order in the visible list', () => {
     // The header renders in table order; swapping the table order would
     // silently reshuffle the nav buttons.
-    const owner = visibleRoutesForUser(caller('owner')).map((r) => r.view);
-    expect(owner).toEqual(ROUTES.map((r) => r.view));
+    const ownerCaller = caller('owner');
+    const owner = visibleRoutesForUser(ownerCaller).map((r) => r.view);
+    expect(owner).toEqual(
+      ROUTES.filter((r) => !r.path.includes('/:') && r.canAccess(ownerCaller)).map((r) => r.view),
+    );
   });
 
   it('never exposes a Daten tab to a caller without data:export', () => {
@@ -65,6 +81,15 @@ describe('ROUTES — per-role nav matrix (AC-75)', () => {
     const visible = visibleRoutesForUser(caller('worker')).map((r) => r.view);
     expect(visible).not.toContain('daten');
     expect(visible).not.toContain('benutzer');
+  });
+
+  it('never exposes an Aktivität tab to a caller without audit:read', () => {
+    // bookkeeper is the only role without `audit:read` in the permission
+    // matrix, so the Aktivität tab must stay hidden. Pins the
+    // audit-surface half of the AC-75 / AC-149 defense-in-depth chain
+    // alongside the Daten negative above.
+    const visible = visibleRoutesForUser(caller('bookkeeper')).map((r) => r.view);
+    expect(visible).not.toContain('aktivitaet');
   });
 });
 
@@ -101,6 +126,10 @@ describe('ROUTES — path/view helpers', () => {
     expect(routeByPath('/kanban')?.view).toBe('kanban');
     expect(routeByPath('/data')?.view).toBe('daten');
     expect(routeByPath('/nowhere')).toBeUndefined();
+  });
+
+  it('routeByPath resolves parametrized paths by pattern', () => {
+    expect(routeByPath('/projects/abc123')?.view).toBe('projektDetail');
   });
 
   it('routeByView throws for an unknown view', () => {

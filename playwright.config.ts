@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,12 +9,58 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Preload `.env` into this config process so the webServer command
+// inherits MINIO_*, POSTGRES_PASSWORD, and any other secrets the dev
+// environment relies on. The E2E-specific overrides below (PORT,
+// DATABASE_URL, VITE_DEV_PORT) then beat the file values because
+// `webServer.env` is merged on top of process.env.
+//
+// `dev:e2e:server` (see package.json) intentionally skips Node's
+// `--env-file-if-exists=.env` — otherwise Node would re-read the file
+// in the child process and clobber the override values (Node's
+// `--env-file` semantics: file wins over environment).
+try {
+  process.loadEnvFile(path.resolve(__dirname, '.env'));
+} catch {
+  // .env missing — rely on the ambient environment.
+}
+
+// The Playwright process itself needs DATABASE_URL pointed at the
+// isolated E2E database — auth.setup.ts opens a direct DB handle
+// (createDatabase → process.env.DATABASE_URL) to run `migrate()` +
+// `seed(force: true)`. Without this override, the setup would
+// truncate-and-reseed the developer's main `projekt_manager` DB,
+// defeating the whole point of the isolation.
+const E2E_DATABASE_URL =
+  process.env.E2E_DATABASE_URL ||
+  `postgresql://pm:${process.env.POSTGRES_PASSWORD || 'changeme'}@localhost:5432/projekt_manager_e2e`;
+process.env.DATABASE_URL = E2E_DATABASE_URL;
+
+// Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1` blocks
+// Chromium's namespace sandbox. Without this, Playwright injects
+// `--no-sandbox` as a fallback and Chromium renders an "unsupported flag"
+// infobar on every headed run. Pointing at Google Chrome's SUID helper
+// (installed via the google-chrome-stable .deb) restores the sandbox —
+// Chromium's docs rank this as the safest of the three workarounds
+// (https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
+// Only applied when the helper is actually present; CI images and
+// workstations without google-chrome-stable fall through to Playwright's
+// default `--no-sandbox` launch, where the infobar is irrelevant (headless).
+const SUID_SANDBOX = '/opt/google/chrome/chrome-sandbox';
+const USE_SUID_SANDBOX = fs.existsSync(SUID_SANDBOX);
+if (USE_SUID_SANDBOX) {
+  process.env.CHROME_DEVEL_SANDBOX = SUID_SANDBOX;
+}
+
 /**
- * Auth storage path — must match e2e/auth.setup.ts. Declared here as a
+ * Default auth storage path — owner role. Must match
+ * `STORAGE_STATES.owner` in e2e/auth.setup.ts. Declared here as a
  * literal (not imported from the setup file) so projects can reference
  * it without pulling a .ts source file into the config's resolution.
+ * Specs that need a different role import `STORAGE_STATES` from
+ * auth.setup.ts and set `test.use({ storageState: STORAGE_STATES.<role> })`.
  */
-const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/user.json');
+const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/owner.json');
 
 /**
  * Tests that create persistent data in the shared database.
@@ -28,7 +75,7 @@ const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/user.json');
  * that completes before this one starts.
  */
 const MUTATING_TESTS =
-  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange|archive-flows/;
+  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange|archive-flows|activity-feed|notification-rules|activity-recipient-scope|push-permission|attachment-upload/;
 const DEMO_TESTS = /demo-.*\.spec\.ts/;
 
 export default defineConfig({
@@ -39,19 +86,29 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL: 'http://localhost:5174',
     // Design ACs are verified by running Playwright in UI mode and reviewing
     // by eye (see CONTRIBUTING.md § Testing) — stored-screenshot baselines
     // were dropped as brittle friction. `retain-on-failure` captures a
     // full trace on any failing run so the failure can be inspected via
     // `npx playwright show-trace <zip>` without needing a retry to trigger.
     trace: 'retain-on-failure',
+    // Re-enable Chromium's sandbox only when the SUID helper is available
+    // (Playwright disables it by default). See the CHROME_DEVEL_SANDBOX
+    // block above for the Ubuntu 24.04 AppArmor context.
+    launchOptions: { chromiumSandbox: USE_SUID_SANDBOX },
   },
   projects: [
-    // 1. Setup — reseed database, authenticate once, save storage state.
+    // 1. Setup — reseed database, authenticate once per role, save four
+    //    storage-state files. `fullyParallel: false` + `workers: 1` keep
+    //    the reseed → per-role logins order — otherwise the logins race
+    //    the TRUNCATE CASCADE and hit `Ein interner Fehler` from the
+    //    dev server mid-truncate.
     {
       name: 'setup',
       testMatch: /.*\.setup\.ts/,
+      fullyParallel: false,
+      workers: 1,
       use: {
         ...devices['Desktop Chrome'],
         viewport: { width: 1920, height: 1080 },
@@ -112,9 +169,48 @@ export default defineConfig({
       },
     },
   ],
+  /**
+   * Playwright spawns its own dev server + backend on ports separate
+   * from the developer's local `npm run dev`, and points the backend
+   * at a dedicated `projekt_manager_e2e` database. This prevents the
+   * long-standing flakiness that arose when the developer was browsing
+   * live data while Playwright's setup spec issued `TRUNCATE CASCADE`
+   * against the same database — race conditions there surfaced as
+   * sporadic visible-data drift and login failures.
+   *
+   * The E2E database must exist ahead of time. The auth.setup reseed
+   * creates the schema via `migrate(db, …)` before the first login.
+   *
+   * `reuseExistingServer: false` means the devex cost is one vite +
+   * one fastify per run; the gain is a reliable, deterministic suite.
+   */
   webServer: {
-    command: 'npm run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: !process.env.CI,
+    command: 'npm run dev:e2e',
+    // Probe the backend via vite's /api proxy so readiness covers BOTH
+    // processes started by `concurrently` — vite on 5174 and fastify on
+    // 3100. Polling just `http://localhost:5174` only waits for vite:
+    // the proxy answers with a 502 while fastify is still migrating +
+    // seeding, and Playwright has happily started firing tests against a
+    // backend that is not yet listening. That raced the first login in
+    // auth.setup.ts (the others passed because fastify finished while
+    // owner's 15 s timeout was still running). `/api/health` returns
+    // 2xx only when the DB, MinIO, and fastify are all up, which is
+    // exactly the pre-test invariant the setup tests assume.
+    url: 'http://localhost:5174/api/health',
+    reuseExistingServer: false,
+    // 2-minute budget covers vite's first-time dep prebundle on a
+    // cold node_modules/.vite cache; the default 60 s was tight enough
+    // that a slow disk + canvas install could push us past it.
+    timeout: 120_000,
+    env: {
+      // Fastify listens on 3100 (defaults to 3000); vite on 5174
+      // (defaults to 5173). Both are overridden via env so the
+      // long-standing `npm run dev` on 3000/5173 can keep running
+      // alongside `npx playwright test` without port or DB collisions.
+      PORT: '3100',
+      VITE_DEV_PORT: '5174',
+      VITE_API_PROXY_TARGET: 'http://localhost:3100',
+      DATABASE_URL: E2E_DATABASE_URL,
+    },
   },
 });

@@ -6,71 +6,71 @@
 
 ## Context
 
-ADR-0002 locked the frontend stack and established TypeScript as the project language. ADR-0003 established Docker Compose as the deployment layer with PostgreSQL as the database. The backend framework and database access layer remain open.
+ADR-0002 locked the frontend stack and made TypeScript the project language. ADR-0003 established Docker Compose as the deployment layer with PostgreSQL as the database. Backend framework and DB access layer remain open.
 
 Key forces:
 
-- **TypeScript end-to-end.** The backend must be TypeScript (architecture.md §11.1). The framework must have first-class TypeScript support, not bolted-on type definitions.
-- **Lightweight for the scale.** The system serves 1–5 users with 10–30 concurrent projects. Enterprise scaffolding (dependency injection, decorators, module systems) adds ceremony without proportional benefit.
-- **SQL-literate.** The spec requires versioned schema migrations and a repository-pattern storage layer. The ORM should make it easy to understand what queries run — debugging opaque query generation is a poor use of time.
-- **Validation at the boundary.** The API layer validates all incoming requests (spec §API). Built-in schema validation reduces boilerplate and keeps validation co-located with route definitions.
+- **TypeScript end-to-end** (architecture.md §11.1). First-class TS support required, not bolted-on types.
+- **Lightweight for the scale.** 1–5 users, 10–30 concurrent projects. Enterprise scaffolding (DI, decorators, modules) adds ceremony without proportional benefit.
+- **SQL-literate.** Spec requires versioned schema migrations and a repository-pattern storage layer. Queries should be inspectable — debugging opaque query generation is a poor use of time.
+- **Validation at the boundary.** API layer validates all incoming requests (spec §API). Built-in schema validation keeps this co-located with route definitions.
 
 ## Decision
 
-We will use **Fastify** as the HTTP framework, **Drizzle ORM** for database access and migrations, and **node-postgres (pg)** as the underlying PostgreSQL driver.
+**Fastify** as the HTTP framework, **Drizzle ORM** for database access and migrations, **node-postgres (pg)** as the underlying PostgreSQL driver.
 
 ### Fastify
 
-Fastify provides built-in request/response validation via JSON Schema, a plugin architecture for organizing the six responsibility layers, and TypeScript support without wrapper libraries. Its schema-based validation aligns with the spec's requirement that the API layer validates all incoming requests — schemas are declared alongside routes, not in a separate validation layer.
+Built-in JSON Schema request/response validation, plugin architecture for organizing the responsibility layers, first-class TypeScript. Schemas live alongside routes — no separate validation layer.
 
 ### Drizzle ORM
 
-Drizzle defines the database schema in TypeScript and generates types directly from it — the same schema drives migrations, queries, and type checking. Its query API reads like SQL rather than abstracting it away, making it straightforward to reason about what the database executes. Migration files are plain SQL, versioned and reproducible as the spec requires.
+Schema defined in TypeScript, types generated from it — the same schema drives migrations, queries, and type checking. Query API reads like SQL rather than abstracting it away. Migration files are plain SQL, versioned and reproducible as the spec requires.
 
 ### node-postgres
 
-Drizzle uses node-postgres as its PostgreSQL driver. This is the most established PostgreSQL client for Node.js with no additional abstraction.
+The most established PostgreSQL client for Node.js. Used by Drizzle as its driver, no additional abstraction.
 
 ## Alternatives Considered
 
 ### Express
 
-The most widely used Node.js framework. Mature ecosystem, extensive middleware. Ruled out because its TypeScript support relies on community-maintained `@types/express` rather than built-in types, and it lacks built-in request validation — requiring additional libraries (Joi, Zod, express-validator) that Fastify handles natively.
+Mature, widely used, extensive middleware. Rejected: TypeScript support via community `@types/express` rather than built-in, no built-in request validation (requires Joi/Zod/express-validator) — all of which Fastify handles natively.
 
 ### Hono
 
-Ultra-lightweight (~14 kB), excellent TypeScript support, runs on multiple runtimes (Node, Deno, Bun, edge). A strong candidate. Ruled out in favor of Fastify's more established ecosystem, richer plugin architecture, and built-in JSON Schema validation. Hono's multi-runtime portability is not a factor — ADR-0003 established Node.js in Docker as the runtime.
+Ultra-lightweight (~14 kB), excellent TS support, multi-runtime (Node, Deno, Bun, edge). Strong candidate. Rejected in favor of Fastify's more established ecosystem, richer plugin architecture, and built-in JSON Schema validation. Multi-runtime portability is moot — ADR-0003 fixed Node.js in Docker.
 
 ### NestJS
 
-Enterprise-grade, Angular-inspired architecture with decorators, dependency injection, and module systems. Ruled out because this overhead is disproportionate for a system serving 1–5 users. The ceremony that benefits large teams becomes friction for a solo developer.
+Enterprise Angular-inspired architecture (decorators, DI, modules). Rejected: overhead disproportionate for 1–5 users. Large-team ceremony becomes solo-developer friction.
 
 ### tRPC
 
-End-to-end type safety by sharing type definitions between client and server — no schema duplication. Ruled out because it couples the API shape to TypeScript clients. The API becomes untestable with standard HTTP tools (curl, Postman) and inaccessible to non-TypeScript consumers. The spec describes a REST API with standard HTTP semantics.
+End-to-end type safety by sharing types client-server — no schema duplication. Rejected: couples the API to TypeScript clients. The API becomes untestable with curl/Postman and inaccessible to non-TS consumers. The spec describes a REST API with standard HTTP semantics.
 
 ### Prisma
 
-The most popular TypeScript ORM. Schema-first approach, auto-generated client, polished migration workflow. Ruled out because it ships a query engine binary (~15 MB) that runs as a sidecar process, adding resource overhead and cold-start latency. Its query abstraction is opaque — when a query behaves unexpectedly, diagnosing the generated SQL adds a debugging layer. Drizzle's SQL-literate API avoids this.
+Most popular TS ORM — schema-first, auto-generated client, polished migrations. Rejected: ships a ~15 MB query engine binary as a sidecar process (resource overhead, cold-start latency). Query abstraction is opaque — diagnosing generated SQL adds a debugging layer. Drizzle's SQL-literate API avoids this.
 
 ### Knex.js
 
-Query builder with solid migration support. More control than a full ORM. Ruled out because it requires manual TypeScript type definitions for query results — Drizzle generates these from the schema automatically, eliminating a class of type drift bugs.
+Query builder with solid migration support. Rejected: requires manual TS types for query results — Drizzle generates them from the schema, eliminating a class of type drift bugs.
 
 ## Consequences
 
 ### Positive
 
-- Type safety flows from database schema through queries to API responses — schema changes surface as compile errors
-- Fastify's JSON Schema validation keeps request validation co-located with route definitions
+- Type safety flows from DB schema through queries to API responses — schema changes surface as compile errors
+- Fastify's JSON Schema validation keeps request validation next to route definitions
 - Drizzle migrations are plain SQL — inspectable, portable, no ORM lock-in for the migration history
-- Both libraries are actively maintained with growing adoption and community support
+- Both libraries are actively maintained with growing adoption
 
 ### Negative
 
 - Fastify's plugin system has a learning curve — lifecycle hooks and encapsulation contexts are not immediately intuitive
-- Drizzle is younger than Prisma — less LLM training data and fewer community resources, which matters in an AI-assisted workflow (the same force that favored React over Svelte in ADR-0002). Mitigated by Drizzle's SQL-literate API: where LLM support falls short on niche Drizzle patterns, the developer can reason in SQL directly
-- JSON Schema (Fastify's validation format) is more verbose than alternatives like Zod schemas
+- Drizzle is younger than Prisma — less LLM training data, fewer community resources, which matters in AI-assisted workflows (same force that favored React over Svelte in ADR-0002). Mitigated by Drizzle's SQL-literate API: where LLM support falls short on niche Drizzle patterns, the developer can reason in SQL directly
+- JSON Schema (Fastify's validation format) is more verbose than alternatives like Zod
 
 ## References
 

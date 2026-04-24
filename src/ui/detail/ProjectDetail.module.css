@@ -1,0 +1,871 @@
+/* Project detail page + its subcomponents. Shared module so
+   the page and the region components stay in one CSS file. */
+
+.page {
+  position: relative;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1200px;
+  margin: 0 auto;
+  height: 100%;
+  overflow-y: auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.notPermitted,
+.notFound {
+  padding: 40px;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.errorBanner {
+  padding: 12px 16px;
+  background: var(--color-surface-muted);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Header */
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.headerTopRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.headerIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 280px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.projectNumber {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+/* Inline-editable title. Looks like an h1 until the user clicks into
+   it; reveals the input affordance on hover/focus. Now a <textarea>
+   (auto-sized by the component via scrollHeight) so long titles wrap
+   within the visual heading rather than clipping mid-word on phones. */
+.titleInput {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--color-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 6px;
+  margin: 0;
+  width: 100%;
+  max-width: 640px;
+  box-sizing: border-box;
+  font-family: inherit;
+  /* Textarea defaults — strip the resize handle (auto-size is driven
+     by the component) and hide the scrollbar, so the box reads as a
+     single-line heading even after wrapping. `overflow-wrap: anywhere`
+     is the aggressive fallback when the title has no natural break
+     points (an unbroken string longer than the width would otherwise
+     force a horizontal scroll). */
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.titleInput:hover:not([readonly]) {
+  border-color: var(--color-border-subtle);
+}
+
+.titleInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+  background: var(--color-surface-raised);
+}
+
+.titleInput[readonly] {
+  cursor: default;
+}
+
+.statusBadge {
+  display: inline-block;
+  width: fit-content;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-on-accent);
+}
+
+.archivedBadge {
+  display: inline-block;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-on-accent);
+  background: var(--color-text-subtle);
+}
+
+.downloadAllButton {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-strong);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.downloadAllButton:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+}
+
+.downloadAllButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.archiveButton {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.archiveButton:hover {
+  background: var(--color-surface-sunken);
+}
+
+.purgeButton {
+  padding: 8px 14px;
+  border: 1px solid var(--color-danger-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-danger-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.purgeButton:hover {
+  background: var(--color-danger-bg);
+}
+
+/* Floating camera capture — fixed to the viewport's top-right corner so
+   a worker on-site can reach it without hunting the layout. Stays
+   visible across scroll; the detail shell is the only page that mounts
+   it (wrapped in `{canWrite && …}` on the caller side).
+
+   The FAB uses the raised-surface token (not accent) so it blends with
+   the page chrome and adjusts with the active theme. An inline SVG icon
+   with `fill: currentColor` lets the icon colour follow `--color-text`
+   — emoji glyphs are OS-coloured and would stay the same across light
+   and dark themes, so they were a poor fit here. */
+.cameraFab {
+  /* Bottom-right is the standard FAB position in modern UI — stays
+     clear of the header action row (Alle herunterladen / Archivieren)
+     which anchors to the top-right of the content area, and lands
+     exactly where thumbs go on a phone so on-site workers reach it
+     one-handed. Fixed to the viewport so it remains visible across
+     the detail page's own scroll. */
+  position: fixed;
+  bottom: 32px;
+  right: 32px;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(var(--color-overlay-rgb), 0.15);
+  cursor: pointer;
+  z-index: 90;
+  transition:
+    transform 0.15s,
+    box-shadow 0.15s,
+    background 0.15s;
+}
+
+.cameraFab:hover,
+.cameraFab:focus-within {
+  transform: translateY(-2px);
+  background: var(--color-surface-sunken);
+  box-shadow: 0 6px 16px rgba(var(--color-overlay-rgb), 0.2);
+}
+
+/* On phones the bottom tab bar (`MobileTabBar`) sits at the viewport's
+   bottom edge, ~66 px tall. A fixed FAB at `bottom: 32px` would land
+   on top of the right-most tab ("Kunden" / "Projekte" depending on
+   role). Lift it above the tab bar and shrink it to the standard
+   Material mini-FAB size so it doesn't crowd the viewport. */
+@media (max-width: 768px) {
+  .cameraFab {
+    bottom: 80px;
+    right: 16px;
+    width: 56px;
+    height: 56px;
+  }
+
+  .cameraFabIcon {
+    width: 24px;
+    height: 24px;
+  }
+}
+
+.cameraFabIcon {
+  width: 32px;
+  height: 32px;
+  display: block;
+  fill: currentColor;
+}
+
+.cameraFabInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  padding: 0;
+  border: 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.regionHeading {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.coreSection,
+.workersSection,
+.photoSection,
+.binarySection,
+.activitySection,
+.uploadSection {
+  padding: 16px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  /* `min-width: 0` is the flex escape hatch so a long inner element
+     (a 6-column binary table, a long unbreakable filename, a dense
+     activity row) can shrink to the section's available width instead
+     of re-expanding the box to fit its content. `overflow-x: auto` on
+     the inner wrappers that genuinely overflow (e.g. `.binaryTableScroll`)
+     then paints a scrollbar only where needed. Avoid `overflow-x: hidden`
+     on the section itself — browsers implicitly set the perpendicular
+     axis to `auto` when one axis is not `visible`, which surfaces as a
+     phantom vertical scrollbar on every section. */
+  min-width: 0;
+}
+
+/* Activity block — last section on the page, tends to grow to 100s of
+   entries for a busy project. Cap the inner feed to a bounded height
+   and let it scroll internally so the page itself has a reachable
+   end. On phones this also preserves the upward swipe needed to
+   reveal the browser's tab bar / address bar at the page bottom. */
+.activitySection [data-testid='project-detail-activity-feed'] {
+  max-height: 50vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Editable core grid. Two columns on wide screens, stack below. Notes
+   span the full row. Each field stacks label above value so inputs
+   align cleanly without a fixed-width label gutter. */
+.coreGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px 20px;
+  margin: 0;
+}
+
+.coreField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.coreFieldFull {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.coreLabel {
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.coreValue {
+  font-size: 0.9rem;
+  color: var(--color-text);
+  padding: 6px 0;
+}
+
+.dateInput,
+.valueInput {
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-base);
+  color: var(--color-text-strong);
+  font-size: 0.9rem;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.dateInput:focus,
+.valueInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+}
+
+.valueInput[readonly] {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  cursor: default;
+}
+
+.notesInput {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-base);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.notesInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+}
+
+.notesInput[readonly] {
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  cursor: default;
+  resize: none;
+}
+
+/* Chips (worker assignment) */
+
+.chipList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--color-surface-muted);
+  border-radius: 14px;
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+}
+
+.chipRemove {
+  padding: 0 4px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.chipRemove:hover {
+  color: var(--color-danger);
+}
+
+.workerAddWrapper {
+  position: relative;
+  margin-top: 10px;
+}
+
+.addButton {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-base);
+  color: var(--color-text-strong);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.addButton:hover {
+  background: var(--color-surface-sunken);
+}
+
+.workerOptions {
+  list-style: none;
+  padding: 4px;
+  margin: 4px 0 0;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  box-shadow: 0 4px 12px rgba(var(--color-overlay-rgb), 0.1);
+  max-width: 260px;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
+}
+
+.optionButton {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: var(--color-text-strong);
+}
+
+.optionButton:hover {
+  background: var(--color-surface-sunken);
+}
+
+.emptyState {
+  padding: 12px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+
+/* Photo gallery */
+
+.photoGrid {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.photoItem {
+  position: relative;
+}
+
+.photoThumb {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid var(--color-border-muted);
+  border-radius: 6px;
+  background: var(--color-surface-base);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.photoThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.photoLoading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.photoMissing {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  background: var(--color-surface-muted);
+  border-radius: 6px;
+  color: var(--color-text-subtle);
+  font-size: 0.8rem;
+}
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(var(--color-overlay-rgb), 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  cursor: zoom-out;
+}
+
+.lightbox img {
+  max-width: 90vw;
+  max-height: 90vh;
+  object-fit: contain;
+}
+
+/* PDF preview — same overlay chrome as the lightbox, with an iframe
+   carrier for the browser's native PDF viewer. The iframe click is NOT
+   stopPropagation'd since PDFs need clicks to flow through for scroll
+   affordances, so a close button is overlaid on the corner. */
+.pdfPreview {
+  position: fixed;
+  inset: 0;
+  background: rgba(var(--color-overlay-rgb), 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.pdfPreviewClose {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font-size: 1.5rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(var(--color-overlay-rgb), 0.3);
+}
+
+.pdfPreviewFrame {
+  width: 90vw;
+  height: 90vh;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  box-shadow: 0 8px 32px rgba(var(--color-overlay-rgb), 0.3);
+}
+
+/* Binary list */
+
+/* Scroll container for the 6-column binary table. On narrow viewports
+   the fixed column set (select, filename, label, uploader, uploaded,
+   actions) exceeds the available width; without this wrapper the
+   table pushed the whole section past the viewport and broke the
+   mobile layout. `max-width: 100%` pins it to the section, `overflow-x:
+   auto` lets the user pan horizontally when it overflows. */
+.binaryTableScroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.binaryTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.binaryTable th,
+.binaryTable td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-subtle);
+  /* Prevent a pathological filename like a base64 string from forcing
+     the column to a multi-thousand-pixel width. `overflow-wrap` breaks
+     only when there's no better break point — normal spaces still
+     flow naturally. */
+  overflow-wrap: anywhere;
+}
+
+.binaryTable thead th {
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* Phone viewport: the 6-column layout is unreadable at <=768px even
+   with horizontal scroll. Drop the uploader + uploaded columns — the
+   uploader is visible on the project's activity feed, and the date
+   is rarely the primary identifier. What remains (select, filename,
+   label, actions) fits without scrolling. */
+@media (max-width: 768px) {
+  .binaryTable .colUploader,
+  .binaryTable .colUploaded {
+    display: none;
+  }
+}
+
+.rowActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.viewButton,
+.downloadButton {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-base);
+  color: var(--color-text-strong);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.viewButton:hover:not(:disabled),
+.downloadButton:hover:not(:disabled) {
+  background: var(--color-surface-sunken);
+}
+
+.downloadButton:disabled,
+.viewButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.deleteButton {
+  padding: 4px 10px;
+  border: 1px solid var(--color-danger-border);
+  background: var(--color-surface-base);
+  color: var(--color-danger-text);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.deleteButton:hover {
+  background: var(--color-danger-bg);
+}
+
+.missingBadge {
+  display: inline-block;
+  padding: 2px 6px;
+  margin-right: 6px;
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+
+.bulkDownloadButton {
+  margin-top: 10px;
+  padding: 6px 14px;
+  border: none;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.bulkDownloadButton:hover {
+  background: var(--color-accent-hover);
+}
+
+/* Upload CTA — redesigned so photos and documents live in clearly
+   separated blocks. The Beschriftung dropdown sits inside the document
+   block so it visually belongs to binaries only; photos default to the
+   `foto` label. */
+.uploadGroups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.uploadGroup {
+  padding: 14px;
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface-base);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.uploadGroupHeading {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0;
+}
+
+.uploadGroupControls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+/* Drag-drop state — outer wrapper lifts the border when a file is
+   hovering over the drop zone. */
+.uploadDropZone {
+  border: 2px dashed transparent;
+  border-radius: 10px;
+  padding: 4px;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.uploadDropZoneActive {
+  border-color: var(--color-accent);
+  background: var(--color-surface-sunken);
+}
+
+.uploadDropHint {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: var(--color-text-subtle);
+  text-align: center;
+}
+
+.fileLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--color-surface-raised);
+  font-size: 0.85rem;
+  color: var(--color-text-strong);
+}
+
+.fileLabel:hover {
+  background: var(--color-surface-sunken);
+}
+
+.fileInput {
+  display: none;
+}
+
+.labelWrapper {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.75rem;
+  color: var(--color-text-subtle);
+}
+
+.labelSelect {
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-strong);
+  font-size: 0.85rem;
+}
+
+/* Wrapper for pending-upload status rows; `role=status` + `aria-live`
+   live on this node so a row change announces to assistive tech. */
+.progressRegion {
+  display: block;
+  margin-top: 12px;
+}
+
+.progressRow {
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: var(--color-surface-muted);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.retryButton {
+  padding: 4px 10px;
+  border: 1px solid var(--color-danger);
+  background: var(--color-surface-base);
+  color: var(--color-danger);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.retryButton:hover {
+  background: var(--color-surface-sunken);
+}
+
+.dismissButton {
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  font-size: 1rem;
+  margin-left: auto;
+}

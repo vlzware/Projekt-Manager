@@ -6,56 +6,54 @@
 
 ## Context
 
-Per [ADR-0015](0015-copy-paste-textarea-email-data-intake.md), email text enters the application via a copy/paste textarea. An LLM extracts structured data (customer name, address, project details) from the raw text and pre-fills the relevant form.
+Per [ADR-0015](0015-copy-paste-textarea-email-data-intake.md), email text enters via a copy/paste textarea. An LLM extracts structured data (customer name, address, project details) and pre-fills the form.
 
-This requires calling a third-party LLM API (OpenRouter) and managing the associated API key. Three forces constrain the architecture:
+This requires calling a third-party LLM API (OpenRouter) and managing the API key. Three forces constrain the architecture:
 
-1. **CSP blocks browser-direct calls.** `connectSrc: ["'self'"]` (`src/server/app.ts`) prevents the browser from making `fetch()` calls to any external origin. Relaxing this widens the data-exfiltration surface.
-2. **ADR-0005 keeps secrets out of JavaScript.** The session security model uses HttpOnly cookies specifically to prevent XSS from stealing tokens. Exposing an API key as a JavaScript-readable value contradicts this principle.
-3. **The API key is a per-installation concern.** Two users (owner, office manager) share one company OpenRouter account. Per-user key management adds complexity without benefit.
+1. **CSP blocks browser-direct calls.** `connectSrc: ["'self'"]` (`src/server/app.ts`) prevents `fetch()` to any external origin. Relaxing widens the exfiltration surface.
+2. **ADR-0005 keeps secrets out of JavaScript.** HttpOnly cookies exist specifically to prevent XSS from stealing tokens. A JS-readable API key contradicts this.
+3. **The API key is per-installation.** Two users (owner, office manager) share one company OpenRouter account; per-user key management adds complexity without benefit.
 
-The API key is rate-limited and spend-capped on OpenRouter's dashboard, which bounds the blast radius of a compromise.
+The key is rate-limited and spend-capped on OpenRouter's dashboard, bounding compromise blast radius.
 
 ## Decision
 
-We will proxy OpenRouter calls through a server route (`POST /api/extract`). The API key is stored as an environment variable (`OPENROUTER_API_KEY`) in `secrets.env.age`, managed identically to existing deployment secrets (Postgres password, MinIO credentials, Cloudflare token). The key never reaches the browser.
+Proxy OpenRouter calls through a server route (`POST /api/extract`). The API key lives as `OPENROUTER_API_KEY` in `secrets.env.age`, managed identically to existing deployment secrets (Postgres password, MinIO credentials, Cloudflare token). The key never reaches the browser.
 
 The LLM model defaults to a hardcoded constant (`google/gemini-2.5-flash-lite`) with an optional `OPENROUTER_MODEL` env var override. Model selection is a technical/operational decision, not exposed in the UI.
 
 ## Alternatives Considered
 
-### Browser-direct calls to OpenRouter (key in browser)
+### Browser-direct calls (key in browser)
 
-The browser calls `https://openrouter.ai/api/v1/chat/completions` directly, with the API key stored in localStorage or sessionStorage. OpenRouter's CORS policy (`access-control-allow-origin: *`) permits this today. Main advantage: no backend route needed.
-
-Ruled out: CSP `connectSrc: ["'self'"]` blocks the call. Relaxing CSP widens the exfiltration surface. Storing the key in JavaScript contradicts ADR-0005. OpenRouter's CORS policy is undocumented and could change, creating a brittle dependency on a third party's infrastructure decision.
+Browser calls `https://openrouter.ai/api/v1/chat/completions` directly with the key in localStorage/sessionStorage. OpenRouter's CORS (`access-control-allow-origin: *`) permits it today. Ruled out: CSP blocks it; relaxing widens exfiltration surface; storing the key in JS contradicts ADR-0005; OpenRouter's CORS is undocumented and could change — brittle dependency on a third party's infra decision.
 
 ### Per-user key encrypted in DB with password-derived key
 
-Each user stores their own OpenRouter key. The key is encrypted with a symmetric key derived from the user's password (PBKDF2/HKDF), separate from the bcrypt hash used for authentication. Decryption requires the plaintext password, available only at login time.
+Each user stores their own key, encrypted with a symmetric key derived from their password (PBKDF2/HKDF), separate from the bcrypt hash. Decryption requires plaintext password — available only at login.
 
-Ruled out: per-installation key makes per-user encryption pointless — both users would store the same value. The approach also adds significant complexity (key derivation, salt management, re-encryption on password change) for no security benefit in this context.
+Ruled out: per-installation key makes per-user encryption pointless — both users store the same value. Adds significant complexity (key derivation, salt management, re-encryption on password change) for no security benefit here.
 
 ### Per-user key encrypted in DB with server-side env var secret
 
-Same as above, but encrypted with AES using a server-side env var instead of a password-derived key. Simpler than the password-derived variant, but still requires encryption utilities, a DB schema change, a settings endpoint, and a key rotation script.
+Same, but encrypted with AES using a server-side env var. Simpler than password-derived, but still needs encryption utilities, a DB schema change, a settings endpoint, and a rotation script.
 
-Ruled out: with a per-installation key, the env var already holds the secret securely. Adding a DB layer on top is unnecessary indirection — the key would be encrypted with a secret stored in the same environment that already has direct access to it.
+Ruled out: with a per-installation key, the env var already holds the secret securely. Adding a DB layer is unnecessary indirection — the key would be encrypted with a secret stored in the same environment that already has direct access to it.
 
 ## Consequences
 
 ### Positive
 
-- CSP and ADR-0005 remain untouched — no security posture changes
-- Key management follows the existing deployment secret pattern (`secrets.env.age` + `age`) — no new infrastructure
-- The proxy route follows established codebase patterns (auth middleware, schema validation, service layer, centralized error handling) — low implementation risk
+- CSP and ADR-0005 untouched — no security posture changes
+- Key management reuses the existing `secrets.env.age` + `age` pattern — no new infrastructure
+- The proxy route follows established patterns (auth middleware, schema validation, service layer, centralized error handling) — low implementation risk
 - OpenRouter's spend cap and rate limits provide defense-in-depth regardless of storage approach
 
 ### Negative
 
-- The server becomes a proxy for every extraction request — adds one route to maintain and one outbound dependency (OpenRouter availability)
-- Changing the API key requires updating `secrets.env.age` and restarting the service — no UI path
-- Customer email text transits through the server en route to OpenRouter — the server already handles this data, but it's an additional processing path to audit
+- Server becomes a proxy for every extraction — one more route to maintain and one outbound dependency (OpenRouter availability)
+- Rotating the key means updating `secrets.env.age` and restarting — no UI path
+- Customer email text transits through the server en route to OpenRouter — already handled, but an additional processing path to audit
 
 ## References
 

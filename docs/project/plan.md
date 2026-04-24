@@ -184,7 +184,7 @@ From test environment into production on Hetzner.
 **Artifacts**
 
 - a mobile-first view with file uploads
-- hardcoded notification system
+- configurable notification system
 
 ## All iterations
 

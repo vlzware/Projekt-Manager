@@ -3,19 +3,42 @@
  * All routes require authentication.
  *
  * Routes are thin HTTP adapters: request parsing, response formatting,
- * Fastify-specific concerns. Business logic lives in ProjectService.
+ * Fastify-specific concerns. Business logic lives in the three project
+ * services (see `src/server/services/project.ts`).
  */
 
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
-import { ProjectService } from '../services/ProjectService.js';
+import {
+  ProjectCrudService,
+  ProjectTransitionService,
+  ProjectDatesService,
+} from '../services/project.js';
 import { STATE_KEYS, type WorkflowState } from '../../config/stateConfig.js';
+import { createStorageClient } from '../storage/client.js';
+import { getEnv } from '../config/env.js';
 
 export function projectRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
-    const projectService = new ProjectService(db);
+    // Storage client for the purge-cascade's storage-side cleanup
+    // (AC-218). Optional — a deployment without storage configured
+    // (e.g. test harness without STORAGE_* env) falls back to DB-only
+    // cascade.
+    const env = getEnv();
+    const storage =
+      env.STORAGE_ENDPOINT && env.STORAGE_ACCESS_KEY && env.STORAGE_SECRET_KEY
+        ? createStorageClient({
+            endpoint: env.STORAGE_ENDPOINT,
+            bucket: env.STORAGE_BUCKET,
+            accessKey: env.STORAGE_ACCESS_KEY,
+            secretKey: env.STORAGE_SECRET_KEY,
+          })
+        : undefined;
+    const crudService = new ProjectCrudService(db, { storage });
+    const transitionService = new ProjectTransitionService(db);
+    const datesService = new ProjectDatesService(db);
 
     // Apply auth to all routes in this plugin
     app.addHook('preHandler', authenticate);
@@ -52,7 +75,7 @@ export function projectRoutes(db: Database) {
           customerId?: string;
           includeArchived?: string;
         };
-        const result = await projectService.listProjects(request.user!, {
+        const result = await crudService.listProjects(request.user!, {
           offset: query.offset,
           limit: query.limit,
           status: query.status,
@@ -106,7 +129,12 @@ export function projectRoutes(db: Database) {
           estimatedValue?: number | null;
           notes?: string | null;
         };
-        const project = await projectService.createProject(body, request.user!.id, request.log);
+        const project = await crudService.createProject(
+          body,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(201).send(project);
       },
     );
@@ -130,7 +158,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        const project = await projectService.getProject(request.user!, id);
+        const project = await crudService.getProject(request.user!, id);
         return reply.code(200).send(project);
       },
     );
@@ -163,11 +191,12 @@ export function projectRoutes(db: Database) {
       async (request, reply) => {
         const { id } = request.params as { id: string };
         const { expectedStatus } = request.body as { expectedStatus: WorkflowState };
-        const project = await projectService.transitionForward(
+        const project = await transitionService.transitionForward(
           id,
           request.user!.id,
           expectedStatus,
           request.log,
+          request.id ?? null,
         );
         return reply.code(200).send(project);
       },
@@ -201,11 +230,12 @@ export function projectRoutes(db: Database) {
       async (request, reply) => {
         const { id } = request.params as { id: string };
         const { expectedStatus } = request.body as { expectedStatus: WorkflowState };
-        const project = await projectService.transitionBackward(
+        const project = await transitionService.transitionBackward(
           id,
           request.user!.id,
           expectedStatus,
           request.log,
+          request.id ?? null,
         );
         return reply.code(200).send(project);
       },
@@ -248,7 +278,13 @@ export function projectRoutes(db: Database) {
           plannedEnd?: string | null;
         };
 
-        const project = await projectService.updateDates(id, request.user!.id, body, request.log);
+        const project = await datesService.updateDates(
+          id,
+          request.user!.id,
+          body,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(200).send(project);
       },
     );
@@ -289,7 +325,13 @@ export function projectRoutes(db: Database) {
           estimatedValue?: number | null;
           notes?: string | null;
         };
-        const project = await projectService.updateProject(id, body, request.user!.id, request.log);
+        const project = await crudService.updateProject(
+          id,
+          body,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
         return reply.code(200).send(project);
       },
     );
@@ -311,7 +353,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        await projectService.deleteProject(id, request.user!.id, request.log);
+        await crudService.deleteProject(id, request.user!.id, request.log, request.id ?? null);
         return reply.code(200).send({ success: true, deleted: true });
       },
     );
@@ -339,7 +381,7 @@ export function projectRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id } = request.params as { id: string };
-        await projectService.purgeProject(id, request.user!.id, request.log);
+        await crudService.purgeProject(id, request.user!.id, request.log, request.id ?? null);
         return reply.code(204).send();
       },
     );

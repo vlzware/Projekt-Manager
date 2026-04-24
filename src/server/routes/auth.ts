@@ -81,21 +81,11 @@ export function authRoutes(db: Database) {
     // Returns the authenticated user profile. For callers with role
     // `owner`, the response also carries the current `backupStatus`
     // (verification.md AC-170 — badge visible only to owner on the
-    // authenticated surface; other roles get no `backupStatus` key).
-    // This reuses the existing `/api/auth/me` endpoint rather than
-    // adding a new REST surface (per ADR-0020 / architecture.md §11.10).
-    //
-    // Design note — login-screen badge: AC-170 also requires the badge
-    // to render on the unauthenticated login screen. The project's
-    // login is a SPA view (not a server-rendered template), so the
-    // "server-render into HTML + inline JSON" approach in the task
-    // description does not match this codebase. Stream 3 (UI) owns the
-    // login-screen wiring; if an unauthenticated status endpoint is
-    // needed, that is a separate piece of work — it is not added here
-    // so the route surface stays within the "no new endpoints" rule.
+    // authenticated landing surface; other roles get no `backupStatus`
+    // key, and absence drives the client's "no badge here" branch).
     // ---------------------------------------------------------------
     app.get('/api/auth/me', { preHandler: authenticate }, async (request, reply) => {
-      const { id, username, displayName, roles, email, themePreference } = request.user!;
+      const { id, username, displayName, roles, email, themePreference, pushMuted } = request.user!;
       const response: {
         user: {
           id: string;
@@ -104,10 +94,11 @@ export function authRoutes(db: Database) {
           roles: string[];
           email: string | null;
           themePreference: string;
+          pushMuted: boolean;
         };
         backupStatus?: BackupStatus;
       } = {
-        user: { id, username, displayName, roles, email, themePreference },
+        user: { id, username, displayName, roles, email, themePreference, pushMuted },
       };
 
       if (roles.includes('owner')) {
@@ -150,15 +141,22 @@ export function authRoutes(db: Database) {
               themePreference: {
                 type: 'string',
                 // data-model.md §5.7 — the accepted set. Kept in sync with
-                // the DB CHECK `users_valid_theme_preference` (migration 0013).
+                // the DB CHECK `users_valid_theme_preference`.
                 enum: ['light', 'dark', 'system'],
               },
+              // data-model.md §5.3 / api.md §14.2.1 — self-settable
+              // boolean. Validation of non-boolean values is Fastify's
+              // standard ajv path → 422 VALIDATION_ERROR (AC-195 arm).
+              pushMuted: { type: 'boolean' },
             },
           },
         },
       },
       async (request, reply) => {
-        const body = request.body as { themePreference?: 'light' | 'dark' | 'system' };
+        const body = request.body as {
+          themePreference?: 'light' | 'dark' | 'system';
+          pushMuted?: boolean;
+        };
         const updated = await authService.updateSelfPreferences(
           request.user!.id,
           body,
@@ -174,6 +172,7 @@ export function authRoutes(db: Database) {
             roles: updated.roles,
             email: updated.email,
             themePreference: updated.themePreference,
+            pushMuted: updated.pushMuted,
           },
         });
       },
@@ -215,12 +214,12 @@ export function authRoutes(db: Database) {
 
         await authService.changePassword(
           request.user!.id,
-          request.user!.username,
           currentPassword,
           newPassword,
           request.cookies.session,
           request.ip,
           request.log,
+          request.id ?? null,
         );
 
         return reply.code(200).send({ success: true });

@@ -1,0 +1,99 @@
+/* Table layout for the global Aktivität view (ui/management.md §8.13.1). */
+
+.tableWrapper {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.table th {
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--color-surface-muted);
+  border-bottom: 2px solid var(--color-border-subtle);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text);
+  vertical-align: top;
+}
+
+.table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.row:hover {
+  background: var(--color-surface-base);
+}
+
+.timestamp {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+.actor {
+  color: var(--color-text);
+}
+
+.entity {
+  color: var(--color-text-secondary);
+}
+
+.entityId {
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 0.7rem;
+  color: var(--color-text-subtle);
+  word-break: break-all;
+}
+
+.action {
+  color: var(--color-text);
+}
+
+.payload {
+  /* The drawer expands inside this cell when open; leave wrapping
+     available so the opened payload drawer can render its table
+     without a horizontal scrollbar inside the cell. */
+  min-width: 120px;
+}
+
+.emptyCell {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--color-text-subtle);
+  font-size: 0.875rem;
+}
+
+.errorCell {
+  padding: 12px;
+  color: var(--color-danger-text);
+  background: var(--color-danger-bg);
+  font-size: 0.85rem;
+}
+
+.loaderCell {
+  padding: 16px;
+  text-align: center;
+  color: var(--color-text-subtle);
+  font-size: 0.85rem;
+}
+
+.footerActions {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  border-top: 1px solid var(--color-border-subtle);
+}

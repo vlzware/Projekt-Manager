@@ -6,58 +6,66 @@
 
 ## Context
 
-The walking skeleton deploy exposed a gap between the specification and the production startup path. Spec §4.5 states "Default admin account — created during seed data loading", but `src/server/start.ts` correctly refuses to run `seed()` when `NODE_ENV=production` (seed plants 19 demo projects, five fake users with real German names, and an inactive user — none of which belong in real company data). Result: the production database is schema-migrated but empty, and every login attempt returns `INVALID_CREDENTIALS` with nothing behind it to authenticate against.
+The walking-skeleton deploy exposed a gap between spec and production startup. Spec §4.5 states "Default admin account — created during seed data loading", but `src/server/start.ts` correctly refuses to run `seed()` when `NODE_ENV=production` (seed plants 19 demo projects, five fake users with real German names, and an inactive user — none belong in real data). Result: production DB is schema-migrated but empty, and every login returns `INVALID_CREDENTIALS`.
 
-Constraints shaping the fix:
+Constraints on the fix:
 
 - Must not weaken the `NODE_ENV=production → skip seed()` guard.
-- Must not require a manual ritual that re-creates the bug on every fresh deploy or `pgdata` volume rebuild.
-- Must fail closed on half-configuration (an operator who sets a username but forgets the password should hit a loud error, not a silent empty database).
-- Must be idempotent under restart — if the bootstrap ran, restarting the container with the same env vars must be a safe no-op.
-- Credentials handling should minimise the window where plaintext sits on disk.
+- Must not require a manual ritual that re-creates the bug on every fresh deploy or `pgdata` rebuild.
+- Must fail closed on half-configuration (username without password → loud error, not silent empty DB).
+- Must be idempotent under restart — same env vars, container restart = safe no-op.
+- Credentials handling should minimise plaintext-on-disk window.
 
 ## Decision
 
-We will add an **opt-in, environment-variable-driven first-run admin bootstrap** to the startup sequence in `src/server/start.ts`.
+Add an **opt-in, env-var-driven first-run admin bootstrap** to the startup sequence in `src/server/start.ts`.
 
-When the `users` table has zero rows AND both `BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` are set, startup inserts a single `owner`-role user with the configured username, a bcrypt hash of the configured password, and `display_name = BOOTSTRAP_ADMIN_DISPLAY_NAME ?? username`. The insert happens after `migrate()` and before `app.listen()`. If the `users` table has one or more rows, the bootstrap hook is a no-op regardless of env var presence. If exactly one of the two required vars is set, startup refuses to continue and exits non-zero with a message naming the missing var. The bootstrap password must pass the standard password policy (minimum length, common-password blocklist) — startup fails with a policy violation message if it does not. A single `warn`-level log line on successful insert tells the operator to log in, change the password immediately, and remove the `BOOTSTRAP_ADMIN_*` vars from `.env` before the next deploy. The password is never logged at any level.
+When the `users` table is empty AND both `BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` are set, startup (after `migrate()`, before `app.listen()`) inserts a single `owner`-role user: configured username, bcrypt hash of the password, `display_name = BOOTSTRAP_ADMIN_DISPLAY_NAME ?? username`.
+
+Rules:
+
+- Users table non-empty → bootstrap is a no-op regardless of env vars.
+- Exactly one of the two required vars set → startup exits non-zero naming the missing var.
+- Password must pass the standard policy (length, common-password blocklist) → otherwise startup fails with a policy-violation message.
+- One `warn` log line on successful insert telling the operator to log in, change the password immediately, and remove `BOOTSTRAP_ADMIN_*` from `.env` before the next deploy.
+- Password never logged at any level.
 
 ## Alternatives Considered
 
-### Alternative A — Manual `psql` insert after each deploy
+### A — Manual `psql` insert after each deploy
 
-Operator SSHes to the box, runs `docker exec ... psql`, and inserts a row by hand with a pre-hashed password. Rejected: every fresh deploy and every `pgdata` volume rebuild reproduces the problem. Requires the operator to run a Node REPL or external bcrypt tool just to hash the password. Produces zero audit trail and invites copy-paste errors in production.
+Operator SSHes in, runs `docker exec ... psql`, inserts a row with a pre-hashed password. Rejected: reproduces the problem on every fresh deploy and `pgdata` rebuild; requires a separate bcrypt tool; zero audit trail; invites copy-paste errors in production.
 
-### Alternative B — Reuse `seed()` in production
+### B — Reuse `seed()` in production
 
-Drop the `isProduction` guard in `start.ts` and let `seed()` run everywhere. Rejected: seed is a dev convenience fixture. Running it in production contaminates real data with 19 demo projects belonging to "Familie Müller" and "Café Sonnenschein" and creates users named after fake employees. The guard exists for good reasons — tearing it down to fix an adjacent problem is a downgrade, not a fix.
+Drop the `isProduction` guard. Rejected: seed is a dev fixture — 19 demo projects ("Familie Müller", "Café Sonnenschein") and fake users contaminate real data. Tearing down the guard to fix an adjacent problem is a downgrade.
 
-### Alternative C — Interactive CLI script (`npm run create-admin`)
+### C — Interactive CLI script (`npm run create-admin`)
 
-Operator runs a script on the VPS that prompts for username and password on a TTY. Rejected for this iteration: adds a manual step, and the credentials typed in a terminal session land in bash history and tmux scrollback. The env-var approach concentrates the plaintext in the one file already locked down (`/opt/projekt-manager/secrets.env.age`, decrypted only at deploy time via process substitution per [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md)) with a clear removal ritual. Revisit once a secret manager is in place.
+TTY-prompted username/password. Rejected for this iteration: adds a manual step; typed creds land in bash history and tmux scrollback. The env-var approach concentrates plaintext in the already-locked-down `/opt/projekt-manager/secrets.env.age` (decrypted only at deploy via process substitution per [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md)). Revisit with a secret manager.
 
-### Alternative D — External identity provider (SSO) from day one
+### D — External identity provider (SSO)
 
-Delegate authentication entirely, skip the admin-in-DB problem. Rejected: the current scope is explicitly single-tenant and pre-SSO. Adding an IdP is a meaningful architectural change scoped for a later iteration (spec §4.5 out-of-scope list).
+Skip admin-in-DB by delegating auth. Rejected: scope is explicitly single-tenant and pre-SSO (spec §4.5 out-of-scope list). Meaningful architectural change for a later iteration.
 
 ## Consequences
 
 ### Positive
 
-- Fresh deploys are self-serviceable: set two env vars, deploy, log in, rotate password, scrub env vars, redeploy clean.
-- The seed guard stays intact. Dev and prod do not share a "convenient but unsafe" user-creation path.
-- Fail-closed partial-config behaviour prevents the silent-empty-DB failure mode that triggered this whole investigation.
-- Idempotent by row count — container restarts with the env vars still in place are safe no-ops, so the removal step is a hygiene action rather than a correctness requirement.
-- No new dependency or runtime surface. Startup gains one SQL `count(*)` and one conditional `INSERT`.
-- Works identically on the first deploy and on a future `pgdata` volume rebuild (e.g., restore-from-backup to a fresh volume).
+- Self-serviceable fresh deploys: set two env vars, deploy, log in, rotate password, scrub vars, redeploy clean.
+- Seed guard stays intact; dev and prod do not share a convenient-but-unsafe user-creation path.
+- Fail-closed partial-config prevents the silent-empty-DB mode that triggered this investigation.
+- Idempotent by row count — container restarts with vars still set are safe no-ops, so removal is hygiene, not correctness.
+- No new dependency or runtime surface — one `count(*)` + one conditional `INSERT` at startup.
+- Works identically on first deploy and on future `pgdata` rebuilds (e.g., restore-to-fresh-volume).
 
 ### Negative
 
-- Credentials live in the age-encrypted secrets file (`secrets.env.age`), decrypted only at deploy time via process substitution (see [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md)). Plaintext never touches disk, but the operator must remove the bootstrap vars from the encrypted file after first login.
-- The "remove vars after first login" step is a human protocol, not enforced by the system. Forgetting it leaves dormant credentials in the encrypted file that no longer do anything (bootstrap is a no-op once users exist) but still represent a leak surface if the passphrase is later compromised. Documented in `.env.example` and `docs/ops/server-setup.md`, but still a protocol gap.
-- Forced password rotation on first login is not implemented. The warning log and docs are the only enforcement. A future iteration may add a "must change on first login" user flag.
-- Walking-skeleton-scoped. A production system with more than one operator will want a proper user management UI or SSO; this mechanism is a successor path, not a permanent answer.
-- One more startup env var pair to remember during onboarding documentation — low cost, non-zero.
+- Credentials live in `secrets.env.age`, decrypted only at deploy via process substitution (see [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md)). Plaintext never on disk, but the operator must remove the bootstrap vars from the encrypted file after first login.
+- "Remove vars after first login" is a human protocol, not enforced. Forgetting leaves dormant credentials in the file — no-op if users exist, but still a leak surface if the passphrase is later compromised. Documented in `.env.example` and `docs/ops/server-setup.md`.
+- Forced password rotation on first login is not implemented — the warning log + docs are the enforcement. Future iteration may add a "must change on first login" flag.
+- Walking-skeleton-scoped. A multi-operator production wants a user-management UI or SSO; this is a successor path, not a permanent answer.
+- One more env-var pair to cover in onboarding docs.
 
 ## References
 

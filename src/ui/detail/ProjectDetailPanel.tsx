@@ -1,10 +1,12 @@
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
 import { STRINGS } from '@/config/strings';
 import type { Project } from '@/domain/types';
 import { formatDateDE, formatCurrencyDE } from '@/domain/dateFormat';
-import { useProjectTransition } from '@/hooks/useProjectTransition';
 import { usePermission } from '@/hooks/usePermission';
 import { useProjectStore } from '@/state/projectStore';
+import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { dateInputValue } from './dateInputValue';
 import styles from './ProjectDetailPanel.module.css';
 
@@ -16,28 +18,58 @@ interface ProjectDetailPanelProps {
 export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps) {
   const updateDates = useProjectStore((s) => s.updateDates);
   const projects = useProjectStore((s) => s.projects);
+  const navigate = useNavigate();
 
   // Always get fresh project data from store
   const currentProject = projects.find((p) => p.id === project.id) ?? project;
   const config = STATE_CONFIG_MAP[currentProject.status];
-  const { canForward, canBackward, forward, backward, inFlight } =
-    useProjectTransition(currentProject);
-  const canTransition = usePermission('project:transition');
   const canUpdateDates = usePermission('project:dates');
+  const canReadAudit = usePermission('audit:read');
 
-  const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    if (!val && currentProject.plannedEnd) {
-      // Clearing start also clears end (spec §8.4, data-model §6.8)
+  // Local draft for date inputs. Native `<input type="date">` emits
+  // onChange with value="" mid-edit (segmented input goes through a
+  // transient invalid state). Committing each onChange to the store
+  // destroys the other date when the "clear start → clear end" rule
+  // trips on a transient empty. We mirror the store value locally,
+  // commit on blur, and let the server see only the user's final
+  // intent.
+  //
+  // Sync uses React's "adjust state during render" pattern — driven by
+  // prop-change comparison with the last observed server value — so
+  // the draft stays in sync with the store without the cascading-render
+  // penalty of `useEffect` + `setState` (react-hooks/set-state-in-effect).
+  const [startDraft, setStartDraft] = useState(dateInputValue(currentProject.plannedStart));
+  const [endDraft, setEndDraft] = useState(dateInputValue(currentProject.plannedEnd));
+  const [lastStart, setLastStart] = useState(currentProject.plannedStart);
+  const [lastEnd, setLastEnd] = useState(currentProject.plannedEnd);
+  if (currentProject.plannedStart !== lastStart) {
+    setLastStart(currentProject.plannedStart);
+    setStartDraft(dateInputValue(currentProject.plannedStart));
+  }
+  if (currentProject.plannedEnd !== lastEnd) {
+    setLastEnd(currentProject.plannedEnd);
+    setEndDraft(dateInputValue(currentProject.plannedEnd));
+  }
+
+  const commitStart = () => {
+    const storeValue = dateInputValue(currentProject.plannedStart);
+    if (startDraft === storeValue) return;
+    if (!startDraft && currentProject.plannedEnd) {
+      // Explicit clear of start while end exists → clear both
+      // (spec §8.4, data-model §6.8). The intermediate-empty case is
+      // excluded by the blur gate: by the time blur fires the user has
+      // left the field, so an empty value reflects a deliberate clear.
       updateDates(currentProject.id, null, null);
+      setEndDraft('');
     } else {
-      updateDates(currentProject.id, val || null, undefined);
+      updateDates(currentProject.id, startDraft || null, undefined);
     }
   };
 
-  const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    updateDates(currentProject.id, undefined, val || null);
+  const commitEnd = () => {
+    const storeValue = dateInputValue(currentProject.plannedEnd);
+    if (endDraft === storeValue) return;
+    updateDates(currentProject.id, undefined, endDraft || null);
   };
 
   const customerAddress = currentProject.customer?.address ?? null;
@@ -47,29 +79,49 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
       )}`
     : null;
 
+  const handleOpenDetailPage = () => {
+    onClose();
+    navigate(`/projects/${currentProject.id}`);
+  };
+
+  const handleCloseClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onClose();
+  };
+
   return (
     <>
       <div className={styles.overlay} onClick={onClose} data-testid="detail-overlay" />
       <div className={styles.panel} data-testid="detail-panel">
-        <div className={styles.header}>
-          <div className={styles.headerInfo}>
-            <div className={styles.projectNumber}>{currentProject.number}</div>
-            <div className={styles.projectTitle}>{currentProject.title}</div>
-          </div>
+        <div className={styles.headerRow}>
           <button
+            type="button"
+            className={styles.header}
+            onClick={handleOpenDetailPage}
+            data-testid="detail-open-page"
+            aria-label={STRINGS.attachments.openDetailPage}
+          >
+            <div className={styles.headerInfo}>
+              <div className={styles.projectNumber}>{currentProject.number}</div>
+              <div className={styles.projectTitle}>{currentProject.title}</div>
+              <div className={styles.headerHint}>{STRINGS.attachments.openDetailPage} →</div>
+            </div>
+          </button>
+          <button
+            type="button"
             className={styles.closeButton}
-            onClick={onClose}
+            onClick={handleCloseClick}
             data-testid="detail-close"
             aria-label={STRINGS.ui.close}
           >
-            &times;
+            ×
           </button>
         </div>
 
         <div className={styles.body}>
           {/* Status */}
           <div className={styles.section}>
-            <div className={styles.sectionLabel}>Status</div>
+            <div className={styles.sectionLabel}>{STRINGS.ui.status}</div>
             <span
               className={styles.badge}
               style={{ backgroundColor: config.color }}
@@ -78,32 +130,6 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
               {config.label}
             </span>
           </div>
-
-          {/* Transitions */}
-          {canTransition && (canForward || canBackward) && (
-            <div className={styles.transitionButtons}>
-              {canForward && (
-                <button
-                  className={styles.forwardBtn}
-                  onClick={forward}
-                  disabled={inFlight}
-                  data-testid="detail-forward-button"
-                >
-                  {STRINGS.ui.nextStep}
-                </button>
-              )}
-              {canBackward && (
-                <button
-                  className={styles.backwardBtn}
-                  onClick={backward}
-                  disabled={inFlight}
-                  data-testid="detail-backward-button"
-                >
-                  {STRINGS.ui.prevStep}
-                </button>
-              )}
-            </div>
-          )}
 
           {/* Customer */}
           <div className={styles.section}>
@@ -148,8 +174,9 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                   <input
                     type="date"
                     className={styles.dateInput}
-                    value={dateInputValue(currentProject.plannedStart)}
-                    onChange={handleStartDateChange}
+                    value={startDraft}
+                    onChange={(e) => setStartDraft(e.target.value)}
+                    onBlur={commitStart}
                     data-testid="detail-date-start"
                   />
                 </div>
@@ -158,8 +185,9 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
                   <input
                     type="date"
                     className={styles.dateInput}
-                    value={dateInputValue(currentProject.plannedEnd)}
-                    onChange={handleEndDateChange}
+                    value={endDraft}
+                    onChange={(e) => setEndDraft(e.target.value)}
+                    onBlur={commitEnd}
                     data-testid="detail-date-end"
                   />
                 </div>
@@ -181,10 +209,6 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
             </div>
           )}
 
-          {/* Estimated value — gate on `!= null` so the section is hidden when
-              the API returns null (not just undefined). formatCurrencyDE()
-              also defends against a null slipping through, but hiding the
-              whole section when there is no value is the cleaner UX. */}
           {currentProject.estimatedValue != null && (
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{STRINGS.ui.estimatedValue}</div>
@@ -194,7 +218,6 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
             </div>
           )}
 
-          {/* Notes */}
           {currentProject.notes && (
             <div className={styles.section}>
               <div className={styles.sectionLabel}>{STRINGS.ui.notes}</div>
@@ -214,6 +237,24 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
               {STRINGS.ui.statusSince} {formatDateDE(currentProject.statusChangedAt)}
             </span>
           </div>
+
+          {/* Activity feed — inner scroll so a long history does not
+              push other sections out of reach. The `updatedAt` stamp is
+              part of the filterKey so the feed refetches whenever any
+              project mutation (dates, workers, …) lands. */}
+          {canReadAudit && (
+            <div className={styles.activityBlock}>
+              <div className={styles.sectionLabel}>{STRINGS.audit.heading}</div>
+              <div className={styles.activityScroll}>
+                <ActivityFeed
+                  filters={{ ancestorType: 'project', ancestorId: currentProject.id }}
+                  filterKey={`project:${currentProject.id}:${currentProject.updatedAt}`}
+                  testId="project-activity-feed"
+                  inline
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>

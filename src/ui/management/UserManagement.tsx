@@ -76,11 +76,13 @@ export function UserManagement() {
               className={`${styles.clickableRow} ${u.active ? '' : `${styles.rowInactive} deactivated`}`}
               onClick={() => handleRowClick(u)}
             >
-              <td>{u.username}</td>
-              <td>{u.displayName}</td>
-              <td>{u.roles.map((r) => STRINGS.roles[r] ?? r).join(', ')}</td>
-              <td>{u.email ?? '—'}</td>
-              <td>
+              <td data-label={STRINGS.ui.username}>{u.username}</td>
+              <td data-label={STRINGS.ui.displayName}>{u.displayName}</td>
+              <td data-label={STRINGS.ui.roles}>
+                {u.roles.map((r) => STRINGS.roles[r] ?? r).join(', ')}
+              </td>
+              <td data-label={STRINGS.ui.email}>{u.email ?? '—'}</td>
+              <td data-label={STRINGS.ui.status}>
                 <span
                   className={`${styles.badge} ${u.active ? styles.badgeActive : styles.badgeInactive}`}
                 >

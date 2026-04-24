@@ -41,7 +41,7 @@ Scheduled encrypted `pg_dump` → R2. Every run is verified on-create (Tier 1); 
 - **Operator procedures:** [docs/ops/backup/](docs/ops/backup/overview.md) — setup, recovery, drills, troubleshooting
 - **Code:** `src/server/services/{backup,backup-drill,ephemeralPg,r2Uploader}.ts`; shell wrappers in `scripts/backup/`
 
-**Retention is linear, not GFS:** bucket lock for 14 days, lifecycle delete at 30 days. No weekly/monthly promotion. This is a deliberate scope call — see [ADR-0020 §Decision](docs/adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
+**Retention is linear, not GFS.** No weekly/monthly promotion. Canonical values and scope rationale: [ADR-0020 §Retention](docs/adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention).
 
 ---
 

@@ -16,12 +16,23 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { STRINGS } from '../config/strings.js';
 import { buildApp } from './app.js';
 import { bootstrapAdminIfEmpty } from './bootstrap.js';
-import { assertAppServerEnv, assertProductionSafe, validateEnv } from './config/env.js';
+import {
+  assertAppServerEnv,
+  assertProductionSafe,
+  assertStoragePublicEndpointInProduction,
+  validateEnv,
+} from './config/env.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
 import { deleteExpiredSessions } from './repositories/session.js';
 import { startSessionReaper } from './session-reaper.js';
+import { startAuditRetentionScheduler } from './audit-retention-scheduler.js';
+import { startAttachmentOrphanReaperScheduler } from './attachment-orphan-reaper-scheduler.js';
+import { startBulkDownloadReaperScheduler } from './bulk-download-reaper-scheduler.js';
+import { setOperationalLogger as setAuditPublisherLogger } from './services/audit-publisher.js';
+import { AUDIT_RETENTION } from '../config/auditRetention.js';
+import { ATTACHMENT_CONFIG } from '../config/attachmentConfig.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
 
@@ -88,6 +99,10 @@ async function start(): Promise<void> {
   // the same validator but doesn't use MinIO); the app server cannot run
   // without them, so enforce here.
   assertAppServerEnv(env);
+  // Refuse to start in production when the storage client would sign
+  // presigned URLs against a container-only hostname — the browser
+  // cannot resolve those, so every upload fails silently.
+  assertStoragePublicEndpointInProduction(env);
   if (isProduction) {
     rejectDevCredentials();
   }
@@ -103,6 +118,16 @@ async function start(): Promise<void> {
 
   // Run database migrations (idempotent — Drizzle tracks applied migrations)
   await migrate(db, { migrationsFolder });
+
+  // Wire the post-commit audit publisher's failure-surface logger
+  // (AC-183) BEFORE any mutate() call can dispatch. Bootstrap below
+  // calls mutate(), which invokes the publisher; without a logger, a
+  // throwing subscriber would be silently swallowed. No subscribers are
+  // registered yet — #112 adds them — but the logger must already be
+  // wired when the first dispatch happens.
+  setAuditPublisherLogger({
+    error: (payload) => console.error(payload),
+  });
 
   // Seed data — never in production.
   // SEED=true  → seed only if database is empty (safe default for dev)
@@ -154,6 +179,62 @@ async function start(): Promise<void> {
     },
   });
 
+  // Schedule audit-log retention cleanup (AC-184). Default cadence is
+  // daily (1440 min) — retention is a cleanup, not a latency-sensitive
+  // sweep, and the DELETE rides the `audit_log_created_at_idx` so cost
+  // stays flat. Window is the [C] default unless
+  // `AUDIT_RETENTION_WINDOW_DAYS` is set.
+  const auditRetention = startAuditRetentionScheduler({
+    db,
+    intervalMinutes: env.AUDIT_RETENTION_INTERVAL_MINUTES,
+    windowDays: env.AUDIT_RETENTION_WINDOW_DAYS ?? AUDIT_RETENTION.windowDays,
+    logger: {
+      info: (ctx, event) => console.log(event, ctx),
+      error: (ctx, event) => console.error(event, ctx),
+    },
+  });
+
+  // Attachment orphan reaper (AC-213). Sweeps pending rows past the
+  // TTL together with their backing storage objects. Default cadence
+  // 5 min — tighter than audit retention because a stuck pending row
+  // has a correlated storage object that needs cleanup before it
+  // accretes.
+  const attachmentStorageForReaper = createStorageClient({
+    endpoint: env.STORAGE_ENDPOINT,
+    publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
+    bucket: env.STORAGE_BUCKET,
+    accessKey: env.STORAGE_ACCESS_KEY,
+    secretKey: env.STORAGE_SECRET_KEY,
+  });
+  const attachmentReaper = startAttachmentOrphanReaperScheduler({
+    db,
+    storage: attachmentStorageForReaper,
+    intervalMinutes: env.ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES ?? 5,
+    ttlMinutes:
+      env.ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES ?? ATTACHMENT_CONFIG.orphanReaperTtlMinutes,
+    logger: {
+      info: (ctx, event) => console.log(event, ctx),
+      error: (ctx, event) => console.error(event, ctx),
+    },
+  });
+
+  // Bulk-download temp-zip reaper (#108). Storage-side ephemera are not
+  // tracked in the DB, so this sibling sweeps `bulk-downloads/` by
+  // LastModified age. Reuses the orphan-reaper TTL (`[C]` default
+  // 15 min) because both values describe "staleness of a short-lived
+  // storage artifact" — see `bulk-download-reaper.ts` header for the
+  // TTL rationale.
+  const bulkDownloadReaper = startBulkDownloadReaperScheduler({
+    storage: attachmentStorageForReaper,
+    intervalMinutes: env.ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES ?? 5,
+    ttlMinutes:
+      env.ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES ?? ATTACHMENT_CONFIG.orphanReaperTtlMinutes,
+    logger: {
+      info: (ctx, event) => console.log(event, ctx),
+      error: (ctx, event) => console.error(event, ctx),
+    },
+  });
+
   const app = buildApp({ logger: true, db });
 
   // Storage client for the health probe. Instantiated once at startup and
@@ -162,6 +243,7 @@ async function start(): Promise<void> {
   // /api/health so operational outages show up before they cascade.
   const storageClient = createStorageClient({
     endpoint: env.STORAGE_ENDPOINT,
+    publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
     bucket: env.STORAGE_BUCKET,
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
@@ -212,7 +294,12 @@ async function start(): Promise<void> {
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, async () => {
       // Wait for any in-flight sweep so pool.end() isn't called under its feet.
-      await reaper.stop();
+      await Promise.all([
+        reaper.stop(),
+        auditRetention.stop(),
+        attachmentReaper.stop(),
+        bulkDownloadReaper.stop(),
+      ]);
       await app.close();
       await pool.end();
       process.exit(0);

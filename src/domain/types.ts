@@ -89,7 +89,6 @@ export interface AuthUserProfile {
 }
 
 export interface SummaryData {
-  actionCounts: Partial<Record<WorkflowState, number>>;
   agedBufferCounts: { state: WorkflowState; count: number; thresholdDays: number }[];
   projectsWithoutDates: number;
 }
@@ -98,4 +97,42 @@ export interface SummaryData {
  * Available view modes. Extend this union and App.tsx when adding new views.
  * See architecture.md §11.5.
  */
-export type ViewMode = 'kanban' | 'kalender' | 'kunden' | 'projekte' | 'benutzer' | 'daten';
+export type ViewMode =
+  | 'meineProjekte'
+  | 'kanban'
+  | 'kalender'
+  | 'kunden'
+  | 'projekte'
+  | 'benutzer'
+  | 'daten'
+  | 'aktivitaet'
+  | 'benachrichtigungen'
+  | 'projektDetail';
+
+export type AttachmentStatus = 'pending' | 'ready';
+
+export type AttachmentKind = 'photo' | 'binary';
+
+export type AttachmentLabel =
+  | 'angebot'
+  | 'auftragsbestaetigung'
+  | 'rechnung'
+  | 'aufmass'
+  | 'foto'
+  | 'sonstiges';
+
+export interface Attachment {
+  id: string;
+  projectId: string;
+  status: AttachmentStatus;
+  kind: AttachmentKind;
+  label: AttachmentLabel;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  originalKey: string;
+  thumbKey: string | null;
+  hasThumbnail: boolean;
+  createdAt: string;
+  createdBy: { id: string; displayName: string } | null;
+}

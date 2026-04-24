@@ -5,7 +5,7 @@ Conventional deploys point the domain's A record at the server's public IP. This
 ## Prerequisites
 
 - Cloudflare account managing the domain's DNS zone
-- A scoped API token: **Zone:DNS:Edit** + **Zone:Zone:Read** on the single zone (same token used by Caddy for DNS-01 ACME -- see Caddyfile)
+- A scoped API token: **DNS Write** + **Zone Read** on the single zone (same token used by Caddy for DNS-01 ACME -- see Caddyfile). Cloudflare's current UI lists these under "DNS & Zones"; legacy docs call them `Zone:DNS:Edit` + `Zone:Zone:Read`.
 
 ## Procedure
 
@@ -28,12 +28,18 @@ Conventional deploys point the domain's A record at the server's public IP. This
 
 The token serves double duty: Caddy uses it for DNS-01 ACME challenges, and it is the same credential you use to manage the zone.
 
-| Permission     | Purpose                                                          |
-| -------------- | ---------------------------------------------------------------- |
-| Zone:DNS:Edit  | Write `_acme-challenge` TXT records (Caddy) and manage A records |
-| Zone:Zone:Read | Let the API resolve the zone ID from the domain name             |
+Cloudflare's current UI groups the relevant permissions under **DNS & Zones** with Read/Write verbs (older docs and tools still use `Zone:DNS:Edit` / `Zone:Zone:Read`). You need exactly these two entries:
+
+| Permission (new UI) | Legacy name    | Purpose                                                          |
+| ------------------- | -------------- | ---------------------------------------------------------------- |
+| DNS Write           | Zone:DNS:Edit  | Write `_acme-challenge` TXT records (Caddy) and manage A records |
+| Zone Read           | Zone:Zone:Read | Let the API resolve the zone ID from the domain name             |
 
 **Zone resources:** restrict to the single managed zone.
+
+**Do NOT use `Zone DNS Settings Write`** — that is a different permission (zone-level DNSSEC / foundation-DNS config) and does NOT grant write on individual DNS records. A token with only that permission looks valid but fails DNS-01 with `expected 1 zone, got 0 for <DOMAIN>.` because the zone lookup returns empty.
+
+**Verifying a scoped token:** the obvious `/user/tokens/verify` endpoint returns 401 for _any_ zone- or account-scoped token (it is user-scope-only), so it cannot confirm a working zone token. Use `GET /client/v4/zones?name=<DOMAIN>` instead — a correctly-scoped token returns `{"result":[{…zone…}]}`, a wrongly-scoped one returns `{"result":[]}` with `success:true`.
 
 Never use the Global API Key. Store the token in your password manager and in `secrets.env.age` per [manual-deploy.md](manual-deploy.md).
 

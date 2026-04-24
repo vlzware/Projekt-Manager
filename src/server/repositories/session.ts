@@ -20,6 +20,7 @@ export interface SessionWithUser {
     email: string | null;
     active: boolean;
     themePreference: ThemePreference;
+    pushMuted: boolean;
   };
 }
 
@@ -58,6 +59,7 @@ export async function findSession(db: Database, token: string): Promise<SessionW
         email: users.email,
         active: users.active,
         themePreference: users.themePreference,
+        pushMuted: users.pushMuted,
       },
     })
     .from(sessions)
@@ -71,9 +73,9 @@ export async function findSession(db: Database, token: string): Promise<SessionW
     session: row.session,
     user: {
       ...row.user,
-      // DB CHECK `users_valid_theme_preference` (migration 0013) guarantees
-      // the column is always one of the three literals — narrow the raw
-      // text type to the domain union for downstream type safety.
+      // DB CHECK `users_valid_theme_preference` guarantees the column is
+      // always one of the three literals — narrow the raw text type to the
+      // domain union for downstream type safety.
       themePreference: row.user.themePreference as ThemePreference,
     },
   };

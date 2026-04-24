@@ -18,8 +18,16 @@ import { customerRoutes } from './routes/customers.js';
 import { userRoutes } from './routes/users.js';
 import { dataExchangeRoutes } from './routes/data-exchange.js';
 import { extractRoutes } from './routes/extract.js';
-import { backupRoutes } from './routes/backup.js';
+import { auditRoutes } from './routes/audit.js';
+import { notificationRuleRoutes } from './routes/notification-rules.js';
+import { pushSubscriptionRoutes } from './routes/push-subscriptions.js';
+import { pushPublicRoutes } from './routes/push.js';
+import { attachmentRoutes } from './routes/attachments.js';
+import { registerNotificationPublisher } from './services/notification-publisher.js';
+import { noopPushDispatcher, type PushDispatcher } from './services/PushDispatcher.js';
+import { WebPushDispatcher } from './services/WebPushDispatcher.js';
 import { getEnv } from './config/env.js';
+import { resolveVapidKeyMaterial, type VapidKeyMaterial } from './config/vapid.js';
 import { AppError, rateLimited, serverError, validationError } from './errors.js';
 import { STRINGS } from '../config/strings.js';
 
@@ -28,6 +36,30 @@ export interface AppOptions {
   db?: Database;
   /** Set false to disable rate limiting (useful in tests). Defaults to true. */
   rateLimit?: boolean;
+}
+
+/**
+ * Map resolved VAPID material to a dispatcher. `null` (missing config
+ * in production / test) → `noopPushDispatcher`. Logging lives in
+ * `resolveVapidKeyMaterial`; this is a thin mapper.
+ */
+function pickPushDispatcher(material: VapidKeyMaterial | null): PushDispatcher {
+  return material ? new WebPushDispatcher(material) : noopPushDispatcher;
+}
+
+/**
+ * Return the scheme+host+port of `endpoint`, or `null` if it isn't a
+ * parseable URL. Used by the CSP assembly to whitelist the object-storage
+ * origin for presigned POST / GET traffic without hard-coding the
+ * hostname.
+ */
+function extractOrigin(endpoint: string | undefined): string | null {
+  if (!endpoint) return null;
+  try {
+    return new URL(endpoint).origin;
+  } catch {
+    return null;
+  }
 }
 
 export function buildApp(opts: AppOptions = {}): FastifyInstance {
@@ -89,17 +121,48 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   // Reads from validated env (see env.ts) — not process.env — so ADR-0013
   // and the assertProductionSafe() guard in start.ts share a single source
   // of truth for ALLOW_INSECURE_HTTP. See consolidation review C-3.
-  const insecureHttp = getEnv().ALLOW_INSECURE_HTTP === 'true';
+  const env = getEnv();
+  const insecureHttp = env.ALLOW_INSECURE_HTTP === 'true';
+  // The browser talks to object storage on a DIFFERENT origin — presigned
+  // POST for uploads (`connect-src`) and presigned GET for thumbnails /
+  // lightbox originals (`img-src`). Derive the storage origin from the
+  // same env the client-side URL signer uses (STORAGE_PUBLIC_ENDPOINT in
+  // production, STORAGE_ENDPOINT in dev), so the CSP auto-tracks
+  // deployment topology. An unparseable / missing value collapses to
+  // an empty list — CSP stays as strict as before.
+  const storageOrigin = extractOrigin(env.STORAGE_PUBLIC_ENDPOINT ?? env.STORAGE_ENDPOINT);
+  const storageSources = storageOrigin ? [storageOrigin] : [];
   app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
+        // `browser-image-compression` spawns its downscale pipeline in a
+        // Web Worker from a blob: URL. Without explicit `worker-src`,
+        // CSP falls back to `script-src`, which forbids blob: — the
+        // worker is silently blocked and the library falls back to
+        // main-thread compression (slower + blocks UI during large
+        // photo uploads). The same-origin `'self'` preserves the rule
+        // that only our own bundle can author a worker script.
+        workerSrc: ["'self'", 'blob:'],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'"],
-        connectSrc: ["'self'"],
+        imgSrc: ["'self'", ...storageSources],
+        connectSrc: ["'self'", ...storageSources],
         fontSrc: ["'self'"],
-        objectSrc: ["'none'"],
+        // PDF preview loads a same-origin `blob:` URL in an <iframe>.
+        // Without `frame-src` set, the directive falls back to
+        // `default-src 'self'`, which does NOT include the blob: scheme
+        // — so the iframe is blocked and the user sees a blank modal.
+        // Limit to 'self' + blob: so only our own origin and blobs we
+        // authored can be framed.
+        frameSrc: ["'self'", 'blob:'],
+        // Chrome's built-in PDF viewer renders the PDF via an internal
+        // <embed> element. With `object-src 'none'` the embed is blocked
+        // and Chrome shows "This content is blocked. Contact the site
+        // owner to fix the issue." — the exact error we hit on the PDF
+        // preview path. `'self'` + blob: keeps third-party embeds out
+        // while letting our own PDF blobs render.
+        objectSrc: ["'self'", 'blob:'],
         frameAncestors: ["'none'"],
         // Helmet defaults to adding upgrade-insecure-requests, which tells
         // browsers to rewrite every HTTP subresource URL to HTTPS. Over
@@ -146,13 +209,39 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
   }
 
   if (opts.db) {
+    // Resolve VAPID material once at boot: derives the public key from
+    // the private half, handles the dev auto-bootstrap, and decides
+    // no-op vs real-transport. Both the dispatcher and the public-key
+    // endpoint consume this single result.
+    const vapid = resolveVapidKeyMaterial({
+      env: getEnv(),
+      logger: {
+        info: (msg) => app.log.info(msg),
+        warn: (msg) => app.log.warn(msg),
+      },
+    });
+
     app.register(authRoutes(opts.db));
     app.register(projectRoutes(opts.db));
     app.register(customerRoutes(opts.db));
     app.register(userRoutes(opts.db));
     app.register(dataExchangeRoutes(opts.db));
     app.register(extractRoutes(opts.db));
-    app.register(backupRoutes(opts.db));
+    app.register(auditRoutes(opts.db));
+    app.register(notificationRuleRoutes(opts.db));
+    app.register(pushSubscriptionRoutes(opts.db));
+    app.register(attachmentRoutes(opts.db));
+    // The VAPID public-key endpoint is unauthenticated (the public key
+    // is public by design). Keeping it in its own plugin isolates it
+    // from the authenticated push-subscriptions plugin's preHandler
+    // hook — see routes/push.ts header for the encapsulation note.
+    app.register(pushPublicRoutes(vapid?.publicKey ?? null));
+
+    // Wire the notification publisher to the audit bus. Composition
+    // happens AFTER the audit-publisher logger is set in start.ts, so
+    // a throwing subscriber surfaces through that logger rather than
+    // being swallowed (AC-183).
+    registerNotificationPublisher({ db: opts.db, dispatcher: pickPushDispatcher(vapid) });
   }
 
   return app;
