@@ -61,7 +61,24 @@ export function authRoutes(db: Database) {
           path: '/',
           maxAge: AUTH_CONFIG.cookieMaxAgeSec,
         });
-        return reply.code(200).send({ user: result.user });
+
+        // Mirror /api/auth/me: owner callers get `backupStatus` in the
+        // login response too. Before this, only /me carried it, so an
+        // owner who logged out and back in saw the badge stuck on
+        // "Status unbekannt" until the next /me refresh (full page
+        // reload). Keeping the two establishment paths symmetric
+        // removes the cross-path staleness. The omission/presence
+        // contract (AC-170, AC-171) is identical.
+        const response: { user: typeof result.user; backupStatus?: BackupStatus } = {
+          user: result.user,
+        };
+        if (result.user.roles.includes('owner')) {
+          const status = await backupStatusService.read();
+          if (status !== null) {
+            response.backupStatus = status;
+          }
+        }
+        return reply.code(200).send(response);
       },
     );
 

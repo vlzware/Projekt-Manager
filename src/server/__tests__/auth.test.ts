@@ -126,6 +126,39 @@ describe('Authentication & Session Management', () => {
       expect(body.user).not.toHaveProperty('passwordHash');
     });
 
+    // Parity with GET /api/auth/me (api.md §14.2.7): the login response
+    // also carries `backupStatus` for owner callers. Before this, a
+    // deliberate log-out/log-in by the owner left the badge on the
+    // stale value set at initial session check, because the login
+    // path rehydrated `user` but not `backupStatus`. This test pins
+    // the parity — a regression would silently reintroduce the stale
+    // badge and only reveal itself as a UX report.
+    it('includes backupStatus for owner callers (parity with /api/auth/me)', async () => {
+      const res = await getApp().inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: SEED_USERS.owner.username, password: SEED_DEFAULT_PASSWORD },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toHaveProperty('backupStatus');
+      // Pre-seed row from the baseline migration guarantees the field
+      // is present; shape is asserted in backup-status tests.
+      expect(body.backupStatus).toBeDefined();
+      expect(typeof body.backupStatus.lastBackupOk).toBe('boolean');
+    });
+
+    it('omits backupStatus for non-owner callers', async () => {
+      const res = await getApp().inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: { username: SEED_USERS.office.username, password: SEED_DEFAULT_PASSWORD },
+      });
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).not.toHaveProperty('backupStatus');
+    });
+
     it('works for a different valid user (office)', async () => {
       const res = await getApp().inject({
         method: 'POST',

@@ -155,11 +155,11 @@ Design notes:
 
 #### 14.2.7 Backup Status
 
-The Layer 2 backup-freshness badge ([verification.md §15.22](verification.md#1522-backup-and-recovery), [ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) is consumed only by the authenticated owner. The status fields piggyback on the existing `GET /api/auth/me` response (see [§14.2.1](#1421-authentication--user-profile)) — no dedicated route. The earlier unauthenticated `GET /api/backup/status` endpoint was removed together with the login-screen badge surface.
+The Layer 2 backup-freshness badge ([verification.md §15.22](verification.md#1522-backup-and-recovery), [ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) is consumed only by the authenticated owner. The status fields piggyback on the two session-establishment responses, `POST /api/auth/login` and `GET /api/auth/me` (see [§14.2.1](#1421-authentication--user-profile)) — no dedicated route. The earlier unauthenticated `GET /api/backup/status` endpoint was removed together with the login-screen badge surface.
 
 Design notes:
 
-- **Owner-only payload.** `/api/auth/me` includes the `backupStatus` field for callers with role `owner`; the field is omitted for every other role. Absence drives the client's "no badge on this surface" branch.
+- **Owner-only payload.** Both `/api/auth/login` and `/api/auth/me` include the `backupStatus` field for callers with role `owner`; the field is omitted for every other role. Absence drives the client's "no badge on this surface" branch. The two session-establishment paths are kept symmetric on purpose — a log-out/log-in without this parity leaves the badge stuck on the last `/me`-hydrated value until a full reload, which is the class of staleness AC-171 rules out.
 - **Unreachable source → field omitted, not silence.** Misleading state is a critical defect class ([ADR-0014](../adr/0014-ac-tier-system-critical-vs-design.md)). When the status row is unreachable, the server omits the field; the client maps `undefined` to the explicit "Status unbekannt" badge state ([AC-171](verification.md#1522-backup-and-recovery)).
 - **No errors on absence of prior runs.** The pre-seed row from the baseline migration is always present. The service reports `lastBackupOk=false` with `lastBackupAt=null` for a DB that has never run a backup; the client derives the `backup-never-run` badge reason from that shape.
 
