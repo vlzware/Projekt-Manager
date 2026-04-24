@@ -46,6 +46,33 @@ const CAMERA_ALLOWED_MIMES = new Set<string>(
   ATTACHMENT_MIME_WHITELIST.filter((m) => m.startsWith('image/')),
 );
 
+/**
+ * Some mobile browsers (Android Chrome on certain camera apps, iOS
+ * WebView shells) emit `file.type === ""` for camera captures even
+ * though the payload is a standard JPEG. The raw MIME-set check would
+ * reject those with the generic "unsupported type" toast, which reads
+ * to the user as "my phone's camera is broken." Infer the MIME from
+ * the filename extension as a fallback before the whitelist check so
+ * the common "empty type but .jpg" case uploads cleanly. Only three
+ * extensions are honoured — the same closed set the server validates
+ * against. `classifyKind` downstream still pins the MIME against the
+ * whitelist, so an unmapped extension reaches the gate and is
+ * rejected with the concrete "what's supported" copy.
+ */
+const EXTENSION_MIME_MAP: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+function inferMimeFromFile(file: File): string {
+  if (file.type) return file.type;
+  const match = file.name.toLowerCase().match(/\.([a-z0-9]+)$/);
+  const ext = match?.[1] ?? '';
+  return EXTENSION_MIME_MAP[ext] ?? '';
+}
+
 export function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const projectId = id ?? '';
@@ -253,11 +280,40 @@ export function ProjectDetailPage() {
               const store = useAttachmentStore.getState();
               const toast = useToastStore.getState();
               for (const file of files) {
-                if (!CAMERA_ALLOWED_MIMES.has(file.type)) {
+                const effectiveMime = inferMimeFromFile(file);
+                if (!CAMERA_ALLOWED_MIMES.has(effectiveMime)) {
+                  // Diagnostic: without this log, a user reporting "camera
+                  // doesn't work" has no way to tell us which MIME the
+                  // browser actually produced (HEIC? empty? image/jpg
+                  // typo?). `console.warn` shows up in the browser
+                  // console + PWA remote-debugging session and costs
+                  // nothing in the happy path.
+                  console.warn(
+                    '[camera] rejected file: name=%s reportedType=%s effectiveType=%s size=%d',
+                    file.name,
+                    file.type || '(empty)',
+                    effectiveMime || '(unresolved)',
+                    file.size,
+                  );
                   toast.show('error', STRINGS.attachments.uploadMimeNotAllowed);
                   continue;
                 }
-                void store.uploadFile(project.id, file, { label: 'foto', hasThumbnail: true });
+                // If file.type is empty but we inferred a valid MIME, hand
+                // the pipeline a new File with the corrected type. The
+                // pipeline / store / server all validate by `file.type`
+                // — a blank type would trip `classifyKind` downstream and
+                // short-circuit the re-encode path.
+                const corrected =
+                  file.type === effectiveMime
+                    ? file
+                    : new File([file], file.name, {
+                        type: effectiveMime,
+                        lastModified: file.lastModified,
+                      });
+                void store.uploadFile(project.id, corrected, {
+                  label: 'foto',
+                  hasThumbnail: true,
+                });
               }
               e.target.value = '';
             }}
