@@ -298,6 +298,23 @@
   right: auto;
 }
 
+/* Middle tier (≈769–900px): the primary view buttons + Verwaltung
+   pill + right cluster still render inline (the bottom tab bar
+   doesn't kick in until 768px), so the horizontal budget is tight.
+   At this width the full "Projekt-Manager" wordmark is what pushes
+   the row past one line — swap it to the logo mark and everything
+   fits. The mobile rules below handle widths ≤768 where the primary
+   destinations move out of the header entirely. Reported in #128. */
+@media (max-width: 900px) {
+  .appNameText {
+    display: none;
+  }
+
+  .appNameLogo {
+    display: block;
+  }
+}
+
 /* Below ~768px the primary destinations move to the bottom tab bar
    (`MobileTabBar`), so the header collapses to admin/status
    affordances only — Verwaltung dropdown, email-extract, backup
