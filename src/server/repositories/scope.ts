@@ -131,6 +131,24 @@ export function isOutOfScope<T>(result: ScopedReadResult<T>): result is OutOfSco
 }
 
 /**
+ * Extra "this row is soft-deleted" outcome for entities that support
+ * archiving. Not part of `ScopedReadResult` because most entities don't
+ * soft-delete; keeping it separate avoids forcing every callsite to
+ * narrow away a fourth case they cannot produce. Callers that can
+ * return it typed it explicitly: `ScopedReadResult<T> | Archived`.
+ *
+ *   → 410 GONE at the HTTP layer. Distinct from 404 so the UI renders
+ *   "Projekt archiviert" rather than "nicht gefunden" (the collapse hid
+ *   actionable state — the row lives in the archive, was not a ghost).
+ */
+export const ARCHIVED = { archived: true } as const;
+export type Archived = typeof ARCHIVED;
+
+export function isArchived<T>(result: ScopedReadResult<T> | Archived): result is Archived {
+  return result !== null && typeof result === 'object' && 'archived' in result;
+}
+
+/**
  * Run a scope check for a known-existing project id.
  *
  * The repository's get-by-id path fetches the row WITHOUT the scope fragment

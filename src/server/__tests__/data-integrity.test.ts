@@ -57,9 +57,15 @@ describe('AC-95: Mutations on soft-deleted projects', () => {
     const delRes = await authDelete(token, `/api/projects/${deletedProjectId}`);
     expect(delRes.statusCode).toBe(200);
 
-    // Confirm it's gone from list results
+    // Confirm it's archived. Per api.md §14.2.2 (iteration 9 change —
+    // see #128), GET now returns 410 GONE with code `GONE` for a
+    // directly-addressed archived project so the UI can render
+    // "Projekt archiviert" instead of "nicht gefunden". AC-95 still
+    // holds — subsequent mutation attempts continue to return 404 via
+    // the mutation-path repository (verified by AT-42..AT-44 below).
     const after = await authGet(token, `/api/projects/${deletedProjectId}`);
-    expect(after.statusCode).toBe(404);
+    expect(after.statusCode).toBe(410);
+    expect(after.json().code).toBe('GONE');
   });
 
   afterAll(async () => {

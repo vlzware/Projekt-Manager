@@ -37,11 +37,18 @@ import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
-import { notFound, notPermitted, validationError, conflict, extractSqlState } from '../errors.js';
+import {
+  notFound,
+  notPermitted,
+  archived,
+  validationError,
+  conflict,
+  extractSqlState,
+} from '../errors.js';
 import { projectMatches, createIdempotent } from './idempotency.js';
 import type { ServiceLogger } from './Logger.js';
 import type { AuthUser } from '../middleware/auth.js';
-import { isOutOfScope } from '../repositories/scope.js';
+import { isOutOfScope, isArchived } from '../repositories/scope.js';
 import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
@@ -94,6 +101,10 @@ export class ProjectCrudService {
     // as 403 NOT_PERMITTED, not 404. The spec accepts the existence leak
     // because project IDs are UUIDs and callers are internal users.
     if (isOutOfScope(result)) throw notPermitted();
+    // Archived (soft-deleted) row — 410 GONE with the "archiviert"
+    // message. Distinct from 404 so the UI can show the archive state
+    // instead of collapsing to "nicht gefunden" (reported in #128).
+    if (isArchived(result)) throw archived(STRINGS.entities.project);
     return result;
   }
 

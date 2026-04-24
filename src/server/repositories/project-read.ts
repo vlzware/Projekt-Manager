@@ -13,7 +13,9 @@ import {
   projectScopeForCaller,
   isProjectInScope,
   OUT_OF_SCOPE,
+  ARCHIVED,
   type ScopedReadResult,
+  type Archived,
 } from './scope.js';
 
 /** Escape LIKE-pattern metacharacters so user input is treated literally. */
@@ -269,26 +271,27 @@ export async function listProjects(
 /**
  * Get a project by id, respecting the caller's read scope.
  *
- * Three-valued result (ADR-0019):
+ * Four-valued result (ADR-0019 + archive branch):
  *   - `null`              — row does not exist (→ 404 NOT_FOUND)
  *   - `OUT_OF_SCOPE`      — row exists but caller is not assigned
  *                           (→ 403 NOT_PERMITTED; AC-147)
- *   - `ReturnType<toProject>` — in-scope row
+ *   - `ARCHIVED`          — row exists, caller is in scope, row is
+ *                           soft-deleted (→ 410 GONE). Lets the UI render
+ *                           "Projekt archiviert" instead of collapsing to
+ *                           "nicht gefunden", which hid the actionable
+ *                           state that the row lives in the archive.
+ *   - `ReturnType<toProject>` — in-scope, active row
  *
- * The two-step fetch (no-scope row lookup, then scope check) is deliberate:
- * a single scoped query cannot distinguish "not found" from "out of scope".
- * The separation honors the spec's explicit 403-over-404 contract.
+ * The row fetch drops the `deleted = false` filter so the archive branch
+ * is decidable; the scope check runs first so we don't leak the
+ * existence of a row the caller had no right to see in the first place.
  */
 export async function getProject(
   db: Database,
   caller: AuthUser,
   id: string,
-): Promise<ScopedReadResult<ReturnType<typeof toProject>>> {
-  const rows = await db
-    .select()
-    .from(projects)
-    .where(and(eq(projects.id, id), eq(projects.deleted, false)))
-    .limit(1);
+): Promise<ScopedReadResult<ReturnType<typeof toProject>> | Archived> {
+  const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
 
   if (rows.length === 0) return null;
 
@@ -297,6 +300,8 @@ export async function getProject(
   }
 
   const row = rows[0]!;
+  if (row.deleted) return ARCHIVED;
+
   const [workers, customerRows] = await Promise.all([
     fetchWorkersForProject(db, id),
     db.select().from(customers).where(eq(customers.id, row.customerId)).limit(1),

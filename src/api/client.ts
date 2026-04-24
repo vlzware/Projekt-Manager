@@ -28,6 +28,7 @@ export type ErrorCategory =
   | 'authorization' // NOT_PERMITTED
   | 'validation' // VALIDATION_ERROR
   | 'not_found' // NOT_FOUND
+  | 'gone' // GONE (soft-deleted / archived row)
   | 'rate_limited' // RATE_LIMITED
   | 'server_error' // SERVER_ERROR, unknown server codes
   | 'network' // NETWORK_ERROR (client-side, fetch rejection)
@@ -67,6 +68,8 @@ function classifyCode(code: string): ErrorCategory {
       return 'validation';
     case 'NOT_FOUND':
       return 'not_found';
+    case 'GONE':
+      return 'gone';
     case 'RATE_LIMITED':
       return 'rate_limited';
     case 'NETWORK_ERROR':

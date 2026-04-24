@@ -141,6 +141,15 @@ export function ProjectDetailPage() {
     );
   }
 
+  if (state.kind === 'archived') {
+    return (
+      <article className={styles.notFound} data-testid="project-detail-archived">
+        <h1>{STRINGS.attachments.archivedHeading}</h1>
+        <p>{STRINGS.attachments.archivedBody}</p>
+      </article>
+    );
+  }
+
   if (state.kind === 'error' && !project) {
     return <div className={styles.errorBanner}>{state.message}</div>;
   }

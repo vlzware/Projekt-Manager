@@ -16,6 +16,7 @@ export type ErrorCode =
   | 'CONFLICT'
   | 'IDEMPOTENCY_CONFLICT'
   | 'NOT_FOUND'
+  | 'GONE'
   | 'RATE_LIMITED'
   | 'SCHEMA_VERSION_MISMATCH'
   | 'TARGET_NOT_EMPTY'
@@ -158,6 +159,18 @@ export function extractSqlState(err: unknown): string | null {
 
 export function notFound(entity: string = STRINGS.entities.resource): AppError {
   return new AppError('NOT_FOUND', STRINGS.errors.notFound(entity), 404);
+}
+
+/**
+ * Row exists but is soft-deleted (archived). Distinct from 404 so the
+ * UI can render an "archiviert" branch — a 404 collapse would hide the
+ * actionable state ("this used to be here; it's in the archive") behind
+ * a "never existed" message. 410 Gone is the semantically exact HTTP
+ * status for resources that were present and are intentionally no
+ * longer served (RFC 9110 §15.5.11).
+ */
+export function archived(entity: string = STRINGS.entities.resource): AppError {
+  return new AppError('GONE', STRINGS.errors.archived(entity), 410);
 }
 
 export function rateLimited(): AppError {
