@@ -229,6 +229,7 @@ export const STRINGS = {
     viewMonth: 'Monat',
     viewWeek: 'Woche',
     navAdminMenu: 'Verwaltung',
+    navHome: 'Zur Startseite',
 
     // Management actions
     create: 'Erstellen',

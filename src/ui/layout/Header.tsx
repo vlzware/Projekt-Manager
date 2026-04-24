@@ -3,7 +3,7 @@ import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useRouterNav } from '@/hooks/useRouterNav';
-import { visibleRoutesForUser, type RouteView } from '@/config/routes';
+import { landingPathForUser, visibleRoutesForUser, type RouteView } from '@/config/routes';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
 import { BACKUP_THRESHOLDS } from '@/config/backupThresholds';
@@ -158,7 +158,18 @@ export function Header() {
   return (
     <header className={styles.header} data-testid="header">
       <div className={styles.navGroup}>
-        <div className={styles.appName}>{BRANDING.appName}</div>
+        <button
+          type="button"
+          className={styles.appName}
+          onClick={() => {
+            if (authUser) navigateTo(landingPathForUser(authUser));
+          }}
+          data-testid="header-app-name"
+          title={STRINGS.ui.navHome}
+          aria-label={`${BRANDING.appName} — ${STRINGS.ui.navHome}`}
+        >
+          {BRANDING.appName}
+        </button>
         {(inlineRoutes.length > 0 || renderSecondaryAsMenu) && (
           <div className={styles.viewToggle}>
             {inlineRoutes.map((r) => (

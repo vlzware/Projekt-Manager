@@ -37,6 +37,26 @@
   font-size: 1.25rem;
   font-weight: 700;
   white-space: nowrap;
+  /* Button reset — element is a <button> so the wordmark can navigate
+     to the user's landing view; keep the visual identity of a heading. */
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: inherit;
+}
+
+.appName:hover {
+  opacity: 0.85;
+}
+
+.appName:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 /* Segmented nav pill. The primary view buttons and the Verwaltung
