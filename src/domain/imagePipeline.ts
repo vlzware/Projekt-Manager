@@ -27,6 +27,15 @@
  * — no re-encode, no thumbnail — so the store's orchestration path
  * stays testable without a real browser.
  *
+ * EXIF fallback — the photo branch requests `preserveExif: true` so GPS
+ * (and other fields) survive the re-encode. Some phone captures trip an
+ * over-strict assertion in the upstream library's EXIF copier; when that
+ * happens the pipeline retries with `preserveExif: false` so the photo
+ * still uploads. See `isExifCopyError` for the detection and the photo
+ * branch for the retry flow. Affected captures lose EXIF for that photo
+ * — a spec deviation from the worker-view EXIF guarantee, accepted over
+ * rejecting the upload.
+ *
  * Layer note: this module is in the domain layer. It imports nothing
  * from `state`, `ui`, `server`, `api`, or `hooks`; the only
  * application-internal dependency is the `[C]` catalogue at
@@ -98,6 +107,31 @@ function passthrough(file: File): ProcessedUpload {
 }
 
 /**
+ * Detect a rejection from `browser-image-compression@2.0.2`'s EXIF copier
+ * (`getApp1Segment` in `dist/browser-image-compression.mjs`). The library
+ * rejects with a raw string message when the source JPEG's APP1/EXIF
+ * segment doesn't match its expectations — most commonly an Orientation
+ * tag encoded as LONG instead of the SHORT the parser asserts. The EXIF
+ * spec permits several data types there, so the assertion is a library
+ * bug (upstream issue #187, unmaintained since 2023) and some Android
+ * camera pipelines trip it on ordinary captures.
+ *
+ * Matching a small whitelist of exact strings rather than `.includes()`:
+ * keeps the retry path scoped to the known bug, so unrelated decode/OOM
+ * failures still fall through to `IMAGE_PROCESSING_FAILED`.
+ */
+function isExifCopyError(err: unknown): boolean {
+  const msg = typeof err === 'string' ? err : err instanceof Error ? err.message : '';
+  return (
+    msg === 'Orientation data type is invalid' ||
+    msg === 'Orientation data count is invalid' ||
+    msg === 'TIFF header contains invalid endian' ||
+    msg === 'TIFF header contains invalid version' ||
+    msg === 'not a valid JPEG'
+  );
+}
+
+/**
  * Run the client-side upload pipeline for a single file.
  *
  * For photo MIME types (`image/jpeg`, `image/png`, `image/webp`):
@@ -151,28 +185,50 @@ export async function runImagePipeline(
   // post-pipeline check — the exact symptom that previously surfaced
   // as a misleading "Datei zu groß".
   const mimeType = file.type;
+  const compressionOptions = {
+    maxSizeMB: ATTACHMENT_PIPELINE.perFileSizeCapBytes / (1024 * 1024),
+    maxWidthOrHeight: ATTACHMENT_PIPELINE.imageMaxDimension,
+    initialQuality: ATTACHMENT_PIPELINE.imageQuality,
+    useWebWorker: true,
+    fileType: mimeType,
+  };
+
   let original: Blob;
   let originalSize: number;
   try {
     const compressed = await imageCompression(file, {
-      maxSizeMB: ATTACHMENT_PIPELINE.perFileSizeCapBytes / (1024 * 1024),
-      maxWidthOrHeight: ATTACHMENT_PIPELINE.imageMaxDimension,
-      initialQuality: ATTACHMENT_PIPELINE.imageQuality,
-      useWebWorker: true,
+      ...compressionOptions,
       preserveExif: true,
-      fileType: mimeType,
     });
     original = compressed;
     originalSize = compressed.size;
   } catch (err) {
-    // Surface a tagged error so the store can mark the upload failed
-    // with a distinct "Bildbearbeitung fehlgeschlagen" message. The
-    // prior silent-fallback path handed the raw file to the store,
-    // which then tripped the per-file size cap and reported
-    // "Datei zu groß" — a misleading diagnosis of an entirely
-    // different failure mode (canvas OOM, worker crash, decode bug).
-    console.warn('[imagePipeline] original compression failed', err);
-    throw new Error('IMAGE_PROCESSING_FAILED');
+    // Distinguish the upstream EXIF-copy bug from real decode/OOM failures.
+    // Non-EXIF errors surface as `IMAGE_PROCESSING_FAILED` so the store can
+    // map them to the "Bildbearbeitung fehlgeschlagen" banner; silent
+    // passthrough would trip the post-pipeline size cap and mis-report as
+    // "Datei zu groß".
+    if (!isExifCopyError(err)) {
+      console.warn('[imagePipeline] original compression failed', err);
+      throw new Error('IMAGE_PROCESSING_FAILED');
+    }
+    // Retry without `preserveExif`: the camera's APP1 segment trips the
+    // library's over-strict parser, but the pixel path works. Affected
+    // captures lose EXIF (incl. GPS) for this photo — a spec deviation
+    // from the worker-view EXIF guarantee, accepted over rejecting the
+    // upload entirely. Library swap tracked in #126.
+    console.warn('[imagePipeline] exif copy failed, retrying without preserveExif', err);
+    try {
+      const compressed = await imageCompression(file, {
+        ...compressionOptions,
+        preserveExif: false,
+      });
+      original = compressed;
+      originalSize = compressed.size;
+    } catch (retryErr) {
+      console.warn('[imagePipeline] compression failed after exif retry', retryErr);
+      throw new Error('IMAGE_PROCESSING_FAILED');
+    }
   }
 
   // WebP thumbnail. Only generated when the caller asks for one

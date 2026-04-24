@@ -254,7 +254,7 @@ describe('runImagePipeline — photo branch', () => {
     expect(result.sizeBytes).toBe(321);
   });
 
-  it('throws IMAGE_PROCESSING_FAILED when original compression throws', async () => {
+  it('throws IMAGE_PROCESSING_FAILED when original compression throws with an unrelated error', async () => {
     // A compression failure used to silently pass the raw file through,
     // which then tripped the post-pipeline size cap and surfaced as
     // "Datei zu groß" — a misleading diagnosis of a different failure
@@ -262,11 +262,67 @@ describe('runImagePipeline — photo branch', () => {
     // a tagged error so the store can map it to
     // `uploadImageProcessingFailed`, keeping the two causes
     // distinguishable in logs and in the UI banner.
+    //
+    // Scoped to non-EXIF errors — the EXIF-copy bug in
+    // browser-image-compression@2.0.2 has its own retry-without-exif
+    // fallback (next test).
     vi.mocked(imageCompression).mockRejectedValueOnce(new Error('oom'));
 
     const file = syntheticFile('photo.jpg', 'image/jpeg', 4096);
     await expect(runImagePipeline(file, { hasThumbnail: false })).rejects.toThrow(
       'IMAGE_PROCESSING_FAILED',
     );
+    // No retry for unrelated errors — a single call proves the
+    // fallback path is scoped and won't mask decode/OOM bugs.
+    expect(imageCompression).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries without preserveExif when the library rejects the EXIF segment', async () => {
+    // browser-image-compression@2.0.2's EXIF copier rejects some
+    // legitimate phone captures (e.g. Orientation encoded as LONG
+    // instead of SHORT). The pipeline retries with preserveExif=false
+    // so the photo still uploads; affected captures lose EXIF/GPS for
+    // that photo, but the alternative is refusing the upload entirely.
+    // The library rejects with a raw string, not an Error — matches
+    // what we observe from the real library.
+    const compressed = new Blob([new Uint8Array(321)], { type: 'image/jpeg' });
+    vi.mocked(imageCompression)
+      .mockRejectedValueOnce('Orientation data type is invalid')
+      .mockResolvedValueOnce(compressed as unknown as File);
+
+    const file = syntheticFile('photo.jpg', 'image/jpeg', 4096);
+    const result = await runImagePipeline(file, { hasThumbnail: false });
+
+    expect(imageCompression).toHaveBeenCalledTimes(2);
+    const [, firstOpts] = vi.mocked(imageCompression).mock.calls[0];
+    const [, secondOpts] = vi.mocked(imageCompression).mock.calls[1];
+    expect(firstOpts).toMatchObject({ preserveExif: true });
+    // The retry must flip preserveExif while keeping every other option
+    // stable — same dimension cap, quality, fileType — so the output
+    // still fits the post-pipeline size check.
+    expect(secondOpts).toMatchObject({
+      preserveExif: false,
+      maxWidthOrHeight: ATTACHMENT_PIPELINE.imageMaxDimension,
+      initialQuality: ATTACHMENT_PIPELINE.imageQuality,
+      fileType: 'image/jpeg',
+    });
+    expect(result.original).toBe(compressed);
+    expect(result.sizeBytes).toBe(321);
+  });
+
+  it('throws IMAGE_PROCESSING_FAILED when the EXIF retry also fails', async () => {
+    // Retry is a best-effort pass — if the library fails again on the
+    // second call (any reason), the pipeline must still surface the
+    // tagged error so the store shows the "Bildbearbeitung fehlgeschlagen"
+    // banner. Silent passthrough would trip the post-pipeline size cap.
+    vi.mocked(imageCompression)
+      .mockRejectedValueOnce('Orientation data type is invalid')
+      .mockRejectedValueOnce(new Error('decode failed'));
+
+    const file = syntheticFile('photo.jpg', 'image/jpeg', 4096);
+    await expect(runImagePipeline(file, { hasThumbnail: false })).rejects.toThrow(
+      'IMAGE_PROCESSING_FAILED',
+    );
+    expect(imageCompression).toHaveBeenCalledTimes(2);
   });
 });
