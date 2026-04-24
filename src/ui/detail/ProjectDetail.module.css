@@ -310,20 +310,14 @@
 }
 
 /* Activity block — last section on the page, tends to grow to 100s of
-   entries for a busy project. On phones the user needs a short upward
-   swipe at the page bottom to reveal the browser's tab bar / address
-   bar; an unbounded list means that swipe always scrolls the feed
-   instead of the viewport. Cap the inner feed to a bounded height and
-   let it scroll internally so the page itself has a reachable end.
-   The cap only applies where it matters — narrow viewports. Desktop
-   keeps the full-height feed so the activity list remains the stable
-   anchor at the bottom of the page. */
-@media (max-width: 768px) {
-  .activitySection [data-testid='project-detail-activity-feed'] {
-    max-height: 50vh;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-  }
+   entries for a busy project. Cap the inner feed to a bounded height
+   and let it scroll internally so the page itself has a reachable
+   end. On phones this also preserves the upward swipe needed to
+   reveal the browser's tab bar / address bar at the page bottom. */
+.activitySection [data-testid='project-detail-activity-feed'] {
+  max-height: 50vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Editable core grid. Two columns on wide screens, stack below. Notes
