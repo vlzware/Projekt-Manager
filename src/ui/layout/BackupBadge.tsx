@@ -24,9 +24,13 @@
  *     the tooltip / aria-label, so an unreachable status source is
  *     discoverable by hover and announced to assistive tech.
  *
- * Accessibility: the container carries `role="status"` so screen readers
- * announce the state when it changes. The label is the announced text
- * via `aria-label` (the icon is decorative — `aria-hidden` on the SVG).
+ * Accessibility: the element is a `<button>` so it is keyboard-focusable
+ * and tap-actionable on touch. The label is surfaced via `aria-label` +
+ * the `title` tooltip (desktop hover) and — on tap/click — as a toast
+ * that also works on mobile where `title` tooltips are practically
+ * invisible. `aria-live="polite"` preserves the original state-change
+ * announcement that the previous `role="status"` provided, without
+ * clobbering the button's implicit role.
  *
  * Colours consume the semantic token chain (`--color-success`, etc.)
  * via the CSS module so a theme override in tokens.css flows through
@@ -34,6 +38,7 @@
  */
 import type { BackupBadgeState } from '@/domain/backupBadge';
 import { STRINGS } from '@/config/strings';
+import { useToastStore } from '@/state/toastStore';
 import styles from './BackupBadge.module.css';
 
 interface BackupBadgeProps {
@@ -115,14 +120,26 @@ export function BackupBadge({ state, variant = 'default' }: BackupBadgeProps) {
   const stateClass = stateClassFor(state);
   const surfaceClass = variant === 'inverse' ? styles.badgeInverse : '';
 
+  // Tap surfaces the label as a toast so mobile users — where `title`
+  // tooltips are effectively invisible — can discover the backup
+  // state. Desktop users who click (rather than hover) get the same
+  // toast as a harmless redundancy alongside the native tooltip;
+  // keeping a single code path avoids an unreliable `hover: none`
+  // media-query branch.
+  const handleClick = () => {
+    useToastStore.getState().show('info', label);
+  };
+
   return (
-    <span
+    <button
+      type="button"
       className={`${styles.badge} ${stateClass} ${surfaceClass}`.trim()}
       data-testid="backup-badge"
       data-badge-kind={state.kind}
-      role="status"
+      onClick={handleClick}
       title={label}
       aria-label={label}
+      aria-live="polite"
     >
       {/* Database-stack + circular arrow — "database backup" glyph.
           `fill: currentColor` in CSS lets the colour follow the state
@@ -156,6 +173,6 @@ export function BackupBadge({ state, variant = 'default' }: BackupBadgeProps) {
           strokeLinejoin="round"
         />
       </svg>
-    </span>
+    </button>
   );
 }
