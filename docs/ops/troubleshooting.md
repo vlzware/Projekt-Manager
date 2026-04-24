@@ -57,6 +57,26 @@ For docs prose, backslash escape reads cleanest. For commit messages (which GitH
 
 **Workaround:** Habit — filter values by default. Use `env | grep -E '^(TOKEN\|KEY\|PASSWORD\|SECRET)=' | sed -E 's/=.*/=<redacted>/'` or similar. If a value has already been exposed, rotate it immediately; do not rely on "I can scroll up and delete the line".
 
+## Push notifications silently show "nicht konfiguriert"
+
+**Trap:** The "Push-Benachrichtigungen aktivieren" affordance triggers the browser's permission prompt, the user grants it, and the UI then flashes "Push-Benachrichtigungen sind auf diesem Server nicht konfiguriert" without ever subscribing. No push messages arrive. Easy to mistake for a CORS or service-worker regression because the symptom sits on the client side.
+
+**Root cause:** `VAPID_PRIVATE_KEY` is unset in the VPS deploy environment. The server's `/api/push/vapid-public-key` endpoint correctly returns `{"vapidPublicKey": null}`, which the client accurately renders as "not configured" (pushClient.ts `resolveVapidPublicKey` → `{ reason: 'not-configured' }`). The permission prompt fires first because spec §9.8 / AC-201 require the prompt to live inside the user gesture — the server round-trip happens afterwards.
+
+**Workaround (actually the fix):**
+
+```bash
+# Probe the live endpoint first — a null value confirms the server is the problem.
+curl -sS https://<your-domain>/api/push/vapid-public-key
+# → {"vapidPublicKey":null}   means VAPID_PRIVATE_KEY is unset
+
+# On the operator workstation, generate a keypair (keep privateKey stable across deploys
+# — rotating invalidates every browser subscription).
+npx web-push generate-vapid-keys --json
+```
+
+Add `VAPID_PRIVATE_KEY=<privateKey>` to `secrets.env.age` (see [manual-deploy.md § Rotate a secret](manual-deploy.md#rotate-a-secret)). Add `VAPID_SUBJECT=mailto:admin@<your-domain>` to the plain `.env` next to `DOMAIN` — it is non-secret. Redeploy. The same probe should then return a real base64url-encoded key, and the subscribe flow lights up.
+
 ## `source <(age -d …)` hangs after the passphrase prompt
 
 **Trap:** `source <(age -d secrets.env.age)` prints the prompt, accepts the passphrase, then hangs indefinitely. The shell never returns. `scripts/deploy.sh` uses this exact form successfully, so the pattern itself is not broken — it just fails in some interactive contexts.
