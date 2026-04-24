@@ -218,6 +218,11 @@ jobs:
           # compose config` parse; real deploys pass a SHA tag via
           # scripts/deploy.sh.
           APP_IMAGE_TAG: placeholder
+          # DOMAIN is `:?`-gated at the first reference (app service —
+          # STORAGE_PUBLIC_ENDPOINT derives `https://storage.${DOMAIN}`).
+          # Real deploys supply it via `.env` / `secrets.env.age`; CI
+          # needs any non-empty value so compose can parse.
+          DOMAIN: placeholder
         run: |
           set -euo pipefail
           check() {

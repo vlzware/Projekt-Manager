@@ -41,11 +41,16 @@ services:
       # reverse-proxies `storage.${DOMAIN}` to the internal `storage:9000`
       # (see Caddyfile) and the app signs presigned upload / download URLs
       # against this host so they are actually resolvable from the
-      # browser. Derived from ${DOMAIN}; the startup guard
-      # `assertStoragePublicEndpointInProduction()` refuses to boot when
-      # STORAGE_ENDPOINT looks internal and this value is missing.
+      # browser. `:?`-gated here at first reference so compose refuses to
+      # parse without DOMAIN rather than producing a broken
+      # `https://storage./...` URL (same pattern as POSTGRES_PASSWORD
+      # etc. above). Later references (line MINIO_API_CORS_ALLOW_ORIGIN,
+      # the caddy service's env) can stay bare — compose aborts the whole
+      # parse on any `:?` failure.  Defense-in-depth:
+      # `assertStoragePublicEndpointInProduction()` also refuses to boot
+      # when STORAGE_ENDPOINT looks internal and this value is missing.
       # See docs/ops/storage-subdomain.md.
-      STORAGE_PUBLIC_ENDPOINT: https://storage.${DOMAIN}
+      STORAGE_PUBLIC_ENDPOINT: https://storage.${DOMAIN:?DOMAIN must be set}
       STORAGE_BUCKET: projekt-manager
       STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
       STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
@@ -283,7 +288,10 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      DOMAIN: ${DOMAIN:-localhost}
+      # DOMAIN is `:?`-gated at first reference (app service above); this
+      # later substitution inherits that guard. Keeping a `:-localhost`
+      # default here would be dead code.
+      DOMAIN: ${DOMAIN}
       # `?` (no colon) — must be DECLARED but may be empty. Local dev
       # and the HTTP-only overlay leave it empty because Caddy is
       # profile-gated off there (docker-compose.dev.yml). Production
