@@ -174,17 +174,46 @@ From test environment into production on Hetzner.
 - polished UI
 - new workflows defined, scripts added
 
-## Iteration 8 - Uploads and Notifications - **CURRENT**
+## Iteration 8 - Uploads and Notifications
 
-- [ ] PWA/SW
-- [ ] a notification system
-- [ ] file uploads
-- [ ] a presentation[^1]
+- [x] PWA/SW
+- [x] a notification system
+- [x] file uploads
+- [x] a presentation[^1]
+
+**Unplanned work**
+
+(as we are still way ahead of time)
+
+- taking pictures with the phone camera, automatic compression
+- PWA app with push notifications
+- API/UI for configuring notifications
+- an extended project page
+- layout improvements, especially for mobile users
+- default page for different roles
+- bulk download with archiving
+- gradual switch to the deployed app on the VPS as the main testing target
+- a backup notification in the UI
 
 **Artifacts**
 
 - a mobile-first view with file uploads
 - configurable notification system
+  _as well as all of the "Unplanned work" ones_
+
+## Iteration 9 - e2e tests, polish, ops, data - **CURRENT**
+
+- [ ] more extensive testing with the deployed app and different clients
+- [ ] polish according to user feedback
+- [ ] extensive testing of the operator-driven processes
+- [ ] integration of D2
+- [ ] a presentation[^1]
+
+**Artifacts**
+
+- polished app
+- polished docs
+- e2e-tested workflows
 
 ## All iterations
 
