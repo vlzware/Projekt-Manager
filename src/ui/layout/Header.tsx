@@ -1,6 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
+import { useBackupStatusRefresh } from '@/hooks/useBackupStatusRefresh';
 import { usePermission } from '@/hooks/usePermission';
 import { useRouterNav } from '@/hooks/useRouterNav';
 import { landingPathForUser, visibleRoutesForUser, type RouteView } from '@/config/routes';
@@ -60,6 +61,12 @@ export function Header() {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const adminMenuRef = useRef<HTMLDivElement>(null);
+
+  // Owner-only: keep `backupStatus` fresh without a full reload. The hook
+  // is a no-op for every other role, so unconditional invocation is safe
+  // (one-liner beats a conditional wrapper that the linter would flag as
+  // a hook-rules violation anyway).
+  useBackupStatusRefresh();
 
   useEffect(() => {
     if (!dropdownOpen) return;
