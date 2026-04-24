@@ -149,7 +149,20 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
         imgSrc: ["'self'", ...storageSources],
         connectSrc: ["'self'", ...storageSources],
         fontSrc: ["'self'"],
-        objectSrc: ["'none'"],
+        // PDF preview loads a same-origin `blob:` URL in an <iframe>.
+        // Without `frame-src` set, the directive falls back to
+        // `default-src 'self'`, which does NOT include the blob: scheme
+        // — so the iframe is blocked and the user sees a blank modal.
+        // Limit to 'self' + blob: so only our own origin and blobs we
+        // authored can be framed.
+        frameSrc: ["'self'", 'blob:'],
+        // Chrome's built-in PDF viewer renders the PDF via an internal
+        // <embed> element. With `object-src 'none'` the embed is blocked
+        // and Chrome shows "This content is blocked. Contact the site
+        // owner to fix the issue." — the exact error we hit on the PDF
+        // preview path. `'self'` + blob: keeps third-party embeds out
+        // while letting our own PDF blobs render.
+        objectSrc: ["'self'", 'blob:'],
         frameAncestors: ["'none'"],
         // Helmet defaults to adding upgrade-insecure-requests, which tells
         // browsers to rewrite every HTTP subresource URL to HTTPS. Over

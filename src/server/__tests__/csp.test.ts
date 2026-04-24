@@ -72,9 +72,22 @@ describe('CSP for attachment upload pipeline', () => {
     expect(csp).toMatch(/default-src 'self'/);
   });
 
-  it('object-src stays none', async () => {
+  it('object-src permits self + blob: so Chrome PDF viewer embed renders', async () => {
+    // Chrome's built-in PDF viewer uses an internal <embed> element to
+    // paint the PDF. `object-src 'none'` blocks that and surfaces the
+    // "This content is blocked" message. Allowing 'self' + blob: unblocks
+    // the preview without opening the door to third-party embeds.
     const csp = await getCsp();
-    expect(csp).toMatch(/object-src 'none'/);
+    expect(csp).toMatch(/object-src[^;]*'self'[^;]*blob:/);
+  });
+
+  it('frame-src permits self + blob: so same-origin PDF blob iframes load', async () => {
+    // The PDF preview creates a same-origin blob: URL from the fetched
+    // bytes and renders it in an <iframe>. Without this directive the
+    // iframe falls back to `default-src 'self'`, which forbids the blob:
+    // scheme and the preview modal renders blank.
+    const csp = await getCsp();
+    expect(csp).toMatch(/frame-src[^;]*'self'[^;]*blob:/);
   });
 
   it('frame-ancestors stays none', async () => {
