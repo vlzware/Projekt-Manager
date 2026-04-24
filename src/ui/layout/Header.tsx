@@ -33,6 +33,18 @@ const SECONDARY_VIEWS: readonly RouteView[] = [
   'benachrichtigungen',
 ];
 
+/** First letters of up to two whitespace-separated words, uppercased.
+ *  "Vladimir Zhelezarov" → "VZ"; "Inhaber" → "I"; "" → "". */
+function initialsFromName(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0] ?? '')
+    .join('')
+    .toUpperCase();
+}
+
 export function Header() {
   const activeView = useUIStore((s) => s.activeView);
   const authUser = useAuthStore((s) => s.authUser);
@@ -168,7 +180,20 @@ export function Header() {
           title={STRINGS.ui.navHome}
           aria-label={`${BRANDING.appName} — ${STRINGS.ui.navHome}`}
         >
-          {BRANDING.appName}
+          {/* Wordmark (≥769px) swaps to logo-only (≤768px) via CSS —
+              keeps the right-cluster fitting on one row at 360px. */}
+          <span className={styles.appNameText}>{BRANDING.appName}</span>
+          <svg
+            className={styles.appNameLogo}
+            viewBox="0 0 32 32"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <rect width="32" height="32" rx="6" fill="#1e293b" />
+            <rect x="4" y="6" width="6" height="20" rx="2" fill="#F97316" opacity="0.9" />
+            <rect x="13" y="10" width="6" height="16" rx="2" fill="#3B82F6" opacity="0.9" />
+            <rect x="22" y="8" width="6" height="18" rx="2" fill="#22C55E" opacity="0.9" />
+          </svg>
         </button>
         {(inlineRoutes.length > 0 || renderSecondaryAsMenu) && (
           <div className={styles.viewToggle}>
@@ -206,7 +231,7 @@ export function Header() {
                     <circle cx="12" cy="12" r="3" />
                     <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
                   </svg>
-                  <span>{STRINGS.ui.navAdminMenu}</span>
+                  <span className={styles.adminTriggerLabel}>{STRINGS.ui.navAdminMenu}</span>
                 </button>
                 {adminMenuOpen && (
                   <div className={styles.adminDropdown} role="menu">
@@ -289,8 +314,18 @@ export function Header() {
               className={styles.userButton}
               data-testid="user-menu-trigger"
               onClick={() => setDropdownOpen(!dropdownOpen)}
+              title={authUser.displayName}
             >
-              <span data-testid="user-indicator">{authUser.displayName}</span>
+              {/* Full name holds the legacy test contract (toContainText);
+                  mobile collapses to the initials span via CSS. Both live
+                  in the DOM so `user-indicator` always contains the text
+                  regardless of viewport. */}
+              <span data-testid="user-indicator" className={styles.userFullName}>
+                {authUser.displayName}
+              </span>
+              <span className={styles.userInitials} aria-hidden="true">
+                {initialsFromName(authUser.displayName)}
+              </span>
             </button>
             {dropdownOpen && (
               <div ref={dropdownRef} className={styles.dropdown}>
