@@ -226,114 +226,116 @@ export function BinaryList({ projectId }: BinaryListProps) {
         <div className={styles.emptyState}>{STRINGS.ui.noResults}</div>
       ) : (
         <>
-          <table className={styles.binaryTable}>
-            <thead>
-              <tr>
-                <th>
-                  <label>
-                    <input
-                      type="checkbox"
-                      data-testid="binary-select-all"
-                      checked={allSelected}
-                      onChange={toggleSelectAll}
-                      aria-label={STRINGS.attachments.selectAll}
-                    />
-                  </label>
-                </th>
-                <th>{STRINGS.attachments.colFileName}</th>
-                <th>{STRINGS.attachments.colLabel}</th>
-                <th>{STRINGS.attachments.colUploader}</th>
-                <th>{STRINGS.attachments.colUploaded}</th>
-                <th>{STRINGS.ui.actions}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {binaries.map((bin) => {
-                const isMissing = missing.has(bin.id);
-                const uploader = bin.createdBy?.displayName ?? null;
-                const canDelete =
-                  authUser !== null &&
-                  canDeleteAttachment(
-                    bin,
-                    authUser,
-                    ATTACHMENT_CONFIG.workerSelfDeleteGraceMinutes,
-                  );
-                return (
-                  <tr
-                    key={bin.id}
-                    data-testid={`attachment-binary-row-${bin.id}`}
-                    data-attachment-id={bin.id}
-                  >
-                    <td>
-                      {isMissing ? (
-                        <input
-                          type="checkbox"
-                          data-testid={`binary-select-${bin.id}`}
-                          disabled
-                          aria-label={bin.fileName}
-                        />
-                      ) : (
-                        <input
-                          type="checkbox"
-                          data-testid={`binary-select-${bin.id}`}
-                          checked={effectiveSelected.has(bin.id)}
-                          onChange={() => toggleSelect(bin.id)}
-                          aria-label={bin.fileName}
-                        />
-                      )}
-                    </td>
-                    <td>{bin.fileName}</td>
-                    <td>{LABEL_BY_VALUE.get(bin.label) ?? bin.label}</td>
-                    <td>{uploader ?? ''}</td>
-                    <td>{formatDateDE(bin.createdAt)}</td>
-                    <td>
-                      <div className={styles.rowActions}>
-                        {isMissing && (
-                          <span
-                            className={styles.missingBadge}
-                            data-testid={`binary-missing-${bin.id}`}
-                          >
-                            {STRINGS.attachments.fileMissing}
-                          </span>
+          <div className={styles.binaryTableScroll}>
+            <table className={styles.binaryTable}>
+              <thead>
+                <tr>
+                  <th>
+                    <label>
+                      <input
+                        type="checkbox"
+                        data-testid="binary-select-all"
+                        checked={allSelected}
+                        onChange={toggleSelectAll}
+                        aria-label={STRINGS.attachments.selectAll}
+                      />
+                    </label>
+                  </th>
+                  <th>{STRINGS.attachments.colFileName}</th>
+                  <th>{STRINGS.attachments.colLabel}</th>
+                  <th className={styles.colUploader}>{STRINGS.attachments.colUploader}</th>
+                  <th className={styles.colUploaded}>{STRINGS.attachments.colUploaded}</th>
+                  <th>{STRINGS.ui.actions}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {binaries.map((bin) => {
+                  const isMissing = missing.has(bin.id);
+                  const uploader = bin.createdBy?.displayName ?? null;
+                  const canDelete =
+                    authUser !== null &&
+                    canDeleteAttachment(
+                      bin,
+                      authUser,
+                      ATTACHMENT_CONFIG.workerSelfDeleteGraceMinutes,
+                    );
+                  return (
+                    <tr
+                      key={bin.id}
+                      data-testid={`attachment-binary-row-${bin.id}`}
+                      data-attachment-id={bin.id}
+                    >
+                      <td>
+                        {isMissing ? (
+                          <input
+                            type="checkbox"
+                            data-testid={`binary-select-${bin.id}`}
+                            disabled
+                            aria-label={bin.fileName}
+                          />
+                        ) : (
+                          <input
+                            type="checkbox"
+                            data-testid={`binary-select-${bin.id}`}
+                            checked={effectiveSelected.has(bin.id)}
+                            onChange={() => toggleSelect(bin.id)}
+                            aria-label={bin.fileName}
+                          />
                         )}
-                        {isPdf(bin) && (
+                      </td>
+                      <td>{bin.fileName}</td>
+                      <td>{LABEL_BY_VALUE.get(bin.label) ?? bin.label}</td>
+                      <td className={styles.colUploader}>{uploader ?? ''}</td>
+                      <td className={styles.colUploaded}>{formatDateDE(bin.createdAt)}</td>
+                      <td>
+                        <div className={styles.rowActions}>
+                          {isMissing && (
+                            <span
+                              className={styles.missingBadge}
+                              data-testid={`binary-missing-${bin.id}`}
+                            >
+                              {STRINGS.attachments.fileMissing}
+                            </span>
+                          )}
+                          {isPdf(bin) && (
+                            <button
+                              type="button"
+                              className={styles.viewButton}
+                              data-testid={`attachment-view-${bin.id}`}
+                              disabled={isMissing}
+                              onClick={() => void handleView(bin)}
+                            >
+                              {STRINGS.attachments.view}
+                            </button>
+                          )}
                           <button
                             type="button"
-                            className={styles.viewButton}
-                            data-testid={`attachment-view-${bin.id}`}
+                            className={styles.downloadButton}
+                            data-testid="attachment-download"
                             disabled={isMissing}
-                            onClick={() => void handleView(bin)}
+                            onClick={() => void handleDownload(bin.id)}
                           >
-                            {STRINGS.attachments.view}
+                            {STRINGS.attachments.download}
                           </button>
-                        )}
-                        <button
-                          type="button"
-                          className={styles.downloadButton}
-                          data-testid="attachment-download"
-                          disabled={isMissing}
-                          onClick={() => void handleDownload(bin.id)}
-                        >
-                          {STRINGS.attachments.download}
-                        </button>
-                        {canDelete && (
-                          <button
-                            type="button"
-                            className={styles.deleteButton}
-                            data-testid="attachment-delete"
-                            onClick={() => void handleDelete(bin)}
-                            aria-label={STRINGS.ui.delete}
-                          >
-                            {STRINGS.ui.delete}
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                          {canDelete && (
+                            <button
+                              type="button"
+                              className={styles.deleteButton}
+                              data-testid="attachment-delete"
+                              onClick={() => void handleDelete(bin)}
+                              aria-label={STRINGS.ui.delete}
+                            >
+                              {STRINGS.ui.delete}
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
           {effectiveSelected.size > 0 && (
             <button

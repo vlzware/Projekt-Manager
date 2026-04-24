@@ -222,6 +222,16 @@ export function Header() {
             )}
           </div>
         )}
+      </div>
+      {/* Right-side cluster: extract + backup + user. Grouping these
+          eliminates the ~row-of-blank-space that the previous layout
+          left between the nav group and the user menu on phones —
+          `navGroup` wrapped below the user button, leaving the icons
+          stranded on their own visual row. All three now share a
+          single cluster so they sit on the same line as the user
+          button and only wrap together when the viewport is very
+          narrow. */}
+      <div className={styles.rightCluster}>
         {canExtract && (
           <button
             className={styles.extractButton}
@@ -249,10 +259,9 @@ export function Header() {
           </button>
         )}
         {backupBadgeState && <BackupBadge state={backupBadgeState} variant="inverse" />}
-      </div>
-      {authUser && (
-        <div className={styles.userMenu} ref={menuRef}>
-          {/*
+        {authUser && (
+          <div className={styles.userMenu} ref={menuRef}>
+            {/*
             Two tests hit this button:
               - `user-menu-trigger` is the push-permission e2e contract
                 (e2e/push-permission.spec.ts), where the spec clicks the
@@ -267,56 +276,57 @@ export function Header() {
             lives and both legacy locators — `.click()` and
             `.toContainText(displayName)` — still resolve against it.
           */}
-          <button
-            ref={buttonRef}
-            className={styles.userButton}
-            data-testid="user-menu-trigger"
-            onClick={() => setDropdownOpen(!dropdownOpen)}
-          >
-            <span data-testid="user-indicator">{authUser.displayName}</span>
-          </button>
-          {dropdownOpen && (
-            <div ref={dropdownRef} className={styles.dropdown}>
-              <div className={styles.dropdownSection}>
-                <div className={styles.dropdownSectionLabel}>{STRINGS.theme.section}</div>
-                {THEME_OPTIONS.map((opt) => {
-                  const selected = authUser.themePreference === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      className={`${styles.dropdownItem} ${selected ? styles.dropdownItemSelected : ''}`}
-                      aria-pressed={selected}
-                      data-testid={`theme-option-${opt.value}`}
-                      onClick={() => handleThemeSelect(opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
+            <button
+              ref={buttonRef}
+              className={styles.userButton}
+              data-testid="user-menu-trigger"
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+            >
+              <span data-testid="user-indicator">{authUser.displayName}</span>
+            </button>
+            {dropdownOpen && (
+              <div ref={dropdownRef} className={styles.dropdown}>
+                <div className={styles.dropdownSection}>
+                  <div className={styles.dropdownSectionLabel}>{STRINGS.theme.section}</div>
+                  {THEME_OPTIONS.map((opt) => {
+                    const selected = authUser.themePreference === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        className={`${styles.dropdownItem} ${selected ? styles.dropdownItemSelected : ''}`}
+                        aria-pressed={selected}
+                        data-testid={`theme-option-${opt.value}`}
+                        onClick={() => handleThemeSelect(opt.value)}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <PushSubscriptionControls />
+                <button
+                  className={styles.dropdownItem}
+                  data-testid="pw-change-button"
+                  onClick={() => {
+                    setDropdownOpen(false);
+                    setPwChangeOpen(true);
+                  }}
+                >
+                  {STRINGS.password.change}
+                </button>
+                <button
+                  className={styles.dropdownItem}
+                  data-testid="logout-button"
+                  onClick={handleLogout}
+                >
+                  {STRINGS.auth.logout}
+                </button>
               </div>
-              <PushSubscriptionControls />
-              <button
-                className={styles.dropdownItem}
-                data-testid="pw-change-button"
-                onClick={() => {
-                  setDropdownOpen(false);
-                  setPwChangeOpen(true);
-                }}
-              >
-                {STRINGS.password.change}
-              </button>
-              <button
-                className={styles.dropdownItem}
-                data-testid="logout-button"
-                onClick={handleLogout}
-              >
-                {STRINGS.auth.logout}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+      </div>
       {extractOpen && <EmailExtractModal onClose={() => setExtractOpen(false)} />}
       {pwChangeOpen && <PasswordChangeModal onClose={() => setPwChangeOpen(false)} />}
     </header>

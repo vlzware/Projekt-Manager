@@ -78,10 +78,13 @@
 }
 
 /* Inline-editable title. Looks like an h1 until the user clicks into
-   it; reveals the input affordance on hover/focus. */
+   it; reveals the input affordance on hover/focus. Now a <textarea>
+   (auto-sized by the component via scrollHeight) so long titles wrap
+   within the visual heading rather than clipping mid-word on phones. */
 .titleInput {
   font-size: 1.5rem;
   font-weight: 700;
+  line-height: 1.25;
   color: var(--color-text);
   background: transparent;
   border: 1px solid transparent;
@@ -92,6 +95,16 @@
   max-width: 640px;
   box-sizing: border-box;
   font-family: inherit;
+  /* Textarea defaults — strip the resize handle (auto-size is driven
+     by the component) and hide the scrollbar, so the box reads as a
+     single-line heading even after wrapping. `overflow-wrap: anywhere`
+     is the aggressive fallback when the title has no natural break
+     points (an unbroken string longer than the width would otherwise
+     force a horizontal scroll). */
+  resize: none;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .titleInput:hover:not([readonly]) {
@@ -284,6 +297,33 @@
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-subtle);
   border-radius: 8px;
+  /* `min-width: 0` is the flex escape hatch so a long inner element
+     (a 6-column binary table, a long unbreakable filename, a dense
+     activity row) can shrink to the section's available width instead
+     of re-expanding the box to fit its content. `overflow-x: auto` on
+     the inner wrappers that genuinely overflow (e.g. `.binaryTableScroll`)
+     then paints a scrollbar only where needed. Avoid `overflow-x: hidden`
+     on the section itself — browsers implicitly set the perpendicular
+     axis to `auto` when one axis is not `visible`, which surfaces as a
+     phantom vertical scrollbar on every section. */
+  min-width: 0;
+}
+
+/* Activity block — last section on the page, tends to grow to 100s of
+   entries for a busy project. On phones the user needs a short upward
+   swipe at the page bottom to reveal the browser's tab bar / address
+   bar; an unbounded list means that swipe always scrolls the feed
+   instead of the viewport. Cap the inner feed to a bounded height and
+   let it scroll internally so the page itself has a reachable end.
+   The cap only applies where it matters — narrow viewports. Desktop
+   keeps the full-height feed so the activity list remains the stable
+   anchor at the bottom of the page. */
+@media (max-width: 768px) {
+  .activitySection [data-testid='project-detail-activity-feed'] {
+    max-height: 50vh;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
 }
 
 /* Editable core grid. Two columns on wide screens, stack below. Notes
@@ -579,6 +619,18 @@
 
 /* Binary list */
 
+/* Scroll container for the 6-column binary table. On narrow viewports
+   the fixed column set (select, filename, label, uploader, uploaded,
+   actions) exceeds the available width; without this wrapper the
+   table pushed the whole section past the viewport and broke the
+   mobile layout. `max-width: 100%` pins it to the section, `overflow-x:
+   auto` lets the user pan horizontally when it overflows. */
+.binaryTableScroll {
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .binaryTable {
   width: 100%;
   border-collapse: collapse;
@@ -590,6 +642,11 @@
   padding: 8px 10px;
   text-align: left;
   border-bottom: 1px solid var(--color-border-subtle);
+  /* Prevent a pathological filename like a base64 string from forcing
+     the column to a multi-thousand-pixel width. `overflow-wrap` breaks
+     only when there's no better break point — normal spaces still
+     flow naturally. */
+  overflow-wrap: anywhere;
 }
 
 .binaryTable thead th {
@@ -598,6 +655,19 @@
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* Phone viewport: the 6-column layout is unreadable at <=768px even
+   with horizontal scroll. Drop the uploader + uploaded columns — the
+   uploader is visible on the project's activity feed, and the date
+   is rarely the primary identifier. What remains (select, filename,
+   label, actions) fits without scrolling. */
+@media (max-width: 768px) {
+  .binaryTable .colUploader,
+  .binaryTable .colUploaded {
+    display: none;
+  }
 }
 
 .rowActions {

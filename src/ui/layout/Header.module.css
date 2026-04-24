@@ -18,6 +18,21 @@
   flex-shrink: 0;
 }
 
+/* Right-side icon cluster (extract + backup + user menu). Grouping
+   these into one flex row eliminates the "orphaned icon row" the old
+   layout produced on phones — backup badge + extract icon sat on a
+   line of their own with the user button on a third line, leaving
+   the top right corner of the navGroup row blank. All three sit
+   together now and only wrap as a unit when the navGroup itself
+   can't share the row. */
+.rightCluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .appName {
   font-size: 1.25rem;
   font-weight: 700;
@@ -142,7 +157,10 @@
 }
 
 .userMenu {
-  margin-left: auto;
+  /* `margin-left: auto` moved to `.rightCluster`. The user menu is a
+     sibling of the extract button and backup badge inside that cluster;
+     the whole cluster gets pushed to the right, the user menu no
+     longer pushes itself. */
   position: relative;
   flex-shrink: 0;
 }

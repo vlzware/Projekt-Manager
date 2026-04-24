@@ -11,7 +11,7 @@
  * NOT_PERMITTED — render the AC-149 mirror surface.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import { STATE_CONFIG_MAP } from '@/config/stateConfig';
@@ -394,10 +394,18 @@ export function ProjectDetailPage() {
 }
 
 /**
- * Inline editable title. Renders a borderless input that looks like a
- * heading until it gets focus. Commits on blur or Enter. Reads fresh
+ * Inline editable title. Renders a borderless textarea that looks like
+ * a heading until it gets focus. Commits on blur or Enter. Reads fresh
  * from props so a store-driven update (reflecting the server response)
  * swaps in without leaving the user's half-typed draft untouched.
+ *
+ * `<textarea>` instead of `<input>` — titles like "Malerarbeiten Praxis
+ * Dr. Braun" exceed the available width on phones; an `<input>` clips
+ * mid-word ("Dr.B") with no visible wrap, which reads as a truncation
+ * bug. A textarea wraps the long title across lines inside the same
+ * visual chrome, so the full identifier stays visible. The textarea
+ * is kept visually single-line via auto-sizing (`rows=1` + JS height
+ * adjust to scrollHeight) and Enter is still a commit (never a newline).
  */
 function InlineTitle({
   value,
@@ -418,23 +426,44 @@ function InlineTitle({
     setDraft(value);
   }
 
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+
+  // Auto-resize to content height. `useLayoutEffect` runs before paint
+  // so the textarea never flashes at its default 2-row height before
+  // shrinking/growing to the content. Resetting `height` to `auto` first
+  // lets `scrollHeight` report the unconstrained content height; pinning
+  // `height` to that value then sizes the box exactly.
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    node.style.height = 'auto';
+    node.style.height = `${node.scrollHeight}px`;
+  }, [draft]);
+
   const commit = () => {
-    const trimmed = draft.trim();
-    if (!trimmed || trimmed === value) {
+    // Paste can inject newlines; collapse any internal whitespace runs
+    // (including the paste-introduced newlines) to a single space so
+    // a stray \n doesn't land in the stored title.
+    const normalized = draft.replace(/\s+/g, ' ').trim();
+    if (!normalized || normalized === value) {
       setDraft(value);
       return;
     }
-    onCommit(trimmed);
+    onCommit(normalized);
   };
 
   return (
-    <input
+    <textarea
+      ref={ref}
       className={styles.titleInput}
+      rows={1}
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') {
+          // Titles are single-line — Enter commits rather than inserting
+          // a newline, matching the prior input-element behaviour.
           e.preventDefault();
           e.currentTarget.blur();
         }
