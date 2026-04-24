@@ -3,7 +3,7 @@ import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useRouterNav } from '@/hooks/useRouterNav';
-import { visibleRoutesForUser, isLandingViewForUser, type RouteView } from '@/config/routes';
+import { visibleRoutesForUser, type RouteView } from '@/config/routes';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
 import { BACKUP_THRESHOLDS } from '@/config/backupThresholds';
@@ -121,14 +121,13 @@ export function Header() {
     ? secondaryRoutes.some((r) => r.view === activeView)
     : false;
 
-  // AC-170 + AC-171: the backup-freshness badge renders ONLY on the
-  // owner's landing view. Two gates:
-  //   1. Role: only owners get the badge surface at all. Non-owners
-  //      never see it (the server also omits `backupStatus` for them,
-  //      so the state would be `unknown` — but hiding the surface
-  //      entirely matches AC-170's "not rendered" wording).
-  //   2. Route: the caller is on their own landing view. Navigating
-  //      to `/customers` (etc.) drops the badge per AC-170.
+  // AC-170 + AC-171: the backup-freshness badge renders on every
+  // authenticated surface for role `owner`. The login screen stays
+  // badge-free because it renders no Header at all (see App.tsx).
+  // Non-owners never see the badge — the server also omits
+  // `backupStatus` for them, so the state would be `unknown`, but
+  // hiding the surface entirely matches AC-170's "not rendered"
+  // wording.
   //
   // `backupStatus === undefined` for an owner means the server could
   // not read the row (DB down). AC-171 forbids silently hiding the
@@ -137,9 +136,7 @@ export function Header() {
   // Do NOT gate on `backupStatus !== undefined` here; that would
   // reintroduce the misleading-state defect.
   const isOwner = authUser ? authUser.roles.includes('owner') : false;
-  const onOwnerLanding = authUser ? isLandingViewForUser(authUser, activeView) : false;
-  const showBackupBadge = isOwner && onOwnerLanding;
-  const backupBadgeState = showBackupBadge
+  const backupBadgeState = isOwner
     ? deriveBadgeState(backupStatus, new Date(), BACKUP_THRESHOLDS)
     : null;
 

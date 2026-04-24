@@ -9,10 +9,9 @@ import { STORAGE_STATES } from './storage-states';
  *   1. The badge is NOT rendered on the unauthenticated login screen.
  *      The login surface is auth-only — health affordances belong on
  *      authenticated views where the operator can act on them.
- *   2. On the authenticated admin landing view, the badge is visible
- *      only to callers with role `owner`. On any other authenticated
- *      surface — other roles' landings, non-landing routes — the
- *      badge is not rendered.
+ *   2. On every authenticated surface, the badge is visible only to
+ *      callers with role `owner`. Other authenticated roles never see
+ *      the badge on any route.
  *
  * Verified structurally (presence / absence of `[data-testid="backup-badge"]`),
  * never by pixel-diff. Structural assertions are the project convention
@@ -22,9 +21,10 @@ import { STORAGE_STATES } from './storage-states';
 type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
 
 /**
- * Expected badge visibility on each role's landing view. Owner is the
- * only role whose landing shows the badge — that is the claim AC-170
- * pins.
+ * Expected badge visibility per role. Owner is the only role that
+ * sees the badge — that is the claim AC-170 pins. Checked on the
+ * landing view; the owner also keeps the badge on non-landing routes
+ * (separate assertion below).
  */
 const BADGE_ON_LANDING: Record<Role, boolean> = {
   owner: true,
@@ -66,12 +66,10 @@ test.describe('AC-170: backup-freshness badge — authenticated landing per role
 test.describe('AC-170: backup-freshness badge — owner non-landing surface', () => {
   test.use({ storageState: STORAGE_STATES.owner });
 
-  test('non-landing authenticated surface does not render the badge for owner', async ({
-    page,
-  }) => {
-    // Owner sees the badge on the admin landing, but the spec limits
-    // that surface to the landing. Navigating to another authenticated
-    // route (here: customers) must drop the badge from the render.
+  test('non-landing authenticated surface renders the badge for owner', async ({ page }) => {
+    // Owner sees the badge on every authenticated surface. Navigating
+    // to another authenticated route (here: customers) must keep the
+    // badge rendered.
     await page.goto('/');
 
     // Navigate to Kunden — any non-landing route is valid; Kunden is
@@ -79,7 +77,7 @@ test.describe('AC-170: backup-freshness badge — owner non-landing surface', ()
     await page.getByTestId('view-toggle-kunden').click();
     await page.getByTestId('customer-table').waitFor();
 
-    // Badge must not render on this surface, regardless of role.
-    await expect(page.getByTestId('backup-badge')).toHaveCount(0);
+    // Badge stays rendered on this surface for owner.
+    await expect(page.getByTestId('backup-badge')).toHaveCount(1);
   });
 });

@@ -6,7 +6,7 @@ Concept map: [overview.md](overview.md). Design rationale: [ADR-0020](../../adr/
 
 ## 1. Pick the dump
 
-If the app is still partially up, check via the login-screen badge or the owner's authenticated landing view ([AC-170](../../spec/verification.md#1522-backup-and-recovery)). Otherwise pull the unencrypted status mirror (`status/latest.json`) from R2:
+If the app is still partially up, check via the owner's authenticated view — the backup-freshness badge in the header ([AC-170](../../spec/verification.md#1522-backup-and-recovery)). Otherwise pull the unencrypted status mirror (`status/latest.json`) from R2:
 
 ```bash
 AWS_ACCESS_KEY_ID="$R2_ACCESS_KEY_ID" \
