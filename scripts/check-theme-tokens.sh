@@ -17,11 +17,14 @@
 # Two checks run in sequence:
 #
 #   Check 1 (AC-108) — palette hex scan
-#     Scans src/**/*.{css,module.css,ts,tsx} for hex color literals (#RGB,
-#     #RGBA, #RRGGBB, #RRGGBBAA) and fails if any are found outside the
+#     Scans src/**/*.{css,module.css,ts,tsx} for 6- and 8-digit hex color
+#     literals (#RRGGBB, #RRGGBBAA) and fails if any are found outside the
 #     allowlist. Palette leaks outside the token source defeat theming —
-#     a dark mode override has no effect on a hardcoded #fff in a
-#     stylesheet.
+#     a dark mode override has no effect on a hardcoded #ffffff in a
+#     stylesheet. The 3- and 4-digit shorthands are intentionally NOT
+#     scanned: they collide with `(issue #NNN)` references and the
+#     codebase's tokens use 6-char hex consistently — so the loss of
+#     coverage is theoretical, while the false-positive cost is real.
 #
 #   Check 2 (AC-113) — no --color-blue-* primitives in tokens.css
 #     Greps src/styles/tokens.css for definitions of the retired blue
@@ -35,13 +38,13 @@
 # Allowlist (Check 1):
 #   src/styles/tokens.css        — single source of palette + semantic tokens
 #   src/config/stateConfig.ts    — data-driven state colors (documented exception)
-#   src/config/brandingConfig.ts — brand accent light/dark values (AC-113)
+#   src/config/brandingConfig.ts — brand accent + brand-mark color values
 #
 # The script is intentionally strict: any new file that needs raw hex values
 # must be justified and added here, not silently added to src/.
 #
 # Run from repo root: ./scripts/check-theme-tokens.sh
-# Exit 0 = clean, exit 1 = leaks found.
+# Exit 0 = clean, exit 1 = leaks found, exit 2 = scan environment broken.
 
 set -euo pipefail
 
@@ -72,33 +75,71 @@ ALLOWLIST=(
 )
 
 # --- Hex literal pattern --------------------------------------------------
-# Match #RGB, #RGBA, #RRGGBB, or #RRGGBBAA bounded by a word boundary. The
-# ripgrep regex uses a negative lookbehind implicitly through the leading
-# context filter below — we do not try to parse CSS; we apply a cheap set of
-# post-filters against obvious false positives (URL hash fragments, shebangs,
-# inline // comments).
-HEX_PATTERN='#[0-9a-fA-F]{3,8}\b'
+# Match #RRGGBB or #RRGGBBAA bounded by a word boundary. The 3- and 4-digit
+# shorthands are intentionally excluded: `(issue #108)` and `Reported in
+# #128. */` and friends would match the loose `[0-9a-fA-F]{3,8}` pattern
+# and the awk filter below cannot reliably distinguish a digit-only short
+# hex from an issue reference (they are syntactically identical). See the
+# header docstring for the tradeoff rationale.
+HEX_PATTERN='#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b'
 
-# Build the ripgrep exclusion for allowlisted files. ripgrep --glob with a
-# leading `!` excludes.
+# Build the ripgrep argument set. Notes on the non-obvious flags:
+#
+#   * Positional path `src` (passed at the call site below) is REQUIRED.
+#     Without it, ripgrep's stdin-detection heuristic ("is_readable_stdin
+#     = true → search stdin, ignore --glob filters") kicks in whenever the
+#     calling shell hands rg a non-TTY stdin. GitHub Actions `run:` steps
+#     do exactly that — `bash -e {0}` runs with stdin connected to an
+#     empty file. Result: rg searches that empty stdin, finds nothing,
+#     exits 1, and `|| true` swallows it. Silent no-op. This is the root
+#     cause of issue #134 (CI green / local red on the same content).
+#
+#   * `--no-config --no-ignore` neutralizes any environment ignore chain
+#     (RIPGREP_CONFIG_PATH, ~/.config/git/ignore, parent .gitignore,
+#     .ignore, .rgignore). Defense in depth — a local override of any of
+#     these would otherwise silently shrink the scan footprint.
+#
+#   * `--glob '!...'` excludes the AC-108 allowlist files from the scan.
 rg_args=(
+  --no-config
+  --no-ignore
+  --hidden
   --line-number
   --no-heading
   --color=never
   --sort=path
   --type-add 'cssmod:*.module.css'
-  --glob 'src/**/*.css'
-  --glob 'src/**/*.ts'
-  --glob 'src/**/*.tsx'
+  --glob '*.css'
+  --glob '*.ts'
+  --glob '*.tsx'
 )
 for entry in "${ALLOWLIST[@]}"; do
   rg_args+=(--glob "!${entry}")
 done
 
+# --- Sanity floor ---------------------------------------------------------
+# Anchor the scan footprint to a known-stable file: src/main.tsx is the
+# Vite entry point. If the configured --glob set cannot see it, the scan
+# would silently no-op and the gate is broken. Fail loud instead.
+#
+# `rg --files` lists candidate files (no regex search) and is immune to
+# the stdin-search heuristic above, but we still pass the positional `src`
+# for symmetry with the actual scan and to ensure the floor mirrors it.
+if ! rg --no-config --no-ignore --hidden --files \
+        --glob '*.tsx' \
+        src \
+      | grep -qx 'src/main.tsx'; then
+  echo "error: scan footprint is missing src/main.tsx — the environment is" >&2
+  echo "       filtering source files (ignore chain, RIPGREP_CONFIG_PATH," >&2
+  echo "       sparse checkout, or similar). The check would no-op silently." >&2
+  exit 2
+fi
+
 # Run ripgrep. Disable pipefail for this one call because rg exits 1 on "no
-# matches" which is actually the success case for us.
+# matches" which is actually the success case for us. The positional `src`
+# argument is load-bearing — see the rg_args note above.
 set +o pipefail
-raw_matches=$(rg "${HEX_PATTERN}" "${rg_args[@]}" || true)
+raw_matches=$(rg "${HEX_PATTERN}" "${rg_args[@]}" src || true)
 set -o pipefail
 
 # --- Filter out obvious false positives -----------------------------------

@@ -173,10 +173,34 @@ export function Header() {
             aria-hidden="true"
             focusable="false"
           >
-            <rect width="32" height="32" rx="6" fill="#1e293b" />
-            <rect x="4" y="6" width="6" height="20" rx="2" fill="#F97316" opacity="0.9" />
-            <rect x="13" y="10" width="6" height="16" rx="2" fill="#3B82F6" opacity="0.9" />
-            <rect x="22" y="8" width="6" height="18" rx="2" fill="#22C55E" opacity="0.9" />
+            <rect width="32" height="32" rx="6" fill={BRANDING.mark.bg} />
+            <rect
+              x="4"
+              y="6"
+              width="6"
+              height="20"
+              rx="2"
+              fill={BRANDING.mark.bars[0]}
+              opacity="0.9"
+            />
+            <rect
+              x="13"
+              y="10"
+              width="6"
+              height="16"
+              rx="2"
+              fill={BRANDING.mark.bars[1]}
+              opacity="0.9"
+            />
+            <rect
+              x="22"
+              y="8"
+              width="6"
+              height="18"
+              rx="2"
+              fill={BRANDING.mark.bars[2]}
+              opacity="0.9"
+            />
           </svg>
         </button>
         {(inlineRoutes.length > 0 || renderSecondaryAsMenu) && (
