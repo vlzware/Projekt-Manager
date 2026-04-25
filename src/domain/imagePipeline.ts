@@ -56,20 +56,18 @@ export interface ProcessedUpload {
 
 /**
  * Liberal raw-source size cap used by the caller (store) to reject
- * obvious garbage before any pipeline work starts. The post-pipeline
- * check against `perFileSizeCapBytes` is still authoritative for
- * photos, because downscale + re-encode may squeeze a large source
- * under the cap. This gate just short-circuits multi-hundred-MB inputs
- * that could never compress enough to be viable.
+ * obvious garbage before any pipeline work starts. Sized to admit any
+ * plausible phone JPEG (worst credible: ~25 MB at 200 MP) while
+ * rejecting RAW DNGs, video files, and multi-hundred-MB mispicks. The
+ * post-pipeline check against `perFileSizeCapBytes` is still
+ * authoritative; this gate just short-circuits inputs that could never
+ * compress enough to be viable.
  *
- * Picked at 30× `perFileSizeCapBytes` — modern phones (50 MP sensors
- * on Pixel, Samsung) commonly emit 10–15 MB JPEGs; the earlier 4×
- * ceiling was tripping on ordinary field captures and rejecting them
- * before the compressor ever ran. 30× leaves plenty of headroom for
- * those sources while still catching multi-GB mispicks.
+ * Decoupled from `perFileSizeCapBytes` — see the rationale on
+ * `rawInputCapBytes` in `attachmentPipeline.ts`.
  */
 export function exceedsRawCap(file: File): boolean {
-  return file.size > ATTACHMENT_PIPELINE.perFileSizeCapBytes * 30;
+  return file.size > ATTACHMENT_PIPELINE.rawInputCapBytes;
 }
 
 /**
