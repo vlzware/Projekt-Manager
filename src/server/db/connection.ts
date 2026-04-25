@@ -64,20 +64,7 @@ export function createDatabase(opts: ConnectionOptions = {}): {
   // call createDatabase() directly (db-constraints, bootstrap, rate-limit)
   // rely on this defensive call because they do not go through start.ts.
   const env = validateEnv();
-  let connectionString = opts.connectionString ?? env.DATABASE_URL;
-
-  if (!connectionString) {
-    if (env.NODE_ENV === 'production') {
-      throw new Error(
-        'DATABASE_URL must be set in production. ' +
-          'Refusing to start with a fallback connection string.',
-      );
-    }
-    // Dev/test convenience fallback. Unreachable today because the env
-    // schema makes DATABASE_URL required, but kept as a defense-in-depth
-    // net in case the schema is ever relaxed.
-    connectionString = `postgresql://pm:${process.env.POSTGRES_PASSWORD ?? 'postgres'}@localhost:5432/projekt_manager_test`;
-  }
+  const connectionString = opts.connectionString ?? env.DATABASE_URL;
 
   const pool = new Pool({ connectionString });
   const db = drizzle(pool, { schema });

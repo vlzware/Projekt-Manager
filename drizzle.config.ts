@@ -7,6 +7,6 @@ export default defineConfig({
   dbCredentials: {
     url:
       process.env.DATABASE_URL ??
-      'postgresql://postgres:postgres@localhost:5432/projekt_manager_test',
+      'postgresql://pm:changeme@localhost:5432/projekt_manager',
   },
 });

@@ -1,10 +1,13 @@
 -- Create the auxiliary databases alongside the main one.
 -- Runs only on first container init (empty data directory).
 --
--- `projekt_manager_test`  — vitest integration suites
 -- `projekt_manager_e2e`   — Playwright isolated environment. Without a
 --   dedicated DB, E2E's `TRUNCATE CASCADE` in auth.setup.ts raced any
 --   live developer session on the main DB, surfacing as "random"
 --   visual / data-drift failures.
-CREATE DATABASE projekt_manager_test;
+--
+-- Vitest integration tests do NOT have a static DB here: each fork
+-- creates `projekt_manager_test_<pid>` on demand via
+-- `src/test/integration-setup.ts`, so multiple parallel runs (different
+-- worktrees, different agents) cannot race each other's seed TRUNCATE.
 CREATE DATABASE projekt_manager_e2e;

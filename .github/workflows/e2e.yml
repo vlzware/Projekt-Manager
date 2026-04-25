@@ -37,13 +37,17 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_DB: projekt_manager_test
+          # POSTGRES_DB defaults to POSTGRES_USER, so omitting it yields
+          # a `pm` database. Playwright overrides DATABASE_URL to
+          # `projekt_manager_e2e` in playwright.config.ts and creates
+          # that DB via `e2e/ensure-db.mjs` — the value below only
+          # needs to be reachable for the service health probe.
           POSTGRES_USER: pm
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U pm -d projekt_manager_test"
+          --health-cmd "pg_isready -U pm -d pm"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
@@ -51,7 +55,7 @@ jobs:
     env:
       # Playwright starts `npm run dev` via playwright.config.ts's
       # `webServer` block, which reads these at startup.
-      DATABASE_URL: postgresql://pm:postgres@localhost:5432/projekt_manager_test
+      DATABASE_URL: postgresql://pm:postgres@localhost:5432/pm
       STORAGE_ENDPOINT: http://localhost:9000
       STORAGE_BUCKET: projekt-manager
       STORAGE_ACCESS_KEY: minioadmin
