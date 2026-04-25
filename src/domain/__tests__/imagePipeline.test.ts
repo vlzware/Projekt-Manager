@@ -165,6 +165,12 @@ describe('runImagePipeline — photo branch', () => {
     // EXIF preservation is the library's structural guarantee (byte-
     // splice in `replaceJpegChunk`) and is asserted end-to-end via the
     // browser fixture test, not here.
+    //
+    // `@uploadcare/image-shrink` takes the target *pixel area* (W×H),
+    // not a longest-edge dimension. Source is the FakeImage's
+    // 4032×3024 (4:3); for `imageMaxDimension = L` the area we send
+    // is `L² · 3024/4032 = L² · 0.75`, which lands the longest output
+    // edge at L modulo rounding inside shrinkImage.
     const compressed = new Blob([new Uint8Array(512)], { type: 'image/jpeg' });
     vi.mocked(shrinkFile).mockResolvedValue(compressed);
 
@@ -173,8 +179,9 @@ describe('runImagePipeline — photo branch', () => {
 
     expect(shrinkFile).toHaveBeenCalledTimes(1);
     const [, opts] = vi.mocked(shrinkFile).mock.calls[0];
+    const L = ATTACHMENT_PIPELINE.imageMaxDimension;
     expect(opts).toEqual({
-      size: ATTACHMENT_PIPELINE.imageMaxDimension,
+      size: Math.round(L * L * (3024 / 4032)),
       quality: ATTACHMENT_PIPELINE.imageQuality,
     });
   });
@@ -196,17 +203,68 @@ describe('runImagePipeline — photo branch', () => {
     expect(shrinkFile).toHaveBeenCalledTimes(2);
     const [, firstOpts] = vi.mocked(shrinkFile).mock.calls[0];
     const [, secondOpts] = vi.mocked(shrinkFile).mock.calls[1];
+    const L = ATTACHMENT_PIPELINE.imageMaxDimension;
+    const firstArea = Math.round(L * L * (3024 / 4032));
     expect(firstOpts).toEqual({
-      size: ATTACHMENT_PIPELINE.imageMaxDimension,
+      size: firstArea,
       quality: ATTACHMENT_PIPELINE.imageQuality,
     });
     // Second attempt: same dimension, quality knocked down. The exact
     // ratio is implementation detail (factor table); what matters is
     // that quality dropped and dimension didn't yet.
-    expect(secondOpts.size).toBe(ATTACHMENT_PIPELINE.imageMaxDimension);
+    expect(secondOpts.size).toBe(firstArea);
     expect(secondOpts.quality).toBeLessThan(ATTACHMENT_PIPELINE.imageQuality);
     expect(result.original).toBe(fits);
     expect(result.sizeBytes).toBe(512);
+  });
+
+  it('returns the source as-is when the library refuses with "Not required"', async () => {
+    // `shrinkImage` throws "Not required" (wrapped by shrinkFile into
+    // `Failed to shrink image. Message: "Not required"` with the
+    // original Error as `cause`) when source pixel area * STEP² is
+    // below the target area — meaning the source is already at or
+    // near the configured longest-edge intent. In that case the
+    // source bytes ARE the best output: re-encoding to slightly
+    // smaller dimensions would lose quality without meaningful gain.
+    // The store still uploads the (untouched) source through the
+    // presigned policy, which enforces the per-file cap server-side.
+    const cause = new Error('Not required');
+    const wrapped = new Error('Failed to shrink image. Message: "Not required".');
+    // `Error.cause` is ES2022; lib target is ES2020 here too. Attach it
+    // as a runtime property so the SUT's structural check finds it.
+    (wrapped as Error & { cause: unknown }).cause = cause;
+    vi.mocked(shrinkFile).mockRejectedValueOnce(wrapped);
+
+    const file = syntheticFile('small.jpg', 'image/jpeg', 4096);
+    const result = await runImagePipeline(file, { hasThumbnail: false });
+
+    expect(shrinkFile).toHaveBeenCalledTimes(1);
+    expect(result.original).toBe(file);
+    expect(result.sizeBytes).toBe(4096);
+  });
+
+  it('throws IMAGE_PROCESSING_FAILED when the library refuses but source exceeds the cap', async () => {
+    // "Not required" + source > cap is a corner where the library has
+    // no resize-free re-encode path. Falling back to the source would
+    // ship oversized bytes; the post-pipeline cap check would then
+    // mis-report it as "Datei zu groß". Surface the tagged error so
+    // the store maps it to "Bildbearbeitung fehlgeschlagen" — the
+    // accurate diagnosis (canvas pipeline can't compress further).
+    const cause = new Error('Not required');
+    const wrapped = new Error('Failed to shrink image. Message: "Not required".');
+    // `Error.cause` is ES2022; lib target is ES2020 here too. Attach it
+    // as a runtime property so the SUT's structural check finds it.
+    (wrapped as Error & { cause: unknown }).cause = cause;
+    vi.mocked(shrinkFile).mockRejectedValueOnce(wrapped);
+
+    const oversized = syntheticFile(
+      'big.jpg',
+      'image/jpeg',
+      ATTACHMENT_PIPELINE.perFileSizeCapBytes + 1,
+    );
+    await expect(runImagePipeline(oversized, { hasThumbnail: false })).rejects.toThrow(
+      'IMAGE_PROCESSING_FAILED',
+    );
   });
 
   it('throws IMAGE_PROCESSING_FAILED when no attempt fits under the cap', async () => {

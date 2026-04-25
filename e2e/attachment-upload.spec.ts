@@ -216,5 +216,36 @@ test.describe('Attachment upload preserves EXIF / GPS through the pipeline', () 
     // APP1 segment. Surviving the re-encode proves the segment was
     // copied verbatim, not just that some EXIF magic exists somewhere.
     expect(body.includes(Buffer.from('vitest-fixture', 'ascii'))).toBe(true);
+
+    // Dimension regression guard. `@uploadcare/image-shrink`'s `size`
+    // setting is a target *pixel area*, not a longest-edge dimension —
+    // a previous build passed `imageMaxDimension` (2560) directly,
+    // which the library interpreted as ~50×40 pixels and shipped
+    // unusable thumbnails as the "original". The fixture is 3840×2160
+    // (16:9), so the re-encoded longest edge should land near
+    // imageMaxDimension. Assert it's at least half — anything below
+    // means the area/edge confusion regressed. Decoding via the page's
+    // own Image constructor avoids pulling a Node JPEG decoder into
+    // the e2e bundle.
+    const dims = await page.evaluate(async (url: string) => {
+      const blob = await fetch(url).then((r) => r.blob());
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        return await new Promise<{ width: number; height: number }>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => reject(new Error('decode failed'));
+          img.src = objectUrl;
+        });
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }, originalUrl!);
+    const longest = Math.max(dims.width, dims.height);
+    // Floor rather than equality — the library's sqrt-based rounding
+    // can shave a pixel or two off the configured edge. 1280 is the
+    // half-baseEdge floor; anything below means the size parameter is
+    // being misinterpreted as an area again (~58×43 for a 4:3 photo).
+    expect(longest).toBeGreaterThanOrEqual(1280);
   });
 });

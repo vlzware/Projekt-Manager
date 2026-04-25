@@ -111,6 +111,15 @@ function passthrough(file: File): ProcessedUpload {
  * be coerced under the cap by then, the source is pathological (huge
  * uncompressible texture, or a near-RAW DNG that slipped through the
  * MIME gate) and we'd rather throw than ship megabytes of detail loss.
+ *
+ * Note on `size` semantics — `@uploadcare/image-shrink`'s `size` is the
+ * target *pixel area* (W×H), not a longest-edge dimension. The library
+ * computes targetW = sqrt(size·ratio), targetH = sqrt(size/ratio) where
+ * ratio = sourceW/sourceH, so targetW·targetH ≈ size and aspect is
+ * preserved. To land the longest output edge at our `imageMaxDimension`
+ * intent, we translate `L` (longest) into the area equivalent for this
+ * source's aspect: `area = L² · (shorter/longer)`. Passing `L` directly
+ * would yield a ~58×43-pixel thumbnail for any 4:3 phone photo.
  */
 const SHRINK_ATTEMPTS: ReadonlyArray<{ scale: number; qualityFactor: number }> = [
   { scale: 1, qualityFactor: 1 },
@@ -121,18 +130,59 @@ const SHRINK_ATTEMPTS: ReadonlyArray<{ scale: number; qualityFactor: number }> =
   { scale: 0.5, qualityFactor: 0.7 },
 ];
 
+async function readImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await loadImageElement(url);
+    return { width: img.naturalWidth, height: img.naturalHeight };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 async function shrinkUntilUnderCap(
   file: Blob,
-  baseSize: number,
+  baseEdge: number,
   baseQuality: number,
   cap: number,
 ): Promise<Blob> {
+  const { width, height } = await readImageDimensions(file);
+  const longerSrc = Math.max(width, height);
+  const shorterSrc = Math.min(width, height);
+  // Aspect-correct longest-edge → pixel-area conversion. See the block
+  // comment on SHRINK_ATTEMPTS for the derivation.
+  const aspectFactor = longerSrc > 0 ? shorterSrc / longerSrc : 1;
+
   let last: Blob | null = null;
   for (const { scale, qualityFactor } of SHRINK_ATTEMPTS) {
-    const out = await shrinkFile(file, {
-      size: Math.round(baseSize * scale),
-      quality: baseQuality * qualityFactor,
-    });
+    const targetEdge = Math.round(baseEdge * scale);
+    const targetArea = Math.max(1, Math.round(targetEdge * targetEdge * aspectFactor));
+    let out: Blob;
+    try {
+      out = await shrinkFile(file, {
+        size: targetArea,
+        quality: baseQuality * qualityFactor,
+      });
+    } catch (err) {
+      // The library throws "Not required" (wrapped) when the source has
+      // less than ~2× the target's pixel area — its STEP² heuristic
+      // says the resize would be too marginal to bother. In that case
+      // the source bytes ARE the best output we can offer; further
+      // attempts at smaller scales would either re-trip the same
+      // refusal or shrink to dimensions the user did not ask for. If
+      // the source already fits the cap we ship it; otherwise the
+      // pipeline cannot reduce it further (the library has no
+      // resize-free re-encode path), so surface the tagged error.
+      // `Error.cause` is ES2022; the project's lib is ES2020, so read
+      // the property structurally to keep typecheck green without a
+      // sweeping lib bump for one access.
+      const cause =
+        err && typeof err === 'object' && 'cause' in err ? (err as { cause: unknown }).cause : null;
+      const isNotRequired = cause instanceof Error && cause.message === 'Not required';
+      if (!isNotRequired) throw err;
+      if (file.size <= cap) return file;
+      throw new Error('IMAGE_PROCESSING_FAILED');
+    }
     if (out.size <= cap) return out;
     last = out;
   }
