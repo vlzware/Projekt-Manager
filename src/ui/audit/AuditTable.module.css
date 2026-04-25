@@ -4,15 +4,16 @@
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
+  /* Fill the remaining column height and scroll internally so a long
+     audit history doesn't push the filter bar out of reach. Mirrors
+     ProjectDetailPanel.module.css `.activityScroll`. The
+     `flex: 1; min-height: 0` pair is the idiomatic "grow + allow
+     overflow" combo — without min-height:0 the flex child refuses
+     to shrink below its content and the inner overflow:auto never
+     activates. */
+  flex: 1;
+  min-height: 0;
   overflow: auto;
-  /* Without flex-shrink:0 this collapses to 0 height inside the
-     `.container` flex column on small viewports. `overflow: auto`
-     resolves the flex item's `min-height: auto` to 0, and the filter
-     bar above consumes the entire available height, so flex shrinks
-     the wrapper to nothing. The parent `.container` already has
-     `overflow: auto`, so refusing to shrink lets the page scroll
-     past the filter to reveal the table. */
-  flex-shrink: 0;
 }
 
 .table {
