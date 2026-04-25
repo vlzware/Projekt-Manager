@@ -163,7 +163,18 @@ services:
     entrypoint: /bin/sh
     command: /init-storage.sh
     volumes:
-      - ./docker/init-storage.sh:/init-storage.sh:ro
+      # Long-form bind with `create_host_path: false` — see the
+      # rationale on the same pattern in docker-compose.dev.yml's
+      # `db.volumes`. dockerd runs as root and silently materialises
+      # missing bind-mount sources as root-owned directories on the
+      # host. Refusing to auto-create converts that footgun into a
+      # loud "source does not exist" error at compose up time.
+      - type: bind
+        source: ./docker/init-storage.sh
+        target: /init-storage.sh
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
@@ -284,7 +295,18 @@ services:
     ports:
       - '${WG_BIND_IP:-127.0.0.1}:443:443'
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Long-form bind with `create_host_path: false` — see the
+      # rationale on the same pattern in docker-compose.dev.yml's
+      # `db.volumes`. Caddy is gated off in dev (profile: production),
+      # so this guard mostly protects production deploys where a
+      # missing Caddyfile must fail loudly rather than silently
+      # materialise as a root-owned empty directory.
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
       - caddy_data:/data
       - caddy_config:/config
     environment:

@@ -12,7 +12,16 @@ services:
     ports: !override
       - '0.0.0.0:80:80'
     volumes: !override
-      - ./Caddyfile.http:/etc/caddy/Caddyfile:ro
+      # Long-form bind with `create_host_path: false` — see the
+      # rationale on the same pattern in docker-compose.dev.yml's
+      # `db.volumes`. Refuses to silently materialise a missing
+      # Caddyfile.http as a root-owned empty directory.
+      - type: bind
+        source: ./Caddyfile.http
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
     environment:
       DOMAIN: ''
       CLOUDFLARE_API_TOKEN: ''

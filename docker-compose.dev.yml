@@ -25,7 +25,22 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+      # Long-form bind with `create_host_path: false`. The default
+      # daemon behaviour is to silently materialise a missing bind-mount
+      # source as a root-owned directory (dockerd runs as root, the
+      # session as the dev user) — which is exactly how the worktree2
+      # Claude session left an unremovable `init-test-db.sql/` directory
+      # behind: the worktree files were rm'd while the compose stack was
+      # still alive, dockerd re-created the missing source path on its
+      # next mount touch, and the user couldn't clean it up without
+      # sudo. `create_host_path: false` converts that silent footgun
+      # into a loud "source does not exist" error at compose up time.
+      - type: bind
+        source: ./docker/init-test-db.sql
+        target: /docker-entrypoint-initdb.d/create-test-db.sql
+        read_only: true
+        bind:
+          create_host_path: false
 
   storage:
     ports:
