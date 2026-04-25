@@ -4,16 +4,33 @@
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
-  /* Fill the remaining column height and scroll internally so a long
-     audit history doesn't push the filter bar out of reach. Mirrors
-     ProjectDetailPanel.module.css `.activityScroll`. The
-     `flex: 1; min-height: 0` pair is the idiomatic "grow + allow
-     overflow" combo — without min-height:0 the flex child refuses
-     to shrink below its content and the inner overflow:auto never
+  overflow: auto;
+  /* Fill the remaining column height; the filter bar stays pinned
+     at the top of `.container` and the wrapper scrolls internally
+     past whatever fits. `min-height: 0` is the idiomatic partner of
+     `flex: 1` here — without it the flex child refuses to shrink
+     below its content size and the inner overflow:auto never
      activates. */
   flex: 1;
   min-height: 0;
-  overflow: auto;
+}
+
+/* Below the mobile breakpoint the filter card wraps each field onto
+   its own row, blowing the bar up to the full viewport height. That
+   breaks the desktop assumption that there is "remaining column
+   height" to grow into — flex:1 has nothing to fill, and `overflow:
+   auto` on this wrapper resolves its `min-height: auto` to 0, so
+   flex crushes it to a 1px line. Switch to a bounded wrapper: the
+   page (.container) becomes the scroll surface, the user swipes
+   past the filter to reach the table, and the table itself is
+   capped at 50vh so a long history scrolls internally rather than
+   pushing the page bottom out of reach. Same shape as the
+   project-detail page's activity-feed treatment. */
+@media (max-width: 768px) {
+  .tableWrapper {
+    flex: 0 0 auto;
+    max-height: 50vh;
+  }
 }
 
 .table {
