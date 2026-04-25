@@ -1,0 +1,13 @@
+/* Invisible viewport-covering layer that absorbs the click that would
+   otherwise close the menu AND activate the element under the cursor.
+   Z-index sits just below the dropdown layer used by all consumers
+   (selectDropdown z-60 in management forms, header dropdown z-100) —
+   render the backdrop as a sibling immediately before the dropdown so
+   the dropdown paints on top. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: transparent;
+  /* Transparent overlay; nothing visible, just a click target. */
+}
