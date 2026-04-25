@@ -4,7 +4,7 @@ A centralized system for consolidation, control, and viewing of data and process
 
 ## Status
 
-Live at `https://prmng.org` behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME and first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
+Deployed live behind WireGuard ([ADR-0008](docs/adr/0008-vpn-first-network-access.md)) with HTTPS via DNS-01 ACME and first-run admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)). Tech stack: TypeScript + React 19 + Vite + Zustand + Fastify + Drizzle ([ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md)).
 
 ## Prerequisites
 

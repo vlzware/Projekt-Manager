@@ -1,3 +1,5 @@
+<!-- READ-ONLY for AI -->
+
 # Plan
 
 ## Iteration 0.A - Discovery
@@ -108,7 +110,7 @@ From test environment into production on Hetzner.
 
 **Artifacts**
 
-- walking skeleton live at `https://prmng.org`, reachable only through WireGuard
+- walking skeleton live, reachable only through WireGuard
 - validated CI/CD pipeline from commit to production (8 successful deploys this iteration)
 
 ## Iteration 5 - Consolidation
@@ -206,7 +208,7 @@ From test environment into production on Hetzner.
 - [ ] more extensive testing with the deployed app and different clients
 - [ ] polish according to user feedback
 - [ ] extensive testing of the operator-driven processes
-- [ ] integration of D2
+- [ ] integration of B2
 - [ ] a presentation[^1]
 
 **Artifacts**
