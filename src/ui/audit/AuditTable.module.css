@@ -5,6 +5,14 @@
   border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
   overflow: auto;
+  /* Without flex-shrink:0 this collapses to 0 height inside the
+     `.container` flex column on small viewports. `overflow: auto`
+     resolves the flex item's `min-height: auto` to 0, and the filter
+     bar above consumes the entire available height, so flex shrinks
+     the wrapper to nothing. The parent `.container` already has
+     `overflow: auto`, so refusing to shrink lets the page scroll
+     past the filter to reveal the table. */
+  flex-shrink: 0;
 }
 
 .table {
