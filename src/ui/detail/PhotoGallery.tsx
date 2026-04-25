@@ -214,19 +214,24 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
           ref={lightboxRef}
           className={styles.lightbox}
           data-testid="photo-lightbox"
-          // Backdrop click dismisses; the inner <img> stops propagation
-          // so a click on the photo itself does NOT close the modal.
-          onClick={closeLightbox}
           role="dialog"
           aria-modal="true"
           aria-label={STRINGS.attachments.photoGallery}
           // Negative-tab-index makes the container programmatically
           // focusable so the open-effect can pull focus inside; Tab
-          // cycles through the (currently zero) interactive children
-          // and wraps within the container.
+          // cycles through the close button and wraps within the container.
           tabIndex={-1}
         >
-          <img src={lightbox.url} alt="" onClick={(e) => e.stopPropagation()} />
+          <button
+            type="button"
+            className={styles.previewClose}
+            onClick={closeLightbox}
+            aria-label={STRINGS.ui.close}
+            data-testid="photo-lightbox-close"
+          >
+            ×
+          </button>
+          <img src={lightbox.url} alt="" />
         </div>
       )}
     </section>

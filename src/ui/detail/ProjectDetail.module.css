@@ -563,7 +563,6 @@
   align-items: center;
   justify-content: center;
   z-index: 200;
-  cursor: zoom-out;
 }
 
 .lightbox img {
@@ -573,9 +572,7 @@
 }
 
 /* PDF preview — same overlay chrome as the lightbox, with an iframe
-   carrier for the browser's native PDF viewer. The iframe click is NOT
-   stopPropagation'd since PDFs need clicks to flow through for scroll
-   affordances, so a close button is overlaid on the corner. */
+   carrier for the browser's native PDF viewer. */
 .pdfPreview {
   position: fixed;
   inset: 0;
@@ -586,7 +583,10 @@
   z-index: 200;
 }
 
-.pdfPreviewClose {
+/* Shared close affordance for overlay surfaces (photo lightbox + PDF
+   preview). Centralised so both surfaces look and behave identically;
+   Esc is the keyboard equivalent. */
+.previewClose {
   position: absolute;
   top: 20px;
   right: 24px;

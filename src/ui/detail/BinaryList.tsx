@@ -360,7 +360,7 @@ export function BinaryList({ projectId }: BinaryListProps) {
         >
           <button
             type="button"
-            className={styles.pdfPreviewClose}
+            className={styles.previewClose}
             onClick={closePreview}
             aria-label={STRINGS.ui.close}
             data-testid="pdf-preview-close"
