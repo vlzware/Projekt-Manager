@@ -62,9 +62,12 @@ describe('CSP for attachment upload pipeline', () => {
     expect(csp).toMatch(/img-src[^;]*'self'[^;]*https:\/\/storage\.example\.com/);
   });
 
-  it('worker-src permits blob: so browser-image-compression workers are not CSP-blocked', async () => {
+  it('worker-src is locked to self — only same-origin scripts can register workers', async () => {
+    // The PWA service worker is registered from `/sw.js` (same-origin).
+    // No code path spawns blob: workers; CSP stays tight.
     const csp = await getCsp();
-    expect(csp).toMatch(/worker-src[^;]*'self'[^;]*blob:/);
+    expect(csp).toMatch(/worker-src 'self'(?:;|$)/);
+    expect(csp).not.toMatch(/worker-src[^;]*blob:/);
   });
 
   it('default-src stays locked to self', async () => {
