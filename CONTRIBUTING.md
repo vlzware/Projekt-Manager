@@ -48,6 +48,10 @@ The trigger question: **"Does this change affect how the system authenticates, a
 
 **Integration prerequisites**: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init` — `npm run test` needs Postgres on `:5432` and MinIO on `:9000`; Playwright needs those plus the dev server on `:5173` (auto-started via `webServer`). Close the MCP Chromium browser or limit workers before Playwright runs — the persistent MCP instance plus per-worker Playwright browsers OOM Chrome.
 
+## Debugging
+
+**Mobile DevTools.** Append `?debug=1` to any URL to mount [Eruda](https://github.com/liriliri/eruda) — a touch-friendly Console / Elements / Network panel for phones where attaching desktop DevTools is impractical. The flag persists in `localStorage`; clear with `?debug=0`. The Eruda chunk is dynamic-imported on demand, so unactivated sessions never download it.
+
 ## Code Style
 
 - **German UI, English code.** All variable names, functions, types, and comments in English. User-facing labels in German, centralized in config.
