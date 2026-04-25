@@ -71,6 +71,18 @@ describe('CSP for attachment upload pipeline', () => {
     expect(csp).toMatch(/img-src[^;]*data:/);
   });
 
+  it('img-src permits blob: so @uploadcare/image-shrink + thumbnail encoder can decode source bytes', async () => {
+    // After the EXIF probe, shrinkFile() loads the actual source via
+    // `imageLoader(URL.createObjectURL(blob))` — a blob: URL into a hidden
+    // <img>. Our own WebP thumbnail encoder (src/domain/imagePipeline.ts)
+    // does the same. Without blob: the <img> onerror fires with "Failed to
+    // load image" and the compression step throws, leaving the user with
+    // "Bildbearbeitung fehlgeschlagen". data: alone is not enough — that
+    // only covers the EXIF feature-detect probe.
+    const csp = await getCsp();
+    expect(csp).toMatch(/img-src[^;]*blob:/);
+  });
+
   it('worker-src is locked to self — only same-origin scripts can register workers', async () => {
     // The PWA service worker is registered from `/sw.js` (same-origin).
     // No code path spawns blob: workers; CSP stays tight.

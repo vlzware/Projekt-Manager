@@ -152,11 +152,26 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
         // the EXIF-byte-splice guarantee that motivated the swap from
         // browser-image-compression). Eruda's toolbar / panel icons
         // are also data: PNG/SVG sprites, so this also unblocks the
-        // mobile debug console. `data:` in `img-src` is helmet's own
-        // default and widely accepted as low-risk: SVG loaded via
-        // `<img>` cannot execute scripts, and inline data URIs cannot
-        // make network requests so they carry no exfil channel.
-        imgSrc: ["'self'", 'data:', ...storageSources],
+        // mobile debug console.
+        //
+        // `blob:` is required by the same library's main path: after
+        // the EXIF probe, `shrinkFile()` calls
+        // `imageLoader(URL.createObjectURL(blob))` to decode the source
+        // bytes into an `<img>` before drawing into the offscreen
+        // canvas. Our own thumbnail encoder
+        // (`src/domain/imagePipeline.ts`) does the same. Without
+        // `blob:`, the browser blocks the resource, the `<img>` fires
+        // `onerror` with "Failed to load image", and uploads fail at
+        // the compression step — surfaced as "Bildbearbeitung
+        // fehlgeschlagen" in the UI.
+        //
+        // Both schemes are helmet's own default for `img-src` and
+        // widely accepted as low-risk: SVG loaded via `<img>` cannot
+        // execute scripts, `data:` cannot initiate network requests,
+        // and `blob:` URLs reference only bytes the same origin's JS
+        // already created with `URL.createObjectURL`, so neither
+        // scheme opens a cross-origin exfil channel.
+        imgSrc: ["'self'", 'data:', 'blob:', ...storageSources],
         connectSrc: ["'self'", ...storageSources],
         fontSrc: ["'self'"],
         // PDF preview loads a same-origin `blob:` URL in an <iframe>.
