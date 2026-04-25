@@ -62,6 +62,15 @@ describe('CSP for attachment upload pipeline', () => {
     expect(csp).toMatch(/img-src[^;]*'self'[^;]*https:\/\/storage\.example\.com/);
   });
 
+  it('img-src permits data: so @uploadcare/image-shrink EXIF probe + Eruda icons render', async () => {
+    // The library loads a base64 JPEG into a hidden <img> to feature-detect
+    // browser EXIF orientation handling on every shrinkFile() call. Without
+    // data: the probe Promise hangs and uploads stall. Eruda's UI icons are
+    // also data: URIs — same fix unblocks the mobile debug console.
+    const csp = await getCsp();
+    expect(csp).toMatch(/img-src[^;]*data:/);
+  });
+
   it('worker-src is locked to self — only same-origin scripts can register workers', async () => {
     // The PWA service worker is registered from `/sw.js` (same-origin).
     // No code path spawns blob: workers; CSP stays tight.

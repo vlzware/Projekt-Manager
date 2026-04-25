@@ -143,7 +143,20 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
         // re-add it deliberately rather than carrying it forward.
         workerSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", ...storageSources],
+        // `data:` is required by `@uploadcare/image-shrink`'s EXIF
+        // orientation probe — it loads a tiny base64 JPEG into a hidden
+        // `<img>` to detect whether the browser auto-rotates JPEGs from
+        // EXIF Orientation. Without `data:`, the probe's load event
+        // never fires, the library's internal Promise hangs, and photo
+        // uploads stall (or get misclassified as non-JPEG, defeating
+        // the EXIF-byte-splice guarantee that motivated the swap from
+        // browser-image-compression). Eruda's toolbar / panel icons
+        // are also data: PNG/SVG sprites, so this also unblocks the
+        // mobile debug console. `data:` in `img-src` is helmet's own
+        // default and widely accepted as low-risk: SVG loaded via
+        // `<img>` cannot execute scripts, and inline data URIs cannot
+        // make network requests so they carry no exfil channel.
+        imgSrc: ["'self'", 'data:', ...storageSources],
         connectSrc: ["'self'", ...storageSources],
         fontSrc: ["'self'"],
         // PDF preview loads a same-origin `blob:` URL in an <iframe>.
