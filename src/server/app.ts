@@ -137,14 +137,11 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
-        // `browser-image-compression` spawns its downscale pipeline in a
-        // Web Worker from a blob: URL. Without explicit `worker-src`,
-        // CSP falls back to `script-src`, which forbids blob: — the
-        // worker is silently blocked and the library falls back to
-        // main-thread compression (slower + blocks UI during large
-        // photo uploads). The same-origin `'self'` preserves the rule
-        // that only our own bundle can author a worker script.
-        workerSrc: ["'self'", 'blob:'],
+        // The PWA service worker is registered from a same-origin URL
+        // (`/sw.js`); no inline blob: workers are spawned. Kept tight
+        // at `'self'` — if a future feature needs `blob:` workers,
+        // re-add it deliberately rather than carrying it forward.
+        workerSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", ...storageSources],
         connectSrc: ["'self'", ...storageSources],
