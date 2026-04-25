@@ -379,6 +379,7 @@ Why this exists: the Docker-internal hostname is unreachable from the browser. E
 - **Project number format**: configurable `[C]`, enforced only for uniqueness.
 - **Customer duplicates on create**: the single-create form offers to edit existing. Unified import preserves IDs and wipes-then-restores (see [ADR-0018](docs/adr/0018-data-persistence-and-recovery-layered-strategy.md)) — no merge semantics.
 - **Bulk transitions**: not supported. Users transition individually.
+- **Menu close on outside click**: shared `src/ui/common/MenuBackdrop.tsx` primitive — invisible fixed-inset overlay rendered as a sibling before the open dropdown. The browser hit-tests the backdrop first, so a single click closes the menu without also activating the element underneath. Replaces the document-level `mousedown` listener pattern (cause of issue #130).
 
 ---
 

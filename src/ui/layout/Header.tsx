@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef } from 'react';
+import { useState, useLayoutEffect, useRef } from 'react';
 import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { useBackupStatusRefresh } from '@/hooks/useBackupStatusRefresh';
@@ -11,6 +11,7 @@ import { BACKUP_THRESHOLDS } from '@/config/backupThresholds';
 import { deriveBadgeState } from '@/domain/backupBadge';
 import type { ThemePreference } from '@/config/themeStorage';
 import { BackupBadge } from './BackupBadge';
+import { MenuBackdrop } from '../common/MenuBackdrop';
 import { EmailExtractModal } from '../extraction/EmailExtractModal';
 import { PasswordChangeModal } from './PasswordChangeModal';
 import { PushSubscriptionControls } from './PushSubscriptionControls';
@@ -57,38 +58,14 @@ export function Header() {
   const [adminMenuOpen, setAdminMenuOpen] = useState(false);
   const [extractOpen, setExtractOpen] = useState(false);
   const [pwChangeOpen, setPwChangeOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const adminMenuRef = useRef<HTMLDivElement>(null);
 
   // Owner-only: keep `backupStatus` fresh without a full reload. The hook
   // is a no-op for every other role, so unconditional invocation is safe
   // (one-liner beats a conditional wrapper that the linter would flag as
   // a hook-rules violation anyway).
   useBackupStatusRefresh();
-
-  useEffect(() => {
-    if (!dropdownOpen) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [dropdownOpen]);
-
-  useEffect(() => {
-    if (!adminMenuOpen) return;
-    function handleClickOutside(e: MouseEvent) {
-      if (adminMenuRef.current && !adminMenuRef.current.contains(e.target as Node)) {
-        setAdminMenuOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [adminMenuOpen]);
 
   // The dropdown is right-anchored by default (opens leftward). When the
   // header wraps and the button lands near the left edge of the viewport,
@@ -215,7 +192,7 @@ export function Header() {
               </button>
             ))}
             {renderSecondaryAsMenu && (
-              <div className={styles.adminMenu} ref={adminMenuRef}>
+              <div className={styles.adminMenu}>
                 <button
                   className={`${styles.adminTrigger} ${secondaryActive ? styles.adminTriggerActive : ''}`}
                   onClick={() => setAdminMenuOpen((o) => !o)}
@@ -241,22 +218,25 @@ export function Header() {
                   <span className={styles.adminTriggerLabel}>{STRINGS.ui.navAdminMenu}</span>
                 </button>
                 {adminMenuOpen && (
-                  <div className={styles.adminDropdown} role="menu">
-                    {secondaryRoutes.map((r) => (
-                      <button
-                        key={r.view}
-                        role="menuitem"
-                        className={`${styles.dropdownItem} ${activeView === r.view ? styles.dropdownItemSelected : ''}`}
-                        onClick={() => {
-                          setAdminMenuOpen(false);
-                          navigateTo(r.path);
-                        }}
-                        data-testid={`view-toggle-${r.view}`}
-                      >
-                        {r.label}
-                      </button>
-                    ))}
-                  </div>
+                  <>
+                    <MenuBackdrop onClose={() => setAdminMenuOpen(false)} />
+                    <div className={styles.adminDropdown} role="menu">
+                      {secondaryRoutes.map((r) => (
+                        <button
+                          key={r.view}
+                          role="menuitem"
+                          className={`${styles.dropdownItem} ${activeView === r.view ? styles.dropdownItemSelected : ''}`}
+                          onClick={() => {
+                            setAdminMenuOpen(false);
+                            navigateTo(r.path);
+                          }}
+                          data-testid={`view-toggle-${r.view}`}
+                        >
+                          {r.label}
+                        </button>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -300,7 +280,7 @@ export function Header() {
         )}
         {backupBadgeState && <BackupBadge state={backupBadgeState} variant="inverse" />}
         {authUser && (
-          <div className={styles.userMenu} ref={menuRef}>
+          <div className={styles.userMenu}>
             {/*
             Two tests hit this button:
               - `user-menu-trigger` is the push-permission e2e contract
@@ -335,44 +315,47 @@ export function Header() {
               </span>
             </button>
             {dropdownOpen && (
-              <div ref={dropdownRef} className={styles.dropdown}>
-                <div className={styles.dropdownSection}>
-                  <div className={styles.dropdownSectionLabel}>{STRINGS.theme.section}</div>
-                  {THEME_OPTIONS.map((opt) => {
-                    const selected = authUser.themePreference === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        className={`${styles.dropdownItem} ${selected ? styles.dropdownItemSelected : ''}`}
-                        aria-pressed={selected}
-                        data-testid={`theme-option-${opt.value}`}
-                        onClick={() => handleThemeSelect(opt.value)}
-                      >
-                        {opt.label}
-                      </button>
-                    );
-                  })}
+              <>
+                <MenuBackdrop onClose={() => setDropdownOpen(false)} />
+                <div ref={dropdownRef} className={styles.dropdown}>
+                  <div className={styles.dropdownSection}>
+                    <div className={styles.dropdownSectionLabel}>{STRINGS.theme.section}</div>
+                    {THEME_OPTIONS.map((opt) => {
+                      const selected = authUser.themePreference === opt.value;
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          className={`${styles.dropdownItem} ${selected ? styles.dropdownItemSelected : ''}`}
+                          aria-pressed={selected}
+                          data-testid={`theme-option-${opt.value}`}
+                          onClick={() => handleThemeSelect(opt.value)}
+                        >
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <PushSubscriptionControls />
+                  <button
+                    className={styles.dropdownItem}
+                    data-testid="pw-change-button"
+                    onClick={() => {
+                      setDropdownOpen(false);
+                      setPwChangeOpen(true);
+                    }}
+                  >
+                    {STRINGS.password.change}
+                  </button>
+                  <button
+                    className={styles.dropdownItem}
+                    data-testid="logout-button"
+                    onClick={handleLogout}
+                  >
+                    {STRINGS.auth.logout}
+                  </button>
                 </div>
-                <PushSubscriptionControls />
-                <button
-                  className={styles.dropdownItem}
-                  data-testid="pw-change-button"
-                  onClick={() => {
-                    setDropdownOpen(false);
-                    setPwChangeOpen(true);
-                  }}
-                >
-                  {STRINGS.password.change}
-                </button>
-                <button
-                  className={styles.dropdownItem}
-                  data-testid="logout-button"
-                  onClick={handleLogout}
-                >
-                  {STRINGS.auth.logout}
-                </button>
-              </div>
+              </>
             )}
           </div>
         )}
