@@ -178,9 +178,33 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
     });
   }
 
-  function markFailed(clientId: string, message: string): void {
-    updatePending(clientId, { status: 'failed', errorMessage: message });
+  /**
+   * Mark a pending upload as failed and surface the toast.
+   *
+   * `cause` is developer-only diagnostic context — surfaced via
+   * `console.warn` so a developer triaging a failed upload can see WHICH
+   * stage and why, while the user-facing copy stays generic. Optional so
+   * the existing call sites that haven't been wired up yet still get a
+   * baseline log via the pending row's status.
+   */
+  function markFailed(
+    clientId: string,
+    message: string,
+    cause?: { stage: string; details?: unknown },
+  ): void {
     const pending = get().pendingUploads[clientId];
+    if (pending) {
+      console.warn('[upload] failed', {
+        clientId,
+        fileName: pending.fileName,
+        mimeType: pending.mimeType,
+        sizeBytes: pending.sizeBytes,
+        stage: cause?.stage ?? pending.status,
+        userMessage: message,
+        details: cause?.details,
+      });
+    }
+    updatePending(clientId, { status: 'failed', errorMessage: message });
     if (pending) {
       useToastStore
         .getState()
@@ -215,7 +239,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       // No File backing — happens when retry is attempted after a reload
       // drops the side-map. We cannot re-upload without bytes; keep the
       // pending row but surface a clear failure for the user.
-      markFailed(clientId, STRINGS.errors.mutationFailed);
+      markFailed(clientId, STRINGS.errors.mutationFailed, { stage: 'retry-after-reload' });
       return;
     }
 
@@ -227,7 +251,10 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
     // still guards the hard cap — photos under the liberal raw cap may
     // still compress to above the per-file limit.
     if (exceedsRawCap(file)) {
-      markFailed(clientId, STRINGS.attachments.uploadFileTooLarge);
+      markFailed(clientId, STRINGS.attachments.uploadFileTooLarge, {
+        stage: 'pre-pipeline-raw-cap',
+        details: { fileSize: file.size, rawCap: ATTACHMENT_PIPELINE.rawInputCapBytes },
+      });
       return;
     }
 
@@ -258,7 +285,13 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       // presigned policy's `content-length-range`; mismatch here is a
       // client bug, not a security gap (ui/project-detail.md §8.15.4).
       if (processed.sizeBytes > ATTACHMENT_PIPELINE.perFileSizeCapBytes) {
-        markFailed(clientId, STRINGS.attachments.uploadFileTooLarge);
+        markFailed(clientId, STRINGS.attachments.uploadFileTooLarge, {
+          stage: 'post-pipeline-size-cap',
+          details: {
+            sizeBytes: processed.sizeBytes,
+            cap: ATTACHMENT_PIPELINE.perFileSizeCapBytes,
+          },
+        });
         return;
       }
 
@@ -281,7 +314,10 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
           handleSessionExpired();
           return;
         }
-        markFailed(clientId, initResult.error.message || STRINGS.errors.mutationFailed);
+        markFailed(clientId, initResult.error.message || STRINGS.errors.mutationFailed, {
+          stage: 'init',
+          details: initResult.error,
+        });
         return;
       }
       const initData = initResult.data;
@@ -302,7 +338,10 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       );
       if (originalResp.aborted || wasAborted()) return;
       if (!originalResp.ok) {
-        markFailed(clientId, STRINGS.errors.mutationFailed);
+        markFailed(clientId, STRINGS.errors.mutationFailed, {
+          stage: 'original-upload-post',
+          details: { status: originalResp.status, url: initData.originalUpload.url },
+        });
         return;
       }
 
@@ -316,7 +355,10 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         );
         if (thumbResp.aborted || wasAborted()) return;
         if (!thumbResp.ok) {
-          markFailed(clientId, STRINGS.errors.mutationFailed);
+          markFailed(clientId, STRINGS.errors.mutationFailed, {
+            stage: 'thumbnail-upload-post',
+            details: { status: thumbResp.status, url: initData.thumbnailUpload.url },
+          });
           return;
         }
       }
@@ -336,7 +378,10 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         }
         const message =
           (completeResult && completeResult.error?.message) || STRINGS.errors.mutationFailed;
-        markFailed(clientId, message);
+        markFailed(clientId, message, {
+          stage: 'complete',
+          details: completeResult?.error,
+        });
         return;
       }
 
@@ -377,12 +422,19 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       if (aborted) return;
       // Tagged error from the pipeline — surface the specific cause so
       // "compression crashed" is diagnosable from "compressed output too
-      // big", rather than collapsing both into the size-cap banner.
+      // big", rather than collapsing both into the size-cap banner. The
+      // pipeline already logged a detailed structured warning before
+      // throwing, so re-logging here would only echo it.
       if (err instanceof Error && err.message === 'IMAGE_PROCESSING_FAILED') {
-        markFailed(clientId, STRINGS.attachments.uploadImageProcessingFailed);
+        markFailed(clientId, STRINGS.attachments.uploadImageProcessingFailed, {
+          stage: 'image-pipeline',
+        });
         return;
       }
-      markFailed(clientId, STRINGS.errors.mutationFailed);
+      markFailed(clientId, STRINGS.errors.mutationFailed, {
+        stage: 'unexpected',
+        details: err instanceof Error ? `${err.name}: ${err.message}` : err,
+      });
     } finally {
       // Release the controller if it's still the one we installed. If a
       // retry has already replaced it, leave that entry alone.

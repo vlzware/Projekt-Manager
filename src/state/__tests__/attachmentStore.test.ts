@@ -489,6 +489,39 @@ describe('attachmentStore — cancellation', () => {
 });
 
 describe('attachmentStore — image processing failures and stale-row sweep', () => {
+  it('emits a structured console diagnostic when an upload fails (developer triage)', async () => {
+    // The user-facing toast / banner is intentionally generic, but a
+    // developer triaging an upload failure must see WHICH stage tripped
+    // and the underlying server error. Without this hook every failure
+    // surfaces as opaque "Bildbearbeitung fehlgeschlagen" or "Änderung
+    // fehlgeschlagen", and the developer has nothing to grep for in the
+    // browser console.
+    initMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'init exploded' },
+      category: 'server_error',
+      sessionExpired: false,
+    });
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const file = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', { type: 'image/jpeg' });
+    await useAttachmentStore.getState().uploadFile('proj-1', file, {
+      label: 'foto',
+      hasThumbnail: false,
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      '[upload] failed',
+      expect.objectContaining({
+        fileName: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        stage: 'init',
+        userMessage: 'init exploded',
+        details: expect.objectContaining({ code: 'SERVER_ERROR' }),
+      }),
+    );
+  });
+
   it('marks the upload failed with uploadImageProcessingFailed when the pipeline throws the tagged error', async () => {
     // The pipeline surfaces a distinct IMAGE_PROCESSING_FAILED tag for
     // compression crashes (canvas OOM, worker crash, decoder bug) so

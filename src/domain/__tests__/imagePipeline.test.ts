@@ -47,7 +47,9 @@ function syntheticFile(name: string, mime: string, bytes = 16): File {
  * synchronously yields a fixed blob; the Image fires `onload` next
  * tick so the await in `loadImageElement` resolves.
  */
-function installCanvasDom(): void {
+function installCanvasDom(
+  dims: { width: number; height: number } = { width: 4032, height: 3024 },
+): void {
   const fakeContext = { drawImage: vi.fn() };
   const fakeCanvas = {
     getContext: vi.fn(() => fakeContext),
@@ -63,8 +65,8 @@ function installCanvasDom(): void {
   class FakeImage {
     onload: (() => void) | null = null;
     onerror: (() => void) | null = null;
-    naturalWidth = 4032;
-    naturalHeight = 3024;
+    naturalWidth = dims.width;
+    naturalHeight = dims.height;
     set src(_v: string) {
       queueMicrotask(() => this.onload?.());
     }
@@ -265,6 +267,90 @@ describe('runImagePipeline — photo branch', () => {
     await expect(runImagePipeline(oversized, { hasThumbnail: false })).rejects.toThrow(
       'IMAGE_PROCESSING_FAILED',
     );
+  });
+
+  it('clamps target to the library accept ceiling for sources in the "Not required" dead zone above the cap', async () => {
+    // Regression: 3264×2448 iPhone 4S photos exceeding 1 MB used to
+    // hard-fail because intended target (2560 longest edge → ~4.92 MP)
+    // landed inside the library's "Not required" zone (source/target
+    // ratio < ~1.984). The pipeline now clamps target to the library's
+    // accept ceiling — `floor(sourceW · 0.71 · sourceH · 0.71)` —
+    // mirroring `@uploadcare/image-shrink`'s STEP heuristic. Effective
+    // longest edge lands ~91% of the configured value (visually
+    // imperceptible) instead of the upload hard-failing.
+    uninstallCanvasDom();
+    installCanvasDom({ width: 3264, height: 2448 });
+
+    const compressed = new Blob([new Uint8Array(512)], { type: 'image/jpeg' });
+    vi.mocked(shrinkFile).mockResolvedValue(compressed);
+
+    const file = syntheticFile(
+      'phone.jpg',
+      'image/jpeg',
+      ATTACHMENT_PIPELINE.perFileSizeCapBytes + 1,
+    );
+    await runImagePipeline(file, { hasThumbnail: false });
+
+    expect(shrinkFile).toHaveBeenCalledTimes(1);
+    const [, opts] = vi.mocked(shrinkFile).mock.calls[0];
+    const expectedCeiling = Math.floor(3264 * 0.71 * 2448 * 0.71);
+    expect(opts.size).toBe(expectedCeiling);
+    // Sanity-check the math hasn't drifted: ceiling must be strictly
+    // below the intended target at scale=1, otherwise the clamp is a
+    // no-op and the regression returns.
+    const intendedAtScale1 = Math.round(2560 * 2560 * (2448 / 3264));
+    expect(expectedCeiling).toBeLessThan(intendedAtScale1);
+  });
+
+  it('passes the source through verbatim when the library would decline AND source fits the cap', async () => {
+    // The pre-flight short-circuit must not call shrinkFile when the
+    // configured target lands in the dead zone but the source already
+    // fits the upload budget. Re-encoding here would be a quality loss
+    // for no byte savings.
+    uninstallCanvasDom();
+    installCanvasDom({ width: 3264, height: 2448 });
+
+    const file = syntheticFile('phone.jpg', 'image/jpeg', 512 * 1024);
+    const result = await runImagePipeline(file, { hasThumbnail: false });
+
+    expect(shrinkFile).not.toHaveBeenCalled();
+    expect(result.original).toBe(file);
+    expect(result.sizeBytes).toBe(512 * 1024);
+  });
+
+  it('logs a diagnostic warning when "Not required" + cap-exceeded surfaces as IMAGE_PROCESSING_FAILED', async () => {
+    // The user-facing banner is intentionally generic
+    // ("Bildbearbeitung fehlgeschlagen"), but a developer triaging an
+    // upload report needs to see WHICH path tripped: source-vs-target
+    // ratio under 2 × *and* file > cap is the unfixable corner of the
+    // library's refusal — distinct from a generic decode crash.
+    const cause = new Error('Not required');
+    const wrapped = new Error('Failed to shrink image. Message: "Not required".');
+    (wrapped as Error & { cause: unknown }).cause = cause;
+    vi.mocked(shrinkFile).mockRejectedValueOnce(wrapped);
+
+    const oversized = syntheticFile(
+      'big.jpg',
+      'image/jpeg',
+      ATTACHMENT_PIPELINE.perFileSizeCapBytes + 1,
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(runImagePipeline(oversized, { hasThumbnail: false })).rejects.toThrow(
+        'IMAGE_PROCESSING_FAILED',
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('shrink declined'),
+        expect.objectContaining({
+          fileName: 'big.jpg',
+          fileSize: ATTACHMENT_PIPELINE.perFileSizeCapBytes + 1,
+          cap: ATTACHMENT_PIPELINE.perFileSizeCapBytes,
+          dimensions: expect.objectContaining({ width: 4032, height: 3024 }),
+        }),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('throws IMAGE_PROCESSING_FAILED when no attempt fits under the cap', async () => {
