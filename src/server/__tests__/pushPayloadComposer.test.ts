@@ -1,0 +1,116 @@
+/**
+ * pushPayloadComposer unit tests — AC-211, AT-110.
+ *
+ * Pin the wire format the service worker reads back. The composer is
+ * pure (no I/O), so each event class gets a dedicated case plus a
+ * fallback case for the missing-audit-row branch (system events).
+ */
+
+import { describe, it, expect } from 'vitest';
+import { composePushPayload } from '../services/pushPayloadComposer.js';
+import type { AuditLogRow } from '../services/audit-publisher.js';
+
+function row(overrides: Partial<AuditLogRow> = {}): AuditLogRow {
+  return {
+    id: 'audit-1',
+    createdAt: new Date('2026-04-26T10:00:00Z'),
+    actorId: 'user-1',
+    actorKind: 'user',
+    actorReason: null,
+    entityType: 'project',
+    entityId: 'project-42',
+    entityLabel: '2026-002 Innenraumgestaltung Weber',
+    ancestorEntityType: 'project',
+    ancestorEntityId: 'project-42',
+    action: 'transition:forward',
+    payload: { before: { status: 'anfrage' }, after: { status: 'beauftragt' } },
+    correlationId: null,
+    ...overrides,
+  };
+}
+
+describe('composePushPayload — AC-211', () => {
+  it('renders project.transition_forward with entityLabel and target status', () => {
+    const out = composePushPayload('project.transition_forward', row(), null);
+    expect(out.title).toBe('Projekt-Statuswechsel vorwärts');
+    expect(out.body).toBe('2026-002 Innenraumgestaltung Weber → Beauftragt');
+    expect(out.url).toBe('/projects/project-42');
+  });
+
+  it('renders project.transition_backward with the resolved status label', () => {
+    const out = composePushPayload(
+      'project.transition_backward',
+      row({
+        action: 'transition:backward',
+        payload: { before: { status: 'beauftragt' }, after: { status: 'angebot' } },
+      }),
+      null,
+    );
+    expect(out.title).toBe('Projekt-Statuswechsel zurück');
+    expect(out.body).toBe('2026-002 Innenraumgestaltung Weber → Angebot');
+  });
+
+  it('falls back to entityLabel only when the after.status is missing', () => {
+    const out = composePushPayload(
+      'project.transition_forward',
+      row({ payload: { before: {}, after: {} } }),
+      null,
+    );
+    expect(out.body).toBe('2026-002 Innenraumgestaltung Weber');
+  });
+
+  it('renders project.archived with entityLabel as the body', () => {
+    const out = composePushPayload(
+      'project.archived',
+      row({ action: 'archive', payload: { before: {}, after: { deleted: true } } }),
+      null,
+    );
+    expect(out.title).toBe('Projekt archiviert');
+    expect(out.body).toBe('2026-002 Innenraumgestaltung Weber');
+    expect(out.url).toBe('/projects/project-42');
+  });
+
+  it('renders project.assignment_changed with entityLabel as the body', () => {
+    const out = composePushPayload(
+      'project.assignment_changed',
+      row({
+        entityType: 'project_worker',
+        action: 'create',
+        // entityId remains the projectId — see ProjectCrudService convention.
+        entityId: 'project-42',
+      }),
+      null,
+    );
+    expect(out.title).toBe('Mitarbeiter-Zuweisung geändert');
+    expect(out.body).toBe('2026-002 Innenraumgestaltung Weber');
+    expect(out.url).toBe('/projects/project-42');
+  });
+
+  it('renders backup.failed system event without an audit row', () => {
+    const out = composePushPayload('backup.failed', null, {});
+    expect(out.title).toBe('Backup fehlgeschlagen');
+    expect(out.body).toBe('Backup konnte nicht abgeschlossen werden.');
+    expect(out.url).toBe('/verwaltung/backups');
+  });
+
+  it('renders disk.threshold_reached system event without an audit row', () => {
+    const out = composePushPayload('disk.threshold_reached', null, {});
+    expect(out.title).toBe('Speichergrenze erreicht');
+    expect(out.body).toBe('Speichernutzung über Schwellwert.');
+    expect(out.url).toBe('/verwaltung');
+  });
+
+  it('never produces an empty title or body — every code path renders strings', () => {
+    // Defensive: the SW falls back to "Projekt-Manager" / "" when keys
+    // are missing. AC-211 pins that the server always sends both, so a
+    // regression that drops one would surface as an empty assertion
+    // here rather than a silent UI fallback.
+    const out = composePushPayload(
+      'project.transition_forward',
+      row({ entityLabel: null, payload: null }),
+      null,
+    );
+    expect(out.title.length).toBeGreaterThan(0);
+    expect(out.body.length).toBeGreaterThan(0);
+  });
+});
