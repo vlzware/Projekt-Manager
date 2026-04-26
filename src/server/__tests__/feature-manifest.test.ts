@@ -66,6 +66,7 @@ async function loadFeaturesModule(): Promise<{
   emitFeatureManifest: (env: Env, logger: ManifestLogger) => void;
   formatFeatureManifest: (env: Env) => string;
   FEATURES: readonly FeatureName[];
+  FEATURE_CATALOG: readonly { feature: FeatureName; requires: readonly string[] }[];
 }> {
   // The module now exists (impl phase landed in #139). The
   // `@ts-expect-error` directive that previously kept the missing-module
@@ -78,6 +79,7 @@ async function loadFeaturesModule(): Promise<{
     emitFeatureManifest: (env: Env, logger: ManifestLogger) => void;
     formatFeatureManifest: (env: Env) => string;
     FEATURES: readonly FeatureName[];
+    FEATURE_CATALOG: readonly { feature: FeatureName; requires: readonly string[] }[];
   };
 }
 
@@ -550,5 +552,88 @@ describe('AC-230: start.ts wires emitFeatureManifest into the boot path', () => 
     expect(validateMatch, 'validateEnv*() call not found in start.ts').toBeGreaterThanOrEqual(0);
     expect(emitMatch, 'emitFeatureManifest() call not found in start.ts').toBeGreaterThanOrEqual(0);
     expect(emitMatch).toBeGreaterThan(validateMatch);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Compose ↔ catalog parity. The deploy pre-flight CLI runs
+// `formatFeatureManifest()` INSIDE the `app` container
+// (scripts/deploy.sh:209 → `docker compose run --rm --no-deps app …`).
+// `process.env` inside that container is built from the compose
+// `services.app.environment:` block — vars not declared there are
+// invisible to the CLI even when set in the operator's shell.
+//
+// The April 2026 regression: backup-related vars (R2_*, AGE_RECIPIENT)
+// were forwarded to `services.backup.environment:` only because at
+// runtime that's the only consumer. The pre-flight CLI then reported
+// "backup disabled — R2_ACCESS_KEY_ID is not set" on every deploy where
+// secrets.env.age was correctly populated — a false negative that
+// defeats the manifest's purpose (operator confidence at deploy time).
+//
+// This test pins the constraint going forward: every var named in any
+// catalog entry's `requires` field must be declared in
+// `services.app.environment:` so the manifest CLI sees it. Adding a
+// new feature now fails this test until both `FEATURE_CATALOG` and
+// the compose env block are updated together.
+// ---------------------------------------------------------------------
+
+describe('AC-230: docker-compose.yml services.app.environment forwards every catalog `requires` var', () => {
+  // YAML parser scoped to the shape this project uses (2-space indent,
+  // top-level `services:` block, services at 2-space indent, stanzas at
+  // 4-space, env keys at 6-space). Mirrors the awk state machine in
+  // scripts/check-env-drift.sh — a real YAML parser would pull a
+  // dependency the project does not currently use for tests, and the
+  // file's structure is stable enough that a state machine is robust.
+  function extractAppEnvironmentKeys(yaml: string): Set<string> {
+    const lines = yaml.split('\n');
+    let inAppService = false;
+    let inAppEnvBlock = false;
+    const keys = new Set<string>();
+    for (const line of lines) {
+      const serviceMatch = line.match(/^ {2}([a-z][a-zA-Z0-9_-]*):\s*$/);
+      if (serviceMatch) {
+        inAppService = serviceMatch[1] === 'app';
+        inAppEnvBlock = false;
+        continue;
+      }
+      if (!inAppService) continue;
+      const stanzaMatch = line.match(/^ {4}([a-zA-Z][a-zA-Z0-9_-]*):\s*$/);
+      if (stanzaMatch) {
+        inAppEnvBlock = stanzaMatch[1] === 'environment';
+        continue;
+      }
+      if (!inAppEnvBlock) continue;
+      const keyMatch = line.match(/^ {6}([A-Z_][A-Z0-9_]+):/);
+      if (keyMatch && keyMatch[1]) keys.add(keyMatch[1]);
+    }
+    return keys;
+  }
+
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  // From src/server/__tests__/, ../../../ is the repo root.
+  const composePath = path.resolve(here, '../../../docker-compose.yml');
+  const composeText = readFileSync(composePath, 'utf8');
+  const appEnvKeys = extractAppEnvironmentKeys(composeText);
+
+  it('the parser found a non-empty services.app.environment block (sanity)', () => {
+    expect(appEnvKeys.size).toBeGreaterThan(0);
+  });
+
+  it('every var in every catalog entry `requires` is declared in services.app.environment', async () => {
+    const { FEATURE_CATALOG } = await loadFeaturesModule();
+    const missing: { feature: string; var: string }[] = [];
+    for (const entry of FEATURE_CATALOG) {
+      for (const v of entry.requires) {
+        if (!appEnvKeys.has(v)) {
+          missing.push({ feature: entry.feature, var: v });
+        }
+      }
+    }
+    expect(
+      missing,
+      `services.app.environment is missing catalog vars — without these the deploy pre-flight CLI cannot see them and formatFeatureManifest() will report a false negative:\n${missing
+        .map((m) => `  - ${m.var} (required by feature "${m.feature}")`)
+        .join('\n')}`,
+    ).toEqual([]);
   });
 });

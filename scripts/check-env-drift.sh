@@ -60,9 +60,12 @@ fi
 # backup compose service runs code bundled from the same TypeScript
 # tree (Dockerfile.backup layers the dist/ produced by the app image —
 # see ADR-0020). A variable forwarded to either service is considered
-# "wired" for drift purposes. Forwarding a schema var to `backup` but
-# not `app` is legitimate when only the backup path reads it (e.g.
-# R2_* + AGE_RECIPIENT), and vice versa.
+# "wired" for this pass — it does not enforce *which* service consumes
+# the var. Service-specific placement is asserted elsewhere:
+# feature-manifest.test.ts pins that every var in a FEATURE_CATALOG
+# entry's `requires` lands in `services.app.environment` so the
+# deploy pre-flight CLI (which runs inside the app container) sees it
+# when computing `formatFeatureManifest()`.
 compose_backend_vars=$(awk '
   # A top-level service name: 2-space indent, identifier, colon, EOL.
   /^  [a-z][a-zA-Z0-9_-]*:[[:space:]]*$/ {
