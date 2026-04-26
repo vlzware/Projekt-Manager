@@ -287,6 +287,7 @@ Criteria for the DB-stored rule engine and two delivery channels defined in [ADR
 - **AC-203** `[crit]`: A rule referencing a user later deactivated or deleted does not crash dispatch — the user is skipped at resolution ([AC-192](#1524-notifications)); the rule row is unchanged by the user state change.
 - **AC-204** `[crit]`: A `PATCH /api/auth/me` updating `themePreference` or `pushMuted` writes no `audit_log` row — the self-preference carve-out per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md). A `PATCH /api/users/:id` from a caller with `user:manage` changing another user's field produces exactly one `audit_log` row per [AC-177](#1523-audit-log). Rationale: self-preference is per-user UI state with no cross-user consequence; routing through audit dilutes the feed with configuration noise.
 - **AC-205** `[vis]`: `Gerät abmelden` failure path — when the unsubscribe API call fails (network error, 5xx), the UI restores the `Gerät abmelden` affordance (optimistic UI reverts) per [ui/behavior.md §9.5](ui/behavior.md#95-asynchronous-mutation-behavior), the affordance stays enabled, and the user sees an error notification. The subscription remains registered server-side; a retry succeeds.
+- **AC-211** `[crit]`: A delivered push notification renders a non-empty German title and a context-bearing body. Title is the event-class label per [`NOTIFICATION_EVENT_LABELS`](../../src/config/notificationEvents.ts). Body for project events combines the project's frozen `entityLabel` (data-model.md §5.10) and, for transitions, the resulting status label per [`STATE_CONFIGS`](../../src/config/stateConfig.ts). System events (`backup.failed`, `disk.threshold_reached`) carry a fixed German body. Click target navigates to `/projects/:id` for project-scoped events; system events route to a relevant management view. Rationale: a payload reduced to opaque event ids leaves the user with a notification carrying no user-actionable information.
 
 ### 15.25 Project Detail Page
 
@@ -326,6 +327,7 @@ Criteria for per-project file attachments ([data-model.md §5.13](data-model.md#
 
 ### 16.1 Unit Tests
 
+- **UT-13**: Push payload composer — for each `NotificationEventClass`, `composePushPayload` returns a non-empty German `title`, a context-bearing `body` (project events fold in `entityLabel` and the resolved status label; system events use a fixed German body), and a navigable `url` (`/projects/:id` for project events). Pins [AC-211](#1524-notifications).
 - **UT-4**: State transition — `getNextState('geplant')` returns `'in_arbeit'`.
 - **UT-5**: State transition — `getNextState('erledigt')` returns `null`.
 - **UT-6**: State transition — `getPreviousState('anfrage')` returns `null`.

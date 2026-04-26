@@ -48,7 +48,20 @@ export interface PushDispatcher {
   send(target: PushSubscriptionTarget, payload: PushPayload): Promise<PushDispatchStatus>;
 }
 
+/**
+ * Wire-format payload sent through the push transport (web-push) and
+ * read by the service worker (`public/sw.js`). The service worker
+ * surfaces `title` / `body` / `url` to the user; `eventClass` and
+ * `auditEntryId` are diagnostic aids visible in browser devtools and
+ * useful for any future click-routing or telemetry.
+ *
+ * AC-211 pins title/body/url as user-facing strings — the publisher
+ * composes them via `pushPayloadComposer` before dispatch.
+ */
 export interface PushPayload {
+  title: string;
+  body: string;
+  url: string;
   eventClass: string;
   auditEntryId: string | null;
 }
