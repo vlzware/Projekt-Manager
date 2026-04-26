@@ -130,6 +130,43 @@ const SHRINK_ATTEMPTS: ReadonlyArray<{ scale: number; qualityFactor: number }> =
   { scale: 0.5, qualityFactor: 0.7 },
 ];
 
+/**
+ * `@uploadcare/image-shrink` declines to resize when
+ * `sourceW · STEP · sourceH · STEP < targetArea` (it throws "Not
+ * required"). STEP is the per-step downscale factor inside the
+ * library's iterative shrink loop; declining when the inequality holds
+ * is the library's way of saying "the resize would only drop a single
+ * step — more quality lost than bytes saved". See
+ * `@uploadcare/image-shrink/dist/esm/index.browser.mjs` (`STEP = 0.71`,
+ * `should be > sqrt(0.5)`).
+ *
+ * Mirrored here so we can compute the largest target the library WILL
+ * accept for a given source, and clamp our intended target to that
+ * ceiling when the configured `imageMaxDimension` would land us inside
+ * the dead zone (sources whose pixel area is between ~1× and ~2× the
+ * intended target — common for older phone cameras like the iPhone 4S
+ * at 3264×2448). Without the clamp the library refuses, the source is
+ * over the per-file cap, and the upload hard-fails with no recourse.
+ */
+const SHRINK_NOT_REQUIRED_STEP = 0.71;
+
+/**
+ * The largest target pixel area `shrinkFile` will accept for the given
+ * source dimensions. Returns `POSITIVE_INFINITY` for degenerate sources
+ * (decode failed) so the loop falls through to the library's own
+ * handling instead of clamping to zero. Mirrors the library's float
+ * arithmetic exactly — equivalent algebraic forms (e.g.
+ * `sourceArea * STEP²`) drift on large sources due to IEEE-754
+ * non-associativity.
+ */
+function shrinkAcceptCeiling(width: number, height: number): number {
+  if (width <= 0 || height <= 0) return Number.POSITIVE_INFINITY;
+  return Math.max(
+    1,
+    Math.floor(width * SHRINK_NOT_REQUIRED_STEP * height * SHRINK_NOT_REQUIRED_STEP),
+  );
+}
+
 async function readImageDimensions(blob: Blob): Promise<{ width: number; height: number }> {
   const url = URL.createObjectURL(blob);
   try {
@@ -145,6 +182,7 @@ async function shrinkUntilUnderCap(
   baseEdge: number,
   baseQuality: number,
   cap: number,
+  fileName?: string,
 ): Promise<Blob> {
   const { width, height } = await readImageDimensions(file);
   const longerSrc = Math.max(width, height);
@@ -152,35 +190,83 @@ async function shrinkUntilUnderCap(
   // Aspect-correct longest-edge → pixel-area conversion. See the block
   // comment on SHRINK_ATTEMPTS for the derivation.
   const aspectFactor = longerSrc > 0 ? shorterSrc / longerSrc : 1;
+  const sourceArea = width * height;
+  const acceptCeiling = shrinkAcceptCeiling(width, height);
+
+  // Pre-flight: if the configured target lands in the library's "Not
+  // required" zone (sourceArea / targetArea < ~1.984), the library
+  // refuses to resize at scale=1. Two outcomes preserve the original
+  // contract for the obvious cases:
+  //   - source ≤ cap → return source verbatim. Re-encoding via canvas
+  //     would lose quality without saving bytes, and the library's
+  //     refusal is an explicit signal that the resize isn't worth it.
+  //   - source > cap → fall through to the loop, which clamps target
+  //     to `acceptCeiling` so the library accepts and re-encoding can
+  //     get us under the cap. Effective dimensions land slightly below
+  //     `imageMaxDimension` for these sources (e.g. 3264×2448 → ~2317
+  //     long edge instead of 2560) — visually imperceptible, beats
+  //     hard-failing the upload.
+  const intendedAtBaseEdge = Math.max(1, Math.round(baseEdge * baseEdge * aspectFactor));
+  if (intendedAtBaseEdge > acceptCeiling && file.size <= cap) {
+    return file;
+  }
 
   let last: Blob | null = null;
-  for (const { scale, qualityFactor } of SHRINK_ATTEMPTS) {
+  for (let attemptIdx = 0; attemptIdx < SHRINK_ATTEMPTS.length; attemptIdx++) {
+    const { scale, qualityFactor } = SHRINK_ATTEMPTS[attemptIdx];
     const targetEdge = Math.round(baseEdge * scale);
-    const targetArea = Math.max(1, Math.round(targetEdge * targetEdge * aspectFactor));
+    const intendedArea = Math.max(1, Math.round(targetEdge * targetEdge * aspectFactor));
+    // Clamp to the library's accept ceiling. For sources outside the
+    // dead zone the clamp is a no-op (intendedArea ≤ acceptCeiling) and
+    // behavior is unchanged. For sources inside the zone we trim to
+    // exactly what the library will accept.
+    const targetArea = Math.min(intendedArea, acceptCeiling);
+    const quality = baseQuality * qualityFactor;
     let out: Blob;
     try {
-      out = await shrinkFile(file, {
-        size: targetArea,
-        quality: baseQuality * qualityFactor,
-      });
+      out = await shrinkFile(file, { size: targetArea, quality });
     } catch (err) {
-      // The library throws "Not required" (wrapped) when the source has
-      // less than ~2× the target's pixel area — its STEP² heuristic
-      // says the resize would be too marginal to bother. In that case
-      // the source bytes ARE the best output we can offer; further
-      // attempts at smaller scales would either re-trip the same
-      // refusal or shrink to dimensions the user did not ask for. If
-      // the source already fits the cap we ship it; otherwise the
-      // pipeline cannot reduce it further (the library has no
-      // resize-free re-encode path), so surface the tagged error.
+      // Defensive paths only — with the pre-flight + per-iteration
+      // clamp in place, "Not required" should be unreachable in normal
+      // operation. Both branches still handle it gracefully:
+      //   - generic rejection (decode failure, OOM, blocked toBlob): log
+      //     and surface so the store maps to IMAGE_PROCESSING_FAILED.
+      //   - "Not required" despite our clamp: indicates the library's
+      //     STEP heuristic moved (version drift) or source dims came
+      //     back degenerate. If source fits the cap we still ship it;
+      //     otherwise tag the failure and bail.
       // `Error.cause` is ES2022; the project's lib is ES2020, so read
       // the property structurally to keep typecheck green without a
       // sweeping lib bump for one access.
       const cause =
         err && typeof err === 'object' && 'cause' in err ? (err as { cause: unknown }).cause : null;
       const isNotRequired = cause instanceof Error && cause.message === 'Not required';
-      if (!isNotRequired) throw err;
+      if (!isNotRequired) {
+        console.warn('[imagePipeline] shrinkFile rejected', {
+          fileName,
+          attemptIdx,
+          fileSize: file.size,
+          dimensions: { width, height },
+          targetEdge,
+          targetArea,
+          quality,
+          error: err instanceof Error ? `${err.name}: ${err.message}` : err,
+        });
+        throw err;
+      }
       if (file.size <= cap) return file;
+      console.warn('[imagePipeline] shrink declined despite ceiling clamp and source exceeds cap', {
+        fileName,
+        attemptIdx,
+        fileSize: file.size,
+        cap,
+        dimensions: { width, height },
+        sourceArea,
+        intendedArea,
+        targetArea,
+        acceptCeiling,
+        hint: 'STEP heuristic in @uploadcare/image-shrink may have moved; re-derive shrinkAcceptCeiling',
+      });
       throw new Error('IMAGE_PROCESSING_FAILED');
     }
     if (out.size <= cap) return out;
@@ -189,7 +275,14 @@ async function shrinkUntilUnderCap(
   // Surface the tagged error so the store maps it to the
   // "Bildbearbeitung fehlgeschlagen" banner rather than a misleading
   // "Datei zu groß" from the post-pipeline cap check.
-  void last;
+  console.warn('[imagePipeline] all attempts above cap', {
+    fileName,
+    fileSize: file.size,
+    cap,
+    finalAttemptSize: last?.size ?? null,
+    dimensions: { width, height },
+    attempts: SHRINK_ATTEMPTS.length,
+  });
   throw new Error('IMAGE_PROCESSING_FAILED');
 }
 
@@ -285,6 +378,7 @@ export async function runImagePipeline(
       ATTACHMENT_PIPELINE.imageMaxDimension,
       ATTACHMENT_PIPELINE.imageQuality,
       ATTACHMENT_PIPELINE.perFileSizeCapBytes,
+      file.name,
     );
   } catch (err) {
     if (err instanceof Error && err.message === 'IMAGE_PROCESSING_FAILED') {
@@ -293,7 +387,12 @@ export async function runImagePipeline(
     // Decode failure, OOM, blocked toBlob — surface as the tagged error
     // so the store's banner reads "Bildbearbeitung fehlgeschlagen"
     // instead of the post-pipeline cap's misleading "Datei zu groß".
-    console.warn('[imagePipeline] original compression failed', err);
+    console.warn('[imagePipeline] original compression failed', {
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type,
+      error: err instanceof Error ? `${err.name}: ${err.message}` : err,
+    });
     throw new Error('IMAGE_PROCESSING_FAILED');
   }
 
@@ -305,9 +404,14 @@ export async function runImagePipeline(
         ATTACHMENT_PIPELINE.thumbnailMaxDimension,
         ATTACHMENT_PIPELINE.thumbnailQuality,
       );
-    } catch {
+    } catch (err) {
       // Thumbnail is opportunistic — leave it null and let the store
       // clear `hasThumbnail` so the server issues only one descriptor.
+      // Log so a vanishing-thumbnail regression isn't completely silent.
+      console.warn('[imagePipeline] thumbnail encode failed (continuing without)', {
+        fileName: file.name,
+        error: err instanceof Error ? `${err.name}: ${err.message}` : err,
+      });
       thumbnail = null;
     }
   }
