@@ -23,11 +23,13 @@ import {
   removeProjectWorker,
   softDeleteProject as softDeleteProjectRepo,
   hardDeleteProject as hardDeleteProjectRepo,
+  restoreProject as restoreProjectRepo,
   fetchWorkersForProject,
   getUserDisplayName,
   toProject,
   ProjectNotFoundError,
   ProjectNotArchivedError,
+  ProjectNotArchivedForRestoreError,
 } from '../repositories/project.js';
 import { listKeysForProject } from '../repositories/attachment.js';
 import type { ListProjectsOpts, ProjectRow } from '../repositories/project-read.js';
@@ -598,6 +600,63 @@ export class ProjectCrudService {
       log.info({ projectId: id }, 'project_archived');
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
+      throw err;
+    }
+  }
+
+  async restoreProject(
+    id: string,
+    userId: string,
+    log: ServiceLogger,
+    correlationId?: string | null,
+  ): Promise<ReturnType<typeof toProject>> {
+    try {
+      const project = await this.db.transaction(async (tx) => {
+        let restoredRow: Awaited<ReturnType<typeof restoreProjectRepo>> | null = null;
+        const ctx = {
+          actorKind: 'user' as const,
+          actorId: userId,
+          correlationId: correlationId ?? null,
+        };
+        const { value } = await mutateInTx(tx, ctx, {
+          entityType: 'project',
+          // Inverse of `archive` — the row flips back from deleted=true.
+          // ADR-0017 §1 used to forbid the UI affordance; the read-only
+          // preview surfaced a real driver (fat-finger archive recovery)
+          // so the destructive-paths section now includes restore.
+          action: 'restore',
+          run: async (innerTx) => {
+            restoredRow = await restoreProjectRepo(innerTx, id, userId);
+            return {
+              entityId: id,
+              entityLabel: projectAuditLabel(restoredRow),
+              value: restoredRow,
+              // Symmetric to archive's `before: {number, title}, after: {}`:
+              // archive was the row leaving the active set, restore is the
+              // row entering it. Action key carries the semantic.
+              before: {},
+              after: { number: restoredRow.number, title: restoredRow.title },
+              ancestorEntityType: 'project',
+              ancestorEntityId: id,
+            };
+          },
+        });
+        const restored = restoredRow ?? value;
+        const workers = await fetchWorkersForProject(tx, id);
+        const customerRows = await tx
+          .select()
+          .from(customers)
+          .where(eq(customers.id, restored.customerId))
+          .limit(1);
+        return toProject(restored, customerRows[0] ?? null, workers);
+      });
+      log.info({ projectId: id }, 'project_restored');
+      return project;
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
+      if (err instanceof ProjectNotArchivedForRestoreError) {
+        throw conflict(STRINGS.projects.restoreRequiresArchive);
+      }
       throw err;
     }
   }

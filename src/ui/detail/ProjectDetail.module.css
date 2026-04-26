@@ -203,6 +203,23 @@
   background: var(--color-danger-bg);
 }
 
+/* Restore — recovery action; visually distinct from archive (neutral)
+   and purge (danger). Reuses the surface-raised → sunken hover swap
+   from the other header buttons so it sits in the same family. */
+.restoreButton {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-strong);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.restoreButton:hover {
+  background: var(--color-surface-sunken);
+}
+
 /* Floating camera capture — fixed to the viewport's top-right corner so
    a worker on-site can reach it without hunting the layout. Stays
    visible across scroll; the detail shell is the only page that mounts

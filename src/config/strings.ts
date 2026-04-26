@@ -77,6 +77,11 @@ export const STRINGS = {
       `Projekt ${identifier} wird endgültig gelöscht. Alle zugeordneten Daten gehen dabei verloren. Fortfahren?`,
     purgeRequiresArchive:
       'Das Projekt muss zunächst archiviert werden, bevor es endgültig gelöscht werden kann.',
+    restore: 'Wiederherstellen',
+    restoreConfirm: (identifier: string) =>
+      `Projekt ${identifier} aus dem Archiv wiederherstellen?`,
+    restoreRequiresArchive:
+      'Das Projekt ist nicht archiviert und kann daher nicht wiederhergestellt werden.',
     transitionConfirm: (from: string, to: string) => `Status ändern: ${from} → ${to}?`,
     cannotAdvanceTerminal:
       'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',
