@@ -276,9 +276,10 @@ function parseAndAggregate(
   }
 
   if (opts.runAllGuards) {
-    aggregateProductionSafe(source, issues);
-    aggregateAppServerEnv(source, issues);
-    aggregateStoragePublicEndpointInProduction(source, issues);
+    for (const check of CROSS_FIELD_GUARDS) {
+      const r = check(source);
+      if (!r.ok) issues.push(r.message);
+    }
   }
 
   // Dev-credential check uses the raw source map, so it can fire
@@ -295,19 +296,39 @@ function parseAndAggregate(
   return result.data;
 }
 
+// ---------------------------------------------------------------------
+// Cross-field guards.
+//
+// Each guard is one shared predicate (`check*`) returning a structured
+// result. Two consumers route through it:
+//   - The exported typed-Env throw helpers (`assert*`) — called by
+//     start.ts at boot, used by tests, throws on failure.
+//   - The aggregated validator's `parseAndAggregate` — collects the
+//     same predicate's failure into the aggregated error message.
+//
+// Single source per predicate eliminates the silent drift mode flagged
+// in #143 follow-up A-3: a regression that softens `ALLOW_INSECURE_HTTP
+// === 'true'` to also accept `'1'` (or similar) used to need updating in
+// two places; the path that wasn't updated kept the old behaviour. Now
+// there is exactly one body to soften.
+// ---------------------------------------------------------------------
+
+type GuardResult = { ok: true } | { ok: false; message: string };
+
 /**
- * Aggregated mirror of `assertProductionSafe` operating on the raw
- * source map. Used by the aggregated validator so a schema failure on an
- * unrelated field cannot mask an ALLOW_INSECURE_HTTP=true offence.
- *
- * Exported guard `assertProductionSafe` (typed Env) remains the contract
- * for start.ts and unit tests; this helper is the same predicate over
- * raw input.
+ * Structural source shape readable by the cross-field guards. Both the
+ * raw `Record<string, string | undefined>` (preflight path) and the
+ * typed `Env` (boot path) are assignable here — the guards read these
+ * fields by name, never the index signature.
  */
-// Shared error messages — used by both the typed-Env throw helpers
-// (assertProductionSafe etc.) and their raw-source aggregating mirrors
-// (aggregateProductionSafe etc.). Keeping the strings in one place avoids
-// silent drift between the two paths.
+type GuardSource = {
+  NODE_ENV?: string | undefined;
+  ALLOW_INSECURE_HTTP?: string | undefined;
+  STORAGE_ENDPOINT?: string | undefined;
+  STORAGE_PUBLIC_ENDPOINT?: string | undefined;
+  STORAGE_ACCESS_KEY?: string | undefined;
+  STORAGE_SECRET_KEY?: string | undefined;
+};
 
 const ALLOW_INSECURE_HTTP_IN_PROD_MSG =
   'Refusing to start: ALLOW_INSECURE_HTTP=true in production. ' +
@@ -331,66 +352,70 @@ function storagePublicEndpointMsg(endpoint: string): string {
   );
 }
 
-function aggregateProductionSafe(
-  source: Record<string, string | undefined>,
-  issues: string[],
-): void {
+/**
+ * Production-safety predicate: refuses ALLOW_INSECURE_HTTP=true under
+ * NODE_ENV=production. ADR-0013 / AC-45 promise the server refuses to
+ * start on this combination — this is that promise.
+ */
+function checkProductionSafe(source: GuardSource): GuardResult {
   if (source.NODE_ENV === 'production' && source.ALLOW_INSECURE_HTTP === 'true') {
-    issues.push(ALLOW_INSECURE_HTTP_IN_PROD_MSG);
+    return { ok: false, message: ALLOW_INSECURE_HTTP_IN_PROD_MSG };
   }
+  return { ok: true };
 }
 
 /**
- * Aggregated mirror of `assertAppServerEnv` operating on raw source.
- * Reports every missing STORAGE_* var in a single message — same shape
- * as the typed-Env guard so the test message contract holds.
+ * App-server presence predicate: every STORAGE_* must be set. The
+ * shared schema keeps these optional so the backup-runner CLI (which
+ * doesn't use MinIO) can share `validateEnvRuntime()`; this guard
+ * restores the fail-fast semantic for the app server. Reports every
+ * missing var in one message so an operator sees the full set, not
+ * one-per-restart.
  */
-function aggregateAppServerEnv(source: Record<string, string | undefined>, issues: string[]): void {
+function checkAppServerEnv(source: GuardSource): GuardResult {
   const missing: string[] = [];
   if (!source.STORAGE_ENDPOINT) missing.push('STORAGE_ENDPOINT');
   if (!source.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
   if (!source.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
-  if (missing.length > 0) {
-    issues.push(appServerMissingMsg(missing));
-  }
+  return missing.length === 0 ? { ok: true } : { ok: false, message: appServerMissingMsg(missing) };
 }
 
 /**
- * Aggregated mirror of `assertStoragePublicEndpointInProduction`
- * operating on raw source.
- */
-function aggregateStoragePublicEndpointInProduction(
-  source: Record<string, string | undefined>,
-  issues: string[],
-): void {
-  if (source.NODE_ENV !== 'production') return;
-  const endpoint = source.STORAGE_ENDPOINT;
-  if (!endpoint) return; // covered by aggregateAppServerEnv
-  if (source.STORAGE_PUBLIC_ENDPOINT) return;
-  if (!hostnameLooksInternal(endpoint)) return;
-  issues.push(storagePublicEndpointMsg(endpoint));
-}
-
-/**
- * Assert startup safety invariants that depend on NODE_ENV. Called from
- * start.ts right after validateEnvRuntime(). Extracted so a unit test can exercise
- * the exact guard that ships, without spawning the server.
+ * Container-hostname predicate: refuses to start in production when the
+ * storage client would sign presigned URLs against a container-only
+ * hostname. Without `STORAGE_PUBLIC_ENDPOINT`, the app signs URLs using
+ * `STORAGE_ENDPOINT` (e.g. `http://storage:9000`) and hands them to the
+ * browser — which cannot resolve the Docker-internal host, so every
+ * upload POST fails silently and the `pending → ready` transition
+ * never happens. That defect sat on the VPS undetected until an
+ * operator noticed attachments never saving.
  *
- * Currently enforces: in production, ALLOW_INSECURE_HTTP must not be 'true'.
- * ADR-0013 promises the server refuses to start on this combination; this
- * function is that promise. See also AC-45 and consolidation review C-2/C-4.
+ * Dev (STORAGE_ENDPOINT = localhost or an IP) does not trip this guard
+ * because dev exposes MinIO on the host; the browser reaches the same
+ * endpoint the app reaches.
  */
-export function assertProductionSafe(env: Env): void {
-  if (env.NODE_ENV === 'production' && env.ALLOW_INSECURE_HTTP === 'true') {
-    throw new Error(ALLOW_INSECURE_HTTP_IN_PROD_MSG);
-  }
+function checkStoragePublicEndpointInProduction(source: GuardSource): GuardResult {
+  if (source.NODE_ENV !== 'production') return { ok: true };
+  const endpoint = source.STORAGE_ENDPOINT;
+  if (!endpoint) return { ok: true }; // covered by checkAppServerEnv
+  if (source.STORAGE_PUBLIC_ENDPOINT) return { ok: true };
+  if (!hostnameLooksInternal(endpoint)) return { ok: true };
+  return { ok: false, message: storagePublicEndpointMsg(endpoint) };
 }
+
+/** Iteration order for `parseAndAggregate`. Stable so the aggregated
+ * error message lists offences in a deterministic order. */
+const CROSS_FIELD_GUARDS: ReadonlyArray<(source: GuardSource) => GuardResult> = [
+  checkProductionSafe,
+  checkAppServerEnv,
+  checkStoragePublicEndpointInProduction,
+];
 
 /**
  * Hostname-looks-internal heuristic: no dot and not an IP literal. The
  * Docker-internal hostnames used by compose (`storage`, `db`, `app`) all
  * hit this, whereas a public URL (`storage.example.com`) does not. Used
- * only by `assertStoragePublicEndpointInProduction()` — a literal IP
+ * only by `checkStoragePublicEndpointInProduction()` — a literal IP
  * (`http://10.0.0.5:9000`) is legitimate in self-hosted setups and is
  * NOT treated as internal.
  */
@@ -407,26 +432,19 @@ function hostnameLooksInternal(endpoint: string): boolean {
   return !host.includes('.');
 }
 
+// ---------------------------------------------------------------------
+// Typed-Env throw helpers — the public API for start.ts. Each delegates
+// to the corresponding shared predicate above, throwing on failure.
+// ---------------------------------------------------------------------
+
 /**
- * Refuses to start in production when the storage client would sign
- * presigned URLs against a container-only hostname. Without
- * `STORAGE_PUBLIC_ENDPOINT`, the app signs URLs using `STORAGE_ENDPOINT`
- * (e.g. `http://storage:9000`) and hands them to the browser — which
- * cannot resolve the Docker-internal host, so every upload POST fails
- * silently and the `pending → ready` transition never happens. That
- * defect sat on the VPS undetected until an operator noticed attachments
- * never saving.
- *
- * Dev (STORAGE_ENDPOINT = localhost or an IP) does not trip this guard
- * because dev exposes MinIO on the host; the browser reaches the same
- * endpoint the app reaches.
+ * Assert startup safety invariants that depend on NODE_ENV. Called from
+ * start.ts right after validateEnvRuntime(). Refuses to start in
+ * production with ALLOW_INSECURE_HTTP=true (ADR-0013 / AC-45).
  */
-export function assertStoragePublicEndpointInProduction(env: Env): void {
-  if (env.NODE_ENV !== 'production') return;
-  if (!env.STORAGE_ENDPOINT) return; // assertAppServerEnv already reports this
-  if (env.STORAGE_PUBLIC_ENDPOINT) return;
-  if (!hostnameLooksInternal(env.STORAGE_ENDPOINT)) return;
-  throw new Error(storagePublicEndpointMsg(env.STORAGE_ENDPOINT));
+export function assertProductionSafe(env: Env): void {
+  const r = checkProductionSafe(env);
+  if (!r.ok) throw new Error(r.message);
 }
 
 /**
@@ -441,17 +459,19 @@ export type AppServerEnv = Env & {
 
 /**
  * App-server-only presence check for the MinIO-backed attachment storage
- * config. The shared schema keeps these optional so the backup-runner CLI
- * (which doesn't use MinIO) can pass validateEnvRuntime(); this guard restores
- * the fail-fast semantic for the app server and narrows the type so the
- * downstream calls in start.ts don't need `!` non-null assertions.
+ * config. Narrows the Env type so downstream calls in start.ts don't need
+ * `!` non-null assertions on the STORAGE_* fields.
  */
 export function assertAppServerEnv(env: Env): asserts env is AppServerEnv {
-  const missing: string[] = [];
-  if (!env.STORAGE_ENDPOINT) missing.push('STORAGE_ENDPOINT');
-  if (!env.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
-  if (!env.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
-  if (missing.length > 0) {
-    throw new Error(appServerMissingMsg(missing));
-  }
+  const r = checkAppServerEnv(env);
+  if (!r.ok) throw new Error(r.message);
+}
+
+/**
+ * Refuses to start in production when the storage client would sign
+ * presigned URLs against a container-only hostname.
+ */
+export function assertStoragePublicEndpointInProduction(env: Env): void {
+  const r = checkStoragePublicEndpointInProduction(env);
+  if (!r.ok) throw new Error(r.message);
 }

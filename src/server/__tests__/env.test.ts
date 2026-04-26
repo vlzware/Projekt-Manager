@@ -476,3 +476,113 @@ describe('dev-default credentials guard in env.ts', () => {
     expect(() => validateEnvAggregated(input)).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------
+// Guard agreement (#143 follow-up A-3) — for any input that trips a
+// single guard, the typed-Env throw helper and the aggregated validator
+// MUST surface the same canonical message text. The guards now share a
+// single predicate body per check; these tests pin that contract so a
+// regression that splits the implementations again (re-introducing the
+// drift mode flagged in #143) fails loud.
+//
+// Each test isolates one guard (other guards must not also trip) and
+// captures the throw helper's message, then asserts the aggregator's
+// message contains it verbatim. Containment (not equality) is required
+// because the aggregator wraps with "Environment validation failed:\n
+// - <message>" — so the message body must appear inside the
+// aggregated error.
+// ---------------------------------------------------------------------
+
+describe('guard predicates: throw helper and aggregator agree', () => {
+  /** Capture an Error message from a throwing call; null if it didn't throw. */
+  function captureMessage(fn: () => unknown): string | null {
+    try {
+      fn();
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  it('checkProductionSafe: same message in throw and aggregated paths', () => {
+    // Input that ONLY trips production-safety. Storage is configured
+    // correctly so app-server / public-endpoint guards stay quiet.
+    const env = makeEnv({
+      NODE_ENV: 'production',
+      ALLOW_INSECURE_HTTP: 'true',
+      STORAGE_ENDPOINT: 'https://storage.example.com',
+      STORAGE_PUBLIC_ENDPOINT: 'https://storage.example.com',
+      STORAGE_ACCESS_KEY: 'ak',
+      STORAGE_SECRET_KEY: 'sk',
+    });
+    const throwMsg = captureMessage(() => assertProductionSafe(env));
+    expect(throwMsg, 'expected assertProductionSafe to throw').not.toBeNull();
+
+    const aggregatedMsg = captureMessage(() =>
+      validateEnvAggregated({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgres://prod',
+        STORAGE_ENDPOINT: 'https://storage.example.com',
+        STORAGE_PUBLIC_ENDPOINT: 'https://storage.example.com',
+        STORAGE_ACCESS_KEY: 'ak',
+        STORAGE_SECRET_KEY: 'sk',
+        STORAGE_BUCKET: 'pm',
+        ALLOW_INSECURE_HTTP: 'true',
+      }),
+    );
+    expect(aggregatedMsg, 'expected validateEnvAggregated to throw').not.toBeNull();
+    expect(aggregatedMsg).toContain(throwMsg!);
+  });
+
+  it('checkAppServerEnv: same message in throw and aggregated paths', () => {
+    // Input that ONLY trips app-server presence. NODE_ENV=test so the
+    // production-safety + container-host guards stay quiet.
+    const env = makeEnv({
+      NODE_ENV: 'test',
+      STORAGE_ENDPOINT: undefined,
+      STORAGE_ACCESS_KEY: undefined,
+      STORAGE_SECRET_KEY: undefined,
+    });
+    const throwMsg = captureMessage(() => assertAppServerEnv(env));
+    expect(throwMsg, 'expected assertAppServerEnv to throw').not.toBeNull();
+
+    const aggregatedMsg = captureMessage(() =>
+      validateEnvAggregated({
+        NODE_ENV: 'test',
+        DATABASE_URL: 'postgres://test',
+      }),
+    );
+    expect(aggregatedMsg, 'expected validateEnvAggregated to throw').not.toBeNull();
+    expect(aggregatedMsg).toContain(throwMsg!);
+  });
+
+  it('checkStoragePublicEndpointInProduction: same message in throw and aggregated paths', () => {
+    // Input that ONLY trips the container-host guard. App-server vars
+    // are set; ALLOW_INSECURE_HTTP=false; STORAGE_ENDPOINT is a
+    // container-only host without a public override.
+    const env = makeEnv({
+      NODE_ENV: 'production',
+      STORAGE_ENDPOINT: 'http://storage:9000',
+      STORAGE_PUBLIC_ENDPOINT: undefined,
+      STORAGE_ACCESS_KEY: 'ak',
+      STORAGE_SECRET_KEY: 'sk',
+      ALLOW_INSECURE_HTTP: 'false',
+    });
+    const throwMsg = captureMessage(() => assertStoragePublicEndpointInProduction(env));
+    expect(throwMsg, 'expected assertStoragePublicEndpointInProduction to throw').not.toBeNull();
+
+    const aggregatedMsg = captureMessage(() =>
+      validateEnvAggregated({
+        NODE_ENV: 'production',
+        DATABASE_URL: 'postgres://prod',
+        STORAGE_ENDPOINT: 'http://storage:9000',
+        STORAGE_ACCESS_KEY: 'ak',
+        STORAGE_SECRET_KEY: 'sk',
+        STORAGE_BUCKET: 'pm',
+        ALLOW_INSECURE_HTTP: 'false',
+      }),
+    );
+    expect(aggregatedMsg, 'expected validateEnvAggregated to throw').not.toBeNull();
+    expect(aggregatedMsg).toContain(throwMsg!);
+  });
+});
