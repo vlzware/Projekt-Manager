@@ -124,8 +124,8 @@ export const envSchema = z.object({
    * in Dockerfile.backup so operators don't need to set it. */
   AGE_IDENTITY_PATH: z.string().default('/run/drill-key/identity'),
   // ---------------------------------------------------------------
-  // Web Push / VAPID (ADR-0023). The public key is derived from the
-  // private half at startup (P-256 ECDSA — `src/server/config/vapid.ts`),
+  // Web Push / VAPID (architecture.md §11.11). The public key is derived
+  // from the private half at startup (P-256 ECDSA — `src/server/config/vapid.ts`),
   // so the operator only maintains the private key. In production,
   // missing `VAPID_PRIVATE_KEY` falls back to `noopPushDispatcher` with
   // a startup warn. In dev/test the helper auto-generates a key into
