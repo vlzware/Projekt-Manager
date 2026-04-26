@@ -61,6 +61,15 @@ For docs prose, backslash escape reads cleanest. For commit messages (which GitH
 
 **Trap:** The "Push-Benachrichtigungen aktivieren" affordance triggers the browser's permission prompt, the user grants it, and the UI then flashes "Push-Benachrichtigungen sind auf diesem Server nicht konfiguriert" without ever subscribing. No push messages arrive. Easy to mistake for a CORS or service-worker regression because the symptom sits on the client side.
 
+**First check:** the boot-time feature manifest. Search the most recent app logs for `event=config-feature-manifest`; the line names every feature with its state and (when disabled) the missing variable:
+
+```bash
+docker compose logs app --no-log-prefix | grep config-feature-manifest | tail -1
+# → … "push":{"state":"disabled","reason":"VAPID_PRIVATE_KEY is not set"} …
+```
+
+If the manifest reports `push: enabled` but the UI still shows "nicht konfiguriert", the issue is downstream of the env (network, service-worker, cache); the rest of this section does not apply.
+
 **Root cause:** `VAPID_PRIVATE_KEY` is unset in the VPS deploy environment. The server's `/api/push/vapid-public-key` endpoint correctly returns `{"vapidPublicKey": null}`, which the client accurately renders as "not configured" (pushClient.ts `resolveVapidPublicKey` → `{ reason: 'not-configured' }`). The permission prompt fires first because spec §9.8 / AC-201 require the prompt to live inside the user gesture — the server round-trip happens afterwards.
 
 **Workaround (actually the fix):**

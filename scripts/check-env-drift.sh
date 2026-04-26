@@ -228,3 +228,124 @@ echo "OK: $COMPOSE operator-required vars ↔ ($ENV_EXAMPLE ∪ $SECRETS_MANIFES
 echo "  compose-required: $(echo "$compose_required" | wc -l)"
 echo "  .env.example keys: $(echo "$example_keys" | wc -l)"
 echo "  secrets.manifest.txt keys: $(echo "$manifest_keys" | wc -l)"
+
+# ==========================================================================
+# Pass 3: schema (env.ts) ↔ operator-documented set (.env.production.example
+# ∪ secrets.manifest.txt)
+#
+# Pass 1 catches schema vars not forwarded by compose (#57 BOOTSTRAP_ADMIN_*
+# fix). Pass 2 catches compose `${VAR}` interpolations not documented for
+# operators. Pass 3 catches the orthogonal third class: a schema var that
+# IS forwarded by compose AND consumed by the app, but never surfaces in
+# operator docs — so an operator setting up a fresh deploy has no way of
+# discovering the knob exists. The classic regression: a new feature lands
+# with `OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}` in compose, and works
+# silently with the empty default in production until someone wonders why
+# the LLM extraction is "broken".
+#
+# In the other direction, an operator-doc entry without a matching schema
+# field is stale documentation pointing at a removed feature — also fail.
+#
+# Compose-derived schema vars (DATABASE_URL built from POSTGRES_PASSWORD,
+# STORAGE_* hardcoded by compose, PORT hardcoded) are excluded — operators
+# never set them directly; the SOURCE values they're built from are the
+# documented surface. Symmetrically, compose-only infrastructure vars in
+# operator docs (POSTGRES_PASSWORD, MINIO_ROOT_*, CLOUDFLARE_API_TOKEN,
+# WG_BIND_IP) feed into compose interpolation but never reach the app's
+# Zod schema, so they're excluded on the docs side.
+# ==========================================================================
+
+# Schema-side exclusions: vars the operator never sets directly because
+# compose-yml hardcodes them or builds them from another (documented)
+# source. Each entry MUST carry a one-line reason; "obvious" is not a
+# valid reason — the next person reading this file deserves the why.
+SCHEMA_DOC_EXCLUDE=$(cat <<'EOF'
+DATABASE_URL          # compose builds from POSTGRES_PASSWORD (documented in secrets.manifest.txt)
+NODE_ENV              # compose hardcodes "production"; an operator override is the wrong surface to expose
+PORT                  # compose hardcodes "3000"; not an operator-tunable surface
+STORAGE_ENDPOINT      # compose hardcodes the Docker-internal hostname http://storage:9000
+STORAGE_PUBLIC_ENDPOINT # compose builds from DOMAIN as https://storage.${DOMAIN}
+STORAGE_BUCKET        # compose hardcodes "projekt-manager"
+STORAGE_ACCESS_KEY    # compose interpolates from MINIO_ROOT_USER (documented in .env.production.example)
+STORAGE_SECRET_KEY    # compose interpolates from MINIO_ROOT_PASSWORD (documented in secrets.manifest.txt)
+EOF
+)
+
+# Docs-side exclusions: operator-doc entries that feed into compose
+# interpolation but never reach the app's Zod schema. They surface in
+# operator docs because the operator must set them; the schema sees the
+# downstream value compose builds (e.g. DATABASE_URL).
+DOC_SCHEMA_EXCLUDE=$(cat <<'EOF'
+POSTGRES_PASSWORD     # compose interpolation source for DATABASE_URL; app sees the URL, not the password
+MINIO_ROOT_USER       # compose interpolation source for STORAGE_ACCESS_KEY
+MINIO_ROOT_PASSWORD   # compose interpolation source for STORAGE_SECRET_KEY
+CLOUDFLARE_API_TOKEN  # consumed only by the caddy service for ACME-DNS-01; no app-schema footprint
+WG_BIND_IP            # consumed only by the caddy service's port binding (${WG_BIND_IP:-127.0.0.1})
+EOF
+)
+
+# Strip the trailing comments and produce one KEY per line. The `awk
+# '{print $1}'` is the mawk-portable way to pick the first whitespace-
+# delimited token; `cut -d' ' -f1` would fail on the multi-space alignment
+# above, and a sed regex would be heavier. Empty lines are filtered too.
+schema_exclude_keys=$(echo "$SCHEMA_DOC_EXCLUDE" \
+  | awk 'NF { print $1 }' | sort -u)
+doc_exclude_keys=$(echo "$DOC_SCHEMA_EXCLUDE" \
+  | awk 'NF { print $1 }' | sort -u)
+
+# Operator-documentation keys: live KEY= and commented `# KEY=` in the
+# example file (both forms count — a commented optional is still a hint
+# the operator can find), plus every key in the manifest. The example
+# regex anchors `# ` (pound + single space) at line start so prose like
+# "the ${VAR}=…" cannot smuggle a stray match in mid-sentence.
+example_doc_keys=""
+if [ -f "$ENV_EXAMPLE" ]; then
+  example_doc_keys=$(grep -E '^(# )?[A-Z_][A-Z0-9_]*=' "$ENV_EXAMPLE" \
+    | sed -E 's/^# //; s/=.*$//' | sort -u)
+fi
+documented_keys=$(cat <(echo "$example_doc_keys") <(echo "$manifest_keys") \
+  | sort -u)
+
+# Schema keys minus schema-side exclusions.
+schema_to_check=$(comm -23 <(echo "$schema_vars") <(echo "$schema_exclude_keys") || true)
+
+# Documented keys minus docs-side exclusions.
+docs_to_check=$(comm -23 <(echo "$documented_keys") <(echo "$doc_exclude_keys") || true)
+
+# (a) Schema fields with no operator-doc entry — these are knobs the
+# operator can never discover from the docs. Adding the var to either
+# .env.production.example (commented optional is fine) or
+# secrets.manifest.txt closes the gap.
+schema_undocumented=$(comm -23 <(echo "$schema_to_check") <(echo "$documented_keys") || true)
+if [ -n "$schema_undocumented" ]; then
+  echo "ERROR: $ENV_TS declares vars that are documented nowhere for operators:" >&2
+  echo "$schema_undocumented" | sed 's/^/  - /' >&2
+  echo "" >&2
+  echo "Each var must appear in exactly one of:" >&2
+  echo "  - $ENV_EXAMPLE     (non-secret operator config — commented optional is fine)" >&2
+  echo "  - $SECRETS_MANIFEST (secret — the value lives encrypted in secrets.env.age)" >&2
+  echo "" >&2
+  echo "If the var is genuinely compose-derived or hardcoded (operator never sets" >&2
+  echo "it directly), add it to SCHEMA_DOC_EXCLUDE in $(basename "$0") with a" >&2
+  echo "one-line reason." >&2
+  exit 1
+fi
+
+# (b) Documentation entries that are not in the schema — stale docs.
+docs_unschemaed=$(comm -23 <(echo "$docs_to_check") <(echo "$schema_vars") || true)
+if [ -n "$docs_unschemaed" ]; then
+  echo "ERROR: operator docs declare keys that are NOT in $ENV_TS:" >&2
+  echo "$docs_unschemaed" | sed 's/^/  - /' >&2
+  echo "" >&2
+  echo "Either remove the stale entry from $ENV_EXAMPLE / $SECRETS_MANIFEST," >&2
+  echo "or — if the key feeds compose interpolation that builds another schema" >&2
+  echo "var (e.g. POSTGRES_PASSWORD → DATABASE_URL) — add it to" >&2
+  echo "DOC_SCHEMA_EXCLUDE in $(basename "$0") with a one-line reason." >&2
+  exit 1
+fi
+
+echo "OK: $ENV_TS ↔ ($ENV_EXAMPLE ∪ $SECRETS_MANIFEST) keyspaces in sync"
+echo "  schema vars checked: $(echo "$schema_to_check" | wc -l)"
+echo "  documented keys checked: $(echo "$docs_to_check" | wc -l)"
+echo "  schema-side exclusions: $(echo "$schema_exclude_keys" | wc -l)"
+echo "  docs-side exclusions: $(echo "$doc_exclude_keys" | wc -l)"

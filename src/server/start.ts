@@ -22,6 +22,7 @@ import {
   assertStoragePublicEndpointInProduction,
   validateEnv,
 } from './config/env.js';
+import { emitFeatureManifest } from './config/features.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
@@ -41,29 +42,6 @@ const HOST = '0.0.0.0';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(__dirname, 'db/migrations');
 const distFolder = path.resolve(__dirname, '../../dist');
-
-/** Known dev-default credentials that must not reach production. */
-const DEV_DEFAULTS: ReadonlyArray<{ envVar: string; values: string[] }> = [
-  { envVar: 'POSTGRES_PASSWORD', values: ['postgres', 'devpassword'] },
-  { envVar: 'MINIO_ROOT_USER', values: ['minioadmin'] },
-  { envVar: 'MINIO_ROOT_PASSWORD', values: ['minioadmin'] },
-];
-
-/**
- * Refuse to start in production when any credential still uses a
- * well-known development default.
- */
-function rejectDevCredentials(): void {
-  for (const { envVar, values } of DEV_DEFAULTS) {
-    const current = process.env[envVar];
-    if (current !== undefined && values.includes(current)) {
-      throw new Error(
-        `Refusing to start: ${envVar} is set to the dev default "${current}". ` +
-          'Set a secure value for production.',
-      );
-    }
-  }
-}
 
 /**
  * Verify that every `status` value in the projects table is present in
@@ -88,6 +66,11 @@ async function validateWorkflowStates(db: ReturnType<typeof createDatabase>['db'
 
 async function start(): Promise<void> {
   // --- Validate environment (fail fast before any I/O) ---
+  // validateEnv() (no-arg) returns the typed Env and folds in
+  // dev-default credential rejection; the cross-field guards below
+  // remain external so start.ts keeps control of their order and the
+  // backup-runner (which shares validateEnv) does not get the
+  // app-server-only narrowing.
   const env = validateEnv();
   const isProduction = env.NODE_ENV === 'production';
 
@@ -103,9 +86,15 @@ async function start(): Promise<void> {
   // presigned URLs against a container-only hostname — the browser
   // cannot resolve those, so every upload fails silently.
   assertStoragePublicEndpointInProduction(env);
-  if (isProduction) {
-    rejectDevCredentials();
-  }
+
+  // Emit the boot-time feature manifest (AC-230) immediately after env
+  // validation — operators see a single structured line listing every
+  // optional feature's enabled/disabled state with reason. Order is
+  // significant: the test pins emission AFTER validateEnv() so the
+  // manifest never reports on an unverified env.
+  emitFeatureManifest(env, {
+    info: (ctx) => console.log(JSON.stringify(ctx)),
+  });
 
   if (env.ALLOW_INSECURE_HTTP === 'true') {
     console.warn(

@@ -162,6 +162,42 @@ export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
 # image is never fetched ahead of `up -d` (which would then block on a
 # registry round-trip while starting).
 docker compose --profile backup pull app backup
+
+# --- Pre-flight: schema-level env validation (AC-231) ----------------
+# Run the same `validateEnv()` the boot path uses, BEFORE `docker
+# compose up`. The two presence checks above (env_example_keys,
+# secrets.manifest.txt) only assert that keys are *declared*; they do
+# not catch shape errors (PORT=0, NODE_ENV=staging, SEED=maybe), nor
+# the cross-cutting checks the schema folds in (dev-default
+# credentials in production). A misconfiguration that gets past the
+# presence check would otherwise crash-loop the freshly-recreated
+# container — losing the previous-revision's known-good replicas before
+# the new replicas are healthy. This step catches it without touching
+# the running stack.
+#
+# Why `docker compose run --rm --no-deps app` (not `docker run`):
+#   - The compose `app.environment:` block hardcodes DATABASE_URL,
+#     STORAGE_*, NODE_ENV, PORT (built from operator vars via `${VAR}`
+#     interpolation). A standalone `docker run` would see only the
+#     operator-supplied env (POSTGRES_PASSWORD, ...) and the schema
+#     would reject DATABASE_URL as missing — a false positive that
+#     does not match what the actual `up` will give the container.
+#     `compose run` resolves the same `environment:` block the live
+#     container receives, so the validation environment matches the
+#     deploy environment exactly.
+#   - `--no-deps` skips starting `db` / `storage` (they may already be
+#     up, and we don't need them to validate env). `--rm` removes the
+#     one-shot container immediately. `-T` disables TTY allocation so
+#     the call works in non-interactive deploy contexts (cron, CI).
+#   - The CMD `node /app/dist/server/validate-env-cli.js` runs the
+#     dedicated validation entry built by `package.json` >
+#     `build:server` esbuild target list. validateEnv() prints the
+#     aggregated error and exits non-zero on any offence; deploy.sh's
+#     `set -euo pipefail` propagates the failure and aborts BEFORE
+#     `docker compose up` runs.
+echo "Validating env against the deploy image's Zod schema..."
+docker compose run --rm --no-deps -T app node /app/dist/server/validate-env-cli.js
+
 # The backup service is behind a profile so local dev (no R2 creds)
 # doesn't spin up a cron loop that will log AccessDenied on every
 # scheduled tick. See docs/ops/backup/setup.md §4 and ADR-0020.

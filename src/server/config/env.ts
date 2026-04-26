@@ -1,6 +1,22 @@
 /**
  * Environment variable validation.
  * Fails fast at startup if required variables are missing or malformed.
+ *
+ * Two entry points (issue #139):
+ *   - `validateEnv()` (no arg) — singleton path; reads `process.env`,
+ *     re-parses on every call. Production callers (start.ts,
+ *     backup-runner.ts, db/connection.ts, api-helpers.ts) use this form.
+ *     The cache that previously memoised the first parse was removed
+ *     because `getRateLimit()` and other call-time consumers must reflect
+ *     env mutations performed during a process's lifetime (notably
+ *     vitest tests that mutate `process.env.NODE_ENV` between cases).
+ *     `validateEnv()` is cheap; the perf cost of re-parsing is irrelevant
+ *     against the staleness footgun the cache introduced.
+ *   - `validateEnv(input)` — pure function over the supplied record.
+ *     Aggregates every offence (Zod schema issues + cross-field guards
+ *     + dev-default credentials) into ONE thrown error so an operator
+ *     sees every fault in a single failed deploy, not one-per-reboot.
+ *     Used by tests; production code paths use the no-arg form.
  */
 import { z } from 'zod';
 
@@ -74,6 +90,16 @@ export const envSchema = z.object({
   // a latency-sensitive sweep. Overridable per deployment — tests leave
   // the scheduler untouched and call the service directly.
   AUDIT_RETENTION_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
+  // Login-rate-limit ceiling — moved into the schema in #139 to close the
+  // last raw-`process.env` read inside the configuration boundary
+  // (AC-228). The build-time default in `getRateLimit()` is environment-
+  // aware (5/min in production, 30/min elsewhere); this override applies
+  // when the operator sets a numeric value. Same `${VAR:-}` empty-string
+  // preprocess as AUDIT_RETENTION_WINDOW_DAYS.
+  LOGIN_RATE_LIMIT_MAX: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
   // ---------------------------------------------------------------
   // Layer 2 backup (ADR-0020). Consumed by the `backup-runner` CLI,
   // not by the main app server — but declared here so the schema
@@ -140,24 +166,205 @@ export const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-let _env: Env | null = null;
+/**
+ * Known dev-default credentials forwarded to the app container by
+ * docker-compose. Each entry pairs an env-var name with the values that
+ * ship in the dev compose file — if any of these reach a production
+ * container, the operator forgot to override them.
+ *
+ * Forwarded explicitly so the names appear in `process.env` (compose's
+ * `environment:` block forwards POSTGRES_PASSWORD / MINIO_ROOT_USER /
+ * MINIO_ROOT_PASSWORD into the app service alongside DATABASE_URL etc.).
+ */
+const DEV_DEFAULT_CREDENTIALS: ReadonlyArray<{ envVar: string; values: readonly string[] }> = [
+  { envVar: 'POSTGRES_PASSWORD', values: ['postgres', 'devpassword'] },
+  { envVar: 'MINIO_ROOT_USER', values: ['minioadmin'] },
+  { envVar: 'MINIO_ROOT_PASSWORD', values: ['minioadmin'] },
+];
 
 /**
- * Parse and validate environment variables.
- * Call once at startup. Throws with descriptive errors on invalid config.
+ * Aggregates dev-default credential offences into the supplied issue list.
+ * Only fires in production; out-of-prod environments need their dev
+ * defaults to keep working.
+ *
+ * Pure-function shape — no throws, no I/O — so the aggregating validator
+ * can call it alongside the schema's safeParse output and the cross-field
+ * guards in a single pass.
  */
-export function validateEnv(): Env {
-  if (_env) return _env;
-  _env = envSchema.parse(process.env);
-  return _env;
+export function assertNoDevCredentials(
+  source: Record<string, string | undefined>,
+  issues: string[],
+): void {
+  if (source.NODE_ENV !== 'production') return;
+  for (const { envVar, values } of DEV_DEFAULT_CREDENTIALS) {
+    const current = source[envVar];
+    if (current !== undefined && values.includes(current)) {
+      issues.push(
+        `${envVar} is set to the dev default "${current}". Set a secure value for production.`,
+      );
+    }
+  }
 }
 
 /**
- * Access validated env. Throws if validateEnv() hasn't been called.
+ * Parse and validate environment variables.
+ *
+ * No arg → singleton-style path: parses `process.env`, returns the typed
+ * `Env`. The aggregated guards (assertNoDevCredentials) ALSO run here so
+ * a forgotten dev-default credential trips at boot regardless of which
+ * binary started — start.ts and backup-runner.ts share this one check.
+ * The other guards (`assertProductionSafe`, `assertAppServerEnv`,
+ * `assertStoragePublicEndpointInProduction`) stay external so start.ts
+ * keeps control of the order and so the app-server-only narrowing
+ * (`assertAppServerEnv`) doesn't reject the backup-runner path.
+ *
+ * Arg supplied → pure aggregating validation: schema + every cross-field
+ * guard runs in one pass; ALL offences are reported in a single thrown
+ * Error. Used by tests; the operator-facing surface that catches every
+ * misconfiguration in one deploy iteration (issue #139).
+ */
+export function validateEnv(input?: Record<string, string | undefined>): Env {
+  if (input !== undefined) {
+    return parseAndAggregate(input, { runAllGuards: true });
+  }
+  return parseAndAggregate(process.env, { runAllGuards: false });
+}
+
+/**
+ * Access the validated env. Re-parses `process.env` on every call (see
+ * file header for rationale). Throws if validation fails — same surface
+ * as `validateEnv()` with no arg.
  */
 export function getEnv(): Env {
-  if (!_env) throw new Error('Environment not validated. Call validateEnv() first.');
-  return _env;
+  return validateEnv();
+}
+
+/**
+ * Run the schema and (optionally) every cross-field guard, accumulating
+ * issues into a single thrown error. The `runAllGuards` switch controls
+ * whether the cross-field guards (assertProductionSafe and friends) run
+ * in this pass: tests pass `true` to surface every offence at once;
+ * start.ts's no-arg path passes `false` because start.ts calls those
+ * guards itself with the typed `Env` afterwards (this avoids
+ * double-running them and preserves the historical wiring).
+ *
+ * `assertNoDevCredentials` runs in BOTH paths because rejecting dev
+ * defaults is the only guard that depends on the raw input map (the
+ * compose-forwarded vars are not part of the typed `Env`).
+ *
+ * Cross-field guards in the aggregated path operate on `source`
+ * directly (not the parsed Env) so a schema failure on one field does
+ * not silence the guard for an unrelated field. AC-231 wants every
+ * offence reported in one pass — so a `PORT=0` Zod failure must NOT
+ * mask `ALLOW_INSECURE_HTTP=true in production`.
+ */
+function parseAndAggregate(
+  source: Record<string, string | undefined>,
+  opts: { runAllGuards: boolean },
+): Env {
+  const issues: string[] = [];
+  const result = envSchema.safeParse(source);
+  if (!result.success) {
+    for (const i of result.error.issues) {
+      const pathStr = i.path.length > 0 ? i.path.join('.') : '<root>';
+      issues.push(`${pathStr}: ${i.message}`);
+    }
+  }
+
+  if (opts.runAllGuards) {
+    aggregateProductionSafe(source, issues);
+    aggregateAppServerEnv(source, issues);
+    aggregateStoragePublicEndpointInProduction(source, issues);
+  }
+
+  // Dev-credential check uses the raw source map, so it can fire
+  // regardless of whether the schema parse succeeded.
+  assertNoDevCredentials(source, issues);
+
+  if (issues.length > 0) {
+    throw new Error(`Environment validation failed:\n${issues.map((m) => `  - ${m}`).join('\n')}`);
+  }
+  // Issues empty ⇒ schema succeeded — every Zod failure was pushed into
+  // `issues` above, so reaching this point with `result.success === false`
+  // is impossible.
+  if (!result.success) throw new Error('unreachable: schema fail did not push issues');
+  return result.data;
+}
+
+/**
+ * Aggregated mirror of `assertProductionSafe` operating on the raw
+ * source map. Used by the aggregated validator so a schema failure on an
+ * unrelated field cannot mask an ALLOW_INSECURE_HTTP=true offence.
+ *
+ * Exported guard `assertProductionSafe` (typed Env) remains the contract
+ * for start.ts and unit tests; this helper is the same predicate over
+ * raw input.
+ */
+// Shared error messages — used by both the typed-Env throw helpers
+// (assertProductionSafe etc.) and their raw-source aggregating mirrors
+// (aggregateProductionSafe etc.). Keeping the strings in one place avoids
+// silent drift between the two paths.
+
+const ALLOW_INSECURE_HTTP_IN_PROD_MSG =
+  'Refusing to start: ALLOW_INSECURE_HTTP=true in production. ' +
+  'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.';
+
+function appServerMissingMsg(missing: ReadonlyArray<string>): string {
+  return (
+    `App server requires these env vars: ${missing.join(', ')}. ` +
+    'They are optional in the shared schema so the backup-runner CLI ' +
+    'can share validateEnv(), but the app server cannot start without them.'
+  );
+}
+
+function storagePublicEndpointMsg(endpoint: string): string {
+  return (
+    `Refusing to start: STORAGE_ENDPOINT (${endpoint}) is a container-only ` +
+    'hostname but STORAGE_PUBLIC_ENDPOINT is not set. Presigned URLs the browser ' +
+    'receives would be unreachable. Set STORAGE_PUBLIC_ENDPOINT to the public ' +
+    'URL that reverse-proxies to MinIO (e.g. https://storage.<your-domain>). ' +
+    'See docs/ops/storage-subdomain.md.'
+  );
+}
+
+function aggregateProductionSafe(
+  source: Record<string, string | undefined>,
+  issues: string[],
+): void {
+  if (source.NODE_ENV === 'production' && source.ALLOW_INSECURE_HTTP === 'true') {
+    issues.push(ALLOW_INSECURE_HTTP_IN_PROD_MSG);
+  }
+}
+
+/**
+ * Aggregated mirror of `assertAppServerEnv` operating on raw source.
+ * Reports every missing STORAGE_* var in a single message — same shape
+ * as the typed-Env guard so the test message contract holds.
+ */
+function aggregateAppServerEnv(source: Record<string, string | undefined>, issues: string[]): void {
+  const missing: string[] = [];
+  if (!source.STORAGE_ENDPOINT) missing.push('STORAGE_ENDPOINT');
+  if (!source.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
+  if (!source.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
+  if (missing.length > 0) {
+    issues.push(appServerMissingMsg(missing));
+  }
+}
+
+/**
+ * Aggregated mirror of `assertStoragePublicEndpointInProduction`
+ * operating on raw source.
+ */
+function aggregateStoragePublicEndpointInProduction(
+  source: Record<string, string | undefined>,
+  issues: string[],
+): void {
+  if (source.NODE_ENV !== 'production') return;
+  const endpoint = source.STORAGE_ENDPOINT;
+  if (!endpoint) return; // covered by aggregateAppServerEnv
+  if (source.STORAGE_PUBLIC_ENDPOINT) return;
+  if (!hostnameLooksInternal(endpoint)) return;
+  issues.push(storagePublicEndpointMsg(endpoint));
 }
 
 /**
@@ -171,10 +378,7 @@ export function getEnv(): Env {
  */
 export function assertProductionSafe(env: Env): void {
   if (env.NODE_ENV === 'production' && env.ALLOW_INSECURE_HTTP === 'true') {
-    throw new Error(
-      'Refusing to start: ALLOW_INSECURE_HTTP=true in production. ' +
-        'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.',
-    );
+    throw new Error(ALLOW_INSECURE_HTTP_IN_PROD_MSG);
   }
 }
 
@@ -218,13 +422,7 @@ export function assertStoragePublicEndpointInProduction(env: Env): void {
   if (!env.STORAGE_ENDPOINT) return; // assertAppServerEnv already reports this
   if (env.STORAGE_PUBLIC_ENDPOINT) return;
   if (!hostnameLooksInternal(env.STORAGE_ENDPOINT)) return;
-  throw new Error(
-    `Refusing to start: STORAGE_ENDPOINT (${env.STORAGE_ENDPOINT}) is a container-only ` +
-      'hostname but STORAGE_PUBLIC_ENDPOINT is not set. Presigned URLs the browser ' +
-      'receives would be unreachable. Set STORAGE_PUBLIC_ENDPOINT to the public ' +
-      'URL that reverse-proxies to MinIO (e.g. https://storage.<your-domain>). ' +
-      'See docs/ops/storage-subdomain.md.',
-  );
+  throw new Error(storagePublicEndpointMsg(env.STORAGE_ENDPOINT));
 }
 
 /**
@@ -250,10 +448,6 @@ export function assertAppServerEnv(env: Env): asserts env is AppServerEnv {
   if (!env.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
   if (!env.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
   if (missing.length > 0) {
-    throw new Error(
-      `App server requires these env vars: ${missing.join(', ')}. ` +
-        'They are optional in the shared schema so the backup-runner CLI ' +
-        'can share validateEnv(), but the app server cannot start without them.',
-    );
+    throw new Error(appServerMissingMsg(missing));
   }
 }
