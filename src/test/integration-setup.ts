@@ -11,7 +11,7 @@
  *
  * The fix: each fork gets its own database, named after its PID. Runs
  * before any test imports so the per-PID DATABASE_URL is in place when
- * `startApp()` first calls `validateEnv()` (which re-parses process.env
+ * `startApp()` first calls `validateEnvRuntime()` (which re-parses process.env
  * on every call).
  *
  * Cleanup of dropped DBs lives in `integration-globalsetup.ts` — the

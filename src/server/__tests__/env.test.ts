@@ -21,13 +21,9 @@ import {
   assertProductionSafe,
   assertStoragePublicEndpointInProduction,
   envSchema,
+  validateEnvAggregated,
 } from '../config/env.js';
 import type { Env } from '../config/env.js';
-// Module surface — used by the schema-bypass-cleanup describe blocks at
-// the bottom of the file to resolve the (impl-phase) aggregated
-// validator regardless of whether it lands as a new export
-// (`validateEnvAggregated`) or as an evolution of `validateEnv()`.
-import * as envModule from '../config/env.js';
 
 /** Minimal Env shape with only the fields assertProductionSafe reads. */
 function makeEnv(overrides: Partial<Env>): Env {
@@ -114,7 +110,7 @@ describe('assertProductionSafe', () => {
 /**
  * `assertAppServerEnv` — the app-server-only presence check for the MinIO
  * storage surface. The shared schema keeps STORAGE_* optional so the
- * backup-runner CLI can share validateEnv(); this guard restores the
+ * backup-runner CLI can share validateEnvRuntime(); this guard restores the
  * fail-fast semantic where it matters (start.ts) without forcing the
  * backup path to carry values it never reads.
  */
@@ -341,7 +337,7 @@ describe('start.ts call-site pin for assertProductionSafe', () => {
 //   2. POSTGRES_PASSWORD / MINIO_ROOT_USER / MINIO_ROOT_PASSWORD — the
 //      dev-defaults guard moved from `start.ts:rejectDevCredentials()`
 //      into `env.ts` (`assertNoDevCredentials`), folded into the
-//      aggregated `validateEnv()` error from AC-231 so every entry
+//      aggregated `validateEnvAggregated()` error from AC-231 so every entry
 //      point (start.ts and backup-runner.ts) shares one guard.
 // ---------------------------------------------------------------------
 
@@ -399,28 +395,6 @@ describe('LOGIN_RATE_LIMIT_MAX in schema', () => {
 
 describe('dev-default credentials guard in env.ts', () => {
   /**
-   * The aggregated validator. The dev-defaults guard now lives inside
-   * `validateEnv()` (the impl exposes it via `assertNoDevCredentials`
-   * which `validateEnv` invokes); the test resolves the validator by
-   * either an explicit `validateEnvAggregated` name or an input-
-   * accepting `validateEnv()` overload.
-   */
-  function getAggregatedValidator(): (input: Record<string, string | undefined>) => unknown {
-    const m = envModule as unknown as Record<string, unknown>;
-    if (typeof m.validateEnvAggregated === 'function') {
-      return m.validateEnvAggregated as (input: Record<string, string | undefined>) => unknown;
-    }
-    if (typeof m.validateEnv === 'function') {
-      const fn = m.validateEnv as (input?: Record<string, string | undefined>) => unknown;
-      if (fn.length >= 1) return fn as (input: Record<string, string | undefined>) => unknown;
-    }
-    throw new Error(
-      'No aggregated validator export found. The impl phase must expose either ' +
-        '`validateEnvAggregated(input)` or extend `validateEnv` to accept input.',
-    );
-  }
-
-  /**
    * Minimal valid prod-shaped env. Each test in this block layers a
    * dev-default credential on top to assert that single fault trips
    * the guard.
@@ -440,27 +414,25 @@ describe('dev-default credentials guard in env.ts', () => {
   }
 
   it('throws in production when POSTGRES_PASSWORD is the dev default "postgres"', () => {
-    const validate = getAggregatedValidator();
-    expect(() => validate(prodInput({ POSTGRES_PASSWORD: 'postgres' }))).toThrow(
+    expect(() => validateEnvAggregated(prodInput({ POSTGRES_PASSWORD: 'postgres' }))).toThrow(
       /POSTGRES_PASSWORD/,
     );
   });
 
   it('throws in production when POSTGRES_PASSWORD is the dev default "devpassword"', () => {
-    const validate = getAggregatedValidator();
-    expect(() => validate(prodInput({ POSTGRES_PASSWORD: 'devpassword' }))).toThrow(
+    expect(() => validateEnvAggregated(prodInput({ POSTGRES_PASSWORD: 'devpassword' }))).toThrow(
       /POSTGRES_PASSWORD/,
     );
   });
 
   it('throws in production when MINIO_ROOT_USER is the dev default "minioadmin"', () => {
-    const validate = getAggregatedValidator();
-    expect(() => validate(prodInput({ MINIO_ROOT_USER: 'minioadmin' }))).toThrow(/MINIO_ROOT_USER/);
+    expect(() => validateEnvAggregated(prodInput({ MINIO_ROOT_USER: 'minioadmin' }))).toThrow(
+      /MINIO_ROOT_USER/,
+    );
   });
 
   it('throws in production when MINIO_ROOT_PASSWORD is the dev default "minioadmin"', () => {
-    const validate = getAggregatedValidator();
-    expect(() => validate(prodInput({ MINIO_ROOT_PASSWORD: 'minioadmin' }))).toThrow(
+    expect(() => validateEnvAggregated(prodInput({ MINIO_ROOT_PASSWORD: 'minioadmin' }))).toThrow(
       /MINIO_ROOT_PASSWORD/,
     );
   });
@@ -470,7 +442,7 @@ describe('dev-default credentials guard in env.ts', () => {
     // safety-guard offence (ALLOW_INSECURE_HTTP=true). A non-aggregated
     // validator would throw on whichever is checked first; the contract
     // requires both names in the same error.
-    const validate = getAggregatedValidator();
+
     const input = prodInput({
       POSTGRES_PASSWORD: 'postgres',
       ALLOW_INSECURE_HTTP: 'true',
@@ -479,7 +451,7 @@ describe('dev-default credentials guard in env.ts', () => {
     // Act + Assert.
     let captured: unknown = null;
     try {
-      validate(input);
+      validateEnvAggregated(input);
     } catch (err) {
       captured = err;
     }
@@ -493,16 +465,14 @@ describe('dev-default credentials guard in env.ts', () => {
   });
 
   it('does NOT throw outside production when POSTGRES_PASSWORD is the dev default', () => {
-    const validate = getAggregatedValidator();
     const input = prodInput({ POSTGRES_PASSWORD: 'postgres' });
     input.NODE_ENV = 'development';
-    expect(() => validate(input)).not.toThrow();
+    expect(() => validateEnvAggregated(input)).not.toThrow();
   });
 
   it('does NOT throw outside production when MINIO_ROOT_USER is the dev default', () => {
-    const validate = getAggregatedValidator();
     const input = prodInput({ MINIO_ROOT_USER: 'minioadmin' });
     input.NODE_ENV = 'test';
-    expect(() => validate(input)).not.toThrow();
+    expect(() => validateEnvAggregated(input)).not.toThrow();
   });
 });

@@ -45,9 +45,9 @@ export const AUTH_CONFIG = {
  * Production with real TLS → true. Explicit HTTP evaluation mode
  * (ALLOW_INSECURE_HTTP=true, see ADR-0013) → false. Development → false.
  *
- * Reads from the validated env (env.ts) — requires validateEnv() to have
- * been called first (start.ts does this before buildApp()). Tests use
- * startApp() in api-helpers.ts which also calls validateEnv().
+ * Reads from the validated env (env.ts) — requires validateEnvRuntime()
+ * to have been called first (start.ts does this before buildApp()). Tests
+ * use startApp() in api-helpers.ts which also calls validateEnvRuntime().
  */
 export function getCookieSecure(): boolean {
   const env = getEnv();

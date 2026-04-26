@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../app.js';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 
 describe('CSP for attachment upload pipeline', () => {
   let app: FastifyInstance;
@@ -21,18 +21,13 @@ describe('CSP for attachment upload pipeline', () => {
   const prevEndpoint = process.env.STORAGE_ENDPOINT;
 
   beforeEach(() => {
-    // Force a fresh env read — validateEnv() caches the first parse, so
-    // process.env edits between tests would be invisible without a cache
-    // bust. The module-level cache lives in env.ts and is not exported,
-    // so the only way to prime is via process.env before the first call.
+    // Force a fresh env read — validateEnvRuntime() re-parses on every
+    // call (the singleton cache was dropped to keep test fixtures
+    // truthful), so process.env edits between tests are picked up
+    // immediately.
     process.env.STORAGE_PUBLIC_ENDPOINT = 'https://storage.example.com';
     process.env.STORAGE_ENDPOINT = 'http://storage:9000';
-    // Clear the env cache by re-importing via dynamic import in each
-    // test block would be heavy-handed; instead we accept that the
-    // first `validateEnv()` call pins the values and require tests in
-    // this file to share that pin. If a test needs a different value,
-    // split into its own describe with its own env setup.
-    validateEnv();
+    validateEnvRuntime();
   });
 
   afterEach(async () => {

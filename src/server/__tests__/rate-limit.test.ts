@@ -25,7 +25,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { buildApp } from '../app.js';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 import { getRateLimit } from '../config/index.js';
 import { createDatabase } from '../db/connection.js';
 import { seed } from '../seed.js';
@@ -48,8 +48,8 @@ describe('Login rate limiting (end-to-end)', () => {
     process.env.LOGIN_RATE_LIMIT_MAX = '5';
 
     // buildApp() reads the validated env (see config/index.ts and app.ts) —
-    // any test that bypasses startApp() must call validateEnv() itself.
-    validateEnv();
+    // any test that bypasses startApp() must call validateEnvRuntime() itself.
+    validateEnvRuntime();
 
     const conn = createDatabase();
     pool = conn.pool;
@@ -192,7 +192,7 @@ describe('Login rate limiting (end-to-end)', () => {
 // Issue #139 (AC-228 / AC-231) moved `LOGIN_RATE_LIMIT_MAX` and
 // `NODE_ENV` reads from raw `process.env` into the validated schema.
 // The dev-default credentials guard (POSTGRES_PASSWORD / MINIO_ROOT_*)
-// now fires inside `validateEnv()` whenever `NODE_ENV=production` is in
+// now fires inside `validateEnvRuntime()` whenever `NODE_ENV=production` is in
 // scope — including these unit tests, which run with the .env-loaded
 // `MINIO_ROOT_USER=minioadmin` already in `process.env`. Clear the
 // dev-cred vars in the production-flavoured cases so the guard does

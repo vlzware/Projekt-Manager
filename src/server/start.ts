@@ -20,7 +20,7 @@ import {
   assertAppServerEnv,
   assertProductionSafe,
   assertStoragePublicEndpointInProduction,
-  validateEnv,
+  validateEnvRuntime,
 } from './config/env.js';
 import { emitFeatureManifest } from './config/features.js';
 import { createDatabase } from './db/connection.js';
@@ -66,12 +66,12 @@ async function validateWorkflowStates(db: ReturnType<typeof createDatabase>['db'
 
 async function start(): Promise<void> {
   // --- Validate environment (fail fast before any I/O) ---
-  // validateEnv() (no-arg) returns the typed Env and folds in
-  // dev-default credential rejection; the cross-field guards below
-  // remain external so start.ts keeps control of their order and the
-  // backup-runner (which shares validateEnv) does not get the
-  // app-server-only narrowing.
-  const env = validateEnv();
+  // validateEnvRuntime() returns the typed Env and folds in dev-default
+  // credential rejection; the cross-field guards below remain external
+  // so start.ts keeps control of their order and the backup-runner
+  // (which shares validateEnvRuntime) does not get the app-server-only
+  // narrowing.
+  const env = validateEnvRuntime();
   const isProduction = env.NODE_ENV === 'production';
 
   // --- Production safety checks ---
@@ -90,8 +90,8 @@ async function start(): Promise<void> {
   // Emit the boot-time feature manifest (AC-230) immediately after env
   // validation — operators see a single structured line listing every
   // optional feature's enabled/disabled state with reason. Order is
-  // significant: the test pins emission AFTER validateEnv() so the
-  // manifest never reports on an unverified env.
+  // significant: the test pins emission AFTER validateEnvRuntime() so
+  // the manifest never reports on an unverified env.
   emitFeatureManifest(env, {
     info: (ctx) => console.log(JSON.stringify(ctx)),
   });

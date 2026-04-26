@@ -31,56 +31,20 @@
  *         failure).
  *       * `&` background-run on the validation step (would race with
  *         the `up` and not gate it).
- *
- * STATUS: Expected to FAIL on iteration/9. The current `validateEnv()`
- * accepts no input and parses `process.env` directly; it surfaces only
- * Zod schema errors and does not fold in the `assertProductionSafe`,
- * `assertStoragePublicEndpointInProduction`, or dev-default checks.
- * `scripts/deploy.sh` does NOT yet invoke `validateEnv` before
- * `docker compose up`.
  */
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
-import * as envModule from '../config/env.js';
+import { validateEnvAggregated } from '../config/env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../..');
 
-/**
- * The aggregated validation surface. The impl phase decides the exact
- * name — the prompt allows either evolving `validateEnv()` to take an
- * input or adding a new wrapper. The test resolves whichever exists,
- * preferring the new wrapper if present.
- *
- * Today the module exports `validateEnv()` (no arg, reads process.env,
- * caches). Neither shape satisfies the contract below; this resolution
- * helper lets the impl pick its name without breaking the assertions.
- */
-function getAggregatedValidator(): (input: Record<string, string | undefined>) => unknown {
-  const m = envModule as unknown as Record<string, unknown>;
-  // Preferred name from the impl plan.
-  if (typeof m.validateEnvAggregated === 'function') {
-    return m.validateEnvAggregated as (input: Record<string, string | undefined>) => unknown;
-  }
-  // Acceptable alternative: validateEnv evolves to accept an optional
-  // env input. We invoke it with the synthetic input directly.
-  if (typeof m.validateEnv === 'function') {
-    const fn = m.validateEnv as (input?: Record<string, string | undefined>) => unknown;
-    if (fn.length >= 1) return fn as (input: Record<string, string | undefined>) => unknown;
-  }
-  throw new Error(
-    'No aggregated validator export found. The impl phase must expose either ' +
-      '`validateEnvAggregated(input)` or extend `validateEnv` to accept input.',
-  );
-}
-
 describe('AC-231: validateEnv aggregates ALL invalid schema fields into one error', () => {
   it('names every invalid key in a single thrown error', () => {
     // Arrange — three independently invalid schema fields.
-    const validate = getAggregatedValidator();
     const input = {
       DATABASE_URL: 'postgres://test',
       // PORT must be a positive integer; "0" violates `.positive()`.
@@ -95,7 +59,7 @@ describe('AC-231: validateEnv aggregates ALL invalid schema fields into one erro
     // Act + Assert — one error mentioning every offending key.
     let captured: unknown = null;
     try {
-      validate(input);
+      validateEnvAggregated(input);
     } catch (err) {
       captured = err;
     }
@@ -110,12 +74,11 @@ describe('AC-231: validateEnv aggregates ALL invalid schema fields into one erro
     // Arrange — DATABASE_URL is the only required-with-no-default field
     // in the schema today. Missing it should produce an error that
     // names it (and any other absent required key the impl phase adds).
-    const validate = getAggregatedValidator();
     const input = {} as Record<string, string | undefined>;
 
     let captured: unknown = null;
     try {
-      validate(input);
+      validateEnvAggregated(input);
     } catch (err) {
       captured = err;
     }
@@ -127,7 +90,6 @@ describe('AC-231: validateEnv aggregates ALL invalid schema fields into one erro
 
 describe('AC-231: validateEnv folds in the production-safety guards in the same pass', () => {
   it('reports ALLOW_INSECURE_HTTP=true under NODE_ENV=production as part of the aggregated error', () => {
-    const validate = getAggregatedValidator();
     const input = {
       NODE_ENV: 'production',
       DATABASE_URL: 'postgres://prod',
@@ -144,7 +106,7 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
 
     let captured: unknown = null;
     try {
-      validate(input);
+      validateEnvAggregated(input);
     } catch (err) {
       captured = err;
     }
@@ -157,7 +119,6 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
   });
 
   it('reports a dev-default POSTGRES_PASSWORD as part of the aggregated error in production', () => {
-    const validate = getAggregatedValidator();
     const input = {
       NODE_ENV: 'production',
       DATABASE_URL: 'postgres://prod',
@@ -172,7 +133,7 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
 
     let captured: unknown = null;
     try {
-      validate(input);
+      validateEnvAggregated(input);
     } catch (err) {
       captured = err;
     }
@@ -182,7 +143,6 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
   });
 
   it('reports a container-only STORAGE_ENDPOINT without STORAGE_PUBLIC_ENDPOINT in production', () => {
-    const validate = getAggregatedValidator();
     const input = {
       NODE_ENV: 'production',
       DATABASE_URL: 'postgres://prod',
@@ -196,7 +156,7 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
 
     let captured: unknown = null;
     try {
-      validate(input);
+      validateEnvAggregated(input);
     } catch (err) {
       captured = err;
     }
@@ -212,7 +172,6 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
     // Arrange — one input tripping all three categories at once. A
     // sequential validator would surface only the first; the aggregated
     // contract requires all three names in the message.
-    const validate = getAggregatedValidator();
     const input = {
       // Schema: PORT zero violates positive().
       PORT: '0',
@@ -231,7 +190,7 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
 
     let captured: unknown = null;
     try {
-      validate(input);
+      validateEnvAggregated(input);
     } catch (err) {
       captured = err;
     }

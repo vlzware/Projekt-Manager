@@ -17,7 +17,7 @@
  *             client banner's "Erneut versuchen" surface).
  *
  * Storage: the test harness points at the real MinIO endpoint
- * (`startApp()` → `validateEnv()`). Direct-storage seeding uses the
+ * (`startApp()` → `validateEnvRuntime()`). Direct-storage seeding uses the
  * pattern in backup.test.ts. MinIO is never mocked (CONTRIBUTING.md
  * §Testing "Integration prerequisites").
  */

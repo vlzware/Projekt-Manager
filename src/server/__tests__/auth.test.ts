@@ -26,7 +26,7 @@ import {
   deactivateUser,
 } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 
 /**
  * Read a single users row directly from the database via a one-shot
@@ -46,7 +46,7 @@ async function readUserAuditRow(userId: string): Promise<{
   updatedBy: string | null;
   updatedAt: Date;
 }> {
-  const env = validateEnv();
+  const env = validateEnvRuntime();
   const client = new pg.Client({ connectionString: env.DATABASE_URL });
   await client.connect();
   try {

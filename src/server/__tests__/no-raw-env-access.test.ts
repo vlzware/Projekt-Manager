@@ -23,7 +23,7 @@
  * STATUS: Passes today. Two of the three pre-existing bypasses moved
  * into the Zod schema — `LOGIN_RATE_LIMIT_MAX` is now a typed schema
  * field consumed via `getEnv()` in `src/server/config/index.ts`, and
- * `start.ts`'s `rejectDevCredentials` was folded into `validateEnv()`
+ * `start.ts`'s `rejectDevCredentials` was folded into `validateEnvRuntime()`
  * as `assertNoDevCredentials`. The third (`src/config/pushDispatch.ts`,
  * `PUSH_DISPATCH_LATENCY_BUDGET_MS`) is allowlisted because the file
  * is in the isomorphic `src/config/` tree which by layering rule must
@@ -89,7 +89,7 @@ const KNOWN_EXCEPTIONS: ReadonlyArray<KnownException> = [
   {
     file: 'src/server/validate-env-cli.ts',
     reason:
-      'Deploy pre-flight CLI: its entire purpose is to validate process.env via the schema loader at deploy time before `docker compose up`. The single `process.env` spread is the input to validateEnv() — the categorical opposite of a bypass. Pre-flight is the consumer the boundary exists to enable.',
+      'Deploy pre-flight CLI: its entire purpose is to validate process.env via the schema loader at deploy time before `docker compose up`. The single `process.env` spread is the input to validateEnvAggregated() — the categorical opposite of a bypass. Pre-flight is the consumer the boundary exists to enable.',
   },
 ];
 

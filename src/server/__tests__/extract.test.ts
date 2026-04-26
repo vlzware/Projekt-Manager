@@ -21,7 +21,7 @@ describe('POST /api/extract', () => {
   beforeAll(async () => {
     // The ExtractionService requires OPENROUTER_API_KEY to be set (it throws
     // a validation error otherwise). Set a test value BEFORE startApp so
-    // validateEnv picks it up. Tests that reach the upstream mock fetch.
+    // validateEnvRuntime picks it up. Tests that reach the upstream mock fetch.
     process.env.OPENROUTER_API_KEY = 'test-key-for-integration';
     await startApp();
     ownerToken = await login('inhaber', 'changeme');

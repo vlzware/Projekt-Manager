@@ -13,7 +13,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import pg from 'pg';
 import { startApp, stopApp, getApp, login, authPost } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 
 /**
  * Read a single users row directly from the database via a one-shot
@@ -32,7 +32,7 @@ async function readUserAuditRowByUsername(username: string): Promise<{
   updatedBy: string | null;
   updatedAt: Date;
 }> {
-  const env = validateEnv();
+  const env = validateEnvRuntime();
   const client = new pg.Client({ connectionString: env.DATABASE_URL });
   await client.connect();
   try {
@@ -69,7 +69,7 @@ async function readUserAuditRowById(id: string): Promise<{
   updatedBy: string | null;
   updatedAt: Date;
 }> {
-  const env = validateEnv();
+  const env = validateEnvRuntime();
   const client = new pg.Client({ connectionString: env.DATABASE_URL });
   await client.connect();
   try {

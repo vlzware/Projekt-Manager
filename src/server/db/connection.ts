@@ -7,7 +7,7 @@
 
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 import * as schema from './schema.js';
 
 const { Pool } = pg;
@@ -54,13 +54,13 @@ export function createDatabase(opts: ConnectionOptions = {}): {
 } {
   // Route env reads through the validated loader so there is a single
   // source of truth for NODE_ENV and friends (consolidation review C-3 /
-  // ADR-0013). validateEnv() re-parses process.env on every call (the
-  // earlier singleton cache was dropped to keep test fixtures truthful);
-  // calling it defensively here is cheap and matches whatever start.ts
-  // saw. Integration tests that call createDatabase() directly
+  // ADR-0013). validateEnvRuntime() re-parses process.env on every call
+  // (the earlier singleton cache was dropped to keep test fixtures
+  // truthful); calling it defensively here is cheap and matches whatever
+  // start.ts saw. Integration tests that call createDatabase() directly
   // (db-constraints, bootstrap, rate-limit) rely on this defensive call
   // because they do not go through start.ts.
-  const env = validateEnv();
+  const env = validateEnvRuntime();
   const connectionString = opts.connectionString ?? env.DATABASE_URL;
 
   const pool = new Pool({ connectionString });

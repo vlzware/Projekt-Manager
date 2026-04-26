@@ -2,21 +2,25 @@
  * Environment variable validation.
  * Fails fast at startup if required variables are missing or malformed.
  *
- * Two entry points (issue #139):
- *   - `validateEnv()` (no arg) — singleton path; reads `process.env`,
- *     re-parses on every call. Production callers (start.ts,
- *     backup-runner.ts, db/connection.ts, api-helpers.ts) use this form.
+ * Two entry points (issue #139, split per #143 follow-up A-1):
+ *   - `validateEnvRuntime()` — boot path; reads `process.env`, re-parses
+ *     on every call. Used by start.ts, backup-runner.ts, db/connection.ts,
+ *     api-helpers.ts. Runs the schema + the dev-default credential guard.
+ *     The other safety guards (`assertProductionSafe`,
+ *     `assertAppServerEnv`, `assertStoragePublicEndpointInProduction`)
+ *     stay external so each entry point keeps control of their order
+ *     and the backup-runner does not get the app-server-only narrowing.
  *     The cache that previously memoised the first parse was removed
  *     because `getRateLimit()` and other call-time consumers must reflect
  *     env mutations performed during a process's lifetime (notably
  *     vitest tests that mutate `process.env.NODE_ENV` between cases).
- *     `validateEnv()` is cheap; the perf cost of re-parsing is irrelevant
- *     against the staleness footgun the cache introduced.
- *   - `validateEnv(input)` — pure function over the supplied record.
- *     Aggregates every offence (Zod schema issues + cross-field guards
- *     + dev-default credentials) into ONE thrown error so an operator
+ *     Re-parsing is cheap; the perf cost is irrelevant against the
+ *     staleness footgun the cache introduced.
+ *   - `validateEnvAggregated(input)` — pure function over the supplied
+ *     record. Runs the schema AND every cross-field guard in one pass,
+ *     aggregating every offence into ONE thrown error so an operator
  *     sees every fault in a single failed deploy, not one-per-reboot.
- *     Used by tests; production code paths use the no-arg form.
+ *     Used by the deploy pre-flight CLI and by tests.
  */
 import { z } from 'zod';
 
@@ -36,7 +40,7 @@ export const envSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   // STORAGE_* is the app server's MinIO surface (attachments). The backup
   // service (ADR-0020) doesn't touch it — it uses R2_* instead. Optional
-  // here so the shared validateEnv() call in backup-runner.ts doesn't
+  // here so the shared validateEnvRuntime() call in backup-runner.ts doesn't
   // reject for vars the backup path never reads; `assertAppServerEnv()`
   // below (called only from start.ts) enforces presence for the app path.
   STORAGE_ENDPOINT: z.string().optional(),
@@ -207,46 +211,46 @@ export function assertNoDevCredentials(
 }
 
 /**
- * Parse and validate environment variables.
- *
- * No arg → singleton-style path: parses `process.env`, returns the typed
- * `Env`. The aggregated guards (assertNoDevCredentials) ALSO run here so
- * a forgotten dev-default credential trips at boot regardless of which
- * binary started — start.ts and backup-runner.ts share this one check.
- * The other guards (`assertProductionSafe`, `assertAppServerEnv`,
- * `assertStoragePublicEndpointInProduction`) stay external so start.ts
- * keeps control of the order and so the app-server-only narrowing
+ * Boot path. Parses `process.env`, returns the typed `Env`. Runs the
+ * schema + `assertNoDevCredentials` so a forgotten dev-default credential
+ * trips at boot regardless of which binary started — start.ts and
+ * backup-runner.ts share this one check. The other cross-field guards
+ * (`assertProductionSafe`, `assertAppServerEnv`,
+ * `assertStoragePublicEndpointInProduction`) stay external so the caller
+ * keeps control of their order and so the app-server-only narrowing
  * (`assertAppServerEnv`) doesn't reject the backup-runner path.
- *
- * Arg supplied → pure aggregating validation: schema + every cross-field
- * guard runs in one pass; ALL offences are reported in a single thrown
- * Error. Used by tests; the operator-facing surface that catches every
- * misconfiguration in one deploy iteration (issue #139).
  */
-export function validateEnv(input?: Record<string, string | undefined>): Env {
-  if (input !== undefined) {
-    return parseAndAggregate(input, { runAllGuards: true });
-  }
+export function validateEnvRuntime(): Env {
   return parseAndAggregate(process.env, { runAllGuards: false });
+}
+
+/**
+ * Pre-flight / test path. Pure function over the supplied record. Runs
+ * the schema AND every cross-field guard in one pass; all offences are
+ * aggregated into a single thrown Error so a misconfigured deploy
+ * iterates once, not N times (issue #139, AC-231).
+ */
+export function validateEnvAggregated(input: Record<string, string | undefined>): Env {
+  return parseAndAggregate(input, { runAllGuards: true });
 }
 
 /**
  * Access the validated env. Re-parses `process.env` on every call (see
  * file header for rationale). Throws if validation fails — same surface
- * as `validateEnv()` with no arg.
+ * as `validateEnvRuntime()`.
  */
 export function getEnv(): Env {
-  return validateEnv();
+  return validateEnvRuntime();
 }
 
 /**
  * Run the schema and (optionally) every cross-field guard, accumulating
  * issues into a single thrown error. The `runAllGuards` switch controls
  * whether the cross-field guards (assertProductionSafe and friends) run
- * in this pass: tests pass `true` to surface every offence at once;
- * start.ts's no-arg path passes `false` because start.ts calls those
- * guards itself with the typed `Env` afterwards (this avoids
- * double-running them and preserves the historical wiring).
+ * in this pass: `validateEnvAggregated` passes `true` to surface every
+ * offence at once; `validateEnvRuntime` passes `false` because start.ts
+ * calls those guards itself with the typed `Env` afterwards (this
+ * avoids double-running them and preserves the historical wiring).
  *
  * `assertNoDevCredentials` runs in BOTH paths because rejecting dev
  * defaults is the only guard that depends on the raw input map (the
@@ -313,7 +317,7 @@ function appServerMissingMsg(missing: ReadonlyArray<string>): string {
   return (
     `App server requires these env vars: ${missing.join(', ')}. ` +
     'They are optional in the shared schema so the backup-runner CLI ' +
-    'can share validateEnv(), but the app server cannot start without them.'
+    'can share validateEnvRuntime(), but the app server cannot start without them.'
   );
 }
 
@@ -369,7 +373,7 @@ function aggregateStoragePublicEndpointInProduction(
 
 /**
  * Assert startup safety invariants that depend on NODE_ENV. Called from
- * start.ts right after validateEnv(). Extracted so a unit test can exercise
+ * start.ts right after validateEnvRuntime(). Extracted so a unit test can exercise
  * the exact guard that ships, without spawning the server.
  *
  * Currently enforces: in production, ALLOW_INSECURE_HTTP must not be 'true'.
@@ -438,7 +442,7 @@ export type AppServerEnv = Env & {
 /**
  * App-server-only presence check for the MinIO-backed attachment storage
  * config. The shared schema keeps these optional so the backup-runner CLI
- * (which doesn't use MinIO) can pass validateEnv(); this guard restores
+ * (which doesn't use MinIO) can pass validateEnvRuntime(); this guard restores
  * the fail-fast semantic for the app server and narrows the type so the
  * downstream calls in start.ts don't need `!` non-null assertions.
  */

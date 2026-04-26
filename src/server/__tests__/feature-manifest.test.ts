@@ -454,10 +454,14 @@ describe('AC-230: start.ts wires emitFeatureManifest into the boot path', () => 
     // A regression where the manifest emission lands before env
     // validation would log a manifest derived from an unverified env —
     // misleading state on the same event the manifest is meant to
-    // surface. Pin the order at the source level.
-    const validateMatch = stripped.search(/\bvalidateEnv\s*\(/);
+    // surface. Pin the order at the source level. Tolerates either
+    // validator entry point — the boot path uses `validateEnvRuntime()`,
+    // but a future refactor that points start.ts at a different
+    // validator should still satisfy the order pin as long as some
+    // `validateEnv*(` call precedes the emit.
+    const validateMatch = stripped.search(/\bvalidateEnv\w*\s*\(/);
     const emitMatch = stripped.search(/\bemitFeatureManifest\s*\(/);
-    expect(validateMatch, 'validateEnv() call not found in start.ts').toBeGreaterThanOrEqual(0);
+    expect(validateMatch, 'validateEnv*() call not found in start.ts').toBeGreaterThanOrEqual(0);
     expect(emitMatch, 'emitFeatureManifest() call not found in start.ts').toBeGreaterThanOrEqual(0);
     expect(emitMatch).toBeGreaterThan(validateMatch);
   });

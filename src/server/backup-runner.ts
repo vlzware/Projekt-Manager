@@ -18,7 +18,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { validateEnv, type Env } from './config/env.js';
+import { validateEnvRuntime, type Env } from './config/env.js';
 import { createDatabase, type Database } from './db/connection.js';
 import {
   runBackup,
@@ -53,7 +53,7 @@ async function main(): Promise<number> {
 
   // Env validation — reuses the app's schema. The backup-specific keys
   // are declared there with the right defaults (AGE_IDENTITY_PATH etc.).
-  const env = validateEnv();
+  const env = validateEnvRuntime();
 
   if (subcommand === 'run') {
     return runSubcommand(env);

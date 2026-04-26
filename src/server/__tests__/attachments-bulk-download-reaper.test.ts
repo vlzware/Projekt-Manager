@@ -44,7 +44,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { createStorageClient } from '../storage/client.js';
 import type { AttachmentStorageClient, StorageClient } from '../storage/client.js';
-import { getEnv, validateEnv } from '../config/env.js';
+import { getEnv, validateEnvRuntime } from '../config/env.js';
 import {
   EVENT_BULK_DOWNLOAD_REAPER,
   runBulkDownloadReaper,
@@ -92,7 +92,7 @@ describe('Bulk-download temp-zip reaper', () => {
   let storage: AttachmentStorageClient;
 
   beforeAll(() => {
-    validateEnv();
+    validateEnvRuntime();
     const env = getEnv();
     storage = createStorageClient({
       endpoint: env.STORAGE_ENDPOINT!,

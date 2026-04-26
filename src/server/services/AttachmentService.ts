@@ -92,7 +92,7 @@ interface ResolvedCaps {
 }
 
 function resolveCaps(): ResolvedCaps {
-  // `validateEnv` has already run by the time a route handler reaches
+  // `validateEnvRuntime` has already run by the time a route handler reaches
   // the service; reading through `getEnv` keeps the config override
   // path consistent with the other `[C]` surfaces (auditRetention etc.).
   let env: ReturnType<typeof getEnv> | null = null;
@@ -101,7 +101,7 @@ function resolveCaps(): ResolvedCaps {
   } catch {
     // Tests that construct a service outside of startApp() fall through
     // to the build-time defaults. Production paths always call
-    // `validateEnv()` before the first request.
+    // `validateEnvRuntime()` before the first request.
     env = null;
   }
   return {
