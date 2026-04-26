@@ -320,6 +320,13 @@ Criteria for per-project file attachments ([data-model.md §5.13](data-model.md#
 - **AC-226** `[vis]`: The label selector on every upload and on every per-attachment control is a dropdown over the closed enum from [data-model.md §5.13](data-model.md#513-attachment); free-text entry is not accepted. German display labels are applied via configuration **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)).
 - **AC-227** `[crit]`: A bulk-download zip staged under the `bulk-downloads/` object-storage prefix is removed by the scheduled bulk-download reaper ([data-model.md §6.12](data-model.md#612-bulk-download-zip-reaper)) once its age exceeds the configured bulk-zip TTL **[C]** ([architecture.md §12.2](architecture.md#122-company-configurable-settings)). Each run emits exactly one structured operational log line at `info` level with fields `event = 'bulk-download-reaper'`, `ttl_minutes`, `removed_count` (non-negative, `0` on a no-op run), and `ran_at` (ISO 8601). The run does not produce an `audit_log` row (no DB row participates). An in-flight sweep is drained on graceful shutdown.
 
+### 15.27 Configuration and Feature Manifest
+
+- **AC-228** `[infra]`: Application code reads configuration values only through the configuration boundary's loader ([architecture.md §12.6](architecture.md#126-feature-manifest-and-operator-confidence)). Direct reads from the process environment outside the loader are rejected by a CI repo scan; each documented allowlist entry carries an inline reason.
+- **AC-229** `[infra]`: The configuration schema's keyspace and the operator-facing example documentation are kept in sync. CI fails when a schema field is missing from the example documentation, or vice versa, naming every divergent key. Documented exclusions for infrastructure-only variables (consumed by container orchestration, not application code) are listed in the check itself.
+- **AC-230** `[crit]`: Each application start emits exactly one structured log line at `info` level with `event = 'config-feature-manifest'` enumerating every feature in the declared catalog ([architecture.md §12.6](architecture.md#126-feature-manifest-and-operator-confidence)) with `state ∈ {enabled, disabled}` and a non-empty `reason` naming the missing required value(s) when `disabled`. Each feature's state is computed from the same catalog entry that gates its runtime activation — the manifest cannot report a state that contradicts the wiring.
+- **AC-231** `[infra]`: The deploy script validates the loaded configuration against the schema before bringing containers up. A validation failure aborts with a non-zero exit code and a message naming every offending key; no containers are recreated.
+
 ---
 
 ## 16. Test Specification
