@@ -319,6 +319,15 @@ export class AttachmentService {
       throw notPermitted();
     }
 
+    // Race guard: a project archived between init and complete must not
+    // produce a `ready` row. initUpload blocks archived rows up front,
+    // but the storage round-trip leaves a window where archive can land
+    // before the flip. The pending row stays for the reaper.
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow || projectRow.deleted) {
+      throw notFound(STRINGS.entities.project);
+    }
+
     const row = await getById(this.db, attachmentId);
     if (!row || row.projectId !== projectId) {
       // Reaper already removed the row (or wrong-project mismatch). AC-212
@@ -420,6 +429,16 @@ export class AttachmentService {
       throw notPermitted();
     }
 
+    // Archived projects are read-only previews — server-side defence
+    // matching the project-mutation gate (AC-95). The detail-page UI
+    // already hides the delete affordance, but a direct API call must
+    // not slip through. 404 mirrors the project-mutation contract: the
+    // attachment "is gone" from the perspective of editable surfaces.
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow || projectRow.deleted) {
+      throw notFound(STRINGS.entities.project);
+    }
+
     const row = await getById(this.db, attachmentId);
     if (!row || row.projectId !== projectId) {
       throw notFound(STRINGS.entities.resource);
@@ -478,9 +497,12 @@ export class AttachmentService {
   async listForProject(caller: AuthUser, projectId: string): Promise<Attachment[]> {
     // 404 / 403 order mirrors the project-detail policy (AC-147) —
     // a missing project is 404, an existing project out-of-scope is 403.
+    // Archived projects ARE listed: the detail page renders them as a
+    // read-only preview (api.md §14.2.2), so the attachment listing has
+    // to surface alongside the rest of the body. Mutation paths
+    // (initUpload, deleteAttachment) keep the archived gate.
     const projectRow = await getProjectRowById(this.db, projectId);
     if (!projectRow) throw notFound(STRINGS.entities.project);
-    if (projectRow.deleted) throw notFound(STRINGS.entities.project);
     if (!(await isProjectInScope(this.db, caller, projectId))) {
       throw notPermitted();
     }

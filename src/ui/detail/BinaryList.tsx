@@ -27,6 +27,8 @@ function isPdf(row: { fileName: string; mimeType?: string | null }): boolean {
 
 interface BinaryListProps {
   projectId: string;
+  /** Archived project — suppresses per-row delete controls. */
+  archived?: boolean;
 }
 
 const LABEL_BY_VALUE = new Map<AttachmentLabel, string>(
@@ -48,7 +50,7 @@ function triggerDownload(url: string, filename: string): void {
   anchor.remove();
 }
 
-export function BinaryList({ projectId }: BinaryListProps) {
+export function BinaryList({ projectId, archived = false }: BinaryListProps) {
   // Select the raw per-project slice then filter in useMemo so the
   // selector output is referentially stable across renders.
   const rows = useAttachmentStore((s) => s.byProject[projectId]);
@@ -254,6 +256,7 @@ export function BinaryList({ projectId }: BinaryListProps) {
                   const uploader = bin.createdBy?.displayName ?? null;
                   const canDelete =
                     authUser !== null &&
+                    !archived &&
                     canDeleteAttachment(
                       bin,
                       authUser,

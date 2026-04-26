@@ -447,6 +447,57 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(res.statusCode).toBe(404);
       expect(res.json().code).toBe('NOT_FOUND');
     });
+
+    it('returns 404 NOT_FOUND when the project is archived between init and complete', async () => {
+      // Race window: init lands on an active project, the project is
+      // archived while the bytes upload, then complete tries to flip
+      // pending → ready. AC-95 says mutations on archived rows must
+      // not stick — without the archive guard in completeUpload, a
+      // racing client could land a `ready` attachment on a frozen
+      // project. The pending row remains for the reaper.
+      //
+      // The fixture archives the project, so it must be a fresh one —
+      // archiving the shared `projectId` would poison every other arm.
+      const customersRes = await authGet(ownerToken, '/api/customers');
+      const customers = customersRes.json().customers ?? customersRes.json().data;
+      const customerId = customers[0].id;
+      const createRes = await authPost(ownerToken, '/api/projects', {
+        number: `${year}-CMP-ARCH`,
+        title: 'Archive-during-upload race',
+        customerId,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const raceProjectId = createRes.json().id;
+
+      const initRes = await authPost(
+        ownerToken,
+        `/api/projects/${raceProjectId}/attachments/init`,
+        photoInit(raceProjectId),
+      );
+      expect(initRes.statusCode).toBe(201);
+      const body = initRes.json();
+      const attId = body.attachment.id;
+
+      // Bytes land in storage (HEAD would otherwise miss and surface 409).
+      const s = storage();
+      await s.upload(body.attachment.originalKey, Buffer.alloc(120_000, 0xff), 'image/jpeg');
+      await s.upload(body.attachment.thumbKey, Buffer.from('webp-thumb'), 'image/webp');
+
+      // Archive lands between init and complete.
+      const archiveRes = await authDelete(ownerToken, `/api/projects/${raceProjectId}`);
+      expect(archiveRes.statusCode).toBe(200);
+
+      const completeRes = await authPost(
+        ownerToken,
+        `/api/projects/${raceProjectId}/attachments/${attId}/complete`,
+      );
+      expect(completeRes.statusCode).toBe(404);
+      expect(completeRes.json().code).toBe('NOT_FOUND');
+
+      // The pending row must survive — the reaper is the sole remover.
+      const status = await fetchAttachmentStatus(attId);
+      expect(status).toBe('pending');
+    });
   });
 
   // -------------------------------------------------------------------

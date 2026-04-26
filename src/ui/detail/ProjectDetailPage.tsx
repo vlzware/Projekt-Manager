@@ -141,15 +141,6 @@ export function ProjectDetailPage() {
     );
   }
 
-  if (state.kind === 'archived') {
-    return (
-      <article className={styles.notFound} data-testid="project-detail-archived">
-        <h1>{STRINGS.attachments.archivedHeading}</h1>
-        <p>{STRINGS.attachments.archivedBody}</p>
-      </article>
-    );
-  }
-
   if (state.kind === 'error' && !project) {
     return <div className={styles.errorBanner}>{state.message}</div>;
   }
@@ -157,6 +148,14 @@ export function ProjectDetailPage() {
   if (!project) {
     return <div className={styles.loading}>{STRINGS.ui.loading}</div>;
   }
+
+  // Archived projects are returned by GET as a regular 200 with
+  // `deleted: true`. The page renders them in preview mode: every
+  // editable surface is forced read-only and mutation affordances
+  // collapse to the purge action. AC-95 immutability is enforced
+  // server-side regardless, but suppressing the controls keeps the
+  // user from staring at a button that always 404s.
+  const isArchived = project.deleted;
 
   const config = STATE_CONFIG_MAP[project.status];
   const customer = project.customer;
@@ -219,7 +218,7 @@ export function ProjectDetailPage() {
             <div className={styles.projectNumber}>{project.number}</div>
             <InlineTitle
               value={project.title}
-              readOnly={!canUpdate}
+              readOnly={!canUpdate || isArchived}
               onCommit={(next) => void updateProject(project.id, { title: next })}
             />
             <span
@@ -229,7 +228,7 @@ export function ProjectDetailPage() {
             >
               {config?.label ?? project.status}
             </span>
-            {project.deleted && (
+            {isArchived && (
               <span className={styles.archivedBadge} data-testid="project-archived-badge">
                 {STRINGS.projects.archivedBadge}
               </span>
@@ -247,7 +246,7 @@ export function ProjectDetailPage() {
             >
               {STRINGS.attachments.downloadAll}
             </button>
-            {canDelete && !project.deleted && (
+            {canDelete && !isArchived && (
               <button
                 type="button"
                 className={styles.archiveButton}
@@ -257,7 +256,7 @@ export function ProjectDetailPage() {
                 {STRINGS.projects.archive}
               </button>
             )}
-            {canPurge && project.deleted && (
+            {canPurge && isArchived && (
               <button
                 type="button"
                 className={styles.purgeButton}
@@ -269,13 +268,22 @@ export function ProjectDetailPage() {
             )}
           </div>
         </div>
+        {isArchived && (
+          <div
+            className={styles.archivedNotice}
+            role="status"
+            data-testid="project-detail-archived-notice"
+          >
+            {STRINGS.attachments.archivedReadOnlyNotice}
+          </div>
+        )}
       </header>
 
       {/* Floating camera-capture button — fixed top-right of the page.
           Only mounts when the user can upload; the UploadCta's own
           Foto-aufnehmen control has moved here so a worker standing on
           a roof doesn't hunt for it in the form layout. */}
-      {canWrite && (
+      {canWrite && !isArchived && (
         <label className={styles.cameraFab} data-testid="detail-camera-capture">
           <input
             type="file"
@@ -372,7 +380,7 @@ export function ProjectDetailPage() {
           )}
           <div className={styles.coreField}>
             <span className={styles.coreLabel}>{STRINGS.ui.dateStart}</span>
-            {canUpdateDates ? (
+            {canUpdateDates && !isArchived ? (
               <DateField
                 initial={project.plannedStart}
                 otherDate={project.plannedEnd}
@@ -394,7 +402,7 @@ export function ProjectDetailPage() {
           </div>
           <div className={styles.coreField}>
             <span className={styles.coreLabel}>{STRINGS.ui.dateEnd}</span>
-            {canUpdateDates ? (
+            {canUpdateDates && !isArchived ? (
               <DateField
                 initial={project.plannedEnd}
                 otherDate={project.plannedStart}
@@ -414,7 +422,7 @@ export function ProjectDetailPage() {
             <span className={styles.coreLabel}>{STRINGS.ui.estimatedValue}</span>
             <InlineNumberField
               initial={project.estimatedValue}
-              readOnly={!canUpdate}
+              readOnly={!canUpdate || isArchived}
               testId="project-value-edit"
               onCommit={(value) => void updateProject(project.id, { estimatedValue: value })}
             />
@@ -423,7 +431,7 @@ export function ProjectDetailPage() {
             <span className={styles.coreLabel}>{STRINGS.ui.notes}</span>
             <InlineTextareaField
               initial={project.notes}
-              readOnly={!canUpdate}
+              readOnly={!canUpdate || isArchived}
               testId="project-notes-input"
               onCommit={(notes) => void updateProject(project.id, { notes })}
             />
@@ -431,13 +439,13 @@ export function ProjectDetailPage() {
         </div>
       </section>
 
-      <AssignedWorkerEditor projectId={project.id} />
+      <AssignedWorkerEditor projectId={project.id} archived={isArchived} />
 
-      {canWrite && <UploadCta projectId={project.id} />}
+      {canWrite && !isArchived && <UploadCta projectId={project.id} />}
 
-      <PhotoGallery projectId={project.id} />
+      <PhotoGallery projectId={project.id} archived={isArchived} />
 
-      <BinaryList projectId={project.id} />
+      <BinaryList projectId={project.id} archived={isArchived} />
 
       <section
         aria-label={STRINGS.attachments.activity}
