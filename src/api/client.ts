@@ -324,6 +324,15 @@ export const projectApi = {
    */
   purge: (id: string) => apiCall<null>(`/api/projects/${id}/purge`, { method: 'DELETE' }),
 
+  /**
+   * Inverse of delete — flips deleted=true back to false on an archived
+   * project. 200 with the now-active project body. An already-active
+   * target returns 409 CONFLICT; a non-existent target returns 404.
+   * Requires `project:delete` (symmetric — same role can archive and
+   * restore). See ADR-0017.
+   */
+  restore: (id: string) => apiCall<Project>(`/api/projects/${id}/restore`, { method: 'POST' }),
+
   transitionForward: (id: string, expectedStatus: WorkflowState) =>
     apiCall<Project>(`/api/projects/${id}/transition/forward`, {
       method: 'POST',

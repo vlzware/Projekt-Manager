@@ -91,6 +91,7 @@ export function ProjectDetailPage() {
   const updateProject = useProjectManagementStore((s) => s.updateProject);
   const deleteProject = useProjectManagementStore((s) => s.deleteProject);
   const purgeProject = useProjectManagementStore((s) => s.purgeProject);
+  const restoreProject = useProjectManagementStore((s) => s.restoreProject);
   const requestConfirm = useConfirmStore((s) => s.request);
 
   const requestBulkDownloadUrl = useAttachmentStore((s) => s.requestBulkDownloadUrl);
@@ -184,6 +185,17 @@ export function ProjectDetailPage() {
     if (ok) navigate('/projects');
   };
 
+  const handleRestore = async () => {
+    const confirmed = await requestConfirm(
+      STRINGS.projects.restoreConfirm(`${project.number} — ${project.title}`),
+    );
+    if (!confirmed) return;
+    // Stay on the page on success — the store flips deleted → false on
+    // the cached project, the read-only banner disappears, and editable
+    // surfaces re-enable in place. No navigation needed.
+    await restoreProject(project.id);
+  };
+
   const handleDownloadAll = async () => {
     const rows = (attachmentsByProject ?? []).filter((a) => a.status === 'ready');
     if (rows.length === 0) return;
@@ -254,6 +266,16 @@ export function ProjectDetailPage() {
                 data-testid="project-detail-archive"
               >
                 {STRINGS.projects.archive}
+              </button>
+            )}
+            {canDelete && isArchived && (
+              <button
+                type="button"
+                className={styles.restoreButton}
+                onClick={() => void handleRestore()}
+                data-testid="project-detail-restore"
+              >
+                {STRINGS.projects.restore}
               </button>
             )}
             {canPurge && isArchived && (

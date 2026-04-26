@@ -18,13 +18,13 @@ Lifecycle: active → terminal (`erledigt`) → archived (off-board, queryable) 
 
 ## Decision
 
-Soft-delete means **"archive from board"** — reversible in principle, no immutability guarantee, not an audit trail. Three destructive paths, each with an explicit scope.
+Soft-delete means **"archive from board"** — reversible in principle, no immutability guarantee, not an audit trail. Three destructive paths plus one recovery path, each with an explicit scope.
 
-### 1. Archive (soft-delete)
+### 1. Archive (soft-delete) and Restore
 
 Default "delete project" action. Sets `projects.deleted = true`, removing the project from active views (Kanban, default lists, exports). The management view exposes `Archivierte einblenden` to re-include archived rows. Archived projects stay tied to their customer.
 
-Intentionally **no UI action to unarchive.** Restoration adds complexity without a real-world driver; the archive is a one-way move at the UI layer. The flag is reversible in the database, but that path is not exposed to end users.
+The inverse — **Restore** — is exposed via `POST /api/projects/:id/restore` and a `Wiederherstellen` button on the read-only archived-project preview. Restore flips `deleted` back to `false` and returns the now-active project. It reuses `project:delete` so the same role that archived can recover from a fat-finger; the original draft of this ADR forbade the affordance ("no real-world driver"), but introducing the read-only preview surface gave the driver a concrete shape: a user landing on an archived project naturally wants the inverse of the action that put it there.
 
 ### 2. Customer deletion cascade
 

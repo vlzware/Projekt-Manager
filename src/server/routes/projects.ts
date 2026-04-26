@@ -385,5 +385,39 @@ export function projectRoutes(db: Database) {
         return reply.code(204).send();
       },
     );
+
+    // ---------------------------------------------------------------
+    // POST /api/projects/:id/restore — undo archive
+    //
+    // Symmetric to DELETE /api/projects/:id (archive). Reuses the
+    // `project:delete` permission so the same role that archived can
+    // recover from a fat-finger; ADR-0017 was updated to expose this
+    // affordance after the read-only-preview surface gave it a UI home.
+    // Precondition: the project must currently be archived; an active
+    // target returns 409 CONFLICT.
+    // ---------------------------------------------------------------
+    app.post(
+      '/api/projects/:id/restore',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', format: 'uuid' } },
+          },
+        },
+        preHandler: requirePermission('project:delete'),
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const project = await crudService.restoreProject(
+          id,
+          request.user!.id,
+          request.log,
+          request.id ?? null,
+        );
+        return reply.code(200).send(project);
+      },
+    );
   };
 }

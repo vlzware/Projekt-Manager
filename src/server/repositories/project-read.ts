@@ -44,6 +44,19 @@ export class ProjectNotArchivedError extends Error {
   }
 }
 
+/**
+ * Thrown when a restore targets a project that is already active.
+ * Symmetric to ProjectNotArchivedError but for the inverse precondition;
+ * kept as its own type so the service can map it to a restore-specific
+ * 409 message instead of the purge-flavoured one.
+ */
+export class ProjectNotArchivedForRestoreError extends Error {
+  constructor() {
+    super(STRINGS.projects.restoreRequiresArchive);
+    this.name = 'ProjectNotArchivedForRestoreError';
+  }
+}
+
 /** Shape of the nested customer in the API response. */
 function toCustomer(row: CustomerRow) {
   return {
@@ -516,6 +529,38 @@ export async function softDeleteProject(
     .returning({ id: projects.id });
 
   if (rows.length === 0) throw new ProjectNotFoundError();
+}
+
+/**
+ * Restore a soft-deleted project (flip deleted = true → false).
+ *
+ * Three outcomes mirror `hardDeleteProject`:
+ *   - Row missing              → ProjectNotFoundError
+ *   - Row already active       → ProjectNotArchivedForRestoreError (409)
+ *   - Row archived             → flipped to active; resolves
+ *
+ * Two-step fetch-then-update for the same reason as the purge path:
+ * a single conditional UPDATE would collapse the not-found and
+ * already-active cases into one zero-rows signal, and the service
+ * must distinguish them at the HTTP layer.
+ */
+export async function restoreProject(
+  db: MutatingDatabase,
+  id: string,
+  userId: string,
+): Promise<ProjectRow> {
+  const existing = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+
+  if (existing.length === 0) throw new ProjectNotFoundError();
+  if (!existing[0]!.deleted) throw new ProjectNotArchivedForRestoreError();
+
+  const rows = await db
+    .update(projects)
+    .set({ deleted: false, updatedAt: new Date(), updatedBy: userId })
+    .where(eq(projects.id, id))
+    .returning();
+
+  return rows[0]!;
 }
 
 /**
