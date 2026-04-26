@@ -86,6 +86,11 @@ const KNOWN_EXCEPTIONS: ReadonlyArray<KnownException> = [
     reason:
       "Build-time-default-with-env-override module under src/config/, which by layering rule must not import from src/server/. Routing this through getEnv() would force src/config/ to depend on the server's Zod loader. Same exception class as src/config/routes.ts above; the override stays a thin parseInt wrapper with the schema-style empty-string handling.",
   },
+  {
+    file: 'src/server/validate-env-cli.ts',
+    reason:
+      'Deploy pre-flight CLI: its entire purpose is to validate process.env via the schema loader at deploy time before `docker compose up`. The single `process.env` spread is the input to validateEnv() — the categorical opposite of a bypass. Pre-flight is the consumer the boundary exists to enable.',
+  },
 ];
 
 // ---------------------------------------------------------------------
