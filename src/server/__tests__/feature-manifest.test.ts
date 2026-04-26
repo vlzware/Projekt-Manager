@@ -64,6 +64,7 @@ import type { Env } from '../config/env.js';
 async function loadFeaturesModule(): Promise<{
   featureStatus: (env: Env, feature: FeatureName) => FeatureStatus;
   emitFeatureManifest: (env: Env, logger: ManifestLogger) => void;
+  formatFeatureManifest: (env: Env) => string;
   FEATURES: readonly FeatureName[];
 }> {
   // The module now exists (impl phase landed in #139). The
@@ -75,6 +76,7 @@ async function loadFeaturesModule(): Promise<{
   return (await import('../config/features.js')) as unknown as {
     featureStatus: (env: Env, feature: FeatureName) => FeatureStatus;
     emitFeatureManifest: (env: Env, logger: ManifestLogger) => void;
+    formatFeatureManifest: (env: Env) => string;
     FEATURES: readonly FeatureName[];
   };
 }
@@ -409,6 +411,90 @@ describe('AC-230: emitFeatureManifest emits exactly one structured info line', (
         // matching featureStatus's reason.
         expect(reported.state).toBe('disabled');
         expect(reported.reason).toBe(status.reason);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
+// `formatFeatureManifest()` — the human-readable variant for the deploy
+// pre-flight CLI. Same source data as `emitFeatureManifest`, formatted
+// for an operator's terminal instead of a log shipper.
+// ---------------------------------------------------------------------
+
+describe('formatFeatureManifest produces aligned operator-readable output', () => {
+  it('returns one line per feature plus a header', async () => {
+    const { formatFeatureManifest, FEATURES } = await loadFeaturesModule();
+    const env = makeEnv();
+    const lines = formatFeatureManifest(env).split('\n');
+    // Header + one line per catalog feature.
+    expect(lines.length).toBe(FEATURES.length + 1);
+  });
+
+  it('lists every feature in catalog order', async () => {
+    const { formatFeatureManifest, FEATURES } = await loadFeaturesModule();
+    const env = makeEnv();
+    const lines = formatFeatureManifest(env).split('\n').slice(1);
+    for (let i = 0; i < FEATURES.length; i++) {
+      expect(lines[i]).toContain(FEATURES[i]!);
+    }
+  });
+
+  it('marks an enabled feature with `enabled` and no dash-reason', async () => {
+    const { formatFeatureManifest } = await loadFeaturesModule();
+    const env = makeEnv({ OPENROUTER_API_KEY: 'sk-test' });
+    const llmLine = formatFeatureManifest(env)
+      .split('\n')
+      .find((l) => l.includes('llm'));
+    expect(llmLine).toBeDefined();
+    expect(llmLine).toMatch(/\bllm\b\s+enabled\s*$/);
+    expect(llmLine).not.toContain('—');
+  });
+
+  it('marks a disabled feature with `disabled — <reason>`', async () => {
+    const { formatFeatureManifest } = await loadFeaturesModule();
+    const env = makeEnv({ OPENROUTER_API_KEY: undefined });
+    const llmLine = formatFeatureManifest(env)
+      .split('\n')
+      .find((l) => l.includes('llm'));
+    expect(llmLine).toBeDefined();
+    expect(llmLine).toContain('disabled');
+    expect(llmLine).toContain('— OPENROUTER_API_KEY is not set');
+  });
+
+  it('aligns feature names so state columns line up', async () => {
+    const { formatFeatureManifest, FEATURES } = await loadFeaturesModule();
+    const env = makeEnv();
+    const lines = formatFeatureManifest(env).split('\n').slice(1);
+    // The `disabled` / `enabled` token must start at the same column on
+    // every line. Pick a stable token present on every line.
+    const cols = lines.map((l) => {
+      const m = l.match(/\b(enabled|disabled)\b/);
+      return m?.index ?? -1;
+    });
+    expect(cols.every((c) => c === cols[0] && c >= 0)).toBe(true);
+    // Header is the first line and not part of the alignment check.
+    expect(FEATURES.length).toBeGreaterThan(0);
+  });
+
+  it('agrees with featureStatus(env, f) for every feature in the same env', async () => {
+    const { formatFeatureManifest, featureStatus, FEATURES } = await loadFeaturesModule();
+    const env = makeEnv({
+      VAPID_PRIVATE_KEY: 'priv',
+      VAPID_SUBJECT: 'mailto:ops@example.com',
+      OPENROUTER_API_KEY: undefined,
+    });
+    const text = formatFeatureManifest(env);
+    for (const f of FEATURES) {
+      const status = featureStatus(env, f);
+      const line = text.split('\n').find((l) => l.includes(f));
+      expect(line, `missing line for feature "${f}"`).toBeDefined();
+      if (status.enabled) {
+        expect(line).toContain('enabled');
+        expect(line).not.toContain('disabled');
+      } else {
+        expect(line).toContain('disabled');
+        expect(line).toContain(status.reason);
       }
     }
   });

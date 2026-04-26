@@ -163,17 +163,27 @@ export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
 # registry round-trip while starting).
 docker compose --profile backup pull app backup
 
-# --- Pre-flight: schema-level env validation (AC-231) ----------------
-# Run the same `validateEnv()` the boot path uses, BEFORE `docker
-# compose up`. The two presence checks above (env_example_keys,
-# secrets.manifest.txt) only assert that keys are *declared*; they do
-# not catch shape errors (PORT=0, NODE_ENV=staging, SEED=maybe), nor
-# the cross-cutting checks the schema folds in (dev-default
-# credentials in production). A misconfiguration that gets past the
-# presence check would otherwise crash-loop the freshly-recreated
-# container — losing the previous-revision's known-good replicas before
-# the new replicas are healthy. This step catches it without touching
-# the running stack.
+# --- Pre-flight: schema-level env validation + feature manifest ------
+# Two checkpoints in one ephemeral container:
+#
+# 1. `validateEnvAggregated()` runs schema + every cross-field guard
+#    (AC-231). The two presence checks above (env_example_keys,
+#    secrets.manifest.txt) only assert that keys are *declared*; they
+#    do not catch shape errors (PORT=0, NODE_ENV=staging, SEED=maybe),
+#    nor the dev-default-credential check the schema folds in. A
+#    misconfiguration that gets past the presence check would
+#    otherwise crash-loop the freshly-recreated container — losing the
+#    previous-revision's known-good replicas before the new replicas
+#    are healthy. This step catches it without touching the running
+#    stack.
+#
+# 2. `formatFeatureManifest()` prints the same per-feature manifest
+#    the app emits at boot (`event = 'config-feature-manifest'`),
+#    formatted for the operator's terminal so the operator sees what
+#    will be enabled / disabled BEFORE `docker compose up` recreates
+#    containers (AC-230). The boot-time JSON emission still lands in
+#    the app's stdout for log aggregation; this is the deploy-time
+#    operator mirror.
 #
 # Why `docker compose run --rm --no-deps app` (not `docker run`):
 #   - The compose `app.environment:` block hardcodes DATABASE_URL,
@@ -189,14 +199,14 @@ docker compose --profile backup pull app backup
 #     up, and we don't need them to validate env). `--rm` removes the
 #     one-shot container immediately. `-T` disables TTY allocation so
 #     the call works in non-interactive deploy contexts (cron, CI).
-#   - The CMD `node /app/dist/server/validate-env-cli.js` runs the
-#     dedicated validation entry built by `package.json` >
-#     `build:server` esbuild target list. validateEnv() prints the
-#     aggregated error and exits non-zero on any offence; deploy.sh's
-#     `set -euo pipefail` propagates the failure and aborts BEFORE
-#     `docker compose up` runs.
-echo "Validating env against the deploy image's Zod schema..."
-docker compose run --rm --no-deps -T app node /app/dist/server/validate-env-cli.js
+#   - The CMD `node /app/dist/server/deploy-preflight-cli.js` runs the
+#     dedicated entry built by `package.json` > `build:server` esbuild
+#     target list. It prints the aggregated error and exits non-zero
+#     on any validation offence; deploy.sh's `set -euo pipefail`
+#     propagates the failure and aborts BEFORE `docker compose up`
+#     runs. On success, it prints the feature manifest before exiting 0.
+echo "Pre-flight: validating env and reporting feature manifest..."
+docker compose run --rm --no-deps -T app node /app/dist/server/deploy-preflight-cli.js
 
 # The backup service is behind a profile so local dev (no R2 creds)
 # doesn't spin up a cron loop that will log AccessDenied on every

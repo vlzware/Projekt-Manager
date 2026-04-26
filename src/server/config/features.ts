@@ -112,3 +112,22 @@ export function emitFeatureManifest(env: Env, logger: ManifestLogger): void {
   }
   logger.info({ event: 'config-feature-manifest', features });
 }
+
+/**
+ * Human-readable manifest for the deploy operator's terminal. Returns
+ * the same per-feature data as `emitFeatureManifest` formatted as
+ * aligned columns instead of single-line JSON.
+ *
+ * The boot-time emission stays JSON because production logs need to be
+ * machine-grep-able; this format is for the one-shot pre-flight CLI
+ * where the consumer is a human reading deploy output.
+ */
+export function formatFeatureManifest(env: Env): string {
+  const nameWidth = Math.max(...FEATURES.map((f) => f.length));
+  const lines = FEATURES.map((f) => {
+    const status = featureStatus(env, f);
+    const namePad = f.padEnd(nameWidth);
+    return status.enabled ? `  ${namePad}  enabled` : `  ${namePad}  disabled — ${status.reason}`;
+  });
+  return ['Feature manifest (this deploy):', ...lines].join('\n');
+}

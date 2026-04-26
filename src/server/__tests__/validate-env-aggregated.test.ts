@@ -211,59 +211,62 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
 
 describe('AC-231: scripts/deploy.sh runs env validation before docker compose up', () => {
   const deployScript = readFileSync(path.join(repoRoot, 'scripts/deploy.sh'), 'utf8');
+  // Strip shell comments so a comment line that mentions `docker
+  // compose up` (or similar) does not satisfy a code-only contract
+  // pin. Code-only view is what gets executed at deploy time.
+  const codeLines = deployScript.split('\n').filter((l) => !/^\s*#/.test(l));
+  const code = codeLines.join('\n');
+  // The deploy pre-flight is invoked by name through the bundled CLI
+  // artifact. Pinning on the dist path (not on a function name that
+  // could appear in a comment) makes the test fail loud if the actual
+  // invocation line is removed or renamed without updating both sides.
+  const PREFLIGHT_INVOCATION = /\/dist\/server\/deploy-preflight-cli\.js\b/;
 
-  it('contains a `validateEnv` invocation', () => {
-    // The pre-flight step. Could be a node one-liner, an `npm run`
-    // alias, or a dedicated wrapper script — the assertion is loose on
-    // form and tight on presence. A literal `validateEnv` token is the
-    // contract surface.
-    expect(deployScript).toMatch(/validateEnv/);
+  it('contains a deploy-preflight-cli invocation', () => {
+    expect(code).toMatch(PREFLIGHT_INVOCATION);
   });
 
-  it('the validateEnv invocation precedes the `docker compose up` step', () => {
-    // Arrange — locate the byte offsets of both anchors.
-    const validateIdx = deployScript.search(/validateEnv/);
-    const composeUpIdx = deployScript.search(/docker\s+compose\s+(?:--profile\s+\S+\s+)?up\b/);
-
-    // Act + Assert.
-    expect(validateIdx, 'validateEnv token not found in deploy.sh').toBeGreaterThanOrEqual(0);
+  it('the preflight invocation precedes the `docker compose up` step', () => {
+    const preflightIdx = code.search(PREFLIGHT_INVOCATION);
+    const composeUpIdx = code.search(/docker\s+compose\s+(?:--profile\s+\S+\s+)?up\b/);
+    expect(preflightIdx, 'preflight invocation not found in deploy.sh').toBeGreaterThanOrEqual(0);
     expect(composeUpIdx, '`docker compose up` not found in deploy.sh').toBeGreaterThanOrEqual(0);
     expect(
-      validateIdx,
-      'validateEnv must be invoked before `docker compose up` so a bad config aborts the deploy before containers are recreated',
+      preflightIdx,
+      'preflight must run before `docker compose up` so a bad config aborts the deploy before containers are recreated',
     ).toBeLessThan(composeUpIdx);
   });
 
-  it('the validateEnv step is not swallowed by a swallow-pattern `||`', () => {
-    // A `validateEnv ... || true` (or `|| :` or `|| echo ...`) turns a
+  it('the preflight step is not swallowed by a swallow-pattern `||`', () => {
+    // A `preflight ... || true` (or `|| :` or `|| echo ...`) turns a
     // non-zero exit into a success, defeating the pre-flight. Patterns
     // that re-throw the failure (`|| exit 1`, `|| { echo ...; exit 1; }`)
     // are legitimate — they preserve abort semantics under both `set -e`
     // and a missing `set -e`. Only the swallow patterns are rejected.
-    const lines = deployScript.split('\n');
     const swallow = /\|\|\s*(true|:|echo\b)/;
-    const offendingLines = lines.filter((l) => /validateEnv/.test(l) && swallow.test(l));
+    const offendingLines = codeLines.filter((l) => PREFLIGHT_INVOCATION.test(l) && swallow.test(l));
     expect(
       offendingLines,
-      `validateEnv step must not be ||-swallowed:\n${offendingLines.join('\n')}`,
+      `preflight step must not be ||-swallowed:\n${offendingLines.join('\n')}`,
     ).toEqual([]);
   });
 
-  it('the validateEnv step is not run in the background (`&`)', () => {
+  it('the preflight step is not run in the background (`&`)', () => {
     // A trailing `&` would race the validation against `docker compose
     // up`; the deploy could proceed before validation reports failure.
     // Tolerate `&&` (logical-AND) but reject a bare `&` at end-of-line.
-    const lines = deployScript.split('\n');
-    const offendingLines = lines.filter((l) => /validateEnv/.test(l) && /(?<!&)&\s*$/.test(l));
+    const offendingLines = codeLines.filter(
+      (l) => PREFLIGHT_INVOCATION.test(l) && /(?<!&)&\s*$/.test(l),
+    );
     expect(
       offendingLines,
-      `validateEnv step must not be backgrounded:\n${offendingLines.join('\n')}`,
+      `preflight step must not be backgrounded:\n${offendingLines.join('\n')}`,
     ).toEqual([]);
   });
 
   it('the deploy script aborts on first failure (`set -e` or equivalent)', () => {
     // Without `set -e` (or `set -euo pipefail`), a non-zero exit from
-    // `validateEnv` followed by `docker compose up` on the next line
+    // the preflight followed by `docker compose up` on the next line
     // would proceed past the failure, defeating the pre-flight. Pin
     // that the script declares fail-fast at the top.
     const head = deployScript.split('\n').slice(0, 30).join('\n');
