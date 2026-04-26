@@ -20,9 +20,11 @@ import styles from './ProjectDetail.module.css';
 
 interface PhotoGalleryProps {
   projectId: string;
+  /** Archived project — suppresses the per-row delete control. */
+  archived?: boolean;
 }
 
-export function PhotoGallery({ projectId }: PhotoGalleryProps) {
+export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps) {
   // Select the raw per-project slice then filter in useMemo so the
   // selector output is referentially stable across renders — a new
   // filtered array each render confuses Zustand's snapshot cache and
@@ -174,6 +176,7 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
             }
             const canDelete =
               authUser !== null &&
+              !archived &&
               canDeleteAttachment(photo, authUser, ATTACHMENT_CONFIG.workerSelfDeleteGraceMinutes);
             return (
               <li key={photo.id} className={styles.photoItem} data-testid="attachment-thumbnail">

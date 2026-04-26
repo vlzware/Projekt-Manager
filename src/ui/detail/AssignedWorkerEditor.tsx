@@ -17,12 +17,17 @@ import styles from './ProjectDetail.module.css';
 
 interface AssignedWorkerEditorProps {
   projectId: string;
+  /** Archived projects render the chips read-only; AC-95 also rejects
+   * mutations server-side, so hiding the controls keeps the user out
+   * of dead-end interactions. */
+  archived?: boolean;
 }
 
 type AssignedWorker = { userId: string; displayName: string };
 
-export function AssignedWorkerEditor({ projectId }: AssignedWorkerEditorProps) {
-  const canUpdate = usePermission('project:update');
+export function AssignedWorkerEditor({ projectId, archived = false }: AssignedWorkerEditorProps) {
+  const canUpdatePerm = usePermission('project:update');
+  const canUpdate = canUpdatePerm && !archived;
   const project = useProjectStore((s) => s.projects.find((p) => p.id === projectId));
   const updateAssignedWorkers = useProjectStore((s) => s.updateAssignedWorkers);
   const mutationInFlight = useProjectStore((s) =>

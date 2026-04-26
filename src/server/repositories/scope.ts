@@ -120,6 +120,11 @@ export function attachmentScopeForCaller(user: AuthUser): SQL | null {
  * keeps the repository free of handler concerns and lets TypeScript's
  * narrowing distinguish all three outcomes at the call site.
  *
+ * Soft-deleted (archived) rows are returned as `T` with the entity's
+ * own archive flag set — the caller renders read-only preview rather
+ * than a "gone" surface. Mutation paths use a separate `*ForMutation`
+ * fetch that filters archived rows back to null (AC-95).
+ *
  * See ADR-0019 for the rationale behind 403-over-404.
  */
 export const OUT_OF_SCOPE = { outOfScope: true } as const;
@@ -128,24 +133,6 @@ export type ScopedReadResult<T> = T | OutOfScope | null;
 
 export function isOutOfScope<T>(result: ScopedReadResult<T>): result is OutOfScope {
   return result !== null && typeof result === 'object' && 'outOfScope' in result;
-}
-
-/**
- * Extra "this row is soft-deleted" outcome for entities that support
- * archiving. Not part of `ScopedReadResult` because most entities don't
- * soft-delete; keeping it separate avoids forcing every callsite to
- * narrow away a fourth case they cannot produce. Callers that can
- * return it typed it explicitly: `ScopedReadResult<T> | Archived`.
- *
- *   → 410 GONE at the HTTP layer. Distinct from 404 so the UI renders
- *   "Projekt archiviert" rather than "nicht gefunden" (the collapse hid
- *   actionable state — the row lives in the archive, was not a ghost).
- */
-export const ARCHIVED = { archived: true } as const;
-export type Archived = typeof ARCHIVED;
-
-export function isArchived<T>(result: ScopedReadResult<T> | Archived): result is Archived {
-  return result !== null && typeof result === 'object' && 'archived' in result;
 }
 
 /**

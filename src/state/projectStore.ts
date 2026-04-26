@@ -19,14 +19,14 @@ import { useProjectManagementStore } from './projectManagementStore';
 /**
  * Outcome of `fetchProject(id)`. Distinguishes the meaningful branches
  * the project-detail page cares about: authorization failure (AC-149
- * mirror), not-found, archived (soft-deleted — 410 GONE per api.md
- * §14.2.2), and everything-else.
+ * mirror), not-found, and everything-else. Archived (soft-deleted)
+ * projects flow through `kind: 'ok'` with `project.deleted = true` —
+ * the page renders them as a read-only preview.
  */
 export type FetchProjectOutcome =
   | { kind: 'ok'; project: Project }
   | { kind: 'not_permitted' }
   | { kind: 'not_found' }
-  | { kind: 'archived' }
   | { kind: 'error'; message: string };
 
 interface ProjectState {
@@ -188,7 +188,6 @@ export const useProjectStore = create<ProjectState>((set, get) => {
         }
         if (result.category === 'authorization') return { kind: 'not_permitted' };
         if (result.category === 'not_found') return { kind: 'not_found' };
-        if (result.category === 'gone') return { kind: 'archived' };
         return { kind: 'error', message: result.error.message || STRINGS.errors.mutationFailed };
       }
       const project = result.data;

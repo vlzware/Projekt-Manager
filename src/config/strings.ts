@@ -31,7 +31,6 @@ export const STRINGS = {
     serverError: 'Ein interner Fehler ist aufgetreten.',
     invalidInput: 'Ungültige Eingabe.',
     notFound: (entity: string) => `${entity} nicht gefunden.`,
-    archived: (entity: string) => `${entity} archiviert.`,
     idempotencyConflict: 'Diese Anfrage-ID wurde bereits mit abweichenden Daten verwendet.',
     schemaVersionMismatch:
       'Die Datenformat-Version der Datei passt nicht zur aktuellen Version des Systems.',
@@ -450,9 +449,8 @@ export const STRINGS = {
     /** Not-found surface — 404 on `GET /projects/:id`. */
     notFoundHeading: 'Projekt nicht gefunden',
     notFoundBody: 'Das angeforderte Projekt existiert nicht.',
-    /** Archived surface — 410 GONE on `GET /projects/:id` for a soft-deleted row. */
-    archivedHeading: 'Projekt archiviert',
-    archivedBody: 'Das Projekt wurde archiviert und wird nicht mehr im Kanban angezeigt.',
+    /** Banner shown atop the read-only preview of an archived project. */
+    archivedReadOnlyNotice: 'Dieses Projekt ist archiviert. Bearbeitung nicht möglich.',
 
     // Region headings
     coreFields: 'Kernfelder',
