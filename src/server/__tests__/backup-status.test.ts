@@ -58,7 +58,16 @@ describe('Layer 2 backup — status dual-write + manifest determinism', () => {
   });
 
   afterAll(async () => {
-    if (pool) await pool.end();
+    if (pool) {
+      // Restore the migration's pre-seed singleton so a long-lived
+      // shared DB (pre-isolation runs, accidental dev-DB targeting)
+      // doesn't carry our fixture state into the next session.
+      await db.execute(sql`DELETE FROM meta_backup_status`);
+      await db.execute(
+        sql`INSERT INTO meta_backup_status (singleton, last_backup_ok) VALUES (TRUE, FALSE)`,
+      );
+      await pool.end();
+    }
   });
 
   beforeEach(async () => {

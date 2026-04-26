@@ -79,6 +79,15 @@ describe('Layer 2 drill — AC-168 skip when key absent', () => {
 
   afterAll(async () => {
     try {
+      // Restore the migration's pre-seed singleton so a long-lived
+      // shared DB (pre-isolation runs, accidental dev-DB targeting)
+      // doesn't carry our fixture timestamp into the next session.
+      if (pool) {
+        await db.execute(sql`DELETE FROM meta_backup_status`);
+        await db.execute(
+          sql`INSERT INTO meta_backup_status (singleton, last_backup_ok) VALUES (TRUE, FALSE)`,
+        );
+      }
       await fs.rm(keyDir, { recursive: true, force: true });
     } finally {
       if (pool) await pool.end();

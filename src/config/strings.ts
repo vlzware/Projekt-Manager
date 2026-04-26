@@ -549,5 +549,12 @@ export const STRINGS = {
     backupNeverRun: 'Backup: noch nie ausgeführt',
     drillNeverRun: 'Drill: noch nie ausgeführt',
     unknown: 'Status unbekannt',
+    /**
+     * Augments any badge label with the timestamp of the last backup
+     * run so the tooltip / toast carries actionable detail rather than
+     * a bare status word. The timestamp comes pre-formatted by
+     * `formatBackupTimestampDE`.
+     */
+    withTimestamp: (label: string, timestamp: string) => `${label} (${timestamp})`,
   },
 } as const;

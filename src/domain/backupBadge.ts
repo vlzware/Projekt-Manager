@@ -63,11 +63,12 @@ export interface BackupStatus {
 
 export type BackupBadgeState =
   | { kind: 'unknown'; label: string }
-  | { kind: 'green' }
-  | { kind: 'amber'; reason: 'drill-stale' }
+  | { kind: 'green'; lastBackupAt?: string }
+  | { kind: 'amber'; reason: 'drill-stale'; lastBackupAt?: string }
   | {
       kind: 'red';
       reason: 'backup-stale' | 'drill-never-run' | 'last-run-failed' | 'backup-never-run';
+      lastBackupAt?: string;
     };
 
 export interface BadgeThresholds {
@@ -120,21 +121,21 @@ export function deriveBadgeState(
   // `lastBackupOk === false` is the "stale-but-green" trap AC-171
   // explicitly forbids. Check this before the age thresholds.
   if (status.lastBackupOk === false) {
-    return { kind: 'red', reason: 'last-run-failed' };
+    return { kind: 'red', reason: 'last-run-failed', lastBackupAt: status.lastBackupAt };
   }
 
   // Never-run drill. `null` (not `undefined`) is the authoritative
   // never-run signal per data-model.md §5.9. Surfaces as red, not amber,
   // because an unverified backup cycle is worse than a stale verified one.
   if (status.lastDrillOk === null) {
-    return { kind: 'red', reason: 'drill-never-run' };
+    return { kind: 'red', reason: 'drill-never-run', lastBackupAt: status.lastBackupAt };
   }
 
   // Backup age evaluation — both red and amber thresholds.
   if (status.lastBackupAt !== undefined) {
     const backupAgeDays = daysBetween(new Date(status.lastBackupAt), now);
     if (backupAgeDays > thresholds.backupRedDays) {
-      return { kind: 'red', reason: 'backup-stale' };
+      return { kind: 'red', reason: 'backup-stale', lastBackupAt: status.lastBackupAt };
     }
   }
 
@@ -142,14 +143,14 @@ export function deriveBadgeState(
   // `lastDrillOk !== null` is an internal inconsistency — treat it as
   // red-stale to surface the problem loudly rather than coerce green.
   if (status.lastDrillAt === undefined) {
-    return { kind: 'red', reason: 'backup-stale' };
+    return { kind: 'red', reason: 'backup-stale', lastBackupAt: status.lastBackupAt };
   }
   const drillAgeDays = daysBetween(new Date(status.lastDrillAt), now);
   if (drillAgeDays > thresholds.drillRedDays) {
-    return { kind: 'red', reason: 'backup-stale' };
+    return { kind: 'red', reason: 'backup-stale', lastBackupAt: status.lastBackupAt };
   }
   if (drillAgeDays > thresholds.drillAmberDays) {
-    return { kind: 'amber', reason: 'drill-stale' };
+    return { kind: 'amber', reason: 'drill-stale', lastBackupAt: status.lastBackupAt };
   }
 
   // Amber backup-age window — only applies when drill is green. Drill
@@ -161,9 +162,9 @@ export function deriveBadgeState(
       // 'drill-stale' reason string; keeping it simple because the test
       // suite only pins the drill-staleness amber case. If a separate
       // amber reason is needed later it's a pure additive change.
-      return { kind: 'amber', reason: 'drill-stale' };
+      return { kind: 'amber', reason: 'drill-stale', lastBackupAt: status.lastBackupAt };
     }
   }
 
-  return { kind: 'green' };
+  return { kind: 'green', lastBackupAt: status.lastBackupAt };
 }

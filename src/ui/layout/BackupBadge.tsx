@@ -38,6 +38,7 @@
  */
 import type { BackupBadgeState } from '@/domain/backupBadge';
 import { STRINGS } from '@/config/strings';
+import { formatBackupTimestampDE } from '@/domain/dateFormat';
 import { useToastStore } from '@/state/toastStore';
 import styles from './BackupBadge.module.css';
 
@@ -75,7 +76,7 @@ function labelForRedReason(reason: Extract<BackupBadgeState, { kind: 'red' }>['r
   }
 }
 
-function labelFor(state: BackupBadgeState): string {
+function baseLabelFor(state: BackupBadgeState): string {
   switch (state.kind) {
     case 'unknown':
       return STRINGS.backup.unknown;
@@ -90,6 +91,23 @@ function labelFor(state: BackupBadgeState): string {
       throw new Error(`Unhandled backup-badge state: ${String(_exhaustive)}`);
     }
   }
+}
+
+/**
+ * Visible label = base status text + (timestamp of last run) when the
+ * timestamp is known. The timestamp lifts the surface from a bare
+ * status word ("Backup: aktuell") to actionable detail
+ * ("Backup: aktuell (14:00 So. 26.04.2026)") that tells the operator
+ * *when* the green/amber/red reading was earned. The 'unknown' branch
+ * and the 'backup-never-run' branch never carry a timestamp — there is
+ * no run to point at — so they fall through with the bare base label.
+ */
+function labelFor(state: BackupBadgeState): string {
+  const base = baseLabelFor(state);
+  if (state.kind === 'unknown') return base;
+  if (state.kind === 'red' && state.reason === 'backup-never-run') return base;
+  if (state.lastBackupAt === undefined) return base;
+  return STRINGS.backup.withTimestamp(base, formatBackupTimestampDE(state.lastBackupAt));
 }
 
 /**

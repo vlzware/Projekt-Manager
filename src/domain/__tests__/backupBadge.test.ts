@@ -212,3 +212,134 @@ describe('AC-171: backup badge — unreachable + never-drilled states', () => {
     }
   });
 });
+
+describe('lastBackupAt propagation', () => {
+  // The badge tooltip / toast carries the timestamp of the last run so
+  // the operator sees *when* the green/amber/red reading was earned.
+  // The derive function must thread `status.lastBackupAt` through to
+  // every state where a run has actually occurred. A regression that
+  // drops the timestamp would silently revert the surface to the
+  // bare-status-word display the user explicitly rejected.
+
+  it('threads lastBackupAt through the green state', () => {
+    const at = daysAgo(0);
+    const s = deriveBadgeState(
+      {
+        lastBackupOk: true,
+        lastBackupAt: at,
+        lastDrillAt: daysAgo(0),
+        lastDrillOk: true,
+        lastError: undefined,
+        updatedAt: at,
+      },
+      NOW,
+      THRESHOLDS,
+    );
+    expect(s.kind).toBe('green');
+    if (s.kind === 'green') expect(s.lastBackupAt).toBe(at);
+  });
+
+  it('threads lastBackupAt through the amber drill-stale state', () => {
+    const at = daysAgo(0);
+    const s = deriveBadgeState(
+      {
+        lastBackupOk: true,
+        lastBackupAt: at,
+        lastDrillAt: daysAgo(THRESHOLDS.drillAmberDays + 1),
+        lastDrillOk: true,
+        lastError: undefined,
+        updatedAt: at,
+      },
+      NOW,
+      THRESHOLDS,
+    );
+    expect(s.kind).toBe('amber');
+    if (s.kind === 'amber') expect(s.lastBackupAt).toBe(at);
+  });
+
+  it('threads lastBackupAt through the red last-run-failed state', () => {
+    const at = daysAgo(0);
+    const s = deriveBadgeState(
+      {
+        lastBackupOk: false,
+        lastBackupAt: at,
+        lastDrillAt: daysAgo(0),
+        lastDrillOk: false,
+        lastError: 'Tier 1 mismatch on projects',
+        updatedAt: at,
+      },
+      NOW,
+      THRESHOLDS,
+    );
+    expect(s.kind).toBe('red');
+    if (s.kind === 'red') {
+      expect(s.reason).toBe('last-run-failed');
+      expect(s.lastBackupAt).toBe(at);
+    }
+  });
+
+  it('threads lastBackupAt through the red backup-stale state', () => {
+    const at = daysAgo(THRESHOLDS.backupRedDays + 1);
+    const s = deriveBadgeState(
+      {
+        lastBackupOk: true,
+        lastBackupAt: at,
+        lastDrillAt: daysAgo(THRESHOLDS.drillRedDays + 1),
+        lastDrillOk: true,
+        lastError: undefined,
+        updatedAt: at,
+      },
+      NOW,
+      THRESHOLDS,
+    );
+    expect(s.kind).toBe('red');
+    if (s.kind === 'red') {
+      expect(s.reason).toBe('backup-stale');
+      expect(s.lastBackupAt).toBe(at);
+    }
+  });
+
+  it('threads lastBackupAt through the red drill-never-run state', () => {
+    const at = daysAgo(0);
+    const s = deriveBadgeState(
+      {
+        lastBackupOk: true,
+        lastBackupAt: at,
+        lastDrillAt: undefined,
+        lastDrillOk: null,
+        lastError: undefined,
+        updatedAt: at,
+      },
+      NOW,
+      THRESHOLDS,
+    );
+    expect(s.kind).toBe('red');
+    if (s.kind === 'red') {
+      expect(s.reason).toBe('drill-never-run');
+      expect(s.lastBackupAt).toBe(at);
+    }
+  });
+
+  it('leaves lastBackupAt unset on the backup-never-run state', () => {
+    // The pre-seed row carries no timestamp — the derived state
+    // mirrors that absence so the renderer shows the bare label
+    // rather than fabricating a "(undefined)" trailer.
+    const s = deriveBadgeState(
+      {
+        lastBackupOk: false,
+        lastBackupAt: undefined,
+        lastDrillAt: undefined,
+        lastDrillOk: null,
+        lastError: undefined,
+        updatedAt: daysAgo(0),
+      },
+      NOW,
+      THRESHOLDS,
+    );
+    expect(s.kind).toBe('red');
+    if (s.kind === 'red') {
+      expect(s.reason).toBe('backup-never-run');
+      expect(s.lastBackupAt).toBeUndefined();
+    }
+  });
+});

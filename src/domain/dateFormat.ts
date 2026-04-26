@@ -43,6 +43,19 @@ export function formatDateShortDE(isoDate: string): string {
 }
 
 /**
+ * Format an ISO timestamp for the backup-freshness badge tooltip:
+ * `HH:mm EEE dd.MM.yyyy` — e.g. `14:00 So. 26.04.2026`.
+ *
+ * Distinct from `formatDateTimeDE` (audit log) because the badge surface
+ * is a glanceable status cue, not a chronological log entry: the
+ * weekday abbreviation in front lets the operator tell "yesterday" from
+ * "Saturday last week" at a glance without subtracting dates.
+ */
+export function formatBackupTimestampDE(isoDate: string): string {
+  return format(parseISO(isoDate), 'HH:mm EEE dd.MM.yyyy', { locale: LOCALE.dateFns });
+}
+
+/**
  * Format a date range for display. Uses short format for start if same year.
  */
 export function formatDateRange(start?: string, end?: string): string {
