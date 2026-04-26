@@ -23,6 +23,11 @@ import {
   envSchema,
 } from '../config/env.js';
 import type { Env } from '../config/env.js';
+// Module surface — used by the schema-bypass-cleanup describe blocks at
+// the bottom of the file to resolve the (impl-phase) aggregated
+// validator regardless of whether it lands as a new export
+// (`validateEnvAggregated`) or as an evolution of `validateEnv()`.
+import * as envModule from '../config/env.js';
 
 /** Minimal Env shape with only the fields assertProductionSafe reads. */
 function makeEnv(overrides: Partial<Env>): Env {
@@ -46,8 +51,10 @@ function makeEnv(overrides: Partial<Env>): Env {
     SESSION_CLEANUP_INTERVAL_MINUTES: 60,
     AUDIT_RETENTION_WINDOW_DAYS: undefined,
     AUDIT_RETENTION_INTERVAL_MINUTES: 1440,
-    // Layer 2 backup env — optional at the app-server level; declared
-    // here so the fixture stays in sync with the schema shape.
+    // Layer 2 backup env — optional at the app-server level. Only the
+    // fields the production-safety guards read are declared here; other
+    // optionals (LOGIN_RATE_LIMIT_MAX, ATTACHMENT_*) are intentionally
+    // omitted to keep the fixture focused on the guards under test.
     R2_ACCESS_KEY_ID: undefined,
     R2_SECRET_ACCESS_KEY: undefined,
     R2_ENDPOINT: undefined,
@@ -318,5 +325,184 @@ describe('start.ts call-site pin for assertProductionSafe', () => {
     expect(stripped).toMatch(/\bstartAuditRetentionScheduler\s*\(/);
     expect(stripped).toMatch(/\benv\.AUDIT_RETENTION_INTERVAL_MINUTES\b/);
     expect(stripped).toMatch(/\benv\.AUDIT_RETENTION_WINDOW_DAYS\b/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Schema bypass cleanups (issue #139, AC-228 family) — pin the typed-
+// schema home of two reads that previously lived as raw `process.env`
+// access:
+//
+//   1. `LOGIN_RATE_LIMIT_MAX` — now a positive-int schema field with no
+//      default. `src/server/config/index.ts:getRateLimit()` resolves it
+//      via `getEnv()`. Missing values keep the build-time env-aware
+//      default in place.
+//
+//   2. POSTGRES_PASSWORD / MINIO_ROOT_USER / MINIO_ROOT_PASSWORD — the
+//      dev-defaults guard moved from `start.ts:rejectDevCredentials()`
+//      into `env.ts` (`assertNoDevCredentials`), folded into the
+//      aggregated `validateEnv()` error from AC-231 so every entry
+//      point (start.ts and backup-runner.ts) shares one guard.
+// ---------------------------------------------------------------------
+
+describe('LOGIN_RATE_LIMIT_MAX in schema', () => {
+  const minimal = { DATABASE_URL: 'postgres://unused' };
+
+  it('accepts a positive integer string', () => {
+    // Arrange — same fixture as the AUDIT_RETENTION_WINDOW_DAYS block;
+    // a single required-without-default field plus the candidate.
+    // Act — parse with a positive-int override.
+    const parsed = envSchema.parse({ ...minimal, LOGIN_RATE_LIMIT_MAX: '15' });
+    // Assert — the schema coerces to number and surfaces it on the
+    // typed `Env`. Using `as` here because the impl phase decides
+    // whether the field is `number | undefined` or has a default.
+    expect((parsed as unknown as { LOGIN_RATE_LIMIT_MAX?: number }).LOGIN_RATE_LIMIT_MAX).toBe(15);
+  });
+
+  it('rejects zero', () => {
+    expect(() => envSchema.parse({ ...minimal, LOGIN_RATE_LIMIT_MAX: '0' })).toThrow();
+  });
+
+  it('rejects negative integers', () => {
+    expect(() => envSchema.parse({ ...minimal, LOGIN_RATE_LIMIT_MAX: '-5' })).toThrow();
+  });
+
+  it('rejects non-numeric strings', () => {
+    expect(() => envSchema.parse({ ...minimal, LOGIN_RATE_LIMIT_MAX: 'lots' })).toThrow();
+  });
+
+  it('rejects fractional numbers (must be int)', () => {
+    // `z.coerce.number()` alone accepts "3.5"; the schema must apply
+    // `.int()` so the rate-limit ceiling is a count, not a rate.
+    expect(() => envSchema.parse({ ...minimal, LOGIN_RATE_LIMIT_MAX: '3.5' })).toThrow();
+  });
+
+  it('treats absence as undefined so the build-time default applies', () => {
+    const parsed = envSchema.parse(minimal);
+    expect(
+      (parsed as unknown as { LOGIN_RATE_LIMIT_MAX?: number }).LOGIN_RATE_LIMIT_MAX,
+    ).toBeUndefined();
+  });
+
+  it('coerces "" to undefined (compose `${VAR:-}` pattern)', () => {
+    // Same edge case as AUDIT_RETENTION_WINDOW_DAYS — docker compose
+    // forwards an unset var as the empty string; the preprocess wrapper
+    // must collapse "" to undefined so the build-time default still
+    // applies. Without the wrapper, z.coerce.number() turns "" into 0
+    // and .positive() rejects, crashing the deploy.
+    const parsed = envSchema.parse({ ...minimal, LOGIN_RATE_LIMIT_MAX: '' });
+    expect(
+      (parsed as unknown as { LOGIN_RATE_LIMIT_MAX?: number }).LOGIN_RATE_LIMIT_MAX,
+    ).toBeUndefined();
+  });
+});
+
+describe('dev-default credentials guard in env.ts', () => {
+  /**
+   * The aggregated validator. The dev-defaults guard now lives inside
+   * `validateEnv()` (the impl exposes it via `assertNoDevCredentials`
+   * which `validateEnv` invokes); the test resolves the validator by
+   * either an explicit `validateEnvAggregated` name or an input-
+   * accepting `validateEnv()` overload.
+   */
+  function getAggregatedValidator(): (input: Record<string, string | undefined>) => unknown {
+    const m = envModule as unknown as Record<string, unknown>;
+    if (typeof m.validateEnvAggregated === 'function') {
+      return m.validateEnvAggregated as (input: Record<string, string | undefined>) => unknown;
+    }
+    if (typeof m.validateEnv === 'function') {
+      const fn = m.validateEnv as (input?: Record<string, string | undefined>) => unknown;
+      if (fn.length >= 1) return fn as (input: Record<string, string | undefined>) => unknown;
+    }
+    throw new Error(
+      'No aggregated validator export found. The impl phase must expose either ' +
+        '`validateEnvAggregated(input)` or extend `validateEnv` to accept input.',
+    );
+  }
+
+  /**
+   * Minimal valid prod-shaped env. Each test in this block layers a
+   * dev-default credential on top to assert that single fault trips
+   * the guard.
+   */
+  function prodInput(extra: Record<string, string>): Record<string, string | undefined> {
+    return {
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgres://prod',
+      STORAGE_ENDPOINT: 'https://storage.example.com',
+      STORAGE_PUBLIC_ENDPOINT: 'https://storage.example.com',
+      STORAGE_ACCESS_KEY: 'ak',
+      STORAGE_SECRET_KEY: 'sk',
+      STORAGE_BUCKET: 'pm',
+      ALLOW_INSECURE_HTTP: 'false',
+      ...extra,
+    };
+  }
+
+  it('throws in production when POSTGRES_PASSWORD is the dev default "postgres"', () => {
+    const validate = getAggregatedValidator();
+    expect(() => validate(prodInput({ POSTGRES_PASSWORD: 'postgres' }))).toThrow(
+      /POSTGRES_PASSWORD/,
+    );
+  });
+
+  it('throws in production when POSTGRES_PASSWORD is the dev default "devpassword"', () => {
+    const validate = getAggregatedValidator();
+    expect(() => validate(prodInput({ POSTGRES_PASSWORD: 'devpassword' }))).toThrow(
+      /POSTGRES_PASSWORD/,
+    );
+  });
+
+  it('throws in production when MINIO_ROOT_USER is the dev default "minioadmin"', () => {
+    const validate = getAggregatedValidator();
+    expect(() => validate(prodInput({ MINIO_ROOT_USER: 'minioadmin' }))).toThrow(/MINIO_ROOT_USER/);
+  });
+
+  it('throws in production when MINIO_ROOT_PASSWORD is the dev default "minioadmin"', () => {
+    const validate = getAggregatedValidator();
+    expect(() => validate(prodInput({ MINIO_ROOT_PASSWORD: 'minioadmin' }))).toThrow(
+      /MINIO_ROOT_PASSWORD/,
+    );
+  });
+
+  it('aggregates the dev-credentials offence with other validation issues', () => {
+    // Arrange — a prod input with a dev-default password AND a separate
+    // safety-guard offence (ALLOW_INSECURE_HTTP=true). A non-aggregated
+    // validator would throw on whichever is checked first; the contract
+    // requires both names in the same error.
+    const validate = getAggregatedValidator();
+    const input = prodInput({
+      POSTGRES_PASSWORD: 'postgres',
+      ALLOW_INSECURE_HTTP: 'true',
+    });
+
+    // Act + Assert.
+    let captured: unknown = null;
+    try {
+      validate(input);
+    } catch (err) {
+      captured = err;
+    }
+    expect(
+      captured,
+      'expected validateEnv to throw on combined dev-default + insecure-HTTP',
+    ).toBeTruthy();
+    const message = captured instanceof Error ? captured.message : String(captured ?? '');
+    expect(message).toContain('POSTGRES_PASSWORD');
+    expect(message).toContain('ALLOW_INSECURE_HTTP');
+  });
+
+  it('does NOT throw outside production when POSTGRES_PASSWORD is the dev default', () => {
+    const validate = getAggregatedValidator();
+    const input = prodInput({ POSTGRES_PASSWORD: 'postgres' });
+    input.NODE_ENV = 'development';
+    expect(() => validate(input)).not.toThrow();
+  });
+
+  it('does NOT throw outside production when MINIO_ROOT_USER is the dev default', () => {
+    const validate = getAggregatedValidator();
+    const input = prodInput({ MINIO_ROOT_USER: 'minioadmin' });
+    input.NODE_ENV = 'test';
+    expect(() => validate(input)).not.toThrow();
   });
 });

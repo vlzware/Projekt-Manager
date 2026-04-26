@@ -69,15 +69,18 @@ export function getCookieSecure(): boolean {
  *     with many fresh browser contexts; 5/min throttles the suite.
  * `LOGIN_RATE_LIMIT_MAX` overrides both, for operators that want a
  * different floor or ceiling without rebuilding.
+ *
+ * Reads the override and NODE_ENV via `getEnv()` — the schema validates
+ * `LOGIN_RATE_LIMIT_MAX` as a positive integer or unset, so an invalid
+ * value crashes the app at boot rather than silently falling back to the
+ * default (a misconfigured ceiling is an operator-facing fault, not a
+ * runtime fallback). NODE_ENV defaults to 'production' in the schema so
+ * a missing var still gets the tighter anti-spraying ceiling.
  */
 export function getRateLimit() {
-  const override = Number(process.env.LOGIN_RATE_LIMIT_MAX);
-  // Default-to-production when NODE_ENV is missing — mirrors the zod
-  // default in env.ts (fail-closed: an unconfigured environment gets the
-  // tighter anti-spraying ceiling, not the looser dev ceiling).
-  const nodeEnv = process.env.NODE_ENV ?? 'production';
-  const defaultMax = nodeEnv === 'production' ? 5 : 30;
-  const loginRateMax = Number.isFinite(override) && override > 0 ? override : defaultMax;
+  const env = getEnv();
+  const defaultMax = env.NODE_ENV === 'production' ? 5 : 30;
+  const loginRateMax = env.LOGIN_RATE_LIMIT_MAX ?? defaultMax;
   return {
     /** Login endpoint. */
     login: { max: loginRateMax, timeWindow: '1 minute' as const },

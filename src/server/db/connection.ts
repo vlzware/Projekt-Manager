@@ -52,17 +52,14 @@ export function createDatabase(opts: ConnectionOptions = {}): {
   db: Database;
   pool: pg.Pool;
 } {
-  // Route env reads through the validated singleton so there is a single
+  // Route env reads through the validated loader so there is a single
   // source of truth for NODE_ENV and friends (consolidation review C-3 /
-  // ADR-0013). Previously this file did a direct
-  // `process.env.NODE_ENV === 'production'` check, which drifted from the
-  // rest of the server after commit 48cfdea consolidated app.ts on getEnv().
-  //
-  // validateEnv() is idempotent — it caches the first parsed result and
-  // returns it on subsequent calls — so calling it defensively here is
-  // safe whether or not start.ts already ran it. Integration tests that
-  // call createDatabase() directly (db-constraints, bootstrap, rate-limit)
-  // rely on this defensive call because they do not go through start.ts.
+  // ADR-0013). validateEnv() re-parses process.env on every call (the
+  // earlier singleton cache was dropped to keep test fixtures truthful);
+  // calling it defensively here is cheap and matches whatever start.ts
+  // saw. Integration tests that call createDatabase() directly
+  // (db-constraints, bootstrap, rate-limit) rely on this defensive call
+  // because they do not go through start.ts.
   const env = validateEnv();
   const connectionString = opts.connectionString ?? env.DATABASE_URL;
 
