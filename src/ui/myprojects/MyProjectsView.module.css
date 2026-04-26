@@ -1,7 +1,11 @@
 .container {
-  padding: 16px;
-  max-width: 800px;
-  margin: 0 auto;
+  /* Span the full main area so the vertical scrollbar lands on the
+     viewport edge, not the right edge of a centred 800 px box (which
+     parks the scroll track in mid-screen on wide monitors). The content
+     column stays visually centred and capped at 800 px via asymmetric
+     inline padding — same idiom used by the project detail page. */
+  padding-block: 16px;
+  padding-inline: max(16px, calc((100% - 800px) / 2));
   width: 100%;
   box-sizing: border-box;
   overflow-y: auto;

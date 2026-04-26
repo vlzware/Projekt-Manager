@@ -3,12 +3,17 @@
 
 .page {
   position: relative;
-  padding: 24px;
+  /* Span the full main area so the vertical scrollbar lands on the
+     viewport edge, not the right edge of a centred 1200 px box (which
+     parks the scroll track in mid-screen on wide monitors). The content
+     column stays visually centred and capped at 1200 px via asymmetric
+     inline padding — the standard CSS idiom for "constrain content,
+     full-bleed chrome". */
+  padding-block: 24px;
+  padding-inline: max(24px, calc((100% - 1200px) / 2));
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1200px;
-  margin: 0 auto;
   height: 100%;
   overflow-y: auto;
   width: 100%;
