@@ -106,6 +106,14 @@ export function PushSubscriptionControls() {
         setErrorMessage(STRINGS.push.notConfigured);
         return;
       }
+      if (result.reason === 'subscribe-failed') {
+        // Off-spec subscribe behaviour (notably mobile-Firefox returning
+        // null instead of a subscription). pushClient already rolled
+        // back any partial state — surface an actionable error so the
+        // user can retry instead of seeing a silent no-op.
+        setErrorMessage(STRINGS.push.subscribeFailed);
+        return;
+      }
       setErrorMessage(result.message ?? STRINGS.push.subscribeFailed);
     } finally {
       setBusy(false);
