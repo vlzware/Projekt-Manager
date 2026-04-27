@@ -51,6 +51,10 @@ services:
       # when STORAGE_ENDPOINT looks internal and this value is missing.
       # See docs/ops/storage-subdomain.md.
       STORAGE_PUBLIC_ENDPOINT: https://storage.${DOMAIN:?DOMAIN must be set}
+      # Default kept in sync with the storage-init service below — both
+      # services must resolve to the same bucket name, otherwise the
+      # init script would create one bucket while the app would read
+      # another.
       STORAGE_BUCKET: ${STORAGE_BUCKET:-projekt-manager}
       # Capability-restricted MinIO user (#45 / ADR-0022). Provisioned by
       # `docker/init-storage.sh` with a bucket-scoped policy that allows
@@ -214,6 +218,8 @@ services:
       # username/password in the `mc admin user add` call.
       MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?MINIO_APP_ACCESS_KEY must be set}
       MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?MINIO_APP_SECRET_KEY must be set}
+      # Must match the app service's STORAGE_BUCKET above — see comment
+      # there.
       STORAGE_BUCKET: ${STORAGE_BUCKET:-projekt-manager}
       # ADR-0022 / docs/ops/object-storage-provisioning.md — R and L
       # dials. Forwarded with defaults so unset vars don't collapse to
