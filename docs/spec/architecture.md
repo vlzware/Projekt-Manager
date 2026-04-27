@@ -85,8 +85,18 @@ Capabilities at minimum:
 
 - Upload (key, data, content type) → stored reference
 - Download (key) → data stream
-- Delete (key) → success/failure
+- Hide (key) → writes a delete marker on the versioned bucket; the prior version is preserved until lifecycle reap
+- Copy-from-version (key, sourceVersionId) → restore primitive; promotes a noncurrent version back to current and returns the freshly-issued current-version id
 - Get signed/temporary access URL (key, expiry) → URL
+
+**Capability-split invariant ([ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)).** The storage module's running credential cannot destroy versions. Destruction is a provider-side lifecycle action only — the app key holds write/read/list capabilities but lacks `deleteFiles` (B2) / `s3:DeleteObjectVersion` (MinIO/AWS). A CI architecture check ([verification.md AC-DDD](verification.md#1526-attachments) — number assigned in §15.26 below) refuses any `DeleteObjectCommand` / `DeleteObjectsCommand` carrying a `VersionId` in the codebase, except at the unique boot-probe site (`probeDeleteVersionCapability` in the storage client) which is allowlisted by an AST-based detector keyed on `{ file, functionName }`.
+
+**Boot-time safety probes.** The module runs two refuse-to-serve checks at app start, before any reaper schedules:
+
+- **Bucket-safety probe** — asserts versioning is enabled, Object Lock is in Compliance mode with positive default-retention `R` days, and the lifecycle is exactly one rule applying `daysFromHidingToDeleting = L` with no other lifecycle rules. The validator is a pure function over a structured snapshot, so the fail/warn matrix is unit-tested without mocking the SDK.
+- **Capability self-test** — issues a `DeleteObjectCommand` with a sentinel non-existent VersionId against a sentinel key and asserts the response is `AccessDenied`. Any other outcome (success, `NoSuchVersion`, network timeout, unexpected error) fails the boot fail-closed: the credential cannot be trusted, so the app refuses to serve.
+
+**Re-upload semantic — UUID-keyed.** Object keys are server-issued and unique per attachment row: `{projectId}/{attachmentId}.{orig|thumb}`. A re-upload to an existing attachment id is not a supported flow — every upload is a fresh init that produces a new attachment id. This pins the choice ADR-0022 left as two options: with UUID-keyed paths the lifecycle never observes silent overwrites (no PUT-over-existing-key sequence), so the audit chain is always paired to the row and an attachment's full version history maps 1:1 to its row's lifetime. Content-addressed keys were rejected because they couple key schema to bytes and complicate restore semantics (a copy of a hidden version produces a new current version with the same hash, which collides with the content-addressed scheme).
 
 ### 11.5 Extensibility Checklist
 
@@ -250,6 +260,8 @@ The following values are centralized as single-source constants and may vary per
 - Attachment label catalog — the closed enum `AttachmentLabel` ([data-model.md §5.13](data-model.md#513-attachment)) paired with its German display strings: `angebot` → `Angebot`, `auftragsbestaetigung` → `Auftragsbestätigung`, `rechnung` → `Rechnung`, `aufmass` → `Aufmaß`, `foto` → `Foto`, `sonstiges` → `Sonstiges`. Adding a label is a code change plus a migration (parity with the notification-event catalog).
 - Attachment upload CTA labels — German copy for the upload affordance on the project detail page ([ui/project-detail.md §8.15.4](ui/project-detail.md#8154-photo-gallery), [§8.15.5](ui/project-detail.md#8155-binary-list)): the camera-capture CTA (`Foto aufnehmen`), the drop-zone text, the explicit-browse labels, and the retry / dismiss actions. Kept alongside the other `German UI and error strings` — listed here because the CTAs are referenced by capability statements elsewhere in the spec.
 - Attachment client-encoding parameters — image-longest-edge, image-quality, thumbnail-longest-edge, thumbnail-quality; applied by the browser pipeline before upload ([ui/project-detail.md §8.15.4](ui/project-detail.md#8154-photo-gallery))
+- Compliance retention `R` (days) — bucket default retention auto-applied per upload ([ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)). Sized for the operator-mistake recovery window. Env var: `STORAGE_OBJECT_LOCK_DAYS`. The dev compose stack mirrors the prod B2 setting via the same var.
+- Lifecycle hide-to-delete `L` (days) — `daysFromHidingToDeleting` on the bucket lifecycle rule. The Papierkorb trash window: a hidden version is reaped exactly `L` days after the hide marker lands. Env var: `STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS`. **Invariant: `R ≤ L`** — otherwise lifecycle reap retries past retention, the trash window stretches but data is still eventually destroyed; the safety probe surfaces the soft-drift as a warning, not a failure ([ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)).
 
 ### 12.3 Configuration Requirements
 
