@@ -30,7 +30,11 @@ const CANONICAL_RULE: LifecycleRuleSnapshot = {
   hasTagFilter: false,
   noncurrentDays: 2,
   expireDeleteMarker: true,
-  hasDisallowedActions: false,
+  hasExpirationDays: false,
+  hasExpirationDate: false,
+  hasTransitions: false,
+  hasNoncurrentTransitions: false,
+  hasAbortMpu: false,
 };
 
 const CANONICAL_CONFIG: BucketSafetyConfig = {
@@ -152,10 +156,65 @@ describe('evaluateBucketSafety — lifecycle failures', () => {
     if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/ExpiredObjectDeleteMarker/);
   });
 
-  it('fails when the rule has any disallowed action (Expiration.Days, Transitions, …)', () => {
-    const verdict = evaluateBucketSafety(withRule({ hasDisallowedActions: true }));
+  // Itemized deny list — one case per disallowed action so a regression
+  // that softens the message or drops the check trips the specific row.
+  it('fails when Expiration.Days > 0 (auto-hides live data — equivalent to B2 daysFromUploadingToHiding)', () => {
+    const verdict = evaluateBucketSafety(withRule({ hasExpirationDays: true }));
     expect(verdict.ok).toBe(false);
-    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/actions beyond/);
+    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/Expiration\.Days/);
+  });
+
+  it('fails when Expiration.Date is set (calendar-based auto-hide — same data-loss class)', () => {
+    const verdict = evaluateBucketSafety(withRule({ hasExpirationDate: true }));
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/Expiration\.Date/);
+  });
+
+  it('fails when the rule has Transitions[]', () => {
+    const verdict = evaluateBucketSafety(withRule({ hasTransitions: true }));
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/Transitions/);
+  });
+
+  it('fails when the rule has NoncurrentVersionTransitions[]', () => {
+    const verdict = evaluateBucketSafety(withRule({ hasNoncurrentTransitions: true }));
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/NoncurrentVersionTransitions/);
+  });
+
+  it('fails when the rule has AbortIncompleteMultipartUpload set', () => {
+    const verdict = evaluateBucketSafety(withRule({ hasAbortMpu: true }));
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/AbortIncompleteMultipartUpload/);
+  });
+
+  // Mixed semantics: a rule that expires both current AND noncurrent
+  // versions is ambiguous — ADR-0022 splits the two into separate
+  // concerns (current = "never auto-hide", noncurrent = "reap after L
+  // days"). Single rule combining both is a defensive reject.
+  it('fails when a rule has BOTH Expiration.Days AND NoncurrentVersionExpiration (mixed semantics)', () => {
+    const verdict = evaluateBucketSafety(withRule({ hasExpirationDays: true, noncurrentDays: 2 }));
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok)
+      expect(verdict.failures.join(' ')).toMatch(/mixes Expiration.*NoncurrentVersionExpiration/);
+  });
+
+  // Defensive name-based check — surfaces the B2 portal moniker in the
+  // failure message even when the structural shape has already been
+  // rejected. Useful for operators reading logs.
+  it('fails when the rule ID matches the B2 deny-listed moniker daysFromUploadingToHiding', () => {
+    const verdict = evaluateBucketSafety(withRule({ id: 'daysFromUploadingToHiding-something' }));
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/daysFromUploadingToHiding/);
+  });
+
+  // The acceptable shape: ONLY NoncurrentVersionExpiration.NoncurrentDays
+  // = L (plus ExpiredObjectDeleteMarker = true). Reaffirmed here as a
+  // dedicated row so a future change that narrows it further trips a
+  // specific test rather than a side effect.
+  it('passes when the only expiration field is NoncurrentVersionExpiration.NoncurrentDays', () => {
+    const verdict = evaluateBucketSafety(withRule({ noncurrentDays: 2 }));
+    expect(verdict).toEqual({ ok: true, warnings: [] });
   });
 });
 

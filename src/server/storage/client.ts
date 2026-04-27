@@ -310,8 +310,9 @@ export function buildContentDisposition(fileName: string): string {
  * Collapse the SDK's LifecycleRule into the structured snapshot the
  * safety validator consumes. Filter shape can be `{Prefix}`, `{Tag}`, or
  * `{And: {Prefix?, Tags?}}` — flatten into `(prefix, hasTagFilter)`.
- * Disallowed actions are anything beyond the canonical
- * `NoncurrentVersionExpiration + ExpiredObjectDeleteMarker` pair.
+ * Action fields are surfaced individually so the validator can emit a
+ * specific failure per defect (Expiration.Days vs Transitions vs …),
+ * matching the itemized runbook deny list.
  */
 function toLifecycleRuleSnapshot(rule: LifecycleRule): LifecycleRuleSnapshot {
   let prefix = '';
@@ -333,14 +334,6 @@ function toLifecycleRuleSnapshot(rule: LifecycleRule): LifecycleRuleSnapshot {
 
   // `Expiration.Days = 0` is the encoding S3 uses when only
   // `ExpiredObjectDeleteMarker` is set — treat as absent.
-  const hasExpirationDays = (expiration?.Days ?? 0) > 0;
-  const hasDisallowedActions =
-    hasExpirationDays ||
-    expiration?.Date !== undefined ||
-    (rule.Transitions?.length ?? 0) > 0 ||
-    (rule.NoncurrentVersionTransitions?.length ?? 0) > 0 ||
-    rule.AbortIncompleteMultipartUpload !== undefined;
-
   return {
     id: rule.ID,
     status: rule.Status ?? 'Disabled',
@@ -348,7 +341,11 @@ function toLifecycleRuleSnapshot(rule: LifecycleRule): LifecycleRuleSnapshot {
     hasTagFilter,
     noncurrentDays: rule.NoncurrentVersionExpiration?.NoncurrentDays,
     expireDeleteMarker,
-    hasDisallowedActions,
+    hasExpirationDays: (expiration?.Days ?? 0) > 0,
+    hasExpirationDate: expiration?.Date !== undefined,
+    hasTransitions: (rule.Transitions?.length ?? 0) > 0,
+    hasNoncurrentTransitions: (rule.NoncurrentVersionTransitions?.length ?? 0) > 0,
+    hasAbortMpu: rule.AbortIncompleteMultipartUpload !== undefined,
   };
 }
 
