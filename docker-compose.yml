@@ -51,7 +51,7 @@ services:
       # when STORAGE_ENDPOINT looks internal and this value is missing.
       # See docs/ops/storage-subdomain.md.
       STORAGE_PUBLIC_ENDPOINT: https://storage.${DOMAIN:?DOMAIN must be set}
-      STORAGE_BUCKET: projekt-manager
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-projekt-manager}
       STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
       STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
       NODE_ENV: production
@@ -200,7 +200,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      STORAGE_BUCKET: projekt-manager
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-projekt-manager}
       # ADR-0022 / docs/ops/object-storage-provisioning.md — R and L
       # dials. Forwarded with defaults so unset vars don't collapse to
       # empty strings (mc rejects "0d").
