@@ -29,6 +29,9 @@ import { startApp, stopApp, login, authGet, authPost, authDelete } from '../../t
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import { createStorageClient } from '../storage/client.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
+import { AttachmentService } from '../services/AttachmentService.js';
+import type { AuthUser } from '../middleware/auth.js';
 import { getEnv } from '../config/env.js';
 import type { Attachment } from '../../domain/types.js';
 
@@ -1087,6 +1090,96 @@ describe('Attachment routes — integration (issue #108)', () => {
   });
 
   // -------------------------------------------------------------------
+  // Hide — storage-first atomicity.
+  //
+  // The atomicity contract: storage hide runs BEFORE the DB CAS. A
+  // storage failure throws, the DB row stays in `ready`, and no
+  // `attachment:hide` audit row is written. The user retries; storage
+  // hide is idempotent (S3 DeleteObject without VersionId on a
+  // versioned bucket).
+  //
+  // The earlier (broken) shape ran storage AFTER the CAS commit and
+  // swallowed errors — a storage outage left a `hidden` row whose
+  // backing object was still the bucket's CURRENT version. The
+  // bucket lifecycle reaps NONCURRENT versions only, so the file
+  // would persist indefinitely with no UI affordance to retry.
+  //
+  // This block bypasses the route layer and constructs `AttachmentService`
+  // directly so a flaky storage proxy can inject the failure.
+  // -------------------------------------------------------------------
+  describe('Hide — storage-first atomicity', () => {
+    it('storage.hide failure leaves the row in ready, writes no audit row, and surfaces the error', async () => {
+      // Seed one ready row directly. The seeded row has no real
+      // backing bytes, but the contract under test never reaches
+      // storage successfully — the proxy throws on the first call.
+      const [attId] = await seedReadyAttachments(projectId, [{ sizeBytes: 100 }]);
+
+      // Resolve the owner user id from the same DB the service will
+      // see — the service expects a real user id for the audit
+      // actor, even though no audit row should be written here.
+      const { db, pool } = createDatabase();
+      let ownerId: string;
+      try {
+        const res = await db.execute(
+          sql`SELECT id FROM users WHERE username = ${SEED_USERS.owner.username} LIMIT 1`,
+        );
+        const row = res.rows[0] as { id: string } | undefined;
+        if (!row) throw new Error('owner user missing from seed');
+        ownerId = row.id;
+      } finally {
+        await pool.end();
+      }
+
+      // Audit-row count snapshot — under the new contract a storage
+      // failure must produce no audit row at all.
+      const auditBefore = await countAuditRows();
+
+      // Build a storage proxy that throws on `hide` but delegates
+      // every other call. Mirrors the proxy pattern used in
+      // attachments-bulk-download-reaper.test.ts.
+      const realStorage = storage();
+      const flakyStorage: AttachmentStorageClient = {
+        ...realStorage,
+        hide: async () => {
+          throw new Error('simulated-storage-flake');
+        },
+      };
+
+      // Construct the service with the flaky storage; reuse the
+      // app's DB. We bypass the route layer because the live route
+      // wiring uses the real storage client.
+      const { db: serviceDb, pool: servicePool } = createDatabase();
+      try {
+        const service = new AttachmentService({ db: serviceDb, storage: flakyStorage });
+        const owner: AuthUser = {
+          id: ownerId,
+          username: SEED_USERS.owner.username,
+          displayName: SEED_USERS.owner.displayName,
+          roles: [...SEED_USERS.owner.roles],
+          email: null,
+          themePreference: 'system',
+          pushMuted: false,
+        };
+        const noopLog = { info: () => {}, error: () => {} };
+
+        await expect(
+          service.hideAttachment(owner, projectId, attId, noopLog, null),
+        ).rejects.toThrow('simulated-storage-flake');
+      } finally {
+        await servicePool.end();
+      }
+
+      // Row stays in `ready` — no DB CAS happened.
+      const status = await fetchAttachmentStatus(attId);
+      expect(status).toBe('ready');
+
+      // No audit row was written.
+      const auditAfter = await countAuditRows();
+      expect(auditAfter).toBe(auditBefore);
+    });
+  });
+
+  // -------------------------------------------------------------------
   // Download URL surface — validation arms.
   // (Happy-path scoping lives in attachments-scope.test.ts.)
   // -------------------------------------------------------------------
@@ -1263,6 +1356,16 @@ async function fetchAttachmentStatus(id: string): Promise<string | null> {
     const res = await db.execute(sql`SELECT status FROM attachments WHERE id = ${id} LIMIT 1`);
     const row = res.rows[0] as { status: string } | undefined;
     return row?.status ?? null;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function countAuditRows(): Promise<number> {
+  const { db, pool } = createDatabase();
+  try {
+    const res = await db.execute(sql`SELECT COUNT(*)::int AS c FROM audit_log`);
+    return (res.rows[0] as { c: number }).c;
   } finally {
     await pool.end();
   }

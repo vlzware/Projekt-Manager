@@ -11,17 +11,22 @@
  *   complete    → HEAD verify both objects; flip to `status = 'ready'`
  *                 and persist the per-version-id pair (ADR-0022).
  *                 No audit row (AC-219 — state-machine finalize).
- *   hide        → flip `ready` → `hidden`, stamp `hidden_at`. Best-
- *                 effort `DeleteObject` (no versionId) writes a delete
- *                 marker on the versioned bucket; the prior version
- *                 stays intact for restore. Audit row
- *                 (`attachment:hide`) via `mutate()`.
+ *   hide        → `DeleteObject` (no versionId) on each storage key
+ *                 writes a delete marker on the versioned bucket;
+ *                 the prior version stays intact for restore. Then
+ *                 the CAS `ready` → `hidden` and the audit row commit
+ *                 atomically inside `mutate()`. Storage runs FIRST so
+ *                 a transient storage outage surfaces as 5xx (the
+ *                 user retries) instead of leaving a `hidden` row
+ *                 paired with a still-current storage object that
+ *                 lifecycle would never reap.
  *   restore     → flip `hidden` → `ready` via CAS, then
  *                 `copyFromVersion` to promote the persisted version
  *                 back to current, then write the freshly-issued
- *                 version-ids. All inside one `mutate()` tx so the
- *                 storage advance and DB state are atomic
- *                 (issue #45 H1). Audit row (`attachment:restore`).
+ *                 version-ids. All inside one `mutate()` tx — the
+ *                 storage advance is reachable only after the CAS
+ *                 commits, so two concurrent restores cannot both
+ *                 advance storage. Audit row (`attachment:restore`).
  *
  * Worker scoping: the repository predicate narrows reads; the service
  * layer additionally rejects worker write/init on an unassigned project
@@ -446,14 +451,22 @@ export class AttachmentService {
   /**
    * Hide (user-initiated DELETE; soft-hide per ADR-0022). Validates
    * caller scope, the project's read-write status (archive gate), and
-   * the worker self-delete grace window (AC-215). Flips the row from
-   * `ready` to `hidden` via CAS and writes one `attachment:hide` audit
-   * row via `mutate()`. Best-effort `DeleteObject` (no versionId) on
-   * each storage key produces a delete marker on the versioned bucket
-   * — the prior version is preserved so restore can promote it back.
-   * A storage failure leaves the row in `hidden` with the original
-   * still current; the next restore is a no-op copy and lifecycle reaps
-   * the orphan eventually. The op-log records the failure for follow-up.
+   * the worker self-delete grace window (AC-215).
+   *
+   * Storage-first ordering, outside the DB transaction. The
+   * `DeleteObject` (no versionId) writes a delete marker on the
+   * versioned bucket; the prior version is preserved so restore can
+   * promote it back. A storage failure throws and propagates as 5xx
+   * — no DB change happens, the user retries from scratch. Storage
+   * hide is idempotent: repeating against an already-hidden key just
+   * appends another delete marker, lifecycle reaps both. Running
+   * storage AHEAD of `mutate()` keeps the bucket lifecycle's
+   * NONCURRENT-only reap consistent with the row's `hidden` status:
+   * the alternative (DB CAS first, swallow storage faults) leaks the
+   * underlying object as the "current" version forever, with no UI
+   * affordance to retry. After storage succeeds, the CAS flip
+   * (`ready` → `hidden`) and the audit row commit atomically inside
+   * `mutate()`.
    */
   async hideAttachment(
     caller: AuthUser,
@@ -493,6 +506,18 @@ export class AttachmentService {
       }
     }
 
+    // Storage hide BEFORE the DB CAS. A throw here surfaces as 5xx
+    // and leaves the row in `ready`; the user retries. Doing this
+    // inside `mutate()`'s `run` would couple a non-transactional side
+    // effect to the SQL tx — a later rollback (e.g. the CAS losing
+    // its predicate to a racing hide) cannot undo a successful
+    // `DeleteObject`, producing the symmetric orphan in the opposite
+    // direction.
+    await this.storage.hide(row.originalKey);
+    if (row.thumbKey) {
+      await this.storage.hide(row.thumbKey);
+    }
+
     await mutate(
       this.db,
       { actorKind: 'user', actorId: caller.id, correlationId: correlationId ?? null },
@@ -507,6 +532,9 @@ export class AttachmentService {
             // racing client), or never reached ready (stuck pending),
             // or was reaped between the read and write. 409 in all
             // cases — the client refetches and sees the actual state.
+            // The storage delete marker we just wrote is harmless
+            // (idempotent) and aligns with the racing hide that
+            // already won the CAS.
             throw conflict(STRINGS.errors.invalidInput);
           }
           return {
@@ -529,17 +557,6 @@ export class AttachmentService {
         },
       },
     );
-
-    // Best-effort storage hide. A failure leaves the row in `hidden`
-    // state with the original storage object still current — the next
-    // restore would succeed (no copy needed since nothing was moved),
-    // but the user-visible "trash bin" claim is incomplete. Orphaned
-    // keys eventually reach lifecycle reap regardless. The op-log
-    // surfaces the failure for follow-up.
-    await this.bestEffortHide(row.originalKey, log);
-    if (row.thumbKey) {
-      await this.bestEffortHide(row.thumbKey, log);
-    }
 
     log.info({ attachmentId, projectId }, 'attachment_hidden');
   }
@@ -785,31 +802,6 @@ export class AttachmentService {
       bulkDownloadMaxFiles: caps.bulkDownloadMaxFiles,
       bulkDownloadMaxBytes: caps.bulkDownloadMaxBytes,
     });
-  }
-
-  /**
-   * Best-effort storage hide (DeleteObject without VersionId on the
-   * versioned bucket — writes a marker, ADR-0022). Swallows errors so a
-   * transient storage outage does not surface as a 500 after the DB
-   * commit succeeds. The operational log preserves the orphaned key so
-   * cleanup can follow; the bucket's lifecycle reaps eventually anyway.
-   */
-  private async bestEffortHide(key: string, log: ServiceLogger): Promise<void> {
-    try {
-      await this.storage.hide(key);
-    } catch (err) {
-      log.error(
-        {
-          event: 'attachment_storage_hide_failed',
-          key,
-          // `error_hint` matches the orphan-reaper / bulk-download-reaper
-          // contract (AC-213, data-model.md §6.11) so a single log-field
-          // name works across every attachment storage-cleanup path.
-          error_hint: err instanceof Error ? err.message : String(err),
-        },
-        'attachment_storage_hide_failed',
-      );
-    }
   }
 }
 
