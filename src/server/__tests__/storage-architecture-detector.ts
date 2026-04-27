@@ -24,8 +24,21 @@
  *   - any other identifier shape (function param, imported binding,
  *     spread, computed value) → opaque-and-flag, fail-closed: the
  *     detector cannot follow it, so the call is reported as a finding
- *     and a contributor must either inline the literal or arrange for
- *     the architecture test to exempt the call site
+ *     and a contributor must either inline the literal or add the call
+ *     site to the architecture-test allowlist
+ *
+ * Allowlist:
+ *   The detector accepts a `siteAllowlist` parameter — entries match by
+ *   `{ file, functionName }`. A destructive instantiation inside a
+ *   function whose name appears in the allowlist (and only in the
+ *   allowlisted file) is NOT flagged. Designed for the single legitimate
+ *   exception in the codebase: the boot-time capability self-test in
+ *   `client.ts`'s `probeDeleteVersionCapability`. The allowlist is
+ *   declared in the test (`storage-architecture.test.ts`), not via an
+ *   in-source magic comment — auditable as part of the architectural
+ *   contract. A companion scan (`findAllowlistViolations`) asserts no
+ *   other file declares a function with an allowlisted name, so the
+ *   carve-out cannot be borrowed by copy-paste in a different file.
  *
  * Limits:
  *   - Cross-file re-export resolution is intentionally out of scope.
@@ -59,6 +72,20 @@ export interface DetectorOffense {
   command: 'DeleteObjectCommand' | 'DeleteObjectsCommand';
   /** Where the VersionId property was found, for the failure message. */
   reason: string;
+}
+
+/**
+ * One entry in the architectural-exception allowlist. A destructive
+ * instantiation inside `functionName` declared in `file` is not flagged.
+ * Match is on the enclosing function declaration / method walked up from
+ * the `new` expression. The detector also asserts no allowlisted name
+ * appears in any other file — preventing a copy-paste bypass.
+ */
+export interface AllowlistEntry {
+  /** Repo-relative path (matches the detector's `file` output). */
+  file: string;
+  /** Enclosing function/method declaration name. */
+  functionName: string;
 }
 
 /** Internal: resolve a local identifier to its AWS-SDK origin. */
@@ -310,12 +337,12 @@ function inspectArgumentForVersionId(
     // (`const a = b` where `b` is itself a const-bound literal) — the
     // detector inspects exactly one hop. Adding chained resolution would
     // expand the bypass surface and the architectural intent is the
-    // opposite: keep destructive shapes inline-or-exempted.
+    // opposite: keep destructive shapes inline-or-allowlisted.
     const initializer = localLiteralBindings.get(node.text);
     if (!initializer) {
       return {
         kind: 'opaque',
-        reason: `argument is variable-bound to "${node.text}" and not resolvable to an inline literal in this file; refactor to inline literal or exempt the call site at the architecture test boundary`,
+        reason: `argument is variable-bound to "${node.text}" and not resolvable to an inline literal in this file; refactor to inline literal or add the call site to the architecture-test allowlist`,
       };
     }
     const reason = findVersionIdInLiteral(initializer, '<arg0>');
@@ -327,7 +354,7 @@ function inspectArgumentForVersionId(
   // etc.) cannot be statically resolved by this detector. Fail closed.
   return {
     kind: 'opaque',
-    reason: `argument is a non-literal expression of kind "${ts.SyntaxKind[node.kind]}"; refactor to inline literal or exempt the call site at the architecture test boundary`,
+    reason: `argument is a non-literal expression of kind "${ts.SyntaxKind[node.kind]}"; refactor to inline literal or add the call site to the architecture-test allowlist`,
   };
 }
 
@@ -379,6 +406,70 @@ function collectLocalLiteralBindings(sourceFile: ts.SourceFile): Map<string, ts.
 }
 
 /**
+ * Walk up from a `new`-expression to the nearest enclosing function-
+ * defining construct and return its bound name, if any. Used to match
+ * against the allowlist. Anonymous arrow functions, function expressions
+ * not bound to a name, methods with computed names, and bare top-level
+ * code return undefined — the inner-most function is the scope of the
+ * call, so its anonymity is dispositive: there's no allowlistable name
+ * even if some outer function has one. The allowlist requires a named
+ * binding by design.
+ */
+function findEnclosingFunctionName(node: ts.Node): string | undefined {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isFunctionDeclaration(current)) {
+      return current.name?.text;
+    }
+    if (ts.isMethodDeclaration(current)) {
+      return ts.isIdentifier(current.name) ? current.name.text : undefined;
+    }
+    if (ts.isFunctionExpression(current) || ts.isArrowFunction(current)) {
+      const parent = current.parent;
+      // `const probe = function() {}` / `const probe = () => {}` / object
+      // property `{ probe: () => {} }` — pick up the binding name.
+      if (parent && ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
+        return parent.name.text;
+      }
+      if (parent && ts.isPropertyAssignment(parent) && ts.isIdentifier(parent.name)) {
+        return parent.name.text;
+      }
+      // Function expression with internal name `function namedExpr(){}`.
+      if (ts.isFunctionExpression(current) && current.name) {
+        return current.name.text;
+      }
+      return undefined;
+    }
+    current = current.parent;
+  }
+  return undefined;
+}
+
+/**
+ * Symmetric to `findEnclosingFunctionName` but operating on the
+ * definition node rather than walking up — returns the name attached to
+ * a function-defining construct, or undefined for non-definitions /
+ * anonymous shapes.
+ */
+function extractDefinitionName(node: ts.Node): string | undefined {
+  if (ts.isFunctionDeclaration(node) && node.name) {
+    return node.name.text;
+  }
+  if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) {
+    return node.name.text;
+  }
+  if ((ts.isFunctionExpression(node) || ts.isArrowFunction(node)) && node.parent) {
+    if (ts.isVariableDeclaration(node.parent) && ts.isIdentifier(node.parent.name)) {
+      return node.parent.name.text;
+    }
+    if (ts.isPropertyAssignment(node.parent) && ts.isIdentifier(node.parent.name)) {
+      return node.parent.name.text;
+    }
+  }
+  return undefined;
+}
+
+/**
  * Detect destructive instantiations carrying (or potentially carrying) a
  * VersionId across the given file list. Pure function; the same code
  * path is exercised by the production scan and the negative-case fixture
@@ -390,15 +481,27 @@ function collectLocalLiteralBindings(sourceFile: ts.SourceFile): Map<string, ts.
  *     the inline-only bypass — T5c)
  *   - any non-literal / non-resolvable argument (opaque-and-flag, fail-
  *     closed): the detector cannot prove absence of VersionId, so a
- *     contributor must inline the literal or arrange an exemption
+ *     contributor must inline the literal or add the call site to the
+ *     architecture-test allowlist
+ *
+ * `siteAllowlist` declares the architectural exceptions: `{ file,
+ * functionName }` pairs whose enclosing function is the unique
+ * legitimate destructive call site (the boot-time capability self-test).
+ * The allowlist is checked AFTER the inspection so a structural change
+ * — e.g., the probe being moved or copy-pasted — surfaces immediately:
+ *   - moving the function to a different file → mismatch on `file`
+ *   - copying the function name into another file → caught by
+ *     `findAllowlistViolations`, run alongside this scan
  */
 export function detectVersionIdOnDestructiveCommands(
   filePaths: readonly string[],
   rootForRelativePaths: string,
+  siteAllowlist: ReadonlyArray<AllowlistEntry> = [],
 ): DetectorOffense[] {
   const offenses: DetectorOffense[] = [];
 
   for (const filePath of filePaths) {
+    const relPath = path.relative(rootForRelativePaths, filePath);
     const text = readFileSync(filePath, 'utf-8');
     const sourceFile = ts.createSourceFile(
       filePath,
@@ -420,13 +523,25 @@ export function detectVersionIdOnDestructiveCommands(
           if (arg) {
             const inspection = inspectArgumentForVersionId(arg, literalBindings);
             if (inspection.kind !== 'clean') {
-              const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
-              offenses.push({
-                file: path.relative(rootForRelativePaths, filePath),
-                line: line + 1,
-                command: command as DetectorOffense['command'],
-                reason: inspection.reason,
-              });
+              // Allowlist check: only suppresses when the enclosing
+              // function name AND file BOTH match an allowlist entry.
+              const enclosing = findEnclosingFunctionName(node);
+              const isAllowed = enclosing
+                ? siteAllowlist.some(
+                    (entry) => entry.file === relPath && entry.functionName === enclosing,
+                  )
+                : false;
+              if (!isAllowed) {
+                const { line } = sourceFile.getLineAndCharacterOfPosition(
+                  node.getStart(sourceFile),
+                );
+                offenses.push({
+                  file: relPath,
+                  line: line + 1,
+                  command: command as DetectorOffense['command'],
+                  reason: inspection.reason,
+                });
+              }
             }
           }
         }
@@ -437,6 +552,54 @@ export function detectVersionIdOnDestructiveCommands(
   }
 
   return offenses;
+}
+
+/**
+ * Cross-file allowlist integrity check. The allowlist names a function
+ * in a specific file as the unique exempt destructive call site. If
+ * another file exposes a function with the same name (so a future
+ * contributor could shelter a destructive call under the borrowed
+ * identifier), this scan returns the offending file paths and the test
+ * fails — keeping the architectural carve-out auditable.
+ *
+ * Matches function declarations / methods / const-bound function
+ * expressions and arrow functions. Same enclosing-name extraction as
+ * `findEnclosingFunctionName`, but against every named definition in
+ * the scanned files.
+ */
+export function findAllowlistViolations(
+  filePaths: readonly string[],
+  rootForRelativePaths: string,
+  siteAllowlist: ReadonlyArray<AllowlistEntry>,
+): Array<{ file: string; functionName: string }> {
+  const violations: Array<{ file: string; functionName: string }> = [];
+  if (siteAllowlist.length === 0) return violations;
+
+  const allowedNames = new Map<string, string>(); // name → permitted file
+  for (const entry of siteAllowlist) allowedNames.set(entry.functionName, entry.file);
+
+  for (const filePath of filePaths) {
+    const relPath = path.relative(rootForRelativePaths, filePath);
+    const text = readFileSync(filePath, 'utf-8');
+    const sourceFile = ts.createSourceFile(
+      filePath,
+      text,
+      ts.ScriptTarget.Latest,
+      /* setParentNodes */ true,
+      filePath.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+
+    const visit = (node: ts.Node): void => {
+      const name = extractDefinitionName(node);
+      if (name && allowedNames.has(name) && allowedNames.get(name) !== relPath) {
+        violations.push({ file: relPath, functionName: name });
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+
+  return violations;
 }
 
 /**

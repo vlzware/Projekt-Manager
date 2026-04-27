@@ -39,8 +39,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   detectVersionIdOnDestructiveCommands,
+  findAllowlistViolations,
   listFilesConstructingDeleteObjectCommand,
   listServerSourceFiles,
+  type AllowlistEntry,
 } from './storage-architecture-detector.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -48,12 +50,75 @@ const repoRoot = path.resolve(__dirname, '../../..');
 const serverRoot = path.join(repoRoot, 'src', 'server');
 const fixturesRoot = path.join(__dirname, 'fixtures', 'storage-architecture');
 
+/**
+ * The single architectural exception: the boot-time capability self-test
+ * (#45 review H3, ADR-0022) MUST issue a destructive shape against a
+ * sentinel non-existent version to verify the running credential lacks
+ * `deleteFiles` / `s3:DeleteObjectVersion`. The detector flags every
+ * other variable-bearing destructive instantiation; this entry says
+ * "this one site, in this one file, is the contractual exception."
+ *
+ * Pinned both ways:
+ *   - the production scan accepts this entry → the legitimate site passes
+ *   - `findAllowlistViolations` runs over the same file list and asserts
+ *     no other file declares a function with the same name (so a future
+ *     contributor cannot copy the function name into a new file as a
+ *     bypass)
+ *
+ * If the probe is renamed or moved, the entry must change at the same
+ * commit — the test is the architectural contract.
+ */
+const SITE_ALLOWLIST: ReadonlyArray<AllowlistEntry> = [
+  {
+    file: 'src/server/storage/client.ts',
+    functionName: 'probeDeleteVersionCapability',
+  },
+];
+
 describe('Storage architecture (ADR-0022 / #45): no destructive call carries a VersionId', () => {
   const productionFiles = listServerSourceFiles(serverRoot);
 
   it('production scan: no DeleteObjectCommand / DeleteObjectsCommand instantiation in src/server carries a VersionId', () => {
-    const offenses = detectVersionIdOnDestructiveCommands(productionFiles, repoRoot);
+    const offenses = detectVersionIdOnDestructiveCommands(
+      productionFiles,
+      repoRoot,
+      SITE_ALLOWLIST,
+    );
     expect(offenses).toEqual([]);
+  });
+
+  it('allowlist takes effect: probe site passes WITH the allowlist', () => {
+    // Direct check that the allowlist parameter is what's letting the
+    // probe site through — in other words, the production assertion
+    // above isn't passing because the probe is somehow a clean literal
+    // (it isn't; it's a variable-bound literal with VersionId, or in a
+    // future commit, an inline literal with VersionId).
+    const offenses = detectVersionIdOnDestructiveCommands(
+      productionFiles,
+      repoRoot,
+      SITE_ALLOWLIST,
+    );
+    expect(offenses.filter((o) => o.file === 'src/server/storage/client.ts')).toEqual([]);
+  });
+
+  it('without the allowlist, the probe site WOULD be flagged (negative control)', () => {
+    // Same scan with empty allowlist — proves the architectural carve-out
+    // is what's permitting the probe call, not a false-negative in the
+    // detector. If this assertion ever stops finding a flag, either the
+    // probe was removed (update the allowlist) or the detector regressed.
+    const offenses = detectVersionIdOnDestructiveCommands(productionFiles, repoRoot, []);
+    const probeOffenses = offenses.filter((o) => o.file === 'src/server/storage/client.ts');
+    expect(probeOffenses.length).toBeGreaterThan(0);
+    expect(probeOffenses.every((o) => o.command === 'DeleteObjectCommand')).toBe(true);
+  });
+
+  it('no file outside the allowlist declares an allowlisted function name', () => {
+    // Symmetric guard: a future contributor cannot land a destructive
+    // call inside a same-named function in a different file. The scan
+    // walks every production file and asserts no name collision with
+    // an allowlist entry outside its declared file.
+    const violations = findAllowlistViolations(productionFiles, repoRoot, SITE_ALLOWLIST);
+    expect(violations).toEqual([]);
   });
 
   it('storage client is the only file that constructs DeleteObjectCommand (concentration check)', () => {
