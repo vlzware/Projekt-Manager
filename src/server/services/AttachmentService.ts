@@ -566,16 +566,22 @@ export class AttachmentService {
    * call. The alternative (copy first, compensate on CAS-loss) was
    * rejected because the compensation can itself fail.
    *
-   * Failure modes:
-   *   - Row not in 'hidden' state → 409.
+   * Failure modes (status-code distinctions matter — issue #45 H5):
+   *   - Row not in 'hidden' state → 409 (transient: client refetches
+   *     and sees the actual state).
    *   - Row missing or wrong project → 404.
    *   - Project archived between hide and restore → 404 (matches the
    *     hide-side gate; an archived project is read-only).
-   *   - Storage CopyObject failure → 500 (genuine provider fault, no
-   *     graceful path; the row stays hidden, the user can retry).
-   *   - `versionId` is null on the row (unset by an old hide that
-   *     pre-dated #45) → 409 — restore is impossible without the source
-   *     version-id.
+   *   - Storage CopyObject failure → 500 (genuine provider fault; the
+   *     transaction rolls back, the row stays hidden, the user can
+   *     retry).
+   *   - `versionId` is null on a 'hidden' row → 422
+   *     (Datenintegritätsproblem — restore is structurally impossible).
+   *   - `hasThumbnail=true` with `thumb_version_id` null → 422
+   *     (gallery preview would be permanently lost; surface the
+   *     integrity violation rather than silently restore a broken
+   *     row).
+   *   - CAS-loss inside the tx → 409 (transient race).
    */
   async restoreAttachment(
     caller: AuthUser,
@@ -599,11 +605,18 @@ export class AttachmentService {
       throw conflict(STRINGS.errors.invalidInput);
     }
     if (!row.versionId) {
-      // No source version → restore is impossible. This is structural,
-      // not a transient failure: a row in 'hidden' without a version_id
-      // is a data-integrity issue (every #45-era hide records its
-      // version_id). Surface it as a conflict so the operator notices.
-      throw conflict(STRINGS.errors.invalidInput);
+      // No source version → restore is structurally impossible. Every
+      // #45-era hide records the version_id; a 'hidden' row without one
+      // is a data-integrity issue. 422 (not 409) — 409 implies "retry"
+      // and the row will not become restorable on its own.
+      throw validationError(STRINGS.attachments.restoreMissingVersionId(attachmentId));
+    }
+    if (row.hasThumbnail && row.thumbKey && !row.thumbVersionId) {
+      // The gallery thumb is part of the photo's restorable state.
+      // Silently skipping the thumb copy would permanently lose the
+      // gallery preview without any error signal — surface the integrity
+      // violation as 422 so the operator can inspect.
+      throw validationError(STRINGS.attachments.restoreMissingThumbVersionId(attachmentId));
     }
 
     // Snapshot the source version-ids — the inside-tx copies run from

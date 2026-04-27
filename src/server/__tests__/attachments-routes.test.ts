@@ -876,6 +876,61 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe('NOT_PERMITTED');
     });
+
+    // -----------------------------------------------------------------
+    // Restore — error-semantic distinctions (issue #45 H5).
+    //
+    // 422 (data integrity, structurally unrestorable) vs 409 (transient
+    // race, retry resolves) carries operator meaning: an operator
+    // fielding 422 inspects the row; an operator fielding 409 retries.
+    // Reusing 409 for both — as the original implementation did — buries
+    // the integrity case under the noise of routine race conflicts.
+    // -----------------------------------------------------------------
+    it('returns 422 VALIDATION_ERROR when a hidden row has no version_id (data integrity)', async () => {
+      // Seed a hidden row directly with version_id=NULL — simulates a
+      // pre-#45 hide (or any future regression that drops the version
+      // capture). Restore must surface this as 422, not 409: 409 says
+      // "retry" and the row will not become restorable on retry.
+      const attId = await seedHiddenAttachment(projectId, {
+        versionId: null,
+        thumbVersionId: null,
+        hasThumbnail: false,
+      });
+
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+      // The operator-visible message names the row id so the activity
+      // feed entry is actionable without spelunking the DB.
+      expect(res.json().message).toContain(attId);
+    });
+
+    it('returns 422 VALIDATION_ERROR when hasThumbnail=true and thumb_version_id is null', async () => {
+      // Seed a hidden photo row with version_id set but
+      // thumb_version_id null. Without the integrity check, the service
+      // would silently restore only the original and the gallery
+      // preview would be permanently lost.
+      const attId = await seedHiddenAttachment(projectId, {
+        versionId: 'fake-original-version-id',
+        thumbVersionId: null,
+        hasThumbnail: true,
+      });
+
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+      // Distinct message from the original-side branch — names the
+      // affected row id and identifies the missing field.
+      const body = res.json();
+      expect(body.message).toContain(attId);
+      expect(body.message).toContain('thumb_version_id');
+    });
   });
 
   // -------------------------------------------------------------------
@@ -1089,6 +1144,42 @@ async function fetchAttachmentVersions(
       | undefined;
     if (!row) return null;
     return { versionId: row.version_id, thumbVersionId: row.thumb_version_id };
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
+ * Insert one row directly in `hidden` state with explicit version_id
+ * shape so the integrity-error arms (issue #45 H5) can exercise the
+ * unrestorable-row branches. The route-driven path always commits
+ * non-null version_ids on a #45-era hide, so DB-level seeding is the
+ * only way to land the regression shape these tests pin.
+ */
+async function seedHiddenAttachment(
+  projectId: string,
+  spec: { versionId: string | null; thumbVersionId: string | null; hasThumbnail: boolean },
+): Promise<string> {
+  const { db, pool } = createDatabase();
+  try {
+    const id = crypto.randomUUID();
+    const kind = spec.hasThumbnail ? 'photo' : 'binary';
+    const label = spec.hasThumbnail ? 'foto' : 'sonstiges';
+    const mimeType = spec.hasThumbnail ? 'image/jpeg' : 'application/pdf';
+    const filename = `hidden-${id.slice(0, 6)}.${spec.hasThumbnail ? 'jpg' : 'pdf'}`;
+    const originalKey = `attachments/${projectId}/${id}.orig`;
+    const thumbKey = spec.hasThumbnail ? `attachments/${projectId}/${id}.thumb` : null;
+    await db.execute(sql`
+      INSERT INTO attachments
+        (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+         original_key, thumb_key, has_thumbnail,
+         version_id, thumb_version_id, hidden_at)
+      VALUES (${id}, ${projectId}, 'hidden', ${kind}, ${label},
+              ${filename}, ${mimeType}, 100,
+              ${originalKey}, ${thumbKey}, ${spec.hasThumbnail},
+              ${spec.versionId}, ${spec.thumbVersionId}, NOW())
+    `);
+    return id;
   } finally {
     await pool.end();
   }
