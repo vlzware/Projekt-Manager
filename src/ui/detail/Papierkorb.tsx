@@ -38,6 +38,24 @@ function relativeFromNow(iso: string, now: Date = new Date()): string {
   return fmt.format(Math.round(diffSec / 86400), 'day');
 }
 
+/**
+ * Local fetch state. Distinguishes the four observable surfaces:
+ *   - `loading` — fetch in progress, render a spinner
+ *   - `ready`   — fetch resolved, render the (possibly empty) list
+ *   - `error`   — network or server error, render a retry banner
+ *   - `forbidden` — 403, defense-in-depth for direct API calls
+ *
+ * Kept component-local rather than in the store so concurrent
+ * actions (a hide on a different surface, an upload error) don't
+ * overwrite the trash-fetch state by reaching for the shared
+ * `state.error` slot.
+ */
+type FetchState =
+  | { kind: 'loading' }
+  | { kind: 'ready' }
+  | { kind: 'error'; message: string }
+  | { kind: 'forbidden' };
+
 export function Papierkorb({ projectId }: PapierkorbProps) {
   // `undefined` = never fetched, `[]` = fetched-empty, otherwise the
   // hidden rows. The selector is already stable (Zustand returns the
@@ -52,10 +70,25 @@ export function Papierkorb({ projectId }: PapierkorbProps) {
   // twice. Disabling the button + flagging `aria-busy` is the same
   // pattern AssignedWorkerEditor / management forms use.
   const [pending, setPending] = useState<Set<string>>(new Set());
+  const [fetchState, setFetchState] = useState<FetchState>({ kind: 'loading' });
+
+  const runFetch = useCallback(async () => {
+    setFetchState({ kind: 'loading' });
+    const outcome = await fetchTrashForProject(projectId);
+    if (outcome.kind === 'forbidden') {
+      setFetchState({ kind: 'forbidden' });
+      return;
+    }
+    if (outcome.kind === 'error') {
+      setFetchState({ kind: 'error', message: outcome.message });
+      return;
+    }
+    setFetchState({ kind: 'ready' });
+  }, [fetchTrashForProject, projectId]);
 
   useEffect(() => {
-    void fetchTrashForProject(projectId);
-  }, [fetchTrashForProject, projectId]);
+    void runFetch();
+  }, [runFetch]);
 
   const handleRestore = useCallback(
     async (att: Attachment) => {
@@ -85,21 +118,48 @@ export function Papierkorb({ projectId }: PapierkorbProps) {
     >
       <h3 className={styles.regionHeading}>{STRINGS.attachments.papierkorbHeading}</h3>
 
-      {items === undefined ? null : items.length === 0 ? (
-        <p className={styles.emptyState}>{STRINGS.attachments.papierkorbEmpty}</p>
+      {fetchState.kind === 'loading' && items === undefined ? (
+        <p
+          className={styles.emptyState}
+          data-testid="papierkorb-loading"
+          role="status"
+          aria-live="polite"
+        >
+          {STRINGS.ui.loading}
+        </p>
+      ) : fetchState.kind === 'forbidden' ? (
+        <p className={styles.emptyState} data-testid="papierkorb-forbidden" role="alert">
+          {STRINGS.auth.notPermitted}
+        </p>
+      ) : fetchState.kind === 'error' ? (
+        <div className={styles.errorBanner} data-testid="papierkorb-error" role="alert">
+          <span>{fetchState.message}</span>
+          <button
+            type="button"
+            className={styles.retryButton}
+            onClick={() => void runFetch()}
+            data-testid="papierkorb-retry"
+          >
+            {STRINGS.attachments.uploadRetry}
+          </button>
+        </div>
+      ) : (items ?? []).length === 0 ? (
+        <p className={styles.emptyState} data-testid="papierkorb-empty">
+          {STRINGS.attachments.papierkorbEmpty}
+        </p>
       ) : (
         <div className={styles.binaryTableScroll}>
           <table className={styles.binaryTable}>
             <thead>
               <tr>
-                <th>{STRINGS.attachments.binarySectionTitle}</th>
-                <th>{STRINGS.attachments.uploadLabel}</th>
-                <th>{STRINGS.attachments.activity}</th>
+                <th>{STRINGS.attachments.colFileName}</th>
+                <th>{STRINGS.attachments.colLabel}</th>
+                <th>{STRINGS.attachments.colHidden}</th>
                 <th aria-label={STRINGS.attachments.restore} />
               </tr>
             </thead>
             <tbody>
-              {items.map((att) => (
+              {(items ?? []).map((att) => (
                 <tr key={att.id} data-testid={`papierkorb-row-${att.id}`}>
                   <td>{att.fileName}</td>
                   <td>{LABEL_BY_VALUE.get(att.label) ?? att.label}</td>

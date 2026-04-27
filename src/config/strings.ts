@@ -527,6 +527,23 @@ export const STRINGS = {
     deleteConfirmTitle: 'Datei löschen?',
     deleteConfirmMessage: 'Die Datei wird in den Papierkorb verschoben.',
 
+    /**
+     * Restore-side data-integrity surfaces (issue #45 H5). A row in
+     * 'hidden' state with a missing `version_id` (or, for photos with a
+     * thumb, a missing `thumb_version_id`) cannot be restored — there
+     * is no source version to copy from. Each branch names the affected
+     * row id so an operator triaging the activity feed sees the cause
+     * without spelunking the DB.
+     *
+     * Distinct from a CAS-loss (transient race, retry resolves it) and
+     * from a missing/wrong-project row (404). These are 422 — the
+     * request is structurally unprocessable.
+     */
+    restoreMissingVersionId: (id: string) =>
+      `Wiederherstellen nicht möglich: Anhang ${id} hat keine version_id (Datenintegritätsproblem).`,
+    restoreMissingThumbVersionId: (id: string) =>
+      `Wiederherstellen nicht möglich: Anhang ${id} hat keine thumb_version_id (Datenintegritätsproblem).`,
+
     // Download actions
     download: 'Herunterladen',
     view: 'Ansehen',
@@ -553,6 +570,8 @@ export const STRINGS = {
     colLabel: 'Beschriftung',
     colUploader: 'Hochgeladen von',
     colUploaded: 'Hochgeladen am',
+    /** Papierkorb-only column: timestamp the row was hidden (not uploaded). */
+    colHidden: 'Gelöscht am',
   },
 
   backup: {

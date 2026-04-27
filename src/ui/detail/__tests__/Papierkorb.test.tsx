@@ -107,6 +107,78 @@ describe('Papierkorb', () => {
     await waitFor(() => {
       expect(screen.getByText(/Keine gelöschten Dateien/)).toBeInTheDocument();
     });
+    // The empty-state must be the explicit "fetched-empty" surface, not
+    // the loading fallthrough — pre-fix the component rendered `null`
+    // both during the initial fetch and on the empty result.
+    expect(screen.getByTestId('papierkorb-empty')).toBeInTheDocument();
+    expect(screen.queryByTestId('papierkorb-loading')).not.toBeInTheDocument();
+  });
+
+  it('shows a loading surface before the trash fetch resolves', async () => {
+    // Hold the fetch open so we can observe the loading state.
+    let resolveList!: (value: ListResult) => void;
+    listTrashMock.mockImplementation(
+      () =>
+        new Promise<ListResult>((resolve) => {
+          resolveList = resolve;
+        }),
+    );
+
+    render(<Papierkorb projectId="p-42" />);
+
+    expect(screen.getByTestId('papierkorb-loading')).toBeInTheDocument();
+    expect(screen.queryByTestId('papierkorb-empty')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('papierkorb-error')).not.toBeInTheDocument();
+
+    // Resolve so the test runner does not hold the promise.
+    resolveList(ok({ data: [] }));
+    await waitFor(() => {
+      expect(screen.getByTestId('papierkorb-empty')).toBeInTheDocument();
+    });
+  });
+
+  it('shows an error banner with retry when the trash fetch fails', async () => {
+    listTrashMock.mockRejectedValueOnce(new Error('network down'));
+
+    render(<Papierkorb projectId="p-42" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('papierkorb-error')).toBeInTheDocument();
+    });
+    // The canonical German error string is the user-facing copy on a
+    // bare network rejection.
+    expect(screen.getByTestId('papierkorb-error')).toHaveTextContent(
+      'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+    );
+    // Retry button re-runs the fetch — wire the mock to succeed on the
+    // second call.
+    listTrashMock.mockResolvedValueOnce(ok({ data: [] }));
+    await userEvent.click(screen.getByTestId('papierkorb-retry'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('papierkorb-empty')).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId('papierkorb-error')).not.toBeInTheDocument();
+  });
+
+  it('shows a forbidden banner when the trash fetch returns 403', async () => {
+    // Tab is permission-gated upstream so this branch is defense-in-depth
+    // for direct API calls by an unprivileged caller (e.g. a worker who
+    // bookmarked the URL).
+    listTrashMock.mockResolvedValue({
+      ok: false,
+      error: { code: 'NOT_PERMITTED', message: 'Keine Berechtigung.' },
+      category: 'authorization',
+      sessionExpired: false,
+    } as ListResult);
+
+    render(<Papierkorb projectId="p-42" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('papierkorb-forbidden')).toBeInTheDocument();
+    });
+    // No retry button — the user cannot recover from a permission denial.
+    expect(screen.queryByTestId('papierkorb-retry')).not.toBeInTheDocument();
   });
 
   it('restore moves the row out of the trash list and into the live list', async () => {

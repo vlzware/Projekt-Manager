@@ -28,6 +28,20 @@ import { runImagePipeline, exceedsRawCap, type ProcessedUpload } from '@/domain/
 import { handleSessionExpired } from './sessionExpired';
 import { useToastStore } from './toastStore';
 
+/**
+ * Outcome of a Papierkorb fetch.
+ *
+ * Discriminated union so the component can render four distinct surfaces
+ * without inferring intent from a shared error string. `forbidden` is
+ * surfaced separately from `error` because the user copy differs ("Sie
+ * haben keinen Zugriff" vs "Erneut versuchen") and the retry affordance
+ * makes no sense for a permission denial.
+ */
+export type TrashFetchOutcome =
+  | { kind: 'ok' }
+  | { kind: 'forbidden' }
+  | { kind: 'error'; message: string };
+
 export interface PendingUpload {
   clientId: string;
   projectId: string;
@@ -53,8 +67,21 @@ interface AttachmentState {
   error: string | null;
 
   fetchForProject: (projectId: string) => Promise<void>;
-  /** Fetch the project's Papierkorb. 403 leaves the map untouched. */
-  fetchTrashForProject: (projectId: string) => Promise<void>;
+  /**
+   * Fetch the project's Papierkorb.
+   *
+   * Returns a discriminated outcome so the UI can render distinct
+   * loading / error / forbidden / empty surfaces. The previous
+   * void-returning shape forced the component to read the shared
+   * `state.error` field which any other action could overwrite, and
+   * left the "fetch in progress vs. fetch errored" cases visually
+   * indistinguishable.
+   *
+   * 403 leaves `hiddenByProject` untouched; the tab is permission-gated
+   * upstream, so this branch is defense-in-depth for direct API calls
+   * from an unprivileged caller.
+   */
+  fetchTrashForProject: (projectId: string) => Promise<TrashFetchOutcome>;
   /**
    * Restore a hidden attachment. Optimistic — the row leaves
    * `hiddenByProject` and joins `byProject` immediately; rollback on
@@ -496,23 +523,29 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         result = await attachmentApi.listTrash(projectId);
       } catch {
         set({ error: STRINGS.errors.mutationFailed });
-        return;
+        return { kind: 'error', message: STRINGS.errors.mutationFailed };
       }
       if (!result.ok) {
         if (result.sessionExpired) {
           handleSessionExpired();
-          return;
+          return { kind: 'error', message: STRINGS.auth.sessionExpiredLogin };
         }
         // 403 (caller lacks attachment:trash) leaves the map untouched —
         // the UI gates the tab on permission anyway, so this branch only
         // fires on a direct API call by an unprivileged caller.
-        set({ error: result.error.message || STRINGS.errors.mutationFailed });
-        return;
+        if (result.category === 'authorization') {
+          set({ error: result.error.message || STRINGS.auth.notPermitted });
+          return { kind: 'forbidden' };
+        }
+        const message = result.error.message || STRINGS.errors.mutationFailed;
+        set({ error: message });
+        return { kind: 'error', message };
       }
       set((s) => ({
         hiddenByProject: { ...s.hiddenByProject, [projectId]: result.data.data },
         error: null,
       }));
+      return { kind: 'ok' };
     },
 
     restoreAttachment: async (projectId, attachmentId) => {
