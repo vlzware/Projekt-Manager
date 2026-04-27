@@ -406,37 +406,29 @@ describe('assertStorageBucketSafe — integration with the dev MinIO bucket', ()
     });
   }
 
-  it('the bucket-shape snapshot from real MinIO satisfies the validator', async () => {
-    // Verifies the SDK→snapshot adapter (`toLifecycleRuleSnapshot` etc.)
-    // produces a shape the validator accepts. Defaults from
-    // init-storage.sh are R=1, L=2 — R ≤ L holds, no warning fires.
-    //
-    // Why not the full `assertStorageBucketSafe` here? The dev compose
-    // currently uses the MinIO root credential (`minioadmin`) which
-    // has destroy capability — the capability self-test on this
-    // credential returns 'unexpected-success' (204) and would correctly
-    // fail boot. That's the known dev-prod gap commit 72ad262 mirrored
-    // bucket *shape* but not the credential capability split (B2 prod
-    // uses a `writeFiles, readFiles, listFiles` key; dev still uses
-    // root). When the dev compose adds a restricted MinIO user, this
-    // test should be widened to call `assertStorageBucketSafe(client, …)`
-    // directly. Until then, the capability self-test is fully covered
-    // by the unit tests above (mocked CapabilityProbeResult cases).
+  it('the canonical dev MinIO bucket + restricted user satisfy the full probe', async () => {
+    // End-to-end exercise of the boot path against the real dev MinIO.
+    // `docker/init-storage.sh` settles the bucket to the shape the
+    // runbook pins (Object Lock COMPLIANCE / R=1, lifecycle
+    // NoncurrentDays=L=2, ExpiredObjectDeleteMarker=true) AND
+    // provisions a capability-restricted MinIO user with a bucket-scoped
+    // policy that allows write/read/list/hide but denies
+    // `s3:DeleteObjectVersion` — mirroring the prod B2 app key. With
+    // that pair in place `assertStorageBucketSafe(client, …)` must pass:
+    // the shape probe is clean, and the capability self-test resolves to
+    // `access-denied` because the running credential cannot destroy
+    // versions. Failure here is one of:
+    //   - bucket shape drifted (init script didn't run, or a previous
+    //     run left it half-configured),
+    //   - the app credentials in `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY`
+    //     are still root creds (regression to the pre-task state),
+    //   - the IAM policy was attached but doesn't actually deny
+    //     DeleteObjectVersion (provider drift).
+    // Each surfaces a distinct message via the aggregated error.
     const client = makeClient();
-    const config = await client.getBucketSafetyConfig();
-    const verdict = evaluateBucketSafety(config);
-    expect(verdict).toEqual({ ok: true, warnings: [] });
-  });
-
-  it('the capability probe runs against real MinIO and returns a structured result', async () => {
-    // Even on the current dev setup (root credential), the probe must
-    // return a structured `CapabilityProbeResult`, never throw. This
-    // guards against regressions in the `probeDeleteVersionCapability`
-    // wiring — it must always classify the response, never propagate
-    // an exception. The exact `kind` value depends on the live
-    // credential's perms; we just assert the shape.
-    const client = makeClient();
-    const result = await client.probeDeleteVersionCapability();
-    expect(['access-denied', 'unexpected-success', 'unexpected-error']).toContain(result.kind);
+    const warns: string[] = [];
+    await assertStorageBucketSafe(client, { warn: (m) => warns.push(m) });
+    // Defaults R=1, L=2 → R ≤ L → no R/L warning.
+    expect(warns).toEqual([]);
   });
 });
