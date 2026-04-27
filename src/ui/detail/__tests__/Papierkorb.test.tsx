@@ -86,7 +86,13 @@ beforeEach(() => {
 
 describe('Papierkorb', () => {
   it('fetches the trash on mount and renders rows with hiddenAt label + restore button', async () => {
-    const item = makeHidden({});
+    // Pin the hiddenAt timestamp at exactly one hour ago so the German
+    // relative-time formatter produces a deterministic string we can
+    // assert against. The fixture's default uses a wall-clock-relative
+    // timestamp computed at fixture-load time, which races a slow render.
+    const item = makeHidden({
+      hiddenAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    });
     listTrashMock.mockResolvedValue(ok({ data: [item] }));
 
     render(<Papierkorb projectId="p-42" />);
@@ -95,6 +101,12 @@ describe('Papierkorb', () => {
     await waitFor(() => {
       expect(screen.getByText(item.fileName)).toBeInTheDocument();
     });
+    // Hidden-at label is the rendered relative-time string composed
+    // through `STRINGS.attachments.hiddenAtLabel`. The pre-fix test
+    // claimed to assert this in its name but had no assertion at all
+    // (T-TAUT).
+    const row = screen.getByTestId(`papierkorb-row-${item.id}`);
+    expect(row).toHaveTextContent('vor 1 Stunde gelöscht');
     // Restore button visible on the row, named per the German strings.
     expect(screen.getByTestId(`papierkorb-restore-${item.id}`)).toBeInTheDocument();
   });

@@ -25,17 +25,23 @@ interface PapierkorbProps {
   projectId: string;
 }
 
+/**
+ * Reusable Intl formatter — instantiation is non-trivial and was
+ * previously created on every row render. Hoist to module scope so the
+ * cost is paid once per page lifecycle, not once per (rows × renders).
+ */
+const RELATIVE_FMT = new Intl.RelativeTimeFormat('de', { numeric: 'auto' });
+
 /** Format an ISO date as a German relative-time label ("vor 3 Tagen",
  *  "vor 5 Stunden"). Uses Intl.RelativeTimeFormat — built-in, no dep. */
 function relativeFromNow(iso: string, now: Date = new Date()): string {
-  const fmt = new Intl.RelativeTimeFormat('de', { numeric: 'auto' });
   const then = new Date(iso).getTime();
   const diffSec = Math.round((then - now.getTime()) / 1000);
   const abs = Math.abs(diffSec);
-  if (abs < 60) return fmt.format(diffSec, 'second');
-  if (abs < 60 * 60) return fmt.format(Math.round(diffSec / 60), 'minute');
-  if (abs < 60 * 60 * 24) return fmt.format(Math.round(diffSec / 3600), 'hour');
-  return fmt.format(Math.round(diffSec / 86400), 'day');
+  if (abs < 60) return RELATIVE_FMT.format(diffSec, 'second');
+  if (abs < 60 * 60) return RELATIVE_FMT.format(Math.round(diffSec / 60), 'minute');
+  if (abs < 60 * 60 * 24) return RELATIVE_FMT.format(Math.round(diffSec / 3600), 'hour');
+  return RELATIVE_FMT.format(Math.round(diffSec / 86400), 'day');
 }
 
 /**
