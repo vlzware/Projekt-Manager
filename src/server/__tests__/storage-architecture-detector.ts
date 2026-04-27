@@ -1,6 +1,6 @@
 /**
  * AST-based detector for "destructive S3 call carrying a VersionId"
- * (ADR-0022 / issue #45).
+ * (ADR-0022).
  *
  * Replaces the prior regex-over-text scanner, which was bypassed by an
  * import alias:
@@ -46,7 +46,7 @@
  *     re-exports `DeleteObjectCommand` would require a TypeChecker
  *     program, which is heavier than this self-contained file scan
  *     warrants. Intra-file rebindings (`const X = DeleteObjectCommand;
- *     new X(...)`) are tracked. The capability split (issue #45 primary
+ *     new X(...)`) are tracked. The capability split (ADR-0022 primary
  *     defense) is the actual enforcement; this scanner is a structural
  *     visibility belt.
  *

@@ -14,7 +14,7 @@
  *     no other actions (no Expiration.Days — would auto-hide live data;
  *     no Transitions — wrong storage class semantic).
  *
- * Capability self-test (per #45 review H3):
+ * Capability self-test:
  *   The shape check above does not verify the *primary* defense — that
  *   the running credential lacks `deleteFiles` (B2) /
  *   `s3:DeleteObjectVersion` (MinIO/AWS). If someone re-issues the app

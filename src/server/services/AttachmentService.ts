@@ -32,10 +32,10 @@
  * layer additionally rejects worker write/init on an unassigned project
  * (AC-214) and enforces the self-delete grace window (AC-215).
  *
- * Archive interaction (issue #45 Medium): hide is gated on the project
- * NOT being archived (read-only preview); restore is permitted on
- * archived projects so binaries in an archived project's trash are not
- * silently reaped by lifecycle.
+ * Archive interaction: hide is gated on the project NOT being archived
+ * (read-only preview); restore is permitted on archived projects so
+ * binaries in an archived project's trash are not silently reaped by
+ * lifecycle.
  */
 
 import crypto from 'node:crypto';
@@ -601,22 +601,21 @@ export class AttachmentService {
    * current versions); a storage failure rolls back the status flip
    * and the audit row (the user retries cleanly).
    *
-   * Atomicity choice (issue #45 H1): copies run AFTER the CAS, inside
-   * the surrounding transaction. The trade-off is that a transient
-   * storage fault rolls the audit row back too; the user repeats the
-   * call. The alternative (copy first, compensate on CAS-loss) was
-   * rejected because the compensation can itself fail.
+   * Atomicity choice: copies run AFTER the CAS, inside the surrounding
+   * transaction. The trade-off is that a transient storage fault rolls
+   * the audit row back too; the user repeats the call. The alternative
+   * (copy first, compensate on CAS-loss) was rejected because the
+   * compensation can itself fail.
    *
-   * Asymmetry with hide (intentional — issue #45 Medium): restore is
-   * permitted on archived projects; hide is not. Archive is a
-   * reversible state (re-activate is a design feature elsewhere);
-   * destruction-by-lifecycle is not. If restore were forbidden during
-   * archival, binaries in an archived project's trash would silently
-   * reap after L days with no recovery path. Hide on an archived
-   * project stays forbidden — read-only previews must not accept new
-   * mutations.
+   * Asymmetry with hide (intentional): restore is permitted on archived
+   * projects; hide is not. Archive is a reversible state (re-activate
+   * is a design feature elsewhere); destruction-by-lifecycle is not.
+   * If restore were forbidden during archival, binaries in an archived
+   * project's trash would silently reap after L days with no recovery
+   * path. Hide on an archived project stays forbidden — read-only
+   * previews must not accept new mutations.
    *
-   * Failure modes (status-code distinctions matter — issue #45 H5):
+   * Failure modes (each maps to a distinct status-code surface):
    *   - Row not in 'hidden' state → 409 (transient: client refetches
    *     and sees the actual state).
    *   - Row missing or wrong project → 404 (project itself missing
@@ -659,9 +658,10 @@ export class AttachmentService {
     }
     if (!row.versionId) {
       // No source version → restore is structurally impossible. Every
-      // #45-era hide records the version_id; a 'hidden' row without one
-      // is a data-integrity issue. 422 (not 409) — 409 implies "retry"
-      // and the row will not become restorable on its own.
+      // hide records the version_id at complete-time; a 'hidden' row
+      // without one is a data-integrity issue. 422 (not 409) — 409
+      // implies "retry" and the row will not become restorable on its
+      // own.
       throw validationError(STRINGS.attachments.restoreMissingVersionId(attachmentId));
     }
     if (row.hasThumbnail && row.thumbKey && !row.thumbVersionId) {

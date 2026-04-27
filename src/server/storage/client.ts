@@ -232,11 +232,11 @@ export interface StorageClient {
   getBucketSafetyConfig?: () => Promise<BucketSafetyConfig>;
 
   /**
-   * Boot-time capability self-test (#45 review H3 / safety.ts header).
-   * Issues a destructive call against a sentinel non-existent version
-   * and classifies the response — AccessDenied means the capability
-   * split is intact, anything else is structured back to the validator
-   * for fail-closed handling.
+   * Boot-time capability self-test (see `safety.ts` header for the
+   * full rationale). Issues a destructive call against a sentinel
+   * non-existent version and classifies the response — AccessDenied
+   * means the capability split is intact, anything else is structured
+   * back to the validator for fail-closed handling.
    *
    * Implementations MUST return a structured `CapabilityProbeResult`
    * even on AccessDenied — the probe is a measurement, not an
@@ -671,12 +671,12 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     },
 
     async probeDeleteVersionCapability(): Promise<CapabilityProbeResult> {
-      // Capability self-test (#45 review H3) — see safety.ts header for
-      // the rationale. The call is constructed to be intentionally
-      // destructive in shape (DeleteObjectCommand + VersionId) but
-      // pointed at a non-existent key with a non-existent VersionId, so
-      // a properly-restricted credential responds with AccessDenied at
-      // the capability layer before any object resolution happens.
+      // Capability self-test — see safety.ts header for the rationale.
+      // The call is constructed to be intentionally destructive in
+      // shape (DeleteObjectCommand + VersionId) but pointed at a
+      // non-existent key with a non-existent VersionId, so a properly-
+      // restricted credential responds with AccessDenied at the
+      // capability layer before any object resolution happens.
       //
       // This is the ONE legitimate site in the codebase that constructs
       // a `DeleteObjectCommand` carrying a `VersionId` — the architecture

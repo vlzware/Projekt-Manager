@@ -1,5 +1,5 @@
 /**
- * Architecture-level invariants for the storage module (ADR-0022 / #45).
+ * Architecture-level invariants for the storage module (ADR-0022).
  *
  * The capability split is the actual enforcement: the app's B2 key has
  * `writeFiles, readFiles, listFiles` only, so any call that resolves to
@@ -20,7 +20,7 @@
  *     import { DeleteObjectCommand as Foo } from '@aws-sdk/client-s3';
  *     new Foo({ Bucket, Key, VersionId: 'destroy' });   // regex missed
  *
- * Issue #45 calls the structural test the "primary defense" for the
+ * ADR-0022 calls the structural test the "primary defense" for the
  * project's binary durability story. A scanner that misses the trivial
  * alias is not a primary defense. The TypeScript compiler API is
  * already a devDependency, so AST resolution has zero new-dep cost.
@@ -52,8 +52,8 @@ const fixturesRoot = path.join(__dirname, 'fixtures', 'storage-architecture');
 
 /**
  * The single architectural exception: the boot-time capability self-test
- * (#45 review H3, ADR-0022) MUST issue a destructive shape against a
- * sentinel non-existent version to verify the running credential lacks
+ * (ADR-0022) MUST issue a destructive shape against a sentinel
+ * non-existent version to verify the running credential lacks
  * `deleteFiles` / `s3:DeleteObjectVersion`. The detector flags every
  * other variable-bearing destructive instantiation; this entry says
  * "this one site, in this one file, is the contractual exception."
@@ -75,7 +75,7 @@ const SITE_ALLOWLIST: ReadonlyArray<AllowlistEntry> = [
   },
 ];
 
-describe('Storage architecture (ADR-0022 / #45): no destructive call carries a VersionId', () => {
+describe('Storage architecture (ADR-0022): no destructive call carries a VersionId', () => {
   const productionFiles = listServerSourceFiles(serverRoot);
 
   it('production scan: no DeleteObjectCommand / DeleteObjectsCommand instantiation in src/server carries a VersionId', () => {

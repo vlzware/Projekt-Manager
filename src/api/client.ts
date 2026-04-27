@@ -19,9 +19,9 @@ export interface ApiError {
 /**
  * Error categories from `docs/spec/api.md §14.4.1`. The client classifies
  * every failure into one of these so the state/UI layers can branch on
- * category rather than on individual error codes. This closes the gap
- * where only SESSION_EXPIRED was handled specially and every other code
- * collapsed into the same generic path. See consolidation review H-3 / E F-1.
+ * category rather than on individual error codes. Without this, only
+ * SESSION_EXPIRED was handled specially and every other code collapsed
+ * into the same generic path.
  */
 export type ErrorCategory =
   | 'authentication' // INVALID_CREDENTIALS, UNAUTHENTICATED, SESSION_EXPIRED

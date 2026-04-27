@@ -813,8 +813,8 @@ describe('Attachment routes — integration (issue #108)', () => {
     });
 
     // -----------------------------------------------------------------
-    // CAS-loss atomicity (issue #45 H1). Two concurrent restores on the
-    // same hidden row: one must succeed (200, 'ready'), one must lose
+    // CAS-loss atomicity. Two concurrent restores on the same hidden
+    // row: one must succeed (200, 'ready'), one must lose
     // the CAS (409). After the dust settles, the row's persisted
     // version_id MUST equal storage's actual current version — i.e. the
     // failed restore must NOT have produced an orphan current version.
@@ -881,19 +881,20 @@ describe('Attachment routes — integration (issue #108)', () => {
     });
 
     // -----------------------------------------------------------------
-    // Restore — error-semantic distinctions (issue #45 H5).
+    // Restore — error-semantic distinctions.
     //
     // 422 (data integrity, structurally unrestorable) vs 409 (transient
     // race, retry resolves) carries operator meaning: an operator
     // fielding 422 inspects the row; an operator fielding 409 retries.
-    // Reusing 409 for both — as the original implementation did — buries
-    // the integrity case under the noise of routine race conflicts.
+    // Reusing 409 for both buries the integrity case under the noise
+    // of routine race conflicts.
     // -----------------------------------------------------------------
     it('returns 422 VALIDATION_ERROR when a hidden row has no version_id (data integrity)', async () => {
       // Seed a hidden row directly with version_id=NULL — simulates a
-      // pre-#45 hide (or any future regression that drops the version
-      // capture). Restore must surface this as 422, not 409: 409 says
-      // "retry" and the row will not become restorable on retry.
+      // legacy hide before version capture, or any future regression
+      // that drops the version capture. Restore must surface this as
+      // 422, not 409: 409 says "retry" and the row will not become
+      // restorable on retry.
       const attId = await seedHiddenAttachment(projectId, {
         versionId: null,
         thumbVersionId: null,
@@ -936,7 +937,7 @@ describe('Attachment routes — integration (issue #108)', () => {
     });
 
     // -----------------------------------------------------------------
-    // Restore on archived projects (issue #45 Medium).
+    // Restore on archived projects.
     //
     // Asymmetry by design: hide on archived stays forbidden (read-only
     // preview), restore on archived is permitted. Without the latter,
@@ -1207,8 +1208,8 @@ describe('Attachment routes — integration (issue #108)', () => {
     });
 
     // -----------------------------------------------------------------
-    // Pending-row invisibility (review H6). `listByProject` only
-    // surfaces ready rows; `issueDownloadUrl` must mirror that, or a
+    // Pending-row invisibility. `listByProject` only surfaces ready
+    // rows; `issueDownloadUrl` must mirror that, or a
     // caller could fetch a presigned GET for partially-uploaded bytes
     // before the HEAD-verify gate ran. 404 matches the reaper-removed
     // branch from the caller's point of view.
@@ -1407,10 +1408,10 @@ async function fetchAttachmentVersions(
 
 /**
  * Insert one row directly in `hidden` state with explicit version_id
- * shape so the integrity-error arms (issue #45 H5) can exercise the
- * unrestorable-row branches. The route-driven path always commits
- * non-null version_ids on a #45-era hide, so DB-level seeding is the
- * only way to land the regression shape these tests pin.
+ * shape so the integrity-error arms can exercise the unrestorable-row
+ * branches. The route-driven path always commits non-null version_ids,
+ * so DB-level seeding is the only way to land the regression shape
+ * these tests pin.
  */
 async function seedHiddenAttachment(
   projectId: string,

@@ -529,10 +529,10 @@ export const STRINGS = {
       'Die Datei wird in den Papierkorb verschoben. Sie kann innerhalb der Aufbewahrungsfrist wiederhergestellt werden; danach wird sie endgültig gelöscht und ist nicht mehr wiederherstellbar.',
 
     /**
-     * Restore-side data-integrity surfaces (issue #45 H5). A row in
-     * 'hidden' state with a missing `version_id` (or, for photos with a
-     * thumb, a missing `thumb_version_id`) cannot be restored — there
-     * is no source version to copy from. Each branch names the affected
+     * Restore-side data-integrity surfaces. A row in 'hidden' state
+     * with a missing `version_id` (or, for photos with a thumb, a
+     * missing `thumb_version_id`) cannot be restored — there is no
+     * source version to copy from. Each branch names the affected
      * row id so an operator triaging the activity feed sees the cause
      * without spelunking the DB.
      *
