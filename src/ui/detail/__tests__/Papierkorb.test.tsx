@@ -126,6 +126,23 @@ describe('Papierkorb', () => {
     expect(screen.queryByTestId('papierkorb-loading')).not.toBeInTheDocument();
   });
 
+  it('skips the mount-time fetch when the cache is already populated', async () => {
+    // The page-level eager fetch fills `hiddenByProject` to drive the
+    // tab-badge count; the tab component must not re-fetch when it
+    // mounts. Pre-seed the store, render, and assert the API is never
+    // called and the loading flash never renders.
+    const item = makeHidden({});
+    useAttachmentStore.setState({ hiddenByProject: { 'p-42': [item] } });
+
+    render(<Papierkorb projectId="p-42" />);
+
+    expect(screen.queryByTestId('papierkorb-loading')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId(`papierkorb-row-${item.id}`)).toBeInTheDocument();
+    });
+    expect(listTrashMock).not.toHaveBeenCalled();
+  });
+
   it('shows a loading surface before the trash fetch resolves', async () => {
     // Hold the fetch open so we can observe the loading state.
     let resolveList!: (value: ListResult) => void;

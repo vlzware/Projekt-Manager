@@ -76,7 +76,14 @@ export function Papierkorb({ projectId }: PapierkorbProps) {
   // twice. Disabling the button + flagging `aria-busy` is the same
   // pattern AssignedWorkerEditor / management forms use.
   const [pending, setPending] = useState<Set<string>>(new Set());
-  const [fetchState, setFetchState] = useState<FetchState>({ kind: 'loading' });
+  // The page eagerly fetches the trash for owner / office to populate
+  // the tab badge (`ProjectDetailPage`), so the cache is usually warm
+  // by the time this tab opens. Initialise from cached state to avoid
+  // a brief loading flash on every tab toggle: `items !== undefined`
+  // means a prior fetch already settled (empty array still counts).
+  const [fetchState, setFetchState] = useState<FetchState>(() =>
+    items === undefined ? { kind: 'loading' } : { kind: 'ready' },
+  );
 
   const runFetch = useCallback(async () => {
     setFetchState({ kind: 'loading' });
@@ -93,7 +100,14 @@ export function Papierkorb({ projectId }: PapierkorbProps) {
   }, [fetchTrashForProject, projectId]);
 
   useEffect(() => {
+    // Skip the duplicate fetch when the cache is already populated by
+    // the page-level eager fetch. The retry banner still uses
+    // `runFetch` directly.
+    if (items !== undefined) return;
     void runFetch();
+    // `items` intentionally not in deps: we only want to gate the
+    // mount-time fetch, not retrigger when the cache later mutates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runFetch]);
 
   const handleRestore = useCallback(
