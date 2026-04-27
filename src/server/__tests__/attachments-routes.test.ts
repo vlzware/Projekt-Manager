@@ -809,6 +809,58 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(res.json().code).toBe('CONFLICT');
     });
 
+    // -----------------------------------------------------------------
+    // CAS-loss atomicity (issue #45 H1). Two concurrent restores on the
+    // same hidden row: one must succeed (200, 'ready'), one must lose
+    // the CAS (409). After the dust settles, the row's persisted
+    // version_id MUST equal storage's actual current version — i.e. the
+    // failed restore must NOT have produced an orphan current version.
+    //
+    // This pins the atomicity invariant: storage advances ONLY when the
+    // DB CAS commits. A regression that runs copyFromVersion before the
+    // CAS would leave the bucket's current version pointing at the
+    // loser's copy while the DB version_id reflects the winner's — a
+    // silent storage/DB drift that tests on the happy path can't catch.
+    // -----------------------------------------------------------------
+    it('two concurrent restores: one wins, one loses CAS, storage and DB stay consistent', async () => {
+      const attId = await seedReadyAttachment();
+
+      // Hide the row first so both concurrent calls hit the restore path.
+      const hideRes = await authDelete(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}`,
+      );
+      expect(hideRes.statusCode).toBe(204);
+
+      // Read the keys so we can probe storage afterward.
+      const keys = await fetchAttachmentKeys(attId);
+      expect(keys).not.toBeNull();
+
+      // Fire both restores in parallel. Postgres will serialize the
+      // CAS UPDATEs at the row-level lock acquired by the first to
+      // reach `markRestored`; the second blocks, then finds status
+      // already flipped to 'ready' and returns null (CAS-loss).
+      const [r1, r2] = await Promise.all([
+        authPost(ownerToken, `/api/projects/${projectId}/attachments/${attId}/restore`),
+        authPost(ownerToken, `/api/projects/${projectId}/attachments/${attId}/restore`),
+      ]);
+      const codes = [r1.statusCode, r2.statusCode].sort();
+      expect(codes).toEqual([200, 409]);
+
+      // Storage's actual current version of the original key —
+      // determined by HEAD, which reports the bucket's current
+      // VersionId. With the atomicity fix, exactly one copyFromVersion
+      // ran (the winner's), so this version_id is the winner's.
+      const s = storage();
+      const head = await s.headObject(keys!.originalKey);
+
+      // The DB's persisted version_id must match storage. Mismatch ⇒
+      // an orphan current version exists from the failed restore =>
+      // C-DATA invariant violated.
+      const dbVersions = await fetchAttachmentVersions(attId);
+      expect(dbVersions?.versionId).toBe(head.versionId);
+    });
+
     it('worker is rejected from the trash listing with 403 NOT_PERMITTED', async () => {
       const res = await authGet(workerToken, `/api/projects/${projectId}/attachments/trash`);
       expect(res.statusCode).toBe(403);
@@ -1003,6 +1055,22 @@ async function fetchAttachmentStatus(id: string): Promise<string | null> {
     const res = await db.execute(sql`SELECT status FROM attachments WHERE id = ${id} LIMIT 1`);
     const row = res.rows[0] as { status: string } | undefined;
     return row?.status ?? null;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function fetchAttachmentKeys(
+  id: string,
+): Promise<{ originalKey: string; thumbKey: string | null } | null> {
+  const { db, pool } = createDatabase();
+  try {
+    const res = await db.execute(
+      sql`SELECT original_key, thumb_key FROM attachments WHERE id = ${id} LIMIT 1`,
+    );
+    const row = res.rows[0] as { original_key: string; thumb_key: string | null } | undefined;
+    if (!row) return null;
+    return { originalKey: row.original_key, thumbKey: row.thumb_key };
   } finally {
     await pool.end();
   }

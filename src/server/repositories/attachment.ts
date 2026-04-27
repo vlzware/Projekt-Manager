@@ -199,26 +199,51 @@ export async function markHidden(
 }
 
 /**
- * Flip `hidden` → `ready`, clear `hidden_at`, and overwrite the
- * version-id pair with the new versions produced by `copyFromVersion`
- * server-side (ADR-0022). The original/thumb keys are unchanged — the
- * UUID-keyed scheme is collision-free, and restore reuses the same key
- * with a freshly-promoted version. Atomic CAS on `status='hidden'`.
+ * Flip `hidden` → `ready` and clear `hidden_at`. Atomic CAS on
+ * `status='hidden'` — the WHERE predicate turns the read+write into a
+ * single conditional update. Returns the updated row when the
+ * transition was applied; null on CAS-loss (the row was not in
+ * `hidden` at the moment of the UPDATE).
+ *
+ * The version_id pair is intentionally NOT touched here. Restore is a
+ * two-phase operation: this CAS locks the row first, then the service
+ * issues `copyFromVersion` (storage round-trip), then writes the
+ * fresh version-ids via `setVersionIds`. Splitting the writes lets a
+ * storage failure roll back the status flip via the surrounding
+ * transaction without producing orphan storage versions.
  */
 export async function markRestored(
+  db: MutatingDatabase,
+  id: string,
+): Promise<AttachmentRowWithUploader | null> {
+  const rows = await db
+    .update(attachments)
+    .set({ status: 'ready', hiddenAt: null })
+    .where(and(eq(attachments.id, id), eq(attachments.status, 'hidden')))
+    .returning();
+  if (!rows[0]) return null;
+  return getById(db, id);
+}
+
+/**
+ * Overwrite the `version_id` / `thumb_version_id` pair on a row that
+ * the caller already holds a row-level lock on (typically via a prior
+ * CAS in the same transaction). No status predicate — this is the
+ * second phase of the restore flow where the surrounding transaction's
+ * lock guarantees no concurrent writer is racing the same row.
+ *
+ * Returns the updated row (with uploader display name re-fetched) or
+ * null when the id does not exist.
+ */
+export async function setVersionIds(
   db: MutatingDatabase,
   id: string,
   versions: { versionId: string | null; thumbVersionId: string | null },
 ): Promise<AttachmentRowWithUploader | null> {
   const rows = await db
     .update(attachments)
-    .set({
-      status: 'ready',
-      hiddenAt: null,
-      versionId: versions.versionId,
-      thumbVersionId: versions.thumbVersionId,
-    })
-    .where(and(eq(attachments.id, id), eq(attachments.status, 'hidden')))
+    .set({ versionId: versions.versionId, thumbVersionId: versions.thumbVersionId })
+    .where(eq(attachments.id, id))
     .returning();
   if (!rows[0]) return null;
   return getById(db, id);

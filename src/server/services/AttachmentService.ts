@@ -34,6 +34,7 @@ import {
   createPending,
   markHidden,
   markRestored,
+  setVersionIds,
   getById,
   listByProject,
   listHiddenByProject,
@@ -551,11 +552,19 @@ export class AttachmentService {
   }
 
   /**
-   * Restore: server-side `copyFromVersion` of original (and thumb, when
-   * present) from the persisted version-id pair, then flip status back
-   * to 'ready' with the freshly-issued current-version ids. Wrapped in
-   * `mutate()` so the audit chain records the restore alongside the
-   * matching prior `attachment:hide`.
+   * Restore: flip `hidden` → `ready` via CAS, then `copyFromVersion`
+   * from the persisted version-id pair, then write the freshly-issued
+   * current-version ids. The whole sequence runs inside `mutate()` so
+   * the audit chain records the restore atomically with the storage
+   * advance — a CAS-loss aborts before any storage call (no orphan
+   * current versions); a storage failure rolls back the status flip
+   * and the audit row (the user retries cleanly).
+   *
+   * Atomicity choice (issue #45 H1): copies run AFTER the CAS, inside
+   * the surrounding transaction. The trade-off is that a transient
+   * storage fault rolls the audit row back too; the user repeats the
+   * call. The alternative (copy first, compensate on CAS-loss) was
+   * rejected because the compensation can itself fail.
    *
    * Failure modes:
    *   - Row not in 'hidden' state → 409.
@@ -597,13 +606,12 @@ export class AttachmentService {
       throw conflict(STRINGS.errors.invalidInput);
     }
 
-    const newVersionId =
-      (await this.storage.copyFromVersion(row.originalKey, row.versionId)) ?? null;
-    let newThumbVersionId: string | null = null;
-    if (row.thumbKey && row.thumbVersionId) {
-      newThumbVersionId =
-        (await this.storage.copyFromVersion(row.thumbKey, row.thumbVersionId)) ?? null;
-    }
+    // Snapshot the source version-ids — the inside-tx copies run from
+    // these. After the CAS commits we know nobody else can race the
+    // same row (the row-level lock on the UPDATE blocks concurrent CAS
+    // attempts until this tx ends).
+    const sourceVersionId = row.versionId;
+    const sourceThumbVersionId = row.thumbKey ? row.thumbVersionId : null;
 
     const restored = await mutate(
       this.db,
@@ -612,25 +620,49 @@ export class AttachmentService {
         entityType: 'attachment',
         action: 'attachment:restore',
         run: async (tx) => {
-          const updated = await markRestored(tx, attachmentId, {
+          // Phase 1 — CAS the status. Holding the row lock from here
+          // means no concurrent restorer can advance storage while we
+          // copy below.
+          const flipped = await markRestored(tx, attachmentId);
+          if (!flipped) {
+            // CAS lost — racing restore committed first, or the row
+            // shifted out of 'hidden' between our read and this write.
+            // No storage call has happened yet, so there is nothing to
+            // compensate. The user retries.
+            throw conflict(STRINGS.errors.invalidInput);
+          }
+
+          // Phase 2 — copy. A failure here throws out of the tx and
+          // rolls back Phase 1 (status returns to 'hidden') AND the
+          // audit row. The bucket retains only the prior hidden version.
+          const newVersionId =
+            (await this.storage.copyFromVersion(row.originalKey, sourceVersionId)) ?? null;
+          let newThumbVersionId: string | null = null;
+          if (row.thumbKey && sourceThumbVersionId) {
+            newThumbVersionId =
+              (await this.storage.copyFromVersion(row.thumbKey, sourceThumbVersionId)) ?? null;
+          }
+
+          // Phase 3 — write the freshly-issued version-ids. We hold the
+          // row lock from Phase 1, so this is a plain UPDATE with no
+          // CAS predicate; setVersionIds returns null only if the id
+          // does not exist (would be a programmer error here).
+          const updated = await setVersionIds(tx, attachmentId, {
             versionId: newVersionId,
             thumbVersionId: newThumbVersionId,
           });
           if (!updated) {
-            // CAS lost — racing restore, or row state shifted. The
-            // freshly-copied storage versions are now orphaned current
-            // versions; lifecycle reaps the prior hide marker after L
-            // days, so the bucket converges. The user retries.
-            throw conflict(STRINGS.errors.invalidInput);
+            throw new Error('restoreAttachment: row vanished mid-transaction');
           }
+
           return {
             entityId: attachmentId,
             entityLabel: attachmentAuditLabel(updated),
             value: updated,
             before: {
               hiddenAt: row.hiddenAt?.toISOString() ?? null,
-              versionId: row.versionId,
-              thumbVersionId: row.thumbVersionId,
+              versionId: sourceVersionId,
+              thumbVersionId: sourceThumbVersionId,
             },
             after: {
               versionId: newVersionId,
