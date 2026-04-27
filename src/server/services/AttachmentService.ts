@@ -486,9 +486,9 @@ export class AttachmentService {
     // Best-effort storage cleanup — a failure here does not resurrect
     // the row (the DB cascade already committed). Orphaned keys are
     // harmless; the reaper / bucket lifecycle ultimately cleans them.
-    await this.bestEffortDelete(row.originalKey, log);
+    await this.bestEffortHide(row.originalKey, log);
     if (row.thumbKey) {
-      await this.bestEffortDelete(row.thumbKey, log);
+      await this.bestEffortHide(row.thumbKey, log);
     }
 
     log.info({ attachmentId, projectId }, 'attachment_removed');
@@ -570,24 +570,26 @@ export class AttachmentService {
   }
 
   /**
-   * Best-effort storage delete. Swallows errors so a transient storage
-   * outage does not surface as a 500 after the DB commit succeeds. The
-   * operational log preserves the orphaned key so cleanup can follow.
+   * Best-effort storage hide (DeleteObject without VersionId on the
+   * versioned bucket — writes a marker, ADR-0022). Swallows errors so a
+   * transient storage outage does not surface as a 500 after the DB
+   * commit succeeds. The operational log preserves the orphaned key so
+   * cleanup can follow; the bucket's lifecycle reaps eventually anyway.
    */
-  private async bestEffortDelete(key: string, log: ServiceLogger): Promise<void> {
+  private async bestEffortHide(key: string, log: ServiceLogger): Promise<void> {
     try {
-      await this.storage.deleteObject(key);
+      await this.storage.hide(key);
     } catch (err) {
       log.error(
         {
-          event: 'attachment_storage_delete_failed',
+          event: 'attachment_storage_hide_failed',
           key,
           // `error_hint` matches the orphan-reaper / bulk-download-reaper
           // contract (AC-213, data-model.md §6.11) so a single log-field
           // name works across every attachment storage-cleanup path.
           error_hint: err instanceof Error ? err.message : String(err),
         },
-        'attachment_storage_delete_failed',
+        'attachment_storage_hide_failed',
       );
     }
   }
@@ -598,35 +600,35 @@ export class AttachmentService {
  * cascade collects keys pre-commit via `listKeysForProject` and then
  * calls this helper after the DB transaction returns.
  */
-export async function bestEffortDeleteStorageKeys(
+export async function bestEffortHideStorageKeys(
   storage: AttachmentStorageClient,
   keys: Array<{ originalKey: string; thumbKey: string | null }>,
   log: ServiceLogger,
 ): Promise<void> {
   for (const entry of keys) {
     try {
-      await storage.deleteObject(entry.originalKey);
+      await storage.hide(entry.originalKey);
     } catch (err) {
       log.error(
         {
-          event: 'attachment_storage_delete_failed',
+          event: 'attachment_storage_hide_failed',
           key: entry.originalKey,
           error_hint: err instanceof Error ? err.message : String(err),
         },
-        'attachment_storage_delete_failed',
+        'attachment_storage_hide_failed',
       );
     }
     if (entry.thumbKey) {
       try {
-        await storage.deleteObject(entry.thumbKey);
+        await storage.hide(entry.thumbKey);
       } catch (err) {
         log.error(
           {
-            event: 'attachment_storage_delete_failed',
+            event: 'attachment_storage_hide_failed',
             key: entry.thumbKey,
             error_hint: err instanceof Error ? err.message : String(err),
           },
-          'attachment_storage_delete_failed',
+          'attachment_storage_hide_failed',
         );
       }
     }

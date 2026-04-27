@@ -80,7 +80,7 @@ async function bestEffortDelete(
   logger: ServiceLogger,
 ): Promise<void> {
   try {
-    await storage.deleteObject(key);
+    await storage.hide(key);
   } catch (err) {
     // Per §6.11: the metadata-table cleanliness goal trumps a missing
     // backing object. Log with `error_hint` (error channel so the single

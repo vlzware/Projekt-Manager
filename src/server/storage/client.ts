@@ -1,9 +1,19 @@
 /**
  * S3-compatible object storage client.
  *
- * Wraps @aws-sdk/client-s3 with a minimal interface for upload, download,
- * delete, and signed URL generation. Configured with forcePathStyle for
- * MinIO compatibility.
+ * Wraps @aws-sdk/client-s3 with a minimal interface for upload, hide,
+ * restore, presign, and signed URL generation. Configured with
+ * forcePathStyle for MinIO compatibility.
+ *
+ * Per ADR-0022, the app key cannot destroy versions. The mutating
+ * surface is `hide()` (DeleteObject without VersionId, creates a marker)
+ * and `copyFromVersion()` (CopyObject from a specific noncurrent version
+ * — the restore primitive). There is no `delete()` / `deleteObject()`
+ * by design: a method named "delete" that cannot actually destroy is
+ * misleading, and the architecture test at
+ * `src/server/__tests__/storage-architecture.test.ts` enforces that no
+ * `DeleteObjectCommand` / `DeleteObjectsCommand` carries a `VersionId`
+ * anywhere in the codebase.
  *
  * See architecture.md §11.4 for the module boundary definition.
  */
@@ -19,6 +29,7 @@ import {
   GetBucketVersioningCommand,
   GetObjectLockConfigurationCommand,
   GetBucketLifecycleConfigurationCommand,
+  CopyObjectCommand,
   type LifecycleRule,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -96,7 +107,6 @@ export class StorageObjectNotFoundError extends Error {
 export interface StorageClient {
   upload(key: string, data: Buffer | Uint8Array, contentType: string): Promise<UploadResult>;
   download(key: string): Promise<DownloadResult>;
-  delete(key: string): Promise<void>;
   getSignedUrl(key: string, expirySeconds: number): Promise<string>;
   /**
    * Liveness probe — verifies the configured bucket is reachable and
@@ -151,9 +161,24 @@ export interface StorageClient {
    */
   headObject?: (key: string) => Promise<HeadObjectResult>;
 
-  /** Explicit delete. Same semantic as `delete`; distinct name so
-   * attachment-flow call sites read naturally. */
-  deleteObject?: (key: string) => Promise<void>;
+  /**
+   * Hide the object — DeleteObject on a versioned bucket without a
+   * VersionId, which writes a delete marker instead of destroying the
+   * underlying version (ADR-0022). The app key has only `writeFiles`
+   * (no `deleteFiles`), so a destructive call would be refused at the
+   * capability layer regardless; the method name reflects what actually
+   * happens on the wire.
+   */
+  hide?: (key: string) => Promise<void>;
+
+  /**
+   * Restore primitive — CopyObject with a versionId in `CopySource`,
+   * promoting an older noncurrent version back to current. Returns the
+   * new version id of the resulting current version (the bucket is
+   * versioned, so each PUT — including this server-side copy — produces
+   * a fresh version). Used by the Papierkorb restore flow (ADR-0022).
+   */
+  copyFromVersion?: (key: string, sourceVersionId: string) => Promise<string | undefined>;
 
   /**
    * Stream the raw bytes of an object. The returned Readable carries the
@@ -212,7 +237,8 @@ export interface AttachmentStorageClient extends StorageClient {
     attachmentFileName?: string,
   ) => Promise<PresignedGetDescriptor>;
   headObject: (key: string) => Promise<HeadObjectResult>;
-  deleteObject: (key: string) => Promise<void>;
+  hide: (key: string) => Promise<void>;
+  copyFromVersion: (key: string, sourceVersionId: string) => Promise<string | undefined>;
   getObject: (key: string) => Promise<Readable>;
   putObject: (key: string, body: Buffer | Uint8Array, contentType: string) => Promise<void>;
   listObjects: (prefix: string, olderThan?: Date) => Promise<string[]>;
@@ -397,17 +423,6 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       };
     },
 
-    async delete(key: string): Promise<void> {
-      validateKey(key);
-      // S3 DeleteObject is idempotent — does not throw for missing keys.
-      await s3.send(
-        new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: key,
-        }),
-      );
-    },
-
     async getSignedUrl(key: string, expirySeconds: number): Promise<string> {
       validateKey(key);
       if (expirySeconds < MIN_SIGNED_URL_EXPIRY_SECONDS) {
@@ -521,9 +536,33 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       }
     },
 
-    async deleteObject(key: string): Promise<void> {
+    async hide(key: string): Promise<void> {
       validateKey(key);
+      // DeleteObject WITHOUT VersionId on a versioned bucket creates a
+      // delete marker — the version becomes "noncurrent" and reads return
+      // 404, but the bytes survive until the lifecycle reap (ADR-0022).
+      // Idempotent like S3 DeleteObject — succeeds on missing keys.
       await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    },
+
+    async copyFromVersion(key: string, sourceVersionId: string): Promise<string | undefined> {
+      validateKey(key);
+      if (!sourceVersionId) {
+        throw new Error('copyFromVersion: sourceVersionId is required');
+      }
+      // CopySource format per AWS S3 docs: "<bucket>/<key>?versionId=<vid>".
+      // The bucket and version-id are app-controlled; the key is already
+      // validated by validateKey() against STORAGE_CONFIG.validKeyPattern.
+      // Slashes inside the key remain raw — encoding them would change the
+      // semantic CopySource path. The SDK URL-encodes the rest.
+      const response = await s3.send(
+        new CopyObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          CopySource: `${bucket}/${key}?versionId=${encodeURIComponent(sourceVersionId)}`,
+        }),
+      );
+      return response.VersionId;
     },
 
     async getObject(key: string): Promise<Readable> {

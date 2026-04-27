@@ -22,7 +22,7 @@
  *     `event = 'bulk-download-reaper'`, `ttl_minutes`, `removed_count`,
  *     `ran_at` (ISO 8601). Same field set as the orphan reaper; own
  *     event name so operators can split the two streams.
- *   - Partial failure: a `deleteObject` throw does not abort the sweep;
+ *   - Partial failure: a `hide` throw does not abort the sweep;
  *     the reaper logs the failure with `error_hint` and continues with
  *     the remaining stale keys.
  *
@@ -43,7 +43,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createStorageClient } from '../storage/client.js';
-import type { AttachmentStorageClient, StorageClient } from '../storage/client.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
 import { getEnv, validateEnvRuntime } from '../config/env.js';
 import {
   EVENT_BULK_DOWNLOAD_REAPER,
@@ -58,7 +58,7 @@ const MINUTE_MS = 60 * SECOND_MS;
 /** Remove every object under `bulk-downloads/` so each test starts clean. */
 async function purgeBulkDownloadPrefix(storage: AttachmentStorageClient): Promise<void> {
   const keys = await storage.listObjects(BULK_DOWNLOAD_PREFIX);
-  await Promise.all(keys.map((k) => storage.deleteObject(k)));
+  await Promise.all(keys.map((k) => storage.hide(k)));
 }
 
 /**
@@ -171,7 +171,7 @@ describe('Bulk-download temp-zip reaper', () => {
     expect(await objectAbsent(storage, foreignKey)).toBe(false);
 
     // Housekeeping — leave no foreign key behind.
-    await storage.deleteObject(foreignKey);
+    await storage.hide(foreignKey);
   });
 
   // -------------------------------------------------------------------
@@ -238,29 +238,29 @@ describe('Bulk-download temp-zip reaper', () => {
   });
 
   // -------------------------------------------------------------------
-  // Partial failure — a `deleteObject` throw on one key must not abort
+  // Partial failure — a `hide` throw on one key must not abort
   // the sweep; the other expired keys are still removed, an error log
   // line with `error_hint` is emitted for the failing key, and the
   // final info line reports the accurate `removed_count` (successes
   // only — `bulk-download-reaper.ts` increments the counter inside the
   // success branch).
   // -------------------------------------------------------------------
-  it('keeps sweeping when one deleteObject throws; logs error_hint and continues', async () => {
+  it('keeps sweeping when one hide throws; logs error_hint and continues', async () => {
     const poison = await seedBulkDownloadZip(storage, 'partial-fail-poison');
     const ok1 = await seedBulkDownloadZip(storage, 'partial-fail-ok-one');
     const ok2 = await seedBulkDownloadZip(storage, 'partial-fail-ok-two');
 
-    // Proxy the storage client so `deleteObject(poison.key)` throws but
+    // Proxy the storage client so `hide(poison.key)` throws but
     // all other calls delegate to the real client. Reaches into
     // `listObjects` too — the proxy must forward it verbatim.
     const flakyStorage: AttachmentStorageClient = {
       ...storage,
       listObjects: storage.listObjects.bind(storage),
-      deleteObject: async (key: string) => {
+      hide: async (key: string) => {
         if (key === poison.key) {
           throw new Error('simulated-storage-flake');
         }
-        await storage.deleteObject(key);
+        await storage.hide(key);
       },
     };
 
@@ -305,7 +305,7 @@ describe('Bulk-download temp-zip reaper', () => {
     expect((infoCtx as { removed_count: number }).removed_count).toBe(2);
 
     // Housekeeping — the poison object is still there.
-    await storage.deleteObject(poison.key);
+    await storage.hide(poison.key);
   });
 });
 
@@ -333,17 +333,16 @@ describe('startBulkDownloadReaperScheduler', () => {
     });
 
     // Minimal storage stub — the scheduler only touches `listObjects`
-    // and `deleteObject` through the reaper, and we want listObjects to
-    // hang so the sweep stays in-flight.
-    const storage: StorageClient = {
+    // and `hide` through the reaper, and we want listObjects to hang so
+    // the sweep stays in-flight.
+    const storage: AttachmentStorageClient = {
       upload: vi.fn(),
       download: vi.fn(),
-      delete: vi.fn(),
       getSignedUrl: vi.fn(),
       ping: vi.fn(),
       listObjects: () => blocker,
-      deleteObject: vi.fn(),
-    } as unknown as StorageClient;
+      hide: vi.fn(),
+    } as unknown as AttachmentStorageClient;
 
     const logger = {
       info: vi.fn<(ctx: Record<string, unknown>, event: string) => void>(),

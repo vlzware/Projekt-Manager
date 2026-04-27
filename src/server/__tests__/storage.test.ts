@@ -4,13 +4,15 @@
  * Test AT-16 from the test specification (verification.md §16.3).
  *
  * This tests the object storage module boundary directly (not through
- * HTTP routes). The module encapsulates upload/download/delete operations
+ * HTTP routes). The module encapsulates upload/download/hide operations
  * against an S3-compatible object storage backend.
  *
  * Per architecture.md §11.4, the module must support:
  *   - Upload (key, data, content type) -> stored reference
  *   - Download (key) -> data stream
- *   - Delete (key) -> success/failure
+ *   - Hide (key) -> success/failure (DeleteObject without VersionId on a
+ *     versioned bucket — writes a delete marker, not a destruction;
+ *     ADR-0022)
  *   - Get signed/temporary access URL (key, expiry) -> URL
  *
  * This test runs against real object storage infrastructure.
@@ -26,7 +28,7 @@
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { createStorageClient } from '../../server/storage/client.js';
-import type { StorageClient } from '../../server/storage/client.js';
+import type { AttachmentStorageClient } from '../../server/storage/client.js';
 
 /**
  * STORAGE_* env vars are required. If they are not set, this file fails loud
@@ -55,7 +57,7 @@ function requireEnv(name: string): string {
 }
 
 describe('Object Storage Module', () => {
-  let storage: StorageClient;
+  let storage: AttachmentStorageClient;
 
   beforeAll(() => {
     storage = createStorageClient({
@@ -108,7 +110,7 @@ describe('Object Storage Module', () => {
       // been deleted by the test itself (e.g. tests 4 and 5), or the
       // upload may have never happened (e.g. a failed upload in test 1).
       try {
-        await storage.delete(testKey);
+        await storage.hide(testKey);
       } catch {
         // ignore — cleanup is best-effort
       }
@@ -140,19 +142,19 @@ describe('Object Storage Module', () => {
       expect(url).toMatch(/^https?:\/\//);
     });
 
-    it('deletes the uploaded file', async () => {
-      // Own upload: delete needs something to delete. Setup, not ordering.
+    it('hides the uploaded file', async () => {
+      // Own upload: hide needs something to hide. Setup, not ordering.
       await storage.upload(testKey, testContent, testContentType);
 
-      await expect(storage.delete(testKey)).resolves.not.toThrow();
+      await expect(storage.hide(testKey)).resolves.not.toThrow();
     });
 
-    it('download after delete returns not-found or throws', async () => {
-      // Full setup: upload then delete, so the assertion under test is
-      // purely "download of a missing key fails". No reliance on any
+    it('download after hide returns not-found or throws', async () => {
+      // Full setup: upload then hide, so the assertion under test is
+      // purely "download of a hidden key fails". No reliance on any
       // other test having run first.
       await storage.upload(testKey, testContent, testContentType);
-      await storage.delete(testKey);
+      await storage.hide(testKey);
 
       await expect(storage.download(testKey)).rejects.toThrow();
     });
