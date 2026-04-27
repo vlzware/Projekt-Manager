@@ -602,6 +602,14 @@ export const attachmentApi = {
       method: 'DELETE',
     }),
 
+  listTrash: (projectId: string) =>
+    apiCall<AttachmentListResponse>(`/api/projects/${projectId}/attachments/trash`),
+
+  restore: (projectId: string, attachmentId: string) =>
+    apiCall<Attachment>(`/api/projects/${projectId}/attachments/${attachmentId}/restore`, {
+      method: 'POST',
+    }),
+
   downloadUrl: (projectId: string, attachmentId: string, variant: 'original' | 'thumbnail') =>
     apiCall<AttachmentDownloadUrlResponse>(
       `/api/projects/${projectId}/attachments/${attachmentId}/download-url` + toQuery({ variant }),

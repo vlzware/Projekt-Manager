@@ -905,3 +905,34 @@
   font-size: 1rem;
   margin-left: auto;
 }
+
+/* Attachment tab strip — owner/office only, separates the live
+   "Anhänge" view from the Papierkorb. ADR-0022. */
+.attachmentTabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  margin-bottom: 8px;
+}
+
+.attachmentTab,
+.attachmentTabActive {
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.attachmentTab:hover {
+  color: var(--color-text);
+}
+
+.attachmentTabActive {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
+}

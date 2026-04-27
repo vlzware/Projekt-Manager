@@ -42,10 +42,25 @@ export interface PendingUpload {
 
 interface AttachmentState {
   byProject: Record<string, Attachment[]>;
+  /**
+   * Hidden (Papierkorb) rows per project, fetched lazily on tab open.
+   * Separate map from `byProject` so the live gallery / binary list never
+   * accidentally read trash entries. Owner / office only — workers
+   * trigger 403 on the GET /trash endpoint and never fill this map.
+   */
+  hiddenByProject: Record<string, Attachment[]>;
   pendingUploads: Record<string, PendingUpload>;
   error: string | null;
 
   fetchForProject: (projectId: string) => Promise<void>;
+  /** Fetch the project's Papierkorb. 403 leaves the map untouched. */
+  fetchTrashForProject: (projectId: string) => Promise<void>;
+  /**
+   * Restore a hidden attachment. Optimistic — the row leaves
+   * `hiddenByProject` and joins `byProject` immediately; rollback on
+   * failure restores the maps to their prior state.
+   */
+  restoreAttachment: (projectId: string, attachmentId: string) => Promise<void>;
   uploadFile: (
     projectId: string,
     file: File,
@@ -446,6 +461,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
   return {
     byProject: {},
+    hiddenByProject: {},
     pendingUploads: {},
     error: null,
 
@@ -467,6 +483,87 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       }
       set((s) => ({
         byProject: { ...s.byProject, [projectId]: result.data.data },
+        error: null,
+      }));
+    },
+
+    fetchTrashForProject: async (projectId: string) => {
+      let result;
+      try {
+        result = await attachmentApi.listTrash(projectId);
+      } catch {
+        set({ error: STRINGS.errors.mutationFailed });
+        return;
+      }
+      if (!result.ok) {
+        if (result.sessionExpired) {
+          handleSessionExpired();
+          return;
+        }
+        // 403 (caller lacks attachment:trash) leaves the map untouched —
+        // the UI gates the tab on permission anyway, so this branch only
+        // fires on a direct API call by an unprivileged caller.
+        set({ error: result.error.message || STRINGS.errors.mutationFailed });
+        return;
+      }
+      set((s) => ({
+        hiddenByProject: { ...s.hiddenByProject, [projectId]: result.data.data },
+        error: null,
+      }));
+    },
+
+    restoreAttachment: async (projectId, attachmentId) => {
+      // Optimistic move: row leaves Papierkorb and joins the live list.
+      // Rollback both maps on failure.
+      const beforeHidden = get().hiddenByProject[projectId];
+      const beforeLive = get().byProject[projectId];
+      const target = (beforeHidden ?? []).find((a) => a.id === attachmentId);
+      if (!target) return;
+      const optimistic: Attachment = { ...target, status: 'ready', hiddenAt: null };
+      set((s) => ({
+        hiddenByProject: {
+          ...s.hiddenByProject,
+          [projectId]: (s.hiddenByProject[projectId] ?? []).filter((a) => a.id !== attachmentId),
+        },
+        byProject: {
+          ...s.byProject,
+          [projectId]: [optimistic, ...(s.byProject[projectId] ?? [])],
+        },
+      }));
+
+      let result;
+      try {
+        result = await attachmentApi.restore(projectId, attachmentId);
+      } catch {
+        set((s) => ({
+          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
+          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
+          error: STRINGS.attachments.restoreFailed,
+        }));
+        return;
+      }
+      if (!result.ok) {
+        if (result.sessionExpired) {
+          handleSessionExpired();
+          return;
+        }
+        set((s) => ({
+          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
+          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
+          error: result.error.message || STRINGS.attachments.restoreFailed,
+        }));
+        return;
+      }
+      // Server response carries the authoritative row (with new
+      // version-ids). Replace the optimistic placeholder.
+      const restored = result.data;
+      set((s) => ({
+        byProject: {
+          ...s.byProject,
+          [projectId]: (s.byProject[projectId] ?? []).map((a) =>
+            a.id === attachmentId ? restored : a,
+          ),
+        },
         error: null,
       }));
     },
