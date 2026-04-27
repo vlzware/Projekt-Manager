@@ -1,106 +1,170 @@
 /**
- * Architecture-level invariants for the storage module (ADR-0022).
+ * Architecture-level invariants for the storage module (ADR-0022 / #45).
  *
- * The app key has only `writeFiles, readFiles, listFiles` — destructive
- * S3 calls are refused at the capability layer regardless of what the
- * code does. This test is a structural belt-and-braces against drift in
- * the same direction: no `DeleteObjectCommand` / `DeleteObjectsCommand`
- * anywhere in `src/` carries a `VersionId`, because such a call would
- * be a destructive intent the code base must not express.
+ * The capability split is the actual enforcement: the app's B2 key has
+ * `writeFiles, readFiles, listFiles` only, so any call that resolves to
+ * `b2_delete_file_version` (i.e. `DeleteObjectCommand` carrying a
+ * `VersionId`) is refused at the provider's capability layer regardless
+ * of what the code says. This test is the structural visibility belt:
+ * no source file under `src/server/` may construct
+ * `DeleteObjectCommand` / `DeleteObjectsCommand` with a `VersionId`,
+ * and only one file may construct `DeleteObjectCommand` at all.
  *
  * Restore (CopyObject with `CopySource: <bucket>/<key>?versionId=<vid>`)
  * is required and unaffected — the test does not scan CopyObjectCommand
  * or version-aware reads (GetObject/HeadObject with VersionId).
+ *
+ * Why AST, not regex. The prior regex implementation was bypassed by
+ * an import alias:
+ *
+ *     import { DeleteObjectCommand as Foo } from '@aws-sdk/client-s3';
+ *     new Foo({ Bucket, Key, VersionId: 'destroy' });   // regex missed
+ *
+ * Issue #45 calls the structural test the "primary defense" for the
+ * project's binary durability story. A scanner that misses the trivial
+ * alias is not a primary defense. The TypeScript compiler API is
+ * already a devDependency, so AST resolution has zero new-dep cost.
+ * `ts-morph` would be more ergonomic but adds a new top-level dep — the
+ * compiler API is the right tool here.
+ *
+ * Glob scope. The detector's production sweep is intentionally narrow
+ * to `src/server/`, excluding `__tests__/`. Today the AWS SDK is server-
+ * only; no client bundle constructs S3 commands. If that ever changes,
+ * the glob in `listServerSourceFiles` must widen at the same PR — the
+ * scanner must not silently miss new code.
  */
 
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  detectVersionIdOnDestructiveCommands,
+  listFilesConstructingDeleteObjectCommand,
+  listServerSourceFiles,
+} from './storage-architecture-detector.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../../..');
-const srcRoot = path.join(repoRoot, 'src');
+const serverRoot = path.join(repoRoot, 'src', 'server');
+const fixturesRoot = path.join(__dirname, 'fixtures', 'storage-architecture');
 
-function listSourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = path.join(dir, entry);
-    const s = statSync(full);
-    if (s.isDirectory()) {
-      if (entry === 'node_modules' || entry === 'dist') continue;
-      listSourceFiles(full, acc);
-    } else if (full.endsWith('.ts') || full.endsWith('.tsx')) {
-      acc.push(full);
-    }
-  }
-  return acc;
-}
+describe('Storage architecture (ADR-0022 / #45): no destructive call carries a VersionId', () => {
+  const productionFiles = listServerSourceFiles(serverRoot);
 
-/**
- * Find every `new <CommandName>(...)` invocation in `src` and return the
- * argument block (text between the outer parens). Balanced-paren walk so
- * nested object literals and function calls inside the args are captured
- * intact.
- */
-function extractCommandArgs(src: string, commandName: string): string[] {
-  const out: string[] = [];
-  const opener = new RegExp(`\\bnew\\s+${commandName}\\s*\\(`, 'g');
-  let match: RegExpExecArray | null;
-  while ((match = opener.exec(src)) !== null) {
-    const start = match.index + match[0].length;
-    let depth = 1;
-    let i = start;
-    while (i < src.length && depth > 0) {
-      const ch = src[i];
-      if (ch === '(') depth++;
-      else if (ch === ')') depth--;
-      i++;
-    }
-    if (depth === 0) {
-      out.push(src.slice(start, i - 1));
-    }
-  }
-  return out;
-}
+  it('production scan: no DeleteObjectCommand / DeleteObjectsCommand instantiation in src/server carries a VersionId', () => {
+    const offenses = detectVersionIdOnDestructiveCommands(productionFiles, repoRoot);
+    expect(offenses).toEqual([]);
+  });
 
-describe('Storage architecture (ADR-0022): no destructive call carries a VersionId', () => {
-  const sourceFiles = listSourceFiles(srcRoot);
+  it('storage client is the only file that constructs DeleteObjectCommand (concentration check)', () => {
+    // Concentration check — destructive-looking SDK constructs belong
+    // in one place so the capability surface is auditable. Anywhere
+    // else is either a leak from an old refactor or someone bypassing
+    // the hide / restore primitives.
+    const constructors = listFilesConstructingDeleteObjectCommand(productionFiles, repoRoot);
+    expect(constructors).toEqual(['src/server/storage/client.ts']);
+  });
 
-  it.each(['DeleteObjectCommand', 'DeleteObjectsCommand'])(
-    '%s is never instantiated with a VersionId field anywhere in src/',
-    (commandName) => {
-      const offenders: Array<{ file: string; args: string }> = [];
-      for (const file of sourceFiles) {
-        const text = readFileSync(file, 'utf-8');
-        if (!text.includes(commandName)) continue;
-        const argBlocks = extractCommandArgs(text, commandName);
-        for (const args of argBlocks) {
-          // Match either property shorthand (`VersionId`) or assignment
-          // (`VersionId:`) or batch-shape (`{ Key: ..., VersionId: ... }`
-          // inside `Objects: [...]`). Case-insensitive guards against an
-          // accidental lowercase-`versionId` slip — the SDK type would
-          // reject it, but the architecture intent is "no version-aware
-          // destruction" regardless of casing.
-          if (/\bversionid\b/i.test(args)) {
-            offenders.push({ file: path.relative(repoRoot, file), args });
-          }
-        }
-      }
-      expect(offenders).toEqual([]);
-    },
-  );
+  // -------------------------------------------------------------------
+  // Negative-case fixtures.
+  //
+  // These files live OUTSIDE the production-scan glob so the real check
+  // doesn't flag them; they're loaded explicitly by the detector here.
+  // Each fixture isolates one bypass shape the prior regex missed —
+  // confirming the AST detector now catches it. Add a fixture before
+  // adding a new resolution rule.
+  // -------------------------------------------------------------------
 
-  it('the storage client is the only file that constructs DeleteObjectCommand directly', () => {
-    // Concentration check — destructive-looking SDK commands belong in
-    // one place so the capability surface is auditable. Anywhere else
-    // is either a leak from an old refactor or someone bypassing the
-    // hide/restore primitives.
-    const callers = sourceFiles.filter((file) => {
-      const text = readFileSync(file, 'utf-8');
-      return /\bnew\s+DeleteObjectCommand\b/.test(text);
+  describe('detector behavior on bypass shapes (fixtures)', () => {
+    const fixtureFile = (name: string) => path.join(fixturesRoot, name);
+
+    it('flags an aliased named import (`import { DeleteObjectCommand as Foo }`)', () => {
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('aliased-import.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toHaveLength(1);
+      expect(offenses[0].command).toBe('DeleteObjectCommand');
+      expect(offenses[0].reason).toContain('VersionId');
     });
-    expect(callers.map((f) => path.relative(repoRoot, f))).toEqual([
-      'src/server/storage/client.ts',
-    ]);
+
+    it('flags a namespace import (`import * as S3; new S3.DeleteObjectCommand`)', () => {
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('namespace-import.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toHaveLength(1);
+      expect(offenses[0].command).toBe('DeleteObjectCommand');
+    });
+
+    it('flags an intra-file rebinding (`const X = DeleteObjectCommand`)', () => {
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('rebinding.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toHaveLength(1);
+      expect(offenses[0].command).toBe('DeleteObjectCommand');
+    });
+
+    it('flags VersionId nested inside batch-delete `Delete.Objects[*]`', () => {
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('batch-nested-versionid.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toHaveLength(1);
+      expect(offenses[0].command).toBe('DeleteObjectsCommand');
+      expect(offenses[0].reason).toContain('VersionId');
+    });
+
+    it('does not flag a benign DeleteObjectCommand (hide marker, no VersionId)', () => {
+      // Mirrors the legitimate call shape in src/server/storage/client.ts
+      // — DeleteObject without VersionId is the *hide* primitive on a
+      // versioned bucket. Detector must not flag this or the production
+      // sweep would fail on its own client.
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('benign-delete-no-versionid.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toEqual([]);
+    });
+
+    it('counts DeleteObjectCommand constructors across alias / namespace / rebinding shapes', () => {
+      // Four fixtures construct DeleteObjectCommand under various
+      // alias shapes (aliased / namespace / rebinding / direct). The
+      // concentration helper must resolve each one through the import
+      // table and count them all — proving the helper used by the
+      // production assertion would catch a splinter caller that
+      // disguised itself with an alias.
+      const fixtureFiles = [
+        'aliased-import.fixture.ts',
+        'namespace-import.fixture.ts',
+        'rebinding.fixture.ts',
+        'benign-delete-no-versionid.fixture.ts',
+      ].map(fixtureFile);
+      const callers = listFilesConstructingDeleteObjectCommand(fixtureFiles, fixturesRoot);
+      expect(callers.sort()).toEqual([
+        'aliased-import.fixture.ts',
+        'benign-delete-no-versionid.fixture.ts',
+        'namespace-import.fixture.ts',
+        'rebinding.fixture.ts',
+      ]);
+    });
+
+    it('residual gap: cross-file re-export is NOT detected (documented limit)', () => {
+      // Detecting a cross-file re-export would require building a
+      // TypeChecker program. The capability split is the actual
+      // enforcement; this scanner is a structural visibility belt for
+      // the in-tree code that lives next to the cap layer. If a
+      // future change introduces a re-export of an SDK destructive
+      // command from a local module, the missing capability still
+      // refuses the call at the wire — but this detector won't flag
+      // the rebinding-via-import. The fixture is here to pin the gap
+      // explicitly so it doesn't quietly become a false-pass surprise.
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('reexport-consumer.fixture.ts'), fixtureFile('reexport-source.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toEqual([]);
+    });
   });
 });
