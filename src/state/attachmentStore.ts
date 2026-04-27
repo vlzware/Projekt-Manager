@@ -58,7 +58,10 @@ interface AttachmentState {
   /**
    * Restore a hidden attachment. Optimistic — the row leaves
    * `hiddenByProject` and joins `byProject` immediately; rollback on
-   * failure restores the maps to their prior state.
+   * failure restores the maps to their prior state and surfaces a
+   * German error toast. The session-expired branch rolls the maps back
+   * before the central handler bounces to the login page so the user
+   * does not return to a half-applied UI.
    */
   restoreAttachment: (projectId: string, attachmentId: string) => Promise<void>;
   uploadFile: (
@@ -531,27 +534,38 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         },
       }));
 
+      // Roll back both maps and surface the toast on a terminal failure.
+      // Centralised here so the network-error, server-error, and
+      // session-expired branches share the same recovery — the previous
+      // session-expired branch bounced to login WITHOUT rolling back the
+      // optimistic move, leaving an inconsistent UI behind.
+      const rollback = (message: string | null): void => {
+        set((s) => ({
+          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
+          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
+          error: message,
+        }));
+        if (message) useToastStore.getState().show('error', message);
+      };
+
       let result;
       try {
         result = await attachmentApi.restore(projectId, attachmentId);
       } catch {
-        set((s) => ({
-          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
-          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
-          error: STRINGS.attachments.restoreFailed,
-        }));
+        rollback(STRINGS.attachments.restoreFailed);
         return;
       }
       if (!result.ok) {
         if (result.sessionExpired) {
+          // Roll the optimistic move back BEFORE the central handler
+          // navigates away. Suppress the toast — the login redirect is
+          // the user-facing signal here, a duplicate error toast would
+          // be noise.
+          rollback(null);
           handleSessionExpired();
           return;
         }
-        set((s) => ({
-          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
-          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
-          error: result.error.message || STRINGS.attachments.restoreFailed,
-        }));
+        rollback(result.error.message || STRINGS.attachments.restoreFailed);
         return;
       }
       // Server response carries the authoritative row (with new

@@ -45,6 +45,8 @@ vi.mock('@/api/client', async (importActual) => {
 
 const { Papierkorb } = await import('@/ui/detail/Papierkorb');
 const { useAttachmentStore } = await import('@/state/attachmentStore');
+const { useToastStore } = await import('@/state/toastStore');
+const { useAuthStore } = await import('@/state/authStore');
 
 function makeHidden(overrides: Partial<Attachment>): Attachment {
   return {
@@ -79,6 +81,7 @@ beforeEach(() => {
     pendingUploads: {},
     error: null,
   });
+  useToastStore.setState({ toasts: [] });
 });
 
 describe('Papierkorb', () => {
@@ -137,7 +140,7 @@ describe('Papierkorb', () => {
     expect(hiddenByProject['p-42']?.some((a) => a.id === item.id)).toBe(false);
   });
 
-  it('rolls the optimistic restore back when the API fails', async () => {
+  it('rolls the optimistic restore back and surfaces an error toast when the API fails', async () => {
     const item = makeHidden({});
     listTrashMock.mockResolvedValue(ok({ data: [item] }));
     restoreMock.mockResolvedValue({
@@ -159,5 +162,101 @@ describe('Papierkorb', () => {
       expect(hiddenByProject['p-42']?.some((a) => a.id === item.id)).toBe(true);
       expect(byProject['p-42']?.some((a) => a.id === item.id)).toBe(false);
     });
+
+    // Failure must surface to the user — silent rollback would leave
+    // the row reappearing in the Papierkorb with no explanation.
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe('error');
+    expect(toasts[0].message).toBe('boom');
+  });
+
+  it('falls back to the canonical German restore-failed copy when the API returns no message', async () => {
+    const item = makeHidden({});
+    listTrashMock.mockResolvedValue(ok({ data: [item] }));
+    restoreMock.mockResolvedValue({
+      ok: false,
+      error: { message: '' },
+    } as RestoreResult);
+
+    render(<Papierkorb projectId="p-42" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`papierkorb-row-${item.id}`)).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId(`papierkorb-restore-${item.id}`));
+
+    await waitFor(() => {
+      const toasts = useToastStore.getState().toasts;
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0].message).toBe('Wiederherstellen fehlgeschlagen.');
+    });
+  });
+
+  it('rolls the optimistic restore back on a network rejection and toasts the canonical copy', async () => {
+    // Distinct from the API-error branch: the fetch throws (offline,
+    // DNS, server unreachable) so the user-supplied message is absent
+    // and the canonical German copy is the only signal.
+    const item = makeHidden({});
+    listTrashMock.mockResolvedValue(ok({ data: [item] }));
+    restoreMock.mockRejectedValue(new Error('network down'));
+
+    render(<Papierkorb projectId="p-42" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`papierkorb-row-${item.id}`)).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId(`papierkorb-restore-${item.id}`));
+
+    await waitFor(() => {
+      const { hiddenByProject } = useAttachmentStore.getState();
+      expect(hiddenByProject['p-42']?.some((a) => a.id === item.id)).toBe(true);
+      const toasts = useToastStore.getState().toasts;
+      expect(toasts).toHaveLength(1);
+      expect(toasts[0].message).toBe('Wiederherstellen fehlgeschlagen.');
+    });
+  });
+
+  it('rolls the optimistic restore back BEFORE bouncing on a session-expired failure', async () => {
+    // Regression: previously the session-expired branch returned to the
+    // central handler WITHOUT undoing the optimistic move, leaving the
+    // restored row in `byProject` under a now-stale cache. Spy on the
+    // auth store's bounce action so we can observe the order.
+    const item = makeHidden({});
+    listTrashMock.mockResolvedValue(ok({ data: [item] }));
+    restoreMock.mockResolvedValue({
+      ok: false,
+      error: { code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen.' },
+      category: 'authentication',
+      sessionExpired: true,
+    } as RestoreResult);
+
+    // Replace handleSessionExpired with a spy so the cascading
+    // downstream-state clear does not run inside this test.
+    const bounce = vi.fn();
+    useAuthStore.setState({ handleSessionExpired: bounce });
+
+    render(<Papierkorb projectId="p-42" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`papierkorb-row-${item.id}`)).toBeInTheDocument();
+    });
+
+    await userEvent.click(screen.getByTestId(`papierkorb-restore-${item.id}`));
+
+    await waitFor(() => {
+      expect(bounce).toHaveBeenCalledTimes(1);
+    });
+
+    // Maps must be back to their pre-click state — the row is in the
+    // Papierkorb again, the live list is empty.
+    const { hiddenByProject, byProject } = useAttachmentStore.getState();
+    expect(hiddenByProject['p-42']?.some((a) => a.id === item.id)).toBe(true);
+    expect(byProject['p-42']?.some((a) => a.id === item.id)).toBe(false);
+    // Login redirect IS the user-facing signal — a duplicate error toast
+    // would be noise, so suppress.
+    expect(useToastStore.getState().toasts).toHaveLength(0);
   });
 });
