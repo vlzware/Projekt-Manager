@@ -201,6 +201,11 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
       STORAGE_BUCKET: projekt-manager
+      # ADR-0022 / docs/ops/object-storage-provisioning.md — R and L
+      # dials. Forwarded with defaults so unset vars don't collapse to
+      # empty strings (mc rejects "0d").
+      STORAGE_OBJECT_LOCK_DAYS: ${STORAGE_OBJECT_LOCK_DAYS:-1}
+      STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS: ${STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS:-2}
     restart: 'no'
 
   backup:
