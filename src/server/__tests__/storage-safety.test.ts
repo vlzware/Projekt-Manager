@@ -56,9 +56,9 @@ function withRule(patch: Partial<LifecycleRuleSnapshot>): BucketSafetyConfig {
 // ---------------------------------------------------------------------
 
 describe('evaluateBucketSafety — happy path', () => {
-  it('passes the canonical configuration with no warnings', () => {
+  it('passes the canonical configuration', () => {
     const verdict = evaluateBucketSafety(CANONICAL_CONFIG);
-    expect(verdict).toEqual({ ok: true, warnings: [] });
+    expect(verdict).toEqual({ ok: true });
   });
 
   it('passes when R = L', () => {
@@ -66,7 +66,7 @@ describe('evaluateBucketSafety — happy path', () => {
       ...CANONICAL_CONFIG,
       objectLock: { enabled: true, defaultMode: 'COMPLIANCE', defaultDays: 2 },
     });
-    expect(verdict).toEqual({ ok: true, warnings: [] });
+    expect(verdict).toEqual({ ok: true });
   });
 });
 
@@ -215,28 +215,28 @@ describe('evaluateBucketSafety — lifecycle failures', () => {
   // specific test rather than a side effect.
   it('passes when the only expiration field is NoncurrentVersionExpiration.NoncurrentDays', () => {
     const verdict = evaluateBucketSafety(withRule({ noncurrentDays: 2 }));
-    expect(verdict).toEqual({ ok: true, warnings: [] });
+    expect(verdict).toEqual({ ok: true });
   });
 });
 
-describe('evaluateBucketSafety — R > L is a warning, not a failure', () => {
-  it('warns but passes when R > L (lifecycle reap retries past retention)', () => {
+describe('evaluateBucketSafety — R > L is a hard failure', () => {
+  it('fails when R > L (lifecycle reap is blocked by Object Lock for R-L days)', () => {
     const verdict = evaluateBucketSafety({
       ...CANONICAL_CONFIG,
       objectLock: { enabled: true, defaultMode: 'COMPLIANCE', defaultDays: 7 },
       lifecycleRules: [{ ...CANONICAL_RULE, noncurrentDays: 2 }],
     });
-    expect(verdict.ok).toBe(true);
-    if (verdict.ok) expect(verdict.warnings.join(' ')).toMatch(/R \(7d.*\) > L \(2d/);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/R \(7d.*\) > L \(2d/);
   });
 
-  it('does NOT warn when R = L', () => {
+  it('passes when R = L', () => {
     const verdict = evaluateBucketSafety({
       ...CANONICAL_CONFIG,
       objectLock: { enabled: true, defaultMode: 'COMPLIANCE', defaultDays: 2 },
       lifecycleRules: [{ ...CANONICAL_RULE, noncurrentDays: 2 }],
     });
-    expect(verdict).toEqual({ ok: true, warnings: [] });
+    expect(verdict).toEqual({ ok: true });
   });
 });
 
@@ -278,21 +278,18 @@ describe('assertStorageBucketSafe — orchestration', () => {
     };
   }
 
-  it('logs warnings via the supplied logger and resolves on a passing config', async () => {
-    const warns: string[] = [];
-    await assertStorageBucketSafe(
-      makeReader({
-        ...CANONICAL_CONFIG,
-        objectLock: { enabled: true, defaultMode: 'COMPLIANCE', defaultDays: 7 },
-      }),
-      { warn: (m) => warns.push(m) },
-    );
-    expect(warns).toHaveLength(1);
-    expect(warns[0]).toMatch(/storage bucket safety: R \(7d.*\) > L/);
+  it('throws on R > L (lifecycle reap is blocked by Object Lock for R-L days)', async () => {
+    await expect(
+      assertStorageBucketSafe(
+        makeReader({
+          ...CANONICAL_CONFIG,
+          objectLock: { enabled: true, defaultMode: 'COMPLIANCE', defaultDays: 7 },
+        }),
+      ),
+    ).rejects.toThrow(/Refusing to start.*R \(7d.*\) > L \(2d/s);
   });
 
   it('throws an aggregated error on a failing config, listing every offence', async () => {
-    const warns: string[] = [];
     await expect(
       assertStorageBucketSafe(
         makeReader({
@@ -300,28 +297,21 @@ describe('assertStorageBucketSafe — orchestration', () => {
           objectLock: { enabled: false },
           lifecycleRules: [],
         }),
-        { warn: (m) => warns.push(m) },
       ),
     ).rejects.toThrow(/Refusing to start.*versioning.*Object Lock.*lifecycle/s);
-    expect(warns).toHaveLength(0); // no R/L pair to compare → no warning
   });
 
   // -------------------------------------------------------------------
-  // Capability self-test (#45 review H3) — load-bearing because it's
-  // the *primary* defense per ADR-0022. Each branch below is a fail-
-  // closed assertion: only AccessDenied passes; everything else trips
-  // a boot failure.
+  // Capability self-test — load-bearing because it's the *primary*
+  // defense per ADR-0022. Each branch below is a fail-closed assertion:
+  // only AccessDenied passes; everything else trips a boot failure.
   // -------------------------------------------------------------------
 
   describe('capability self-test', () => {
     it('passes when the probe returns access-denied (capability split intact)', async () => {
       // Healthy case — the credential cannot destroy versions, both
-      // bucket-shape and capability are clean. No throw, no warnings.
-      const warns: string[] = [];
-      await assertStorageBucketSafe(makeReader(CANONICAL_CONFIG, { kind: 'access-denied' }), {
-        warn: (m) => warns.push(m),
-      });
-      expect(warns).toEqual([]);
+      // bucket-shape and capability are clean. No throw.
+      await assertStorageBucketSafe(makeReader(CANONICAL_CONFIG, { kind: 'access-denied' }));
     });
 
     it('fails boot when the probe returns unexpected-success (credential CAN destroy versions)', async () => {
@@ -331,11 +321,7 @@ describe('assertStorageBucketSafe — orchestration', () => {
       // or running with MinIO root credentials). Failure message must
       // name the capability and point at the runbook.
       await expect(
-        assertStorageBucketSafe(makeReader(CANONICAL_CONFIG, { kind: 'unexpected-success' }), {
-          warn: () => {
-            /* discard */
-          },
-        }),
+        assertStorageBucketSafe(makeReader(CANONICAL_CONFIG, { kind: 'unexpected-success' })),
       ).rejects.toThrow(/capability self-test FAILED.*CAN destroy versions/s);
     });
 
@@ -350,11 +336,6 @@ describe('assertStorageBucketSafe — orchestration', () => {
             errorName: 'NoSuchVersion',
             message: 'The specified version does not exist',
           }),
-          {
-            warn: () => {
-              /* discard */
-            },
-          },
         ),
       ).rejects.toThrow(/capability self-test ambiguous.*NoSuchVersion/s);
     });
@@ -368,11 +349,6 @@ describe('assertStorageBucketSafe — orchestration', () => {
             { ...CANONICAL_CONFIG, versioningEnabled: false },
             { kind: 'unexpected-success' },
           ),
-          {
-            warn: () => {
-              /* discard */
-            },
-          },
         ),
       ).rejects.toThrow(/Refusing to start.*versioning.*capability self-test FAILED/s);
     });
@@ -426,9 +402,6 @@ describe('assertStorageBucketSafe — integration with the dev MinIO bucket', ()
     //     DeleteObjectVersion (provider drift).
     // Each surfaces a distinct message via the aggregated error.
     const client = makeClient();
-    const warns: string[] = [];
-    await assertStorageBucketSafe(client, { warn: (m) => warns.push(m) });
-    // Defaults R=1, L=2 → R ≤ L → no R/L warning.
-    expect(warns).toEqual([]);
+    await assertStorageBucketSafe(client);
   });
 });

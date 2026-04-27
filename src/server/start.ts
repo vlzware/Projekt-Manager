@@ -200,11 +200,9 @@ async function start(): Promise<void> {
   // Boot-time bucket-safety probe (ADR-0022 / docs/ops/object-storage-provisioning.md).
   // Refuses to start on data-corruption-class drift (versioning off,
   // Object Lock not Compliance, lifecycle missing or with disallowed
-  // actions). Warns on R > L. Runs before reapers so a misconfigured
-  // bucket cannot accumulate side-effects.
-  await assertStorageBucketSafe(attachmentStorageForReaper, {
-    warn: (msg) => console.warn(msg),
-  });
+  // actions, R > L). Runs before reapers so a misconfigured bucket
+  // cannot accumulate side-effects.
+  await assertStorageBucketSafe(attachmentStorageForReaper);
 
   const attachmentReaper = startAttachmentOrphanReaperScheduler({
     db,

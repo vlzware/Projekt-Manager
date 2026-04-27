@@ -48,15 +48,16 @@
  *       format before perms; same ambiguity
  *     - Network / timeout → ambiguous; refuse to serve
  *
- * Soft drift (`R > L`) reports as a warning — lifecycle reap retries
- * past retention so data still gets destroyed; only the trash-bin TTL
- * stretches.
+ * `R > L` is a hard failure — lifecycle would attempt to reap noncurrent
+ * versions still protected by Object Lock retention, leaving zombie
+ * versions on every reap cycle until R has elapsed. The configuration
+ * is incoherent on its face; refuse to serve until R ≤ L.
  *
- * The validator is a pure function over a structured snapshot so the
- * fail/warn matrix is unit-tested without mocking the S3 SDK. The
- * capability self-test is mocked via the `BucketSafetyReader`
- * interface so unit tests can pin AccessDenied / 204 / other-error
- * paths without an SDK round-trip.
+ * The validator is a pure function over a structured snapshot so each
+ * fail-path is unit-tested without mocking the S3 SDK. The capability
+ * self-test is mocked via the `BucketSafetyReader` interface so unit
+ * tests can pin AccessDenied / 204 / other-error paths without an SDK
+ * round-trip.
  */
 
 /**
@@ -111,17 +112,15 @@ export interface LifecycleRuleSnapshot {
   hasAbortMpu: boolean;
 }
 
-export type SafetyVerdict =
-  | { ok: true; warnings: string[] }
-  | { ok: false; failures: string[]; warnings: string[] };
+export type SafetyVerdict = { ok: true } | { ok: false; failures: string[] };
 
 /**
- * Pure validator over the structured snapshot. Returns failures (block
- * boot) and warnings (log only) per ADR-0022's R ≤ L preference.
+ * Pure validator over the structured snapshot. Returns the canonical
+ * pass / fail verdict — every drift is a hard failure (no soft warnings;
+ * ADR-0022 prescribes a single canonical bucket shape).
  */
 export function evaluateBucketSafety(config: BucketSafetyConfig): SafetyVerdict {
   const failures: string[] = [];
-  const warnings: string[] = [];
 
   if (!config.versioningEnabled) {
     failures.push('bucket versioning is not Enabled (required for hide/restore semantics)');
@@ -237,17 +236,13 @@ export function evaluateBucketSafety(config: BucketSafetyConfig): SafetyVerdict 
       rule.noncurrentDays &&
       config.objectLock.defaultDays > rule.noncurrentDays
     ) {
-      warnings.push(
-        `R (${config.objectLock.defaultDays}d default retention) > L (${rule.noncurrentDays}d hide-to-delete) — trash-bin TTL stretches per ADR-0022; data still reaps eventually`,
+      failures.push(
+        `R (${config.objectLock.defaultDays}d default retention) > L (${rule.noncurrentDays}d hide-to-delete) — lifecycle reap is blocked by Object Lock for R-L days; configuration is incoherent (ADR-0022 prescribes R ≤ L)`,
       );
     }
   }
 
-  return failures.length === 0 ? { ok: true, warnings } : { ok: false, failures, warnings };
-}
-
-export interface SafetyLogger {
-  warn: (msg: string) => void;
+  return failures.length === 0 ? { ok: true } : { ok: false, failures };
 }
 
 /**
@@ -299,9 +294,9 @@ export interface BucketSafetyReader {
 
 /**
  * Reads the bucket configuration via the storage client, applies the
- * shape validator, and runs the capability self-test. Logs warnings
- * and throws an aggregated error on failure — same fail-fast shape as
- * the existing assertX helpers in src/server/config/env.ts.
+ * shape validator, and runs the capability self-test. Throws an
+ * aggregated error on failure — same fail-fast shape as the existing
+ * assertX helpers in src/server/config/env.ts.
  *
  * Both checks run unconditionally and their failures aggregate into a
  * single thrown error: the operator sees every defect at once instead
@@ -310,16 +305,9 @@ export interface BucketSafetyReader {
  * cheaper and surfaces more class-of-config drift, not because the
  * capability check depends on the shape.
  */
-export async function assertStorageBucketSafe(
-  client: BucketSafetyReader,
-  logger: SafetyLogger,
-): Promise<void> {
+export async function assertStorageBucketSafe(client: BucketSafetyReader): Promise<void> {
   const config = await client.getBucketSafetyConfig();
   const verdict = evaluateBucketSafety(config);
-
-  for (const w of verdict.warnings) {
-    logger.warn(`storage bucket safety: ${w}`);
-  }
 
   const failures: string[] = verdict.ok ? [] : [...verdict.failures];
 
