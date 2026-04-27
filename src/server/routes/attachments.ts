@@ -139,7 +139,9 @@ export function attachmentRoutes(db: Database) {
     );
 
     // ---------------------------------------------------------------
-    // DELETE /api/projects/:id/attachments/:attId — hard-delete
+    // DELETE /api/projects/:id/attachments/:attId — soft-hide
+    // (ADR-0022; the row moves to status='hidden' and is recoverable
+    // via the Papierkorb restore endpoint until lifecycle reap.)
     // ---------------------------------------------------------------
     app.delete(
       '/api/projects/:id/attachments/:attId',
@@ -154,12 +156,70 @@ export function attachmentRoutes(db: Database) {
             },
           },
         },
-        preHandler: requirePermission('attachment:delete'),
+        preHandler: requirePermission('attachment:hide'),
       },
       async (request, reply) => {
         const { id, attId } = request.params as { id: string; attId: string };
         await service.hideAttachment(request.user!, id, attId, request.log, request.id ?? null);
         return reply.code(204).send();
+      },
+    );
+
+    // ---------------------------------------------------------------
+    // GET /api/projects/:id/attachments/trash — Papierkorb listing.
+    // Owner / office only via attachment:trash. Returns the same shape
+    // as the live list, with hiddenAt populated.
+    // ---------------------------------------------------------------
+    app.get(
+      '/api/projects/:id/attachments/trash',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id'],
+            properties: { id: { type: 'string', format: 'uuid' } },
+          },
+        },
+        preHandler: requirePermission('attachment:trash'),
+      },
+      async (request, reply) => {
+        const { id } = request.params as { id: string };
+        const data = await service.listHiddenForProject(request.user!, id);
+        return reply.code(200).send({ data });
+      },
+    );
+
+    // ---------------------------------------------------------------
+    // POST /api/projects/:id/attachments/:attId/restore — pull the row
+    // back from the Papierkorb. Owner / office only via attachment:trash.
+    // copyFromVersion runs server-side; the row's persisted version_id
+    // pair is the source.
+    // ---------------------------------------------------------------
+    app.post(
+      '/api/projects/:id/attachments/:attId/restore',
+      {
+        schema: {
+          params: {
+            type: 'object',
+            required: ['id', 'attId'],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              attId: { type: 'string', format: 'uuid' },
+            },
+          },
+        },
+        preHandler: requirePermission('attachment:trash'),
+      },
+      async (request, reply) => {
+        const { id, attId } = request.params as { id: string; attId: string };
+        const attachment = await service.restoreAttachment(
+          request.user!,
+          id,
+          attId,
+          request.log,
+          request.id ?? null,
+        );
+        return reply.code(200).send(attachment);
       },
     );
 

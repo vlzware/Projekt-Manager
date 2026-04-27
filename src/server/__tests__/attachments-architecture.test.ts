@@ -124,17 +124,19 @@ describe('AC-221: no attachment route accepts a raw/multipart body', () => {
     expect(ROUTES_SRC).not.toMatch(/addContentTypeParser\s*\(\s*'\*'/);
   });
 
-  it('only the six documented endpoints are registered under /api/projects/:id/attachments', () => {
-    // The documented control plane per api.md §14.2.11:
-    //   GET    /api/projects/:id/attachments                             (list)
+  it('only the eight documented endpoints are registered under /api/projects/:id/attachments', () => {
+    // The documented control plane per api.md §14.2.11 + ADR-0022:
+    //   GET    /api/projects/:id/attachments                             (list — ready only)
     //   POST   /api/projects/:id/attachments/init                        (init)
     //   POST   /api/projects/:id/attachments/:attId/complete             (complete)
-    //   DELETE /api/projects/:id/attachments/:attId                      (delete)
+    //   DELETE /api/projects/:id/attachments/:attId                      (soft-hide)
     //   GET    /api/projects/:id/attachments/:attId/download-url         (download URL)
     //   POST   /api/projects/:id/attachments/bulk-download               (bulk download URL)
+    //   GET    /api/projects/:id/attachments/trash                       (Papierkorb listing)
+    //   POST   /api/projects/:id/attachments/:attId/restore              (Papierkorb restore)
     //
     // Pinning the registrations here prevents a subsequent PR from
-    // adding a 7th route that quietly accepts bytes.
+    // adding a 9th route that quietly accepts bytes.
     const methodPathRegistrations = [
       /app\.get\s*\(\s*['"]\/api\/projects\/:id\/attachments['"]/,
       /app\.post\s*\(\s*['"]\/api\/projects\/:id\/attachments\/init['"]/,
@@ -142,13 +144,15 @@ describe('AC-221: no attachment route accepts a raw/multipart body', () => {
       /app\.delete\s*\(\s*['"]\/api\/projects\/:id\/attachments\/:attId['"]/,
       /app\.get\s*\(\s*['"]\/api\/projects\/:id\/attachments\/:attId\/download-url['"]/,
       /app\.post\s*\(\s*['"]\/api\/projects\/:id\/attachments\/bulk-download['"]/,
+      /app\.get\s*\(\s*['"]\/api\/projects\/:id\/attachments\/trash['"]/,
+      /app\.post\s*\(\s*['"]\/api\/projects\/:id\/attachments\/:attId\/restore['"]/,
     ];
     for (const re of methodPathRegistrations) {
       expect(ROUTES_SRC).toMatch(re);
     }
 
     // No other verb-method combinations on an `/api/projects/:id/attachments`
-    // path. A 7th endpoint is a regression — either a genuine new
+    // path. A 9th endpoint is a regression — either a genuine new
     // capability (which needs its own AC + review) or a byte-proxy slip.
     const attachmentRegistrationCount = (
       ROUTES_SRC.match(

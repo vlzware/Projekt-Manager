@@ -199,6 +199,56 @@ export async function markHidden(
 }
 
 /**
+ * Flip `hidden` → `ready`, clear `hidden_at`, and overwrite the
+ * version-id pair with the new versions produced by `copyFromVersion`
+ * server-side (ADR-0022). The original/thumb keys are unchanged — the
+ * UUID-keyed scheme is collision-free, and restore reuses the same key
+ * with a freshly-promoted version. Atomic CAS on `status='hidden'`.
+ */
+export async function markRestored(
+  db: MutatingDatabase,
+  id: string,
+  versions: { versionId: string | null; thumbVersionId: string | null },
+): Promise<AttachmentRowWithUploader | null> {
+  const rows = await db
+    .update(attachments)
+    .set({
+      status: 'ready',
+      hiddenAt: null,
+      versionId: versions.versionId,
+      thumbVersionId: versions.thumbVersionId,
+    })
+    .where(and(eq(attachments.id, id), eq(attachments.status, 'hidden')))
+    .returning();
+  if (!rows[0]) return null;
+  return getById(db, id);
+}
+
+/**
+ * List rows in the project's Papierkorb — `status='hidden'`, ordered by
+ * `hiddenAt` desc so the most-recent removals surface first. Same scope
+ * predicate as the live list (worker visibility narrowing) so the type
+ * shape is consistent; the calling service layer enforces "owner / office
+ * only" via `attachment:trash` permission, so workers never reach this.
+ */
+export async function listHiddenByProject(
+  db: Database,
+  projectId: string,
+  caller: AuthUser,
+): Promise<AttachmentRowWithUploader[]> {
+  const scope = attachmentScopeForCaller(caller);
+  const conditions = [eq(attachments.projectId, projectId), eq(attachments.status, 'hidden')];
+  if (scope) conditions.push(scope);
+  const rows = await db
+    .select({ attachments, users: { displayName: users.displayName } })
+    .from(attachments)
+    .leftJoin(users, eq(attachments.createdBy, users.id))
+    .where(and(...conditions))
+    .orderBy(desc(attachments.hiddenAt), desc(attachments.id));
+  return rows.map(flattenWithUploader);
+}
+
+/**
  * List pending rows older than the cutoff time. Used by the orphan
  * reaper (data-model.md §6.11).
  */

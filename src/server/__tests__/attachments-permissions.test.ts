@@ -185,12 +185,12 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
   });
 
   // -------------------------------------------------------------------
-  // attachment:delete — owner, office, worker (author + grace);
+  // attachment:hide — owner, office, worker (author + grace);
   // bookkeeper denied at the permission gate alone (never reaches
   // authorship / grace branches).
   // -------------------------------------------------------------------
-  describe('delete — attachment:delete gate', () => {
-    it('bookkeeper is rejected with 403 NOT_PERMITTED — lacks attachment:delete', async () => {
+  describe('delete — attachment:hide gate', () => {
+    it('bookkeeper is rejected with 403 NOT_PERMITTED — lacks attachment:hide', async () => {
       const id = await seedReadyAttachment(projectId, null);
       const res = await authDelete(bookkeeperToken, `/api/projects/${projectId}/attachments/${id}`);
       expect(res.statusCode).toBe(403);

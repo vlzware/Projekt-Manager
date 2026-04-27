@@ -30,6 +30,7 @@ import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js
 import { createDatabase } from '../db/connection.js';
 import { createStorageClient } from '../storage/client.js';
 import { getEnv } from '../config/env.js';
+import type { Attachment } from '../../domain/types.js';
 
 const year = new Date().getFullYear();
 
@@ -710,6 +711,118 @@ describe('Attachment routes — integration (issue #108)', () => {
       );
       expect(res.statusCode).toBe(404);
       expect(res.json().code).toBe('NOT_FOUND');
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Papierkorb — soft-hide round-trip (ADR-0022).
+  //
+  // Verifies the full hide→trash→restore cycle exercises the new wire:
+  // delete writes status='hidden' + hiddenAt; the trash listing surfaces
+  // it; restore returns it to ready with freshly-issued version-ids.
+  // Permission gate (`attachment:trash`) keeps workers off the trash
+  // surface entirely.
+  // -------------------------------------------------------------------
+  describe('Papierkorb — soft-hide round-trip', () => {
+    async function seedReadyAttachment(): Promise<string> {
+      const initRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        photoInit(projectId),
+      );
+      expect(initRes.statusCode).toBe(201);
+      const body = initRes.json();
+      const s = storage();
+      const payload = Buffer.alloc(120_000, 0xff);
+      await s.upload(body.attachment.originalKey, payload, 'image/jpeg');
+      await s.upload(body.attachment.thumbKey, Buffer.from('webp-thumb'), 'image/webp');
+      const completeRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${body.attachment.id}/complete`,
+      );
+      expect(completeRes.statusCode).toBe(200);
+      return body.attachment.id;
+    }
+
+    it('hide → trash → restore round-trip: status flips, version-ids re-issued', async () => {
+      const attId = await seedReadyAttachment();
+      const beforeVersions = await fetchAttachmentVersions(attId);
+      expect(beforeVersions?.versionId).toMatch(/.+/);
+
+      // Hide.
+      const hideRes = await authDelete(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}`,
+      );
+      expect(hideRes.statusCode).toBe(204);
+
+      const hiddenStatus = await fetchAttachmentStatus(attId);
+      expect(hiddenStatus).toBe('hidden');
+
+      // Trash listing contains the row, with hiddenAt populated.
+      const trashRes = await authGet(ownerToken, `/api/projects/${projectId}/attachments/trash`);
+      expect(trashRes.statusCode).toBe(200);
+      const trashBody = trashRes.json() as { data: Attachment[] };
+      const found = trashBody.data.find((it) => it.id === attId);
+      expect(found).toBeDefined();
+      expect(found!.status).toBe('hidden');
+      expect(found!.hiddenAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+      // Live list excludes it.
+      const listRes = await authGet(ownerToken, `/api/projects/${projectId}/attachments`);
+      expect(listRes.statusCode).toBe(200);
+      const listBody = listRes.json() as { data: Attachment[] };
+      expect(listBody.data.some((it) => it.id === attId)).toBe(false);
+
+      // Restore.
+      const restoreRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(restoreRes.statusCode).toBe(200);
+      const restored = restoreRes.json() as Attachment;
+      expect(restored.status).toBe('ready');
+      expect(restored.hiddenAt).toBeNull();
+
+      // Fresh version-ids — copyFromVersion produced new current versions.
+      const afterVersions = await fetchAttachmentVersions(attId);
+      expect(afterVersions?.versionId).toMatch(/.+/);
+      // The new ones may equal the old ones only if the bucket is
+      // unversioned (test mis-config); on a versioned bucket every PUT
+      // produces a fresh id, including the server-side copy.
+      expect(afterVersions?.versionId).not.toBe(beforeVersions?.versionId);
+
+      // Trash listing no longer carries it.
+      const trashAfter = await authGet(ownerToken, `/api/projects/${projectId}/attachments/trash`);
+      expect((trashAfter.json() as { data: Attachment[] }).data.some((it) => it.id === attId)).toBe(
+        false,
+      );
+    });
+
+    it('restore on a ready row returns 409 CONFLICT (idempotent guard)', async () => {
+      const attId = await seedReadyAttachment();
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('CONFLICT');
+    });
+
+    it('worker is rejected from the trash listing with 403 NOT_PERMITTED', async () => {
+      const res = await authGet(workerToken, `/api/projects/${projectId}/attachments/trash`);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('worker is rejected from restore with 403 NOT_PERMITTED', async () => {
+      const attId = await seedReadyAttachment();
+      const res = await authPost(
+        workerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
     });
   });
 

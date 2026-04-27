@@ -33,8 +33,10 @@ import { isProjectInScope } from '../repositories/scope.js';
 import {
   createPending,
   markHidden,
+  markRestored,
   getById,
   listByProject,
+  listHiddenByProject,
   markReady,
   type AttachmentRow,
   type AttachmentRowWithUploader,
@@ -121,7 +123,7 @@ function isOwnerOrOffice(user: AuthUser): boolean {
 function callerIsWorkerOnly(user: AuthUser): boolean {
   // A caller is "worker-only" for delete-grace purposes when none of
   // the roles grants unscoped write (owner, office). Bookkeeper also
-  // lacks `attachment:delete` entirely — the permission gate rejects
+  // lacks `attachment:hide` entirely — the permission gate rejects
   // them before the service runs, so the grace logic doesn't fire for
   // bookkeepers.
   return !isOwnerOrOffice(user);
@@ -531,6 +533,118 @@ export class AttachmentService {
     }
     const rows = await listByProject(this.db, projectId, caller);
     return rows.map(toAttachment);
+  }
+
+  /**
+   * Papierkorb listing — hidden rows on the project, newest hide first.
+   * Route gate (`attachment:trash`) restricts to owner / office; this
+   * method assumes the gate has run and only enforces project scope.
+   */
+  async listHiddenForProject(caller: AuthUser, projectId: string): Promise<Attachment[]> {
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow) throw notFound(STRINGS.entities.project);
+    if (!(await isProjectInScope(this.db, caller, projectId))) {
+      throw notPermitted();
+    }
+    const rows = await listHiddenByProject(this.db, projectId, caller);
+    return rows.map(toAttachment);
+  }
+
+  /**
+   * Restore: server-side `copyFromVersion` of original (and thumb, when
+   * present) from the persisted version-id pair, then flip status back
+   * to 'ready' with the freshly-issued current-version ids. Wrapped in
+   * `mutate()` so the audit chain records the restore alongside the
+   * matching prior `attachment:hide`.
+   *
+   * Failure modes:
+   *   - Row not in 'hidden' state → 409.
+   *   - Row missing or wrong project → 404.
+   *   - Project archived between hide and restore → 404 (matches the
+   *     hide-side gate; an archived project is read-only).
+   *   - Storage CopyObject failure → 500 (genuine provider fault, no
+   *     graceful path; the row stays hidden, the user can retry).
+   *   - `versionId` is null on the row (unset by an old hide that
+   *     pre-dated #45) → 409 — restore is impossible without the source
+   *     version-id.
+   */
+  async restoreAttachment(
+    caller: AuthUser,
+    projectId: string,
+    attachmentId: string,
+    log: ServiceLogger,
+    correlationId: string | null,
+  ): Promise<Attachment> {
+    if (!(await isProjectInScope(this.db, caller, projectId))) {
+      throw notPermitted();
+    }
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow || projectRow.deleted) {
+      throw notFound(STRINGS.entities.project);
+    }
+    const row = await getById(this.db, attachmentId);
+    if (!row || row.projectId !== projectId) {
+      throw notFound(STRINGS.entities.resource);
+    }
+    if (row.status !== 'hidden') {
+      throw conflict(STRINGS.errors.invalidInput);
+    }
+    if (!row.versionId) {
+      // No source version → restore is impossible. This is structural,
+      // not a transient failure: a row in 'hidden' without a version_id
+      // is a data-integrity issue (every #45-era hide records its
+      // version_id). Surface it as a conflict so the operator notices.
+      throw conflict(STRINGS.errors.invalidInput);
+    }
+
+    const newVersionId =
+      (await this.storage.copyFromVersion(row.originalKey, row.versionId)) ?? null;
+    let newThumbVersionId: string | null = null;
+    if (row.thumbKey && row.thumbVersionId) {
+      newThumbVersionId =
+        (await this.storage.copyFromVersion(row.thumbKey, row.thumbVersionId)) ?? null;
+    }
+
+    const restored = await mutate(
+      this.db,
+      { actorKind: 'user', actorId: caller.id, correlationId: correlationId ?? null },
+      {
+        entityType: 'attachment',
+        action: 'attachment:restore',
+        run: async (tx) => {
+          const updated = await markRestored(tx, attachmentId, {
+            versionId: newVersionId,
+            thumbVersionId: newThumbVersionId,
+          });
+          if (!updated) {
+            // CAS lost — racing restore, or row state shifted. The
+            // freshly-copied storage versions are now orphaned current
+            // versions; lifecycle reaps the prior hide marker after L
+            // days, so the bucket converges. The user retries.
+            throw conflict(STRINGS.errors.invalidInput);
+          }
+          return {
+            entityId: attachmentId,
+            entityLabel: attachmentAuditLabel(updated),
+            value: updated,
+            before: {
+              hiddenAt: row.hiddenAt?.toISOString() ?? null,
+              versionId: row.versionId,
+              thumbVersionId: row.thumbVersionId,
+            },
+            after: {
+              versionId: newVersionId,
+              thumbVersionId: newThumbVersionId,
+            },
+            ancestorEntityType: 'project',
+            ancestorEntityId: projectId,
+          };
+        },
+      },
+    );
+
+    log.info({ attachmentId, projectId }, 'attachment_restored');
+    return toAttachment(restored);
   }
 
   async issueDownloadUrl(
