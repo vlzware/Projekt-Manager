@@ -1,10 +1,8 @@
-<!-- READ-ONLY for AI -->
-
 # Storage architecture detector — negative-case fixtures
 
 Files in this directory exist solely to exercise
 `storage-architecture-detector.ts` against bypass shapes the prior
-regex-based scanner missed (issue #45 / ADR-0022).
+regex-based scanner missed (ADR-0022).
 
 Each `*.fixture.ts` is INTENTIONALLY DESTRUCTIVE-LOOKING. Do not import
 them from production code. The detector's production glob excludes
