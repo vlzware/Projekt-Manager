@@ -94,7 +94,7 @@ STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS=14
 
 ## Boot-time safety probe
 
-`assertStorageBucketSafe()` in `src/server/storage/safety.ts` runs once at startup (before reapers schedule) and reads the bucket's actual versioning, Object Lock, and lifecycle config. Behaviour:
+`assertStorageBucketSafe()` in `src/server/storage/safety.ts` runs once at startup (before reapers schedule) and reads the bucket's actual versioning, Object Lock, and lifecycle config — plus a credential capability self-test (#45 review H3). Behaviour:
 
 - **Refuses to boot** (data-corruption class):
   - Versioning not Enabled.
@@ -104,10 +104,12 @@ STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS=14
     - has a prefix or tag filter (must apply to all objects), or
     - lacks `NoncurrentVersionExpiration.NoncurrentDays` (hidden versions would never reap), or
     - lacks `ExpiredObjectDeleteMarker = true` (delete markers would zombie), or
-    - has any other action (`Expiration.Days` would auto-hide live data; `Transitions` move storage class).
+    - has any other action — itemized: `Expiration.Days`, `Expiration.Date`, `Transitions[]`, `NoncurrentVersionTransitions[]`, `AbortIncompleteMultipartUpload`, or a rule with both `Expiration` AND `NoncurrentVersionExpiration` (mixed semantics).
+    - has an `ID` containing the deny-listed B2 moniker `daysFromUploadingToHiding`.
+  - **Capability self-test** — issues `DeleteObjectCommand` with a non-existent `VersionId` against the sentinel key `__probe/safety` and refuses to boot unless the response is `AccessDenied`. A 2xx response means the credential CAN destroy versions (the primary defense layer is broken); any other error code means the response leaked no perms info and the probe is fail-closed under that ambiguity.
 - **Warns only** (UX class): `R > L` — trash-bin TTL stretches per ADR-0022, but reap eventually fires.
 
-This catches drift between the runbook and live bucket state — e.g., an operator who edits lifecycle in the B2 portal without updating the runbook trips the probe at next deploy.
+This catches drift between the runbook and live bucket state — e.g., an operator who edits lifecycle in the B2 portal without updating the runbook trips the probe at next deploy. The capability self-test additionally catches the orthogonal "credential drift" axis: a reissued app key with `deleteFiles` enabled by mistake passes every shape check yet breaks the primary defense.
 
 ## Related
 

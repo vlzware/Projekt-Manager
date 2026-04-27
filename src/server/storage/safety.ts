@@ -1,11 +1,11 @@
 /**
  * Boot-time bucket-safety probe. ADR-0022 / docs/ops/object-storage-provisioning.md
  * pin a precise bucket shape — Compliance Object Lock, Versioning, and a
- * single canonical lifecycle rule. This module verifies the running
- * bucket matches that shape and refuses to start on data-corruption-
- * class drift.
+ * single canonical lifecycle rule — AND a credential capability split
+ * (the app key cannot destroy versions). This module verifies both and
+ * refuses to start on data-corruption-class drift in either.
  *
- * Shape:
+ * Shape (validator):
  *   - Versioning: Enabled
  *   - Object Lock: Enabled, default retention COMPLIANCE for R days
  *   - Lifecycle: exactly one Enabled rule, no prefix/tag filter,
@@ -14,12 +14,49 @@
  *     no other actions (no Expiration.Days — would auto-hide live data;
  *     no Transitions — wrong storage class semantic).
  *
+ * Capability self-test (per #45 review H3):
+ *   The shape check above does not verify the *primary* defense — that
+ *   the running credential lacks `deleteFiles` (B2) /
+ *   `s3:DeleteObjectVersion` (MinIO/AWS). If someone re-issues the app
+ *   key with destroy capability by mistake, every shape probe still
+ *   passes and the credential can destroy any version older than the
+ *   retention window. The self-test issues a `DeleteObjectCommand` with
+ *   a format-valid-but-nonexistent `VersionId` against a sentinel key
+ *   (`__probe/safety`) and asserts `AccessDenied` is the response —
+ *   meaning the capability layer refused before the existence check
+ *   ran.
+ *
+ *   Why a bogus VersionId, not a sentinel write:
+ *     - On B2 with a `writeFiles, readFiles, listFiles` key, the
+ *       `b2_delete_file_version` capability check fires before the
+ *       version-existence check, so the bogus VersionId never matters.
+ *       Verified end-to-end against B2 in 2026-04 (see
+ *       docs/wip/verify-hide-capability-split.sh).
+ *     - On MinIO with a restricted user (no `s3:DeleteObjectVersion`),
+ *       the IAM policy denies the action before resolution. Same shape.
+ *     - A sentinel write would auto-apply Compliance retention
+ *       (`R` days) and never be deletable by design — heavier fixture
+ *       with the same outcome. The bogus-version path keeps the probe
+ *       side-effect-free and identical across providers.
+ *
+ *   Failure semantics — fail-closed for any non-AccessDenied outcome:
+ *     - 204 success → credential CAN destroy (catastrophic dev/prod drift)
+ *     - NoSuchVersion / NoSuchKey → provider checked existence first;
+ *       the response leaks no perms info, so we cannot trust the
+ *       capability split is actually in place
+ *     - InvalidArgument (malformed VersionId) → provider validated the
+ *       format before perms; same ambiguity
+ *     - Network / timeout → ambiguous; refuse to serve
+ *
  * Soft drift (`R > L`) reports as a warning — lifecycle reap retries
  * past retention so data still gets destroyed; only the trash-bin TTL
  * stretches.
  *
  * The validator is a pure function over a structured snapshot so the
- * fail/warn matrix is unit-tested without mocking the S3 SDK.
+ * fail/warn matrix is unit-tested without mocking the S3 SDK. The
+ * capability self-test is mocked via the `BucketSafetyReader`
+ * interface so unit tests can pin AccessDenied / 204 / other-error
+ * paths without an SDK round-trip.
  */
 
 /**
@@ -213,15 +250,65 @@ export interface SafetyLogger {
   warn: (msg: string) => void;
 }
 
+/**
+ * Sentinel key the capability self-test tries (and is expected to fail)
+ * to delete. The key is never written — the call is intentionally
+ * directed at a non-existent object so the only branches are:
+ *   - the credential is denied at the capability layer  → AccessDenied
+ *   - the credential is permitted, server resolves the version → other
+ * Both providers (B2, MinIO) check capability before resolution when
+ * the IAM/key entitlements forbid the action; both return AccessDenied
+ * for the denied case regardless of whether the object exists.
+ *
+ * The leading `__probe/` prefix is unique to this probe so even if a
+ * future change starts writing here, an operator grepping the bucket
+ * sees the safety-probe namespace immediately.
+ */
+export const CAPABILITY_PROBE_KEY = '__probe/safety';
+
+/**
+ * Format-valid UUID that no real PUT will ever produce (the "nil UUID",
+ * RFC 4122). Plausible to both B2 (which uses long opaque base64-ish
+ * VersionIds; format-validation is permissive) and MinIO (which uses
+ * UUIDs natively). On a properly-restricted credential, the capability
+ * layer rejects the call before the server inspects this value, so it
+ * never has to be a "real" version.
+ */
+export const CAPABILITY_PROBE_VERSION_ID = '00000000-0000-0000-0000-000000000000';
+
+/**
+ * Outcome of the capability self-test, surfaced as a discriminated
+ * union so the caller can render distinct error messages without
+ * stringly matching on SDK output.
+ */
+export type CapabilityProbeResult =
+  | { kind: 'access-denied' }
+  | { kind: 'unexpected-success' }
+  | { kind: 'unexpected-error'; errorName: string; message: string };
+
 export interface BucketSafetyReader {
   getBucketSafetyConfig: () => Promise<BucketSafetyConfig>;
+  /**
+   * Issue a DeleteObjectCommand with a non-existent VersionId against
+   * `CAPABILITY_PROBE_KEY` and classify the outcome. Implementations
+   * MUST NOT translate AccessDenied into a thrown exception — the
+   * probe needs the structured result, not a control-flow signal.
+   */
+  probeDeleteVersionCapability: () => Promise<CapabilityProbeResult>;
 }
 
 /**
- * Reads the bucket configuration via the storage client and applies the
- * validator. Logs warnings and throws an aggregated error on failure —
- * same fail-fast shape as the existing assertX helpers in
- * src/server/config/env.ts.
+ * Reads the bucket configuration via the storage client, applies the
+ * shape validator, and runs the capability self-test. Logs warnings
+ * and throws an aggregated error on failure — same fail-fast shape as
+ * the existing assertX helpers in src/server/config/env.ts.
+ *
+ * Both checks run unconditionally and their failures aggregate into a
+ * single thrown error: the operator sees every defect at once instead
+ * of fixing one and re-deploying to discover the next. Order is fixed
+ * (shape first, capability second) only because the shape probe is
+ * cheaper and surfaces more class-of-config drift, not because the
+ * capability check depends on the shape.
  */
 export async function assertStorageBucketSafe(
   client: BucketSafetyReader,
@@ -234,9 +321,41 @@ export async function assertStorageBucketSafe(
     logger.warn(`storage bucket safety: ${w}`);
   }
 
-  if (!verdict.ok) {
+  const failures: string[] = verdict.ok ? [] : [...verdict.failures];
+
+  // Capability self-test — verify the running credential cannot
+  // destroy versions. Per ADR-0022 the capability split is the primary,
+  // continuous defense; a misconfigured credential here is more
+  // dangerous than any shape drift because the credential is what
+  // mediates every runtime call.
+  const probe = await client.probeDeleteVersionCapability();
+  switch (probe.kind) {
+    case 'access-denied':
+      // Pass — credential lacks destroy capability, layered defense intact.
+      break;
+    case 'unexpected-success':
+      failures.push(
+        'capability self-test FAILED: DeleteObjectCommand with a non-existent ' +
+          'VersionId returned 2xx — the running credential CAN destroy versions. ' +
+          'This violates ADR-0022 §"capability split" and breaks the primary ' +
+          'defense layer. Re-issue the app key without `deleteFiles` (B2) / ' +
+          '`s3:DeleteObjectVersion` (MinIO/AWS) before serving traffic.',
+      );
+      break;
+    case 'unexpected-error':
+      failures.push(
+        `capability self-test ambiguous: DeleteObjectCommand returned ` +
+          `${probe.errorName} ("${probe.message}"). Expected AccessDenied — ` +
+          `any other response leaves the capability layer unverified. Probe is ` +
+          `fail-closed: refusing to serve until the credential's destroy capability ` +
+          `is provably absent. See docs/ops/object-storage-provisioning.md.`,
+      );
+      break;
+  }
+
+  if (failures.length > 0) {
     throw new Error(
-      `Refusing to start: storage bucket configuration violates ADR-0022.\n${verdict.failures
+      `Refusing to start: storage bucket configuration violates ADR-0022.\n${failures
         .map((f) => `  - ${f}`)
         .join('\n')}\nSee docs/ops/object-storage-provisioning.md.`,
     );

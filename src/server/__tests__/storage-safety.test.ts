@@ -15,6 +15,7 @@ import {
   evaluateBucketSafety,
   assertStorageBucketSafe,
   type BucketSafetyConfig,
+  type CapabilityProbeResult,
   type LifecycleRuleSnapshot,
 } from '../storage/safety.js';
 import { createStorageClient } from '../storage/client.js';
@@ -259,11 +260,22 @@ describe('evaluateBucketSafety — multiple offences aggregate', () => {
 // ---------------------------------------------------------------------
 // assertStorageBucketSafe — orchestration. Stub the reader, capture
 // warnings, expect throw on failure.
+//
+// `makeReader` defaults the capability probe to AccessDenied (the
+// healthy case) so existing shape-focused tests don't have to repeat
+// it. Tests that exercise the capability probe specifically pass a
+// custom result.
 // ---------------------------------------------------------------------
 
 describe('assertStorageBucketSafe — orchestration', () => {
-  function makeReader(config: BucketSafetyConfig) {
-    return { getBucketSafetyConfig: () => Promise.resolve(config) };
+  function makeReader(
+    config: BucketSafetyConfig,
+    probe: CapabilityProbeResult = { kind: 'access-denied' },
+  ) {
+    return {
+      getBucketSafetyConfig: () => Promise.resolve(config),
+      probeDeleteVersionCapability: () => Promise.resolve(probe),
+    };
   }
 
   it('logs warnings via the supplied logger and resolves on a passing config', async () => {
@@ -293,6 +305,78 @@ describe('assertStorageBucketSafe — orchestration', () => {
     ).rejects.toThrow(/Refusing to start.*versioning.*Object Lock.*lifecycle/s);
     expect(warns).toHaveLength(0); // no R/L pair to compare → no warning
   });
+
+  // -------------------------------------------------------------------
+  // Capability self-test (#45 review H3) — load-bearing because it's
+  // the *primary* defense per ADR-0022. Each branch below is a fail-
+  // closed assertion: only AccessDenied passes; everything else trips
+  // a boot failure.
+  // -------------------------------------------------------------------
+
+  describe('capability self-test', () => {
+    it('passes when the probe returns access-denied (capability split intact)', async () => {
+      // Healthy case — the credential cannot destroy versions, both
+      // bucket-shape and capability are clean. No throw, no warnings.
+      const warns: string[] = [];
+      await assertStorageBucketSafe(makeReader(CANONICAL_CONFIG, { kind: 'access-denied' }), {
+        warn: (m) => warns.push(m),
+      });
+      expect(warns).toEqual([]);
+    });
+
+    it('fails boot when the probe returns unexpected-success (credential CAN destroy versions)', async () => {
+      // Catastrophic case — the credential has destroy capability.
+      // This is the dev/prod drift the probe was added to catch
+      // (e.g., re-issuing the app key with `deleteFiles` by mistake,
+      // or running with MinIO root credentials). Failure message must
+      // name the capability and point at the runbook.
+      await expect(
+        assertStorageBucketSafe(makeReader(CANONICAL_CONFIG, { kind: 'unexpected-success' }), {
+          warn: () => {
+            /* discard */
+          },
+        }),
+      ).rejects.toThrow(/capability self-test FAILED.*CAN destroy versions/s);
+    });
+
+    it('fails boot on any non-AccessDenied error (probe is fail-closed)', async () => {
+      // Provider returned NoSuchVersion, NoSuchKey, InvalidArgument,
+      // a network error — any of those mean the response leaks no
+      // perms info. The probe refuses to serve under that ambiguity.
+      await expect(
+        assertStorageBucketSafe(
+          makeReader(CANONICAL_CONFIG, {
+            kind: 'unexpected-error',
+            errorName: 'NoSuchVersion',
+            message: 'The specified version does not exist',
+          }),
+          {
+            warn: () => {
+              /* discard */
+            },
+          },
+        ),
+      ).rejects.toThrow(/capability self-test ambiguous.*NoSuchVersion/s);
+    });
+
+    it('aggregates a shape failure AND a capability failure into one error', async () => {
+      // Both layers can be wrong simultaneously — operator should see
+      // every defect at once instead of fix-and-redeploy iteration.
+      await expect(
+        assertStorageBucketSafe(
+          makeReader(
+            { ...CANONICAL_CONFIG, versioningEnabled: false },
+            { kind: 'unexpected-success' },
+          ),
+          {
+            warn: () => {
+              /* discard */
+            },
+          },
+        ),
+      ).rejects.toThrow(/Refusing to start.*versioning.*capability self-test FAILED/s);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------
@@ -313,17 +397,46 @@ function requireEnv(name: string): string {
 }
 
 describe('assertStorageBucketSafe — integration with the dev MinIO bucket', () => {
-  it('passes the canonical bucket the init script produces (no failures, no warnings)', async () => {
-    const client = createStorageClient({
+  function makeClient() {
+    return createStorageClient({
       endpoint: requireEnv('STORAGE_ENDPOINT'),
       bucket: requireEnv('STORAGE_BUCKET'),
       accessKey: requireEnv('STORAGE_ACCESS_KEY'),
       secretKey: requireEnv('STORAGE_SECRET_KEY'),
     });
-    const warns: string[] = [];
-    // Throws on failure — implicit assertion. Defaults from init-storage.sh
-    // are R=1, L=2, so R ≤ L holds and no warning fires.
-    await assertStorageBucketSafe(client, { warn: (m) => warns.push(m) });
-    expect(warns).toEqual([]);
+  }
+
+  it('the bucket-shape snapshot from real MinIO satisfies the validator', async () => {
+    // Verifies the SDK→snapshot adapter (`toLifecycleRuleSnapshot` etc.)
+    // produces a shape the validator accepts. Defaults from
+    // init-storage.sh are R=1, L=2 — R ≤ L holds, no warning fires.
+    //
+    // Why not the full `assertStorageBucketSafe` here? The dev compose
+    // currently uses the MinIO root credential (`minioadmin`) which
+    // has destroy capability — the capability self-test on this
+    // credential returns 'unexpected-success' (204) and would correctly
+    // fail boot. That's the known dev-prod gap commit 72ad262 mirrored
+    // bucket *shape* but not the credential capability split (B2 prod
+    // uses a `writeFiles, readFiles, listFiles` key; dev still uses
+    // root). When the dev compose adds a restricted MinIO user, this
+    // test should be widened to call `assertStorageBucketSafe(client, …)`
+    // directly. Until then, the capability self-test is fully covered
+    // by the unit tests above (mocked CapabilityProbeResult cases).
+    const client = makeClient();
+    const config = await client.getBucketSafetyConfig();
+    const verdict = evaluateBucketSafety(config);
+    expect(verdict).toEqual({ ok: true, warnings: [] });
+  });
+
+  it('the capability probe runs against real MinIO and returns a structured result', async () => {
+    // Even on the current dev setup (root credential), the probe must
+    // return a structured `CapabilityProbeResult`, never throw. This
+    // guards against regressions in the `probeDeleteVersionCapability`
+    // wiring — it must always classify the response, never propagate
+    // an exception. The exact `kind` value depends on the live
+    // credential's perms; we just assert the shape.
+    const client = makeClient();
+    const result = await client.probeDeleteVersionCapability();
+    expect(['access-denied', 'unexpected-success', 'unexpected-error']).toContain(result.kind);
   });
 });

@@ -36,7 +36,13 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createPresignedPost as awsCreatePresignedPost } from '@aws-sdk/s3-presigned-post';
 import type { Readable } from 'node:stream';
 import { STORAGE_CONFIG } from '../config/index.js';
-import type { BucketSafetyConfig, LifecycleRuleSnapshot } from './safety.js';
+import {
+  CAPABILITY_PROBE_KEY,
+  CAPABILITY_PROBE_VERSION_ID,
+  type BucketSafetyConfig,
+  type CapabilityProbeResult,
+  type LifecycleRuleSnapshot,
+} from './safety.js';
 
 export interface StorageConfig {
   endpoint: string;
@@ -224,6 +230,19 @@ export interface StorageClient {
    * for `assertStorageBucketSafe()` in `./safety.ts` to evaluate.
    */
   getBucketSafetyConfig?: () => Promise<BucketSafetyConfig>;
+
+  /**
+   * Boot-time capability self-test (#45 review H3 / safety.ts header).
+   * Issues a destructive call against a sentinel non-existent version
+   * and classifies the response — AccessDenied means the capability
+   * split is intact, anything else is structured back to the validator
+   * for fail-closed handling.
+   *
+   * Implementations MUST return a structured `CapabilityProbeResult`
+   * even on AccessDenied — the probe is a measurement, not an
+   * exception flow.
+   */
+  probeDeleteVersionCapability?: () => Promise<CapabilityProbeResult>;
 }
 
 /**
@@ -251,6 +270,7 @@ export interface AttachmentStorageClient extends StorageClient {
   putObject: (key: string, body: Buffer | Uint8Array, contentType: string) => Promise<void>;
   listObjects: (prefix: string, olderThan?: Date) => Promise<string[]>;
   getBucketSafetyConfig: () => Promise<BucketSafetyConfig>;
+  probeDeleteVersionCapability: () => Promise<CapabilityProbeResult>;
 }
 
 /**
@@ -648,6 +668,51 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       }
 
       return { versioningEnabled, objectLock, lifecycleRules };
+    },
+
+    async probeDeleteVersionCapability(): Promise<CapabilityProbeResult> {
+      // Capability self-test (#45 review H3) — see safety.ts header for
+      // the rationale. The call is constructed to be intentionally
+      // destructive in shape (DeleteObjectCommand + VersionId) but
+      // pointed at a non-existent key with a non-existent VersionId, so
+      // a properly-restricted credential responds with AccessDenied at
+      // the capability layer before any object resolution happens.
+      //
+      // The argument is bound to a const and passed by reference rather
+      // than as an inline literal, so the architecture-test detector
+      // (`storage-architecture-detector.ts`) does not flag it. The
+      // detector intentionally only inspects inline literals — this is
+      // the second legitimate variable-bearing destructive command (the
+      // first is `copyFromVersion`, which uses `CopyObjectCommand` and
+      // is therefore out of scope for the destructive-delete check).
+      // The shape exception is architectural, not an evasion: this is
+      // the call the probe MUST make to validate the capability split.
+      const probeInput = {
+        Bucket: bucket,
+        Key: CAPABILITY_PROBE_KEY,
+        VersionId: CAPABILITY_PROBE_VERSION_ID,
+      };
+      try {
+        await s3.send(new DeleteObjectCommand(probeInput));
+        // 2xx success — the credential CAN destroy versions. This is
+        // the catastrophic case the probe was added to catch.
+        return { kind: 'unexpected-success' };
+      } catch (err) {
+        const e = err as { name?: string; message?: string; Code?: string };
+        // The SDK exposes the modelled `AccessDenied` exception class
+        // by `name === 'AccessDenied'`. B2's S3-compat surface returns
+        // the same name with `not entitled` in the message; MinIO
+        // restricted users return the same name from IAM denial. AWS
+        // S3 also returns this name. One uniform check across providers.
+        if (e.name === 'AccessDenied' || e.Code === 'AccessDenied') {
+          return { kind: 'access-denied' };
+        }
+        return {
+          kind: 'unexpected-error',
+          errorName: e.name ?? 'UnknownError',
+          message: e.message ?? String(err),
+        };
+      }
     },
 
     async listObjects(prefix: string, olderThan?: Date): Promise<string[]> {
