@@ -106,6 +106,34 @@ describe('Storage architecture (ADR-0022 / #45): no destructive call carries a V
       expect(offenses[0].command).toBe('DeleteObjectCommand');
     });
 
+    it('flags a variable-bound argument carrying VersionId (T5c — closes the inline-only gap)', () => {
+      // The shape that previously evaded the detector at
+      // `client.ts:probeDeleteVersionCapability`. The argument is a const-
+      // bound object literal in the same file; the detector must follow
+      // one hop and flag the VersionId carried by the resolved literal.
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('variable-bound-versionid.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toHaveLength(1);
+      expect(offenses[0].command).toBe('DeleteObjectCommand');
+      expect(offenses[0].reason).toContain('VersionId');
+    });
+
+    it('flags an opaque (non-resolvable) argument as fail-closed', () => {
+      // A function-parameter argument cannot be statically resolved to a
+      // literal in this file. The detector cannot prove the absence of a
+      // VersionId, so it MUST flag — silent pass would re-open the
+      // bypass via "pass the literal in from the outside".
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('opaque-argument.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toHaveLength(1);
+      expect(offenses[0].command).toBe('DeleteObjectCommand');
+      expect(offenses[0].reason.toLowerCase()).toContain('variable-bound');
+    });
+
     it('flags VersionId nested inside batch-delete `Delete.Objects[*]`', () => {
       const offenses = detectVersionIdOnDestructiveCommands(
         [fixtureFile('batch-nested-versionid.fixture.ts')],

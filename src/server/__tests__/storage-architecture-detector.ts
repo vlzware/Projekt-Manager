@@ -16,6 +16,17 @@
  * top-level for the single-object delete, inside `Delete.Objects[*]`
  * for the batch delete.
  *
+ * Argument shapes covered:
+ *   - inline object/array literal (the obvious case)
+ *   - identifier resolving via one hop of intra-file `const` binding to
+ *     an object/array literal initializer in the same file (T5c — closes
+ *     the variable-bound bypass that the inline-only check missed)
+ *   - any other identifier shape (function param, imported binding,
+ *     spread, computed value) → opaque-and-flag, fail-closed: the
+ *     detector cannot follow it, so the call is reported as a finding
+ *     and a contributor must either inline the literal or arrange for
+ *     the architecture test to exempt the call site
+ *
  * Limits:
  *   - Cross-file re-export resolution is intentionally out of scope.
  *     Detecting `import { X } from './local'` where `local.ts`
@@ -205,23 +216,22 @@ function resolveToCommand(
 }
 
 /**
- * Walk an expression looking for a property literally named `VersionId`
- * (case-insensitive — the SDK type would reject any other casing, this
- * is defense-in-depth for the architectural intent: no version-aware
- * destruction regardless of casing). Returns a short locator string for
- * the failure message, or `undefined` if no such property is present.
+ * Walk an already-literal expression looking for a property literally
+ * named `VersionId` (case-insensitive — the SDK type would reject any
+ * other casing, this is defense-in-depth for the architectural intent:
+ * no version-aware destruction regardless of casing). Returns a short
+ * locator string for the failure message, or `undefined` if no such
+ * property is present.
  *
  * Object literals, array literals, and parenthesised expressions are
- * traversed. Identifier arguments (`new Cmd(opts)`) and other
- * non-literal shapes return `undefined` — the detector only inspects
- * inline shapes, by design. A caller wanting to assert on a variable
- * passed in from elsewhere must inline the literal at the call site
- * (the SDK's typing makes this the natural pattern; restore is the
- * one variable-bearing call and uses CopyObjectCommand, not Delete).
+ * traversed. Other shapes return `undefined` — this helper only walks
+ * literal subtrees. The top-level argument inspection is handled by
+ * `inspectArgumentForVersionId`, which adds opaque-and-flag semantics
+ * for variable-bound arguments.
  */
-function findVersionIdInExpression(node: ts.Expression, breadcrumb: string): string | undefined {
+function findVersionIdInLiteral(node: ts.Expression, breadcrumb: string): string | undefined {
   if (ts.isParenthesizedExpression(node)) {
-    return findVersionIdInExpression(node.expression, breadcrumb);
+    return findVersionIdInLiteral(node.expression, breadcrumb);
   }
   if (ts.isObjectLiteralExpression(node)) {
     for (const prop of node.properties) {
@@ -232,7 +242,7 @@ function findVersionIdInExpression(node: ts.Expression, breadcrumb: string): str
           return `${breadcrumb}.${name.text}`;
         }
         if (ts.isPropertyAssignment(prop)) {
-          const inner = findVersionIdInExpression(prop.initializer, `${breadcrumb}.${name.text}`);
+          const inner = findVersionIdInLiteral(prop.initializer, `${breadcrumb}.${name.text}`);
           if (inner) return inner;
         }
       } else if (ts.isSpreadAssignment(prop)) {
@@ -247,7 +257,7 @@ function findVersionIdInExpression(node: ts.Expression, breadcrumb: string): str
   }
   if (ts.isArrayLiteralExpression(node)) {
     for (let i = 0; i < node.elements.length; i++) {
-      const inner = findVersionIdInExpression(node.elements[i], `${breadcrumb}[${i}]`);
+      const inner = findVersionIdInLiteral(node.elements[i], `${breadcrumb}[${i}]`);
       if (inner) return inner;
     }
     return undefined;
@@ -256,9 +266,131 @@ function findVersionIdInExpression(node: ts.Expression, breadcrumb: string): str
 }
 
 /**
- * Detect destructive instantiations carrying a VersionId across the
- * given file list. Pure function; the same code path is exercised by
- * the production scan and the negative-case fixture tests.
+ * Top-level argument inspection. Distinct return cases drive the
+ * detector's flagging decision:
+ *
+ *   - 'clean'  — argument is a literal with no VersionId. Not flagged.
+ *   - 'found'  — argument literal (or const-resolved literal) carries a
+ *                VersionId. Flagged with the property locator.
+ *   - 'opaque' — argument is variable-bound and cannot be resolved to a
+ *                literal in the same file (function param, imported
+ *                binding, computed value, top-level spread, deeper hop).
+ *                Flagged fail-closed: the detector cannot prove absence
+ *                of VersionId, so it must not silently pass.
+ *
+ * Resolution rule: when the argument is a bare `Identifier`, look it up
+ * in the file's local `const`-declared object/array literals (one hop).
+ * Anything else — including chained `const a = b; const c = a;` — is
+ * opaque, by design. The single legitimate variable-bearing destructive
+ * call site is exempted at the architectural-test boundary, not papered
+ * over here.
+ */
+type ArgumentInspection =
+  | { kind: 'clean' }
+  | { kind: 'found'; reason: string }
+  | { kind: 'opaque'; reason: string };
+
+function inspectArgumentForVersionId(
+  argExpr: ts.Expression,
+  localLiteralBindings: ReadonlyMap<string, ts.Expression>,
+): ArgumentInspection {
+  // Strip parens before classifying — `new Cmd((opts))` should behave
+  // identically to `new Cmd(opts)`.
+  let node: ts.Expression = argExpr;
+  while (ts.isParenthesizedExpression(node)) node = node.expression;
+
+  if (ts.isObjectLiteralExpression(node) || ts.isArrayLiteralExpression(node)) {
+    const reason = findVersionIdInLiteral(node, '<arg0>');
+    return reason ? { kind: 'found', reason } : { kind: 'clean' };
+  }
+
+  if (ts.isIdentifier(node)) {
+    // One-hop resolution: same-file `const x = { ... }` whose init is a
+    // literal. Anything else is opaque. We deliberately do NOT chain
+    // (`const a = b` where `b` is itself a const-bound literal) — the
+    // detector inspects exactly one hop. Adding chained resolution would
+    // expand the bypass surface and the architectural intent is the
+    // opposite: keep destructive shapes inline-or-exempted.
+    const initializer = localLiteralBindings.get(node.text);
+    if (!initializer) {
+      return {
+        kind: 'opaque',
+        reason: `argument is variable-bound to "${node.text}" and not resolvable to an inline literal in this file; refactor to inline literal or exempt the call site at the architecture test boundary`,
+      };
+    }
+    const reason = findVersionIdInLiteral(initializer, '<arg0>');
+    return reason ? { kind: 'found', reason } : { kind: 'clean' };
+  }
+
+  // Anything else at the top level (function call, conditional, await,
+  // spread expression, type assertion bodies that are themselves opaque,
+  // etc.) cannot be statically resolved by this detector. Fail closed.
+  return {
+    kind: 'opaque',
+    reason: `argument is a non-literal expression of kind "${ts.SyntaxKind[node.kind]}"; refactor to inline literal or exempt the call site at the architecture test boundary`,
+  };
+}
+
+/**
+ * Build the lookup table of same-file `const x = <literal>` bindings
+ * whose initializer is an object or array literal. Used by
+ * `inspectArgumentForVersionId` to follow exactly one hop of intra-file
+ * const resolution.
+ *
+ * Walks the entire source tree (any depth — so a `const probeInput = …`
+ * inside a method body is captured), but a name declared more than once
+ * anywhere in the file is recorded as "ambiguous" and never resolves —
+ * the detector treats the use as opaque and flags it. Fail-closed: a
+ * shadowed name could mean the use site picks up a different scope's
+ * binding than the one we'd pair it with.
+ *
+ * Non-const variables (`let`, `var`) and non-literal initializers are
+ * ignored entirely; the use site of such a name lands in the opaque
+ * branch via the missing-binding path in `inspectArgumentForVersionId`.
+ */
+function collectLocalLiteralBindings(sourceFile: ts.SourceFile): Map<string, ts.Expression> {
+  const bindings = new Map<string, ts.Expression>();
+  const ambiguous = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableStatement(node)) {
+      const isConst = (node.declarationList.flags & ts.NodeFlags.Const) !== 0;
+      if (isConst) {
+        for (const decl of node.declarationList.declarations) {
+          if (!decl.initializer) continue;
+          if (!ts.isIdentifier(decl.name)) continue; // ignore destructuring
+          let init: ts.Expression = decl.initializer;
+          while (ts.isParenthesizedExpression(init)) init = init.expression;
+          if (ts.isObjectLiteralExpression(init) || ts.isArrayLiteralExpression(init)) {
+            const name = decl.name.text;
+            if (bindings.has(name)) {
+              ambiguous.add(name);
+            } else {
+              bindings.set(name, init);
+            }
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  for (const name of ambiguous) bindings.delete(name);
+  return bindings;
+}
+
+/**
+ * Detect destructive instantiations carrying (or potentially carrying) a
+ * VersionId across the given file list. Pure function; the same code
+ * path is exercised by the production scan and the negative-case fixture
+ * tests.
+ *
+ * Findings are emitted for three argument shapes:
+ *   - inline literal that contains a VersionId (the obvious case)
+ *   - same-file `const`-bound literal that contains a VersionId (closes
+ *     the inline-only bypass — T5c)
+ *   - any non-literal / non-resolvable argument (opaque-and-flag, fail-
+ *     closed): the detector cannot prove absence of VersionId, so a
+ *     contributor must inline the literal or arrange an exemption
  */
 export function detectVersionIdOnDestructiveCommands(
   filePaths: readonly string[],
@@ -278,20 +410,22 @@ export function detectVersionIdOnDestructiveCommands(
     const imports = collectImports(sourceFile);
     if (imports.bindings.size === 0) continue;
 
+    const literalBindings = collectLocalLiteralBindings(sourceFile);
+
     const visit = (node: ts.Node): void => {
       if (ts.isNewExpression(node)) {
         const command = resolveNewExpressionTarget(node.expression, imports.bindings);
         if (command && DESTRUCTIVE_COMMANDS.has(command)) {
           const arg = node.arguments?.[0];
           if (arg) {
-            const reason = findVersionIdInExpression(arg, '<arg0>');
-            if (reason) {
+            const inspection = inspectArgumentForVersionId(arg, literalBindings);
+            if (inspection.kind !== 'clean') {
               const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
               offenses.push({
                 file: path.relative(rootForRelativePaths, filePath),
                 line: line + 1,
                 command: command as DetectorOffense['command'],
-                reason,
+                reason: inspection.reason,
               });
             }
           }
