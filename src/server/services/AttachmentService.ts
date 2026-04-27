@@ -1,20 +1,36 @@
 /**
- * Attachment service — init / complete / delete / list / download-url /
- * bulk-download orchestration.
+ * Attachment service — init / complete / hide / restore / list /
+ * Papierkorb listing / download-url / bulk-download orchestration.
  *
- * The state machine is pinned by api.md §14.2.11 and data-model.md §5.13:
+ * The state machine is pinned by api.md §14.2.11, data-model.md §5.13
+ * and ADR-0022 (capability split + Papierkorb):
  *
  *   init        → row created at `status = 'pending'`; presigned POST(s)
  *                 issued for original (+thumb). Audit row (`attachment:add`)
  *                 via `mutate()`.
- *   complete    → HEAD verify both objects; flip to `status = 'ready'`.
+ *   complete    → HEAD verify both objects; flip to `status = 'ready'`
+ *                 and persist the per-version-id pair (ADR-0022).
  *                 No audit row (AC-219 — state-machine finalize).
- *   delete      → row hard-deleted; storage objects best-effort removed.
- *                 Audit row (`attachment:remove`) via `mutate()`.
+ *   hide        → flip `ready` → `hidden`, stamp `hidden_at`. Best-
+ *                 effort `DeleteObject` (no versionId) writes a delete
+ *                 marker on the versioned bucket; the prior version
+ *                 stays intact for restore. Audit row
+ *                 (`attachment:hide`) via `mutate()`.
+ *   restore     → flip `hidden` → `ready` via CAS, then
+ *                 `copyFromVersion` to promote the persisted version
+ *                 back to current, then write the freshly-issued
+ *                 version-ids. All inside one `mutate()` tx so the
+ *                 storage advance and DB state are atomic
+ *                 (issue #45 H1). Audit row (`attachment:restore`).
  *
  * Worker scoping: the repository predicate narrows reads; the service
  * layer additionally rejects worker write/init on an unassigned project
  * (AC-214) and enforces the self-delete grace window (AC-215).
+ *
+ * Archive interaction (issue #45 Medium): hide is gated on the project
+ * NOT being archived (read-only preview); restore is permitted on
+ * archived projects so binaries in an archived project's trash are not
+ * silently reaped by lifecycle.
  */
 
 import crypto from 'node:crypto';
@@ -428,8 +444,16 @@ export class AttachmentService {
   }
 
   /**
-   * Delete: permission + scope + worker grace; hard-delete via mutate();
-   * best-effort storage cleanup.
+   * Hide (user-initiated DELETE; soft-hide per ADR-0022). Validates
+   * caller scope, the project's read-write status (archive gate), and
+   * the worker self-delete grace window (AC-215). Flips the row from
+   * `ready` to `hidden` via CAS and writes one `attachment:hide` audit
+   * row via `mutate()`. Best-effort `DeleteObject` (no versionId) on
+   * each storage key produces a delete marker on the versioned bucket
+   * — the prior version is preserved so restore can promote it back.
+   * A storage failure leaves the row in `hidden` with the original
+   * still current; the next restore is a no-op copy and lifecycle reaps
+   * the orphan eventually. The op-log records the failure for follow-up.
    */
   async hideAttachment(
     caller: AuthUser,
