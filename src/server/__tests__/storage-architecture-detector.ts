@@ -246,50 +246,94 @@ function resolveToCommand(
  * Walk an already-literal expression looking for a property literally
  * named `VersionId` (case-insensitive — the SDK type would reject any
  * other casing, this is defense-in-depth for the architectural intent:
- * no version-aware destruction regardless of casing). Returns a short
- * locator string for the failure message, or `undefined` if no such
- * property is present.
+ * no version-aware destruction regardless of casing).
+ *
+ * Three outcomes:
+ *   - 'clean'  — the literal is fully visible and contains no VersionId
+ *   - 'found'  — VersionId is present at some depth; reason is the locator
+ *   - 'opaque' — the literal contains a `...spread` (or `SpreadElement`)
+ *                whose source the detector cannot see through. Fail-closed:
+ *                we cannot prove absence of VersionId, so the caller must
+ *                flag the call. `found` wins over `opaque` when both apply
+ *                — a literal VersionId carries a provable destructive
+ *                intent and is the more actionable finding.
  *
  * Object literals, array literals, and parenthesised expressions are
- * traversed. Other shapes return `undefined` — this helper only walks
+ * traversed. Other shapes return `'clean'` — this helper only walks
  * literal subtrees. The top-level argument inspection is handled by
  * `inspectArgumentForVersionId`, which adds opaque-and-flag semantics
- * for variable-bound arguments.
+ * for variable-bound arguments and propagates this helper's `'opaque'`.
  */
-function findVersionIdInLiteral(node: ts.Expression, breadcrumb: string): string | undefined {
+type LiteralWalkResult =
+  | 'clean'
+  | { kind: 'found'; reason: string }
+  | { kind: 'opaque'; reason: string };
+
+function findVersionIdInLiteral(node: ts.Expression, breadcrumb: string): LiteralWalkResult {
   if (ts.isParenthesizedExpression(node)) {
     return findVersionIdInLiteral(node.expression, breadcrumb);
   }
   if (ts.isObjectLiteralExpression(node)) {
+    let opaque: { kind: 'opaque'; reason: string } | undefined;
     for (const prop of node.properties) {
       if (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) {
         const name = prop.name;
         if (!name || !('text' in name) || typeof name.text !== 'string') continue;
         if (name.text.toLowerCase() === 'versionid') {
-          return `${breadcrumb}.${name.text}`;
+          return { kind: 'found', reason: `${breadcrumb}.${name.text}` };
         }
         if (ts.isPropertyAssignment(prop)) {
           const inner = findVersionIdInLiteral(prop.initializer, `${breadcrumb}.${name.text}`);
-          if (inner) return inner;
+          if (typeof inner !== 'string') {
+            if (inner.kind === 'found') return inner;
+            opaque = inner;
+          }
         }
       } else if (ts.isSpreadAssignment(prop)) {
-        // `...spread` — we cannot see through to whatever the spread
-        // resolves to without a TypeChecker. Mark the breadcrumb so a
-        // reviewer auditing a flagged file knows a spread was present;
-        // do not flag the call on the strength of a spread alone.
-        continue;
+        // `...spread` — without a TypeChecker we cannot see what the
+        // spread source contributes. A spread can carry VersionId; the
+        // detector must fail closed. `found` over a sibling property
+        // still wins (handled by the early return above).
+        if (!opaque) {
+          const sourceText = ts.isIdentifier(prop.expression)
+            ? `"${prop.expression.text}"`
+            : '<spread>';
+          opaque = {
+            kind: 'opaque',
+            reason: `${breadcrumb} contains a \`...spread\` of ${sourceText} which the detector cannot resolve; refactor to inline literal or add the call site to the architecture-test allowlist`,
+          };
+        }
       }
     }
-    return undefined;
+    return opaque ?? 'clean';
   }
   if (ts.isArrayLiteralExpression(node)) {
+    let opaque: { kind: 'opaque'; reason: string } | undefined;
     for (let i = 0; i < node.elements.length; i++) {
-      const inner = findVersionIdInLiteral(node.elements[i], `${breadcrumb}[${i}]`);
-      if (inner) return inner;
+      const element = node.elements[i];
+      if (ts.isSpreadElement(element)) {
+        // Same fail-closed posture as object spread — array elements can
+        // carry `{ Key, VersionId }` shapes for the batch-delete path.
+        if (!opaque) {
+          const sourceText = ts.isIdentifier(element.expression)
+            ? `"${element.expression.text}"`
+            : '<spread>';
+          opaque = {
+            kind: 'opaque',
+            reason: `${breadcrumb}[${i}] contains a \`...spread\` of ${sourceText} which the detector cannot resolve; refactor to inline literal or add the call site to the architecture-test allowlist`,
+          };
+        }
+        continue;
+      }
+      const inner = findVersionIdInLiteral(element, `${breadcrumb}[${i}]`);
+      if (typeof inner !== 'string') {
+        if (inner.kind === 'found') return inner;
+        opaque = inner;
+      }
     }
-    return undefined;
+    return opaque ?? 'clean';
   }
-  return undefined;
+  return 'clean';
 }
 
 /**
@@ -327,8 +371,9 @@ function inspectArgumentForVersionId(
   while (ts.isParenthesizedExpression(node)) node = node.expression;
 
   if (ts.isObjectLiteralExpression(node) || ts.isArrayLiteralExpression(node)) {
-    const reason = findVersionIdInLiteral(node, '<arg0>');
-    return reason ? { kind: 'found', reason } : { kind: 'clean' };
+    const result = findVersionIdInLiteral(node, '<arg0>');
+    if (result === 'clean') return { kind: 'clean' };
+    return result;
   }
 
   if (ts.isIdentifier(node)) {
@@ -345,8 +390,9 @@ function inspectArgumentForVersionId(
         reason: `argument is variable-bound to "${node.text}" and not resolvable to an inline literal in this file; refactor to inline literal or add the call site to the architecture-test allowlist`,
       };
     }
-    const reason = findVersionIdInLiteral(initializer, '<arg0>');
-    return reason ? { kind: 'found', reason } : { kind: 'clean' };
+    const result = findVersionIdInLiteral(initializer, '<arg0>');
+    if (result === 'clean') return { kind: 'clean' };
+    return result;
   }
 
   // Anything else at the top level (function call, conditional, await,

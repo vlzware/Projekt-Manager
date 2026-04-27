@@ -185,6 +185,20 @@ describe('Storage architecture (ADR-0022 / #45): no destructive call carries a V
       expect(offenses[0].reason).toContain('VersionId');
     });
 
+    it('flags an inline literal carrying a `...spread` as fail-closed', () => {
+      // `new DeleteObjectCommand({ ...opts })` — the spread source could
+      // carry VersionId. Without a TypeChecker the detector cannot see
+      // through; it must flag, parallel to the variable-bound branch.
+      // The reason names the spread so the operator can locate it.
+      const offenses = detectVersionIdOnDestructiveCommands(
+        [fixtureFile('spread-versionid.fixture.ts')],
+        fixturesRoot,
+      );
+      expect(offenses).toHaveLength(1);
+      expect(offenses[0].command).toBe('DeleteObjectCommand');
+      expect(offenses[0].reason.toLowerCase()).toContain('spread');
+    });
+
     it('flags an opaque (non-resolvable) argument as fail-closed', () => {
       // A function-parameter argument cannot be statically resolved to a
       // literal in this file. The detector cannot prove the absence of a
