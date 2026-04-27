@@ -10,7 +10,7 @@
  * value.
  */
 
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_LABELS } from '@/domain/attachments';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
@@ -39,21 +39,43 @@ function relativeFromNow(iso: string, now: Date = new Date()): string {
 }
 
 export function Papierkorb({ projectId }: PapierkorbProps) {
-  const rows = useAttachmentStore((s) => s.hiddenByProject[projectId]);
+  // `undefined` = never fetched, `[]` = fetched-empty, otherwise the
+  // hidden rows. The selector is already stable (Zustand returns the
+  // same array reference until `set` produces a new one), so no useMemo.
+  const items = useAttachmentStore((s) => s.hiddenByProject[projectId]);
   const fetchTrashForProject = useAttachmentStore((s) => s.fetchTrashForProject);
   const restoreAttachment = useAttachmentStore((s) => s.restoreAttachment);
+
+  // Per-row in-flight tracking. A double-click on Restore would otherwise
+  // dispatch the mutation twice — the second call wins the optimistic
+  // update race and the UI can briefly show the row in the live list
+  // twice. Disabling the button + flagging `aria-busy` is the same
+  // pattern AssignedWorkerEditor / management forms use.
+  const [pending, setPending] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     void fetchTrashForProject(projectId);
   }, [fetchTrashForProject, projectId]);
 
-  // Stable reference for the renderer so empty / loaded paths are
-  // distinguishable; `undefined` = never fetched, `[]` = fetched-empty.
-  const items = useMemo<Attachment[] | undefined>(() => rows, [rows]);
-
-  const handleRestore = async (att: Attachment) => {
-    await restoreAttachment(projectId, att.id);
-  };
+  const handleRestore = useCallback(
+    async (att: Attachment) => {
+      // Guard against the React 18 strict-mode double-invoke and a fast
+      // double-click; both produce overlapping calls that the store's
+      // optimistic move handles incorrectly.
+      if (pending.has(att.id)) return;
+      setPending((prev) => new Set(prev).add(att.id));
+      try {
+        await restoreAttachment(projectId, att.id);
+      } finally {
+        setPending((prev) => {
+          const next = new Set(prev);
+          next.delete(att.id);
+          return next;
+        });
+      }
+    },
+    [pending, projectId, restoreAttachment],
+  );
 
   return (
     <section
@@ -91,6 +113,8 @@ export function Papierkorb({ projectId }: PapierkorbProps) {
                       type="button"
                       onClick={() => void handleRestore(att)}
                       data-testid={`papierkorb-restore-${att.id}`}
+                      disabled={pending.has(att.id)}
+                      aria-busy={pending.has(att.id)}
                     >
                       {STRINGS.attachments.restore}
                     </button>

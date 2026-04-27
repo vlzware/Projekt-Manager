@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ApiResult } from '@/api/client';
 import type { Attachment } from '@/domain/types';
@@ -217,6 +217,74 @@ describe('Papierkorb', () => {
       expect(toasts).toHaveLength(1);
       expect(toasts[0].message).toBe('Wiederherstellen fehlgeschlagen.');
     });
+  });
+
+  it('guards against a fast double-click — the second click is a no-op', async () => {
+    // Without the pending-set guard, two synchronous click dispatches in
+    // the same React tick (touchscreen double-tap, programmatic
+    // re-dispatch) both reach the store before the optimistic move
+    // unmounts the button. The store's `if (!target) return` is a
+    // safety net but not a contract — make the no-double-POST behaviour
+    // explicit at the component layer too.
+    //
+    // `fireEvent` is the right tool here: `userEvent.click` awaits state
+    // settling between actions, which would unmount the button before
+    // the second event fires. `fireEvent` dispatches synchronously, so
+    // both clicks land on the still-mounted node.
+    const item = makeHidden({});
+    listTrashMock.mockResolvedValue(ok({ data: [item] }));
+
+    let resolveRestore!: (value: RestoreResult) => void;
+    restoreMock.mockImplementation(
+      () =>
+        new Promise<RestoreResult>((resolve) => {
+          resolveRestore = resolve;
+        }),
+    );
+
+    render(<Papierkorb projectId="p-42" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`papierkorb-row-${item.id}`)).toBeInTheDocument();
+    });
+
+    const button = screen.getByTestId(`papierkorb-restore-${item.id}`);
+
+    // Two synchronous click events — the second must NOT enqueue a
+    // second restore. With the in-component guard, the state-update
+    // from the first click and the `pending.has(att.id)` check both
+    // reflect an in-flight call by the time the second click runs.
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    expect(restoreMock).toHaveBeenCalledTimes(1);
+
+    // Resolve the restore so the test runner doesn't hold the promise.
+    resolveRestore(ok({ ...item, status: 'ready', hiddenAt: null }));
+    await waitFor(() => {
+      expect(screen.queryByTestId(`papierkorb-row-${item.id}`)).not.toBeInTheDocument();
+    });
+  });
+
+  it('renders Restore as not-busy and not-disabled before any click — sanity check', async () => {
+    // The aria-busy + disabled attributes flip to `true` while a
+    // restore is in flight (see the double-click guard test). The
+    // optimistic move unmounts the row before that state is observable
+    // to a real user across a full React commit, so the assertions
+    // here are limited to the pre-click resting state — anything more
+    // would test React's render scheduling rather than the component.
+    const item = makeHidden({});
+    listTrashMock.mockResolvedValue(ok({ data: [item] }));
+
+    render(<Papierkorb projectId="p-42" />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId(`papierkorb-row-${item.id}`)).toBeInTheDocument();
+    });
+
+    const button = screen.getByTestId(`papierkorb-restore-${item.id}`);
+    expect(button).not.toBeDisabled();
+    expect(button).toHaveAttribute('aria-busy', 'false');
   });
 
   it('rolls the optimistic restore back BEFORE bouncing on a session-expired failure', async () => {
