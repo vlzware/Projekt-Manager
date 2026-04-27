@@ -54,12 +54,16 @@ jobs:
 
     env:
       # Playwright starts `npm run dev` via playwright.config.ts's
-      # `webServer` block, which reads these at startup.
+      # `webServer` block, which reads these at startup. STORAGE_*
+      # credentials are the capability-restricted app user provisioned by
+      # docker/init-storage.sh below — the boot-time bucket-safety probe
+      # (#45 / ADR-0022) refuses to start `npm run dev` if these are root
+      # creds, so the dev server itself depends on the full provisioning.
       DATABASE_URL: postgresql://pm:postgres@localhost:5432/pm
       STORAGE_ENDPOINT: http://localhost:9000
       STORAGE_BUCKET: projekt-manager
-      STORAGE_ACCESS_KEY: minioadmin
-      STORAGE_SECRET_KEY: changeme
+      STORAGE_ACCESS_KEY: pmappci
+      STORAGE_SECRET_KEY: pmappcisecret
       # NODE_ENV=test matches what vitest uses; the env schema accepts it
       # and the safety checks in assertProductionSafe() do NOT fire.
       NODE_ENV: test
@@ -86,12 +90,44 @@ jobs:
       # service container) because GitHub service containers cannot
       # override `command`, and minio/minio needs `server /data` as its
       # argv. Versions are pinned to match docker-compose.yml (ADR-0009).
+      #
+      # Bucket provisioning is delegated to docker/init-storage.sh so the
+      # dev compose recipe and CI stay in lockstep — versioning, Compliance
+      # Object Lock, lifecycle, AND a capability-restricted MinIO app user
+      # (#45 / ADR-0022). The boot-time bucket-safety probe in
+      # src/server/storage/safety.ts runs in start.ts and refuses to serve
+      # without the full bucket+user shape, so `npm run dev` (started by
+      # Playwright's webServer block) cannot boot otherwise.
+      #
+      # The script hardcodes `http://storage:9000` as its mc alias target
+      # (the compose service hostname). To reuse the script unchanged, MinIO
+      # is named `storage` and attached to a user-defined bridge network
+      # alongside the mc one-shot — Docker auto-creates DNS entries for
+      # container names on user-defined networks. Port 9000 is still
+      # published to the runner so the dev server (running on the host)
+      # reaches MinIO at http://localhost:9000.
       - name: Start MinIO
+        env:
+          # Root creds run the MinIO process and are used by the init script
+          # for admin operations only — the dev server NEVER runs as root.
+          # Hardcoded ephemeral test values; no secret material.
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: changeme
+          # Capability-restricted app user (#45 / ADR-0022). The init script
+          # provisions this user with a bucket-scoped policy that allows
+          # write/read/list/hide but denies s3:DeleteObjectVersion. Must
+          # match the STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY in this job's
+          # `env:` so `npm run dev` boots under the same restricted user.
+          MINIO_APP_ACCESS_KEY: pmappci
+          MINIO_APP_SECRET_KEY: pmappcisecret
+          STORAGE_BUCKET: projekt-manager
         run: |
-          docker run -d --name minio \
+          docker network create pm-storage-net
+          docker run -d --name storage \
+            --network pm-storage-net \
             -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=changeme \
+            -e MINIO_ROOT_USER \
+            -e MINIO_ROOT_PASSWORD \
             minio/minio:RELEASE.2025-09-07T16-13-09Z \
             server /data
           for i in {1..30}; do
@@ -101,10 +137,20 @@ jobs:
             fi
             sleep 1
           done
-          docker run --rm --network host \
+          # Provision the bucket and the capability-restricted app user via
+          # the same script the dev compose stack runs. Mounted read-only;
+          # the script itself is idempotent. Network-attached so the
+          # script's `mc alias set minio http://storage:9000 ...` resolves.
+          docker run --rm --network pm-storage-net \
+            -v "$PWD/docker/init-storage.sh:/init-storage.sh:ro" \
+            -e MINIO_ROOT_USER \
+            -e MINIO_ROOT_PASSWORD \
+            -e MINIO_APP_ACCESS_KEY \
+            -e MINIO_APP_SECRET_KEY \
+            -e STORAGE_BUCKET \
             --entrypoint /bin/sh \
             minio/mc:RELEASE.2025-08-13T08-35-41Z \
-            -c "mc alias set local http://localhost:9000 minioadmin changeme && mc mb --ignore-existing local/projekt-manager"
+            /init-storage.sh
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium

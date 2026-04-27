@@ -108,12 +108,46 @@ jobs:
       # containers do not support overriding `command`, and minio/minio needs
       # `server /data` as its argv. Versions are pinned to match
       # docker-compose.yml (ADR-0009 — version pinning across environments).
+      #
+      # Bucket provisioning is delegated to docker/init-storage.sh so the dev
+      # compose recipe and CI stay in lockstep — versioning, Compliance
+      # Object Lock, lifecycle, AND a capability-restricted MinIO app user
+      # (#45 / ADR-0022). The boot-time bucket-safety probe in
+      # src/server/storage/safety.ts plus the integration arm of
+      # src/server/__tests__/storage-safety.test.ts both run end-to-end
+      # against this MinIO; without the full provisioning the probe
+      # correctly fail-closes and CI stops before any test executes.
+      #
+      # The script hardcodes `http://storage:9000` as its mc alias target
+      # (the compose service hostname). To reuse the script unchanged, MinIO
+      # is named `storage` and attached to a user-defined bridge network
+      # alongside the mc one-shot — Docker auto-creates DNS entries for
+      # container names on user-defined networks. Port 9000 is still
+      # published to the runner so vitest (running on the host) reaches
+      # MinIO at http://localhost:9000.
       - name: Start MinIO
+        env:
+          # Root creds run the MinIO process and are used by the init script
+          # for admin operations only — the app NEVER runs as root. Hardcoded
+          # ephemeral test values; no secret material.
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: changeme
+          # Capability-restricted app user (#45 / ADR-0022). The init script
+          # provisions this user with a bucket-scoped policy that allows
+          # write/read/list/hide but denies s3:DeleteObjectVersion. The
+          # boot-time capability self-test (and the integration arm of
+          # storage-safety.test.ts) asserts this credential cannot destroy
+          # versions, so vitest must run with these creds, not the root ones.
+          MINIO_APP_ACCESS_KEY: pmappci
+          MINIO_APP_SECRET_KEY: pmappcisecret
+          STORAGE_BUCKET: projekt-manager
         run: |
-          docker run -d --name minio \
+          docker network create pm-storage-net
+          docker run -d --name storage \
+            --network pm-storage-net \
             -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=changeme \
+            -e MINIO_ROOT_USER \
+            -e MINIO_ROOT_PASSWORD \
             minio/minio:RELEASE.2025-09-07T16-13-09Z \
             server /data
           # Wait for MinIO to become ready (max 30s).
@@ -124,12 +158,20 @@ jobs:
             fi
             sleep 1
           done
-          # Create the test bucket. Uses mc with the same pinned version as
-          # docker-compose.yml's storage-init sidecar.
-          docker run --rm --network host \
+          # Provision the bucket and the capability-restricted app user via
+          # the same script the dev compose stack runs. Mounted read-only;
+          # the script itself is idempotent. Network-attached so the
+          # script's `mc alias set minio http://storage:9000 ...` resolves.
+          docker run --rm --network pm-storage-net \
+            -v "$PWD/docker/init-storage.sh:/init-storage.sh:ro" \
+            -e MINIO_ROOT_USER \
+            -e MINIO_ROOT_PASSWORD \
+            -e MINIO_APP_ACCESS_KEY \
+            -e MINIO_APP_SECRET_KEY \
+            -e STORAGE_BUCKET \
             --entrypoint /bin/sh \
             minio/mc:RELEASE.2025-08-13T08-35-41Z \
-            -c "mc alias set local http://localhost:9000 minioadmin changeme && mc mb --ignore-existing local/projekt-manager"
+            /init-storage.sh
 
       - name: Unit and component tests
         run: npm run test:coverage
@@ -137,11 +179,14 @@ jobs:
           DATABASE_URL: postgresql://pm:postgres@localhost:5432/pm
           # Storage env vars are required by src/server/__tests__/storage.test.ts
           # which fails loud if any is missing (no silent skips — see file
-          # header in storage.test.ts).
+          # header in storage.test.ts). The integration arm of
+          # storage-safety.test.ts additionally requires these to be the
+          # capability-restricted app user (not root) — the boot probe
+          # asserts the running credential cannot destroy versions.
           STORAGE_ENDPOINT: http://localhost:9000
           STORAGE_BUCKET: projekt-manager
-          STORAGE_ACCESS_KEY: minioadmin
-          STORAGE_SECRET_KEY: changeme
+          STORAGE_ACCESS_KEY: pmappci
+          STORAGE_SECRET_KEY: pmappcisecret
 
       - name: Build
         run: npm run build
