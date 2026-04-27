@@ -678,22 +678,24 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       // a properly-restricted credential responds with AccessDenied at
       // the capability layer before any object resolution happens.
       //
-      // The argument is bound to a const and passed by reference rather
-      // than as an inline literal, so the architecture-test detector
-      // (`storage-architecture-detector.ts`) does not flag it. The
-      // detector intentionally only inspects inline literals — this is
-      // the second legitimate variable-bearing destructive command (the
-      // first is `copyFromVersion`, which uses `CopyObjectCommand` and
-      // is therefore out of scope for the destructive-delete check).
-      // The shape exception is architectural, not an evasion: this is
-      // the call the probe MUST make to validate the capability split.
-      const probeInput = {
-        Bucket: bucket,
-        Key: CAPABILITY_PROBE_KEY,
-        VersionId: CAPABILITY_PROBE_VERSION_ID,
-      };
+      // This is the ONE legitimate site in the codebase that constructs
+      // a `DeleteObjectCommand` carrying a `VersionId` — the architecture
+      // test (`src/server/__tests__/storage-architecture.test.ts`)
+      // exempts it via an explicit `SITE_ALLOWLIST` entry keyed on
+      // `{ file: 'src/server/storage/client.ts', functionName:
+      // 'probeDeleteVersionCapability' }`. The exception is architectural,
+      // not an evasion: this is the call the probe MUST make to validate
+      // the capability split. If the function is renamed or moved, the
+      // allowlist entry must change at the same commit — the test
+      // enforces no other file may declare a function with this name.
       try {
-        await s3.send(new DeleteObjectCommand(probeInput));
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: CAPABILITY_PROBE_KEY,
+            VersionId: CAPABILITY_PROBE_VERSION_ID,
+          }),
+        );
         // 2xx success — the credential CAN destroy versions. This is
         // the catastrophic case the probe was added to catch.
         return { kind: 'unexpected-success' };
