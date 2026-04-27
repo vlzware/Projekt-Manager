@@ -65,6 +65,7 @@ function makePhoto(overrides: Partial<Attachment>): Attachment {
     originalKey: 'proj/p-42/att/ph-1/o.jpg',
     thumbKey: 'proj/p-42/att/ph-1/thumb.webp',
     hasThumbnail: true,
+    hiddenAt: null,
     createdAt: '2026-04-20T10:00:00Z',
     createdBy: { id: 'u-w1', displayName: 'Anna Arbeiter' },
     ...overrides,

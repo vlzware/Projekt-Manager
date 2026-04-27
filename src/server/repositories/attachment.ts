@@ -163,10 +163,39 @@ export async function markReady(
 /**
  * Hard-delete by id. Returns the deleted row (for audit-payload capture)
  * or null when the row did not exist.
+ *
+ * Used by the orphan reaper (pending rows that never reached the audit
+ * chain) and by the project-delete cascade (the project row's audit
+ * carries the destruction; per-attachment audit rows would duplicate
+ * that). User-initiated removals go through `markHidden` instead —
+ * those are reversible and need their own audit row.
  */
 export async function deleteById(db: MutatingDatabase, id: string): Promise<AttachmentRow | null> {
   const rows = await db.delete(attachments).where(eq(attachments.id, id)).returning();
   return rows[0] ?? null;
+}
+
+/**
+ * Flip `ready` → `hidden`, stamp `hidden_at = now()`. Returns the updated
+ * row when the transition was applied; null when the row is gone or
+ * already in another state. Atomic CAS via the WHERE on `status='ready'`.
+ *
+ * Pending rows can never reach hidden — they are reaped by the orphan
+ * reaper (their backing upload never completed; there is nothing to
+ * restore). Hidden rows are idempotent at the API level — a second
+ * DELETE returns 409 because this returns null.
+ */
+export async function markHidden(
+  db: MutatingDatabase,
+  id: string,
+): Promise<AttachmentRowWithUploader | null> {
+  const rows = await db
+    .update(attachments)
+    .set({ status: 'hidden', hiddenAt: new Date() })
+    .where(and(eq(attachments.id, id), eq(attachments.status, 'ready')))
+    .returning();
+  if (!rows[0]) return null;
+  return getById(db, id);
 }
 
 /**

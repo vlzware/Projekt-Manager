@@ -18,9 +18,10 @@ CREATE TABLE "attachments" (
 	"has_thumbnail" boolean DEFAULT false NOT NULL,
 	"version_id" text,
 	"thumb_version_id" text,
+	"hidden_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"created_by" uuid,
-	CONSTRAINT "attachments_valid_status" CHECK ("attachments"."status" IN ('pending', 'ready')),
+	CONSTRAINT "attachments_valid_status" CHECK ("attachments"."status" IN ('pending', 'ready', 'hidden')),
 	CONSTRAINT "attachments_valid_kind" CHECK ("attachments"."kind" IN ('photo', 'binary')),
 	CONSTRAINT "attachments_valid_label" CHECK ("attachments"."label" IN ('angebot', 'auftragsbestaetigung', 'rechnung', 'aufmass', 'foto', 'sonstiges')),
 	CONSTRAINT "attachments_valid_mime_type" CHECK ("attachments"."mime_type" IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))

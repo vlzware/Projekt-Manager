@@ -32,7 +32,7 @@ import { type AttachmentStorageClient, StorageObjectNotFoundError } from '../sto
 import { isProjectInScope } from '../repositories/scope.js';
 import {
   createPending,
-  deleteById,
+  markHidden,
   getById,
   listByProject,
   markReady,
@@ -140,6 +140,7 @@ function toAttachment(row: AttachmentRowWithUploader): Attachment {
     originalKey: row.originalKey,
     thumbKey: row.thumbKey,
     hasThumbnail: row.hasThumbnail,
+    hiddenAt: row.hiddenAt ? row.hiddenAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     createdBy:
       row.createdBy && row.uploaderDisplayName
@@ -427,7 +428,7 @@ export class AttachmentService {
    * Delete: permission + scope + worker grace; hard-delete via mutate();
    * best-effort storage cleanup.
    */
-  async deleteAttachment(
+  async hideAttachment(
     caller: AuthUser,
     projectId: string,
     attachmentId: string,
@@ -440,7 +441,7 @@ export class AttachmentService {
 
     // Archived projects are read-only previews — server-side defence
     // matching the project-mutation gate (AC-95). The detail-page UI
-    // already hides the delete affordance, but a direct API call must
+    // already hides the trash affordance, but a direct API call must
     // not slip through. 404 mirrors the project-mutation contract: the
     // attachment "is gone" from the perspective of editable surfaces.
     const projectRow = await getProjectRowById(this.db, projectId);
@@ -470,12 +471,20 @@ export class AttachmentService {
       { actorKind: 'user', actorId: caller.id, correlationId: correlationId ?? null },
       {
         entityType: 'attachment',
-        action: 'attachment:remove',
+        action: 'attachment:hide',
         run: async (tx) => {
-          const deleted = await deleteById(tx, attachmentId);
+          const hidden = await markHidden(tx, attachmentId);
+          if (!hidden) {
+            // Lost the CAS — the row was not in `ready` at the moment of
+            // the UPDATE. Either it was already hidden (double-click,
+            // racing client), or never reached ready (stuck pending),
+            // or was reaped between the read and write. 409 in all
+            // cases — the client refetches and sees the actual state.
+            throw conflict(STRINGS.errors.invalidInput);
+          }
           return {
             entityId: attachmentId,
-            entityLabel: deleted ? attachmentAuditLabel(deleted) : null,
+            entityLabel: attachmentAuditLabel(hidden),
             value: null,
             before: {
               projectId,
@@ -484,7 +493,9 @@ export class AttachmentService {
               mimeType: row.mimeType,
               sizeBytes: row.sizeBytes,
             },
-            after: {},
+            after: {
+              hiddenAt: hidden.hiddenAt?.toISOString() ?? null,
+            },
             ancestorEntityType: 'project',
             ancestorEntityId: projectId,
           };
@@ -492,15 +503,18 @@ export class AttachmentService {
       },
     );
 
-    // Best-effort storage cleanup — a failure here does not resurrect
-    // the row (the DB cascade already committed). Orphaned keys are
-    // harmless; the reaper / bucket lifecycle ultimately cleans them.
+    // Best-effort storage hide. A failure leaves the row in `hidden`
+    // state with the original storage object still current — the next
+    // restore would succeed (no copy needed since nothing was moved),
+    // but the user-visible "trash bin" claim is incomplete. Orphaned
+    // keys eventually reach lifecycle reap regardless. The op-log
+    // surfaces the failure for follow-up.
     await this.bestEffortHide(row.originalKey, log);
     if (row.thumbKey) {
       await this.bestEffortHide(row.thumbKey, log);
     }
 
-    log.info({ attachmentId, projectId }, 'attachment_removed');
+    log.info({ attachmentId, projectId }, 'attachment_hidden');
   }
 
   async listForProject(caller: AuthUser, projectId: string): Promise<Attachment[]> {
@@ -509,7 +523,7 @@ export class AttachmentService {
     // Archived projects ARE listed: the detail page renders them as a
     // read-only preview (api.md §14.2.2), so the attachment listing has
     // to surface alongside the rest of the body. Mutation paths
-    // (initUpload, deleteAttachment) keep the archived gate.
+    // (initUpload, hideAttachment) keep the archived gate.
     const projectRow = await getProjectRowById(this.db, projectId);
     if (!projectRow) throw notFound(STRINGS.entities.project);
     if (!(await isProjectInScope(this.db, caller, projectId))) {

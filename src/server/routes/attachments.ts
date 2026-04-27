@@ -158,7 +158,7 @@ export function attachmentRoutes(db: Database) {
       },
       async (request, reply) => {
         const { id, attId } = request.params as { id: string; attId: string };
-        await service.deleteAttachment(request.user!, id, attId, request.log, request.id ?? null);
+        await service.hideAttachment(request.user!, id, attId, request.log, request.id ?? null);
         return reply.code(204).send();
       },
     );

@@ -77,7 +77,7 @@ interface AttachmentState {
   cancelUpload: (clientId: string) => void;
   /** Cancel every in-flight upload for `projectId`. */
   cancelUploadsForProject: (projectId: string) => void;
-  deleteAttachment: (projectId: string, attachmentId: string) => Promise<void>;
+  hideAttachment: (projectId: string, attachmentId: string) => Promise<void>;
   requestDownloadUrl: (
     projectId: string,
     attachmentId: string,
@@ -543,7 +543,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       });
     },
 
-    deleteAttachment: async (projectId, attachmentId) => {
+    hideAttachment: async (projectId, attachmentId) => {
       // Optimistic removal — roll back on failure.
       const before = get().byProject[projectId];
       set((s) => ({

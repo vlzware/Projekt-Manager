@@ -36,7 +36,7 @@ export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps)
   );
   const fetchForProject = useAttachmentStore((s) => s.fetchForProject);
   const requestDownloadUrl = useAttachmentStore((s) => s.requestDownloadUrl);
-  const deleteAttachment = useAttachmentStore((s) => s.deleteAttachment);
+  const hideAttachment = useAttachmentStore((s) => s.hideAttachment);
   const authUser = useAuthStore((s) => s.authUser);
 
   const handleDelete = async (photo: Attachment) => {
@@ -44,7 +44,7 @@ export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps)
       title: STRINGS.attachments.deleteConfirmTitle,
     });
     if (!ok) return;
-    await deleteAttachment(projectId, photo.id);
+    await hideAttachment(projectId, photo.id);
   };
 
   // Thumbnail URL cache keyed by attachment id. `null` entry means a 404
