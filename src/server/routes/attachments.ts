@@ -4,7 +4,7 @@
  * presigned URLs (AC-221, api.md §14.2.11).
  *
  * The route shape is pinned by AC-221's structural check — do not add
- * a 7th route on `/api/projects/:id/attachments/**` without updating
+ * a 9th route on `/api/projects/:id/attachments/**` without updating
  * the spec + AC first.
  */
 

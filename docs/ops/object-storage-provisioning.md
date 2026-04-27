@@ -9,7 +9,7 @@
 | `R`    | Default Compliance retention (days) — auto-applied per upload | `1`           | Operator-mistake recovery window. Sized for the iterating-friction phase; bump when real data lands. |
 | `L`    | Lifecycle `daysFromHidingToDeleting` (days)                   | `2`           | Trash-bin TTL after a hide. Same: bump for prod.                                                     |
 
-Preferred: `R ≤ L` (every hide reaps at exactly `L`). If `R > L`, the lifecycle reap retries until retention expires — trash-bin TTL stretches but data is still eventually destroyed.
+**Required: `R ≤ L`.** With `R > L` the lifecycle would attempt to reap noncurrent versions still protected by Object Lock retention, leaving zombie versions on every reap cycle until `R` elapses — incoherent on its face. The boot-time safety probe refuses to start under `R > L`.
 
 To adjust:
 
@@ -152,8 +152,8 @@ MINIO_APP_SECRET_KEY=pmappsecret        # password for the app user (default in 
     - lacks `ExpiredObjectDeleteMarker = true` (delete markers would zombie), or
     - has any other action — itemized: `Expiration.Days`, `Expiration.Date`, `Transitions[]`, `NoncurrentVersionTransitions[]`, `AbortIncompleteMultipartUpload`, or a rule with both `Expiration` AND `NoncurrentVersionExpiration` (mixed semantics).
     - has an `ID` containing the deny-listed B2 moniker `daysFromUploadingToHiding`.
+  - `R > L` — lifecycle reap is blocked by Object Lock retention for `R-L` days, leaving zombie versions every cycle. The configuration is incoherent; refuse to start.
   - **Capability self-test** — issues `DeleteObjectCommand` with a non-existent `VersionId` against the sentinel key `__probe/safety` and refuses to boot unless the response is `AccessDenied`. A 2xx response means the credential CAN destroy versions (the primary defense layer is broken); any other error code means the response leaked no perms info and the probe is fail-closed under that ambiguity.
-- **Warns only** (UX class): `R > L` — trash-bin TTL stretches per ADR-0022, but reap eventually fires.
 
 This catches drift between the runbook and live bucket state — e.g., an operator who edits lifecycle in the B2 portal without updating the runbook trips the probe at next deploy. The capability self-test additionally catches the orthogonal "credential drift" axis: a reissued app key with `deleteFiles` enabled by mistake passes every shape check yet breaks the primary defense.
 

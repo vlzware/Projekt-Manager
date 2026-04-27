@@ -62,13 +62,15 @@ Displays every `status = 'ready'` attachment with `kind = 'binary'` (PDF, DOCX) 
 - **Per-file controls.** Label dropdown (closed enum, default `Sonstiges`) and a delete affordance. A `Herunterladen` action requests a download URL ([api.md §14.2.11](../api.md#14211-attachments)) and navigates the browser to it.
 - **Bulk download.** A `Auswahl als ZIP` action appears when the user selects at least one file. Selection exceeding the configured bulk-download caps **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) — maximum file count OR summed byte size — is blocked client-side with a German validation message naming both caps. The server re-validates per [api.md §14.2.11](../api.md#14211-attachments); the mismatch path surfaces the same German message via the mutation error banner ([index.md §8.1.2](index.md#812-authenticated-state)).
 
-### 8.15.6 Deletion
+### 8.15.6 Soft-Hide
+
+The delete affordance is a soft-hide: the row flips to `status = 'hidden'` and the file moves to the project's Papierkorb (§8.15.10). The Papierkorb is bounded — a hidden row is reaped after the configured hide-to-delete window `L` **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) and is then permanently destroyed.
 
 - Owner, office: any attachment on the project.
 - Worker: own attachments only, within the configured self-delete grace window **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Outside that window the delete control is hidden; the server rejects with `403 NOT_PERMITTED` as the authoritative gate ([api.md §14.2.11](../api.md#14211-attachments)).
 - Bookkeeper: no delete.
 
-Every delete carries a Yes / No confirmation dialog with a German warning that recovery is not possible. Hard-delete is the only deletion mode — no soft-delete, no trash. Attachment versioning and retention are not part of this surface; any future capability of that class belongs to the storage-provider layer ([data-model.md §5.13](../data-model.md#513-attachment), [ADR-0018](../../adr/0018-data-persistence-and-recovery-layered-strategy.md)).
+Every soft-hide carries a Yes / No confirmation dialog with a German warning that names the Papierkorb destination, the bounded Aufbewahrungsfrist during which restore (§8.15.10) is possible, and the irreversible final destruction once that window elapses. Hide is forbidden on archived projects; restore remains permitted on archived projects so binaries are recoverable before lifecycle reap (§8.15.10).
 
 ### 8.15.7 Restored Rows Without Backing Bytes
 
@@ -98,6 +100,18 @@ Capability-to-region mapping on the project detail page:
 | Assigned-worker editor   | read inherent to the page; edit requires `project:update`                                                                          |
 
 The role → capability mapping (which role holds `attachment:read`, `attachment:write`, `attachment:hide`, `attachment:trash`) is defined by the permission matrix in [api.md §14.3](../api.md#143-authorization-rules) — that is the SSOT. Server-side authorization is authoritative ([api.md §14.2.11](../api.md#14211-attachments)); client-side hiding is a UX convenience per [AC-121](../verification.md#1516-management-views).
+
+### 8.15.10 Papierkorb Tab
+
+Per-project trash surface listing rows soft-hidden via §8.15.6. Bounded by the configured hide-to-delete window `L` **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) — a hidden row past that window is reaped by the storage lifecycle and is no longer recoverable.
+
+- **Visibility.** Tab is shown only to callers with `attachment:trash` (owner / office under the default matrix). The tab badge carries the trash row count. Server-side authorization remains authoritative: a forbidden caller hitting the API directly receives `403 NOT_PERMITTED` ([AC-235](../verification.md#1526-attachments)).
+- **Render states.** `loading` while the initial fetch is in flight, `forbidden` (`403`) for defense-in-depth on direct API calls that bypass tab visibility, `error` with a German message and an `Erneut versuchen` action ([behavior.md §9.5](behavior.md#95-asynchronous-mutation-behavior)), `ready` rendering the list (possibly empty).
+- **Empty surface.** A `ready` list with zero rows renders an explicit German label `"Keine gelöschten Dateien"` — distinct from the `loading` placeholder so the user never confuses fetch-in-flight with an empty Papierkorb.
+- **Row content.** Filename, label, hidden-since timestamp rendered as a German `Intl.RelativeTimeFormat` string (e.g. `"vor 1 Stunde"`), and a restore action.
+- **Restore interaction.** One-click. No confirmation dialog — restore is reversible (a subsequent soft-hide returns the row to the Papierkorb). Server contract pinned by [AC-233](../verification.md#1526-attachments).
+- **Archived projects.** Restore is permitted on archived projects — binaries must be recoverable before lifecycle reap consumes the hidden version. Hide remains forbidden on archived projects (read-only previews refuse new mutations); see §8.15.6.
+- **Server contract.** List shape, ordering (`hiddenAt DESC`, `id` tiebreaker), and scoping pinned by [AC-235](../verification.md#1526-attachments).
 
 ---
 

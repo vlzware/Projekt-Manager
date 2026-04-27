@@ -525,7 +525,8 @@ export const STRINGS = {
 
     // Deletion (soft-hide → Papierkorb, ADR-0022)
     deleteConfirmTitle: 'Datei löschen?',
-    deleteConfirmMessage: 'Die Datei wird in den Papierkorb verschoben.',
+    deleteConfirmMessage:
+      'Die Datei wird in den Papierkorb verschoben. Sie kann innerhalb der Aufbewahrungsfrist wiederhergestellt werden; danach wird sie endgültig gelöscht und ist nicht mehr wiederherstellbar.',
 
     /**
      * Restore-side data-integrity surfaces (issue #45 H5). A row in
