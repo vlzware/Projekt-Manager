@@ -340,7 +340,11 @@ export class AttachmentService {
     }
 
     const caps = resolveCaps();
-    // HEAD the original first.
+    // HEAD the original first. Capture VersionId for the restore path
+    // (ADR-0022) — the bucket is versioned, every PUT produces a fresh
+    // version-id, and the version that is current immediately post-
+    // upload is exactly what `copyFromVersion` must recreate later.
+    let versionId: string | null;
     try {
       const head = await this.storage.headObject(row.originalKey);
       // Declared-size pin first (AC-212, spec §14.2.11 error paths).
@@ -359,6 +363,7 @@ export class AttachmentService {
       if (head.contentType !== row.mimeType) {
         throw conflict(STRINGS.errors.invalidInput);
       }
+      versionId = head.versionId ?? null;
     } catch (err) {
       if (err instanceof StorageObjectNotFoundError) {
         throw conflict(STRINGS.errors.invalidInput);
@@ -366,6 +371,7 @@ export class AttachmentService {
       throw err;
     }
 
+    let thumbVersionId: string | null = null;
     if (row.hasThumbnail && row.thumbKey) {
       try {
         // Defense in depth: the presigned POST policy already pins
@@ -379,6 +385,7 @@ export class AttachmentService {
         if (!thumbHead.contentType.startsWith('image/')) {
           throw conflict(STRINGS.errors.invalidInput);
         }
+        thumbVersionId = thumbHead.versionId ?? null;
       } catch (err) {
         if (err instanceof StorageObjectNotFoundError) {
           throw conflict(STRINGS.errors.invalidInput);
@@ -394,7 +401,9 @@ export class AttachmentService {
     // row during the HEAD→markReady gap; a storage object verified by
     // HEAD but not-yet-marked-ready can remain orphaned for up to one
     // reaper tick before the next sweep cleans it up.
-    const updated = await this.db.transaction(async (tx) => markReady(tx, attachmentId));
+    const updated = await this.db.transaction(async (tx) =>
+      markReady(tx, attachmentId, { versionId, thumbVersionId }),
+    );
     if (!updated) {
       // Either the row disappeared between the get + markReady calls
       // (reaper race — 404) or it's already ready (racing client — 409).

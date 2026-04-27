@@ -126,21 +126,32 @@ export async function createPending(
 }
 
 /**
- * Flip `pending` → `ready` conditionally. Returns the updated row when
- * the status transition was applied; returns null when the row is gone
- * OR already at `ready` — the service layer distinguishes those cases
- * via a follow-up read (404 vs 409 per AC-212).
+ * Flip `pending` → `ready` conditionally and persist the per-version-id
+ * pair captured at HEAD-verify time (ADR-0022). Returns the updated row
+ * when the status transition was applied; returns null when the row is
+ * gone OR already at `ready` — the service layer distinguishes those
+ * cases via a follow-up read (404 vs 409 per AC-212).
  *
  * The WHERE predicate on `status = 'pending'` is the atomic guard that
  * turns the two-call flow (read → write) into a single CAS.
+ *
+ * `thumbVersionId` is set in tandem with `versionId` for photos
+ * (`hasThumbnail=true`); for binaries it is null, mirroring `thumbKey`.
+ * Both are captured from the bucket's HEAD response — the version that
+ * is current immediately post-upload is what restore must recreate.
  */
 export async function markReady(
   db: MutatingDatabase,
   id: string,
+  versions: { versionId: string | null; thumbVersionId: string | null },
 ): Promise<AttachmentRowWithUploader | null> {
   const rows = await db
     .update(attachments)
-    .set({ status: 'ready' })
+    .set({
+      status: 'ready',
+      versionId: versions.versionId,
+      thumbVersionId: versions.thumbVersionId,
+    })
     .where(and(eq(attachments.id, id), eq(attachments.status, 'pending')))
     .returning();
   if (!rows[0]) return null;

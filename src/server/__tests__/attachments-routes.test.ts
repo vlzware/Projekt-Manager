@@ -295,6 +295,26 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(body.status).toBe('ready');
     });
 
+    it('persists original + thumb version-ids on complete (ADR-0022)', async () => {
+      // The bucket is versioned; every PUT (browser or test setup) yields
+      // a fresh VersionId in the HEAD response. complete() captures both
+      // ids and writes them to attachments.version_id / thumb_version_id
+      // — the row is the sole source of truth for the future restore
+      // copyFromVersion call. Pending → null; ready (with thumb) → both
+      // non-null, well-formed (non-empty strings).
+      const attId = await seedPendingWithBackingBytes();
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/complete`,
+      );
+      expect(res.statusCode).toBe(200);
+
+      const versions = await fetchAttachmentVersions(attId);
+      expect(versions).not.toBeNull();
+      expect(versions?.versionId).toMatch(/.+/);
+      expect(versions?.thumbVersionId).toMatch(/.+/);
+    });
+
     it('returns 409 CONFLICT and leaves the row pending when the original object is missing', async () => {
       // Seed an init WITHOUT uploading bytes — the HEAD must miss.
       const initRes = await authPost(
@@ -870,6 +890,24 @@ async function fetchAttachmentStatus(id: string): Promise<string | null> {
     const res = await db.execute(sql`SELECT status FROM attachments WHERE id = ${id} LIMIT 1`);
     const row = res.rows[0] as { status: string } | undefined;
     return row?.status ?? null;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function fetchAttachmentVersions(
+  id: string,
+): Promise<{ versionId: string | null; thumbVersionId: string | null } | null> {
+  const { db, pool } = createDatabase();
+  try {
+    const res = await db.execute(
+      sql`SELECT version_id, thumb_version_id FROM attachments WHERE id = ${id} LIMIT 1`,
+    );
+    const row = res.rows[0] as
+      | { version_id: string | null; thumb_version_id: string | null }
+      | undefined;
+    if (!row) return null;
+    return { versionId: row.version_id, thumbVersionId: row.thumb_version_id };
   } finally {
     await pool.end();
   }

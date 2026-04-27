@@ -75,6 +75,14 @@ export interface DownloadResult {
 export interface HeadObjectResult {
   size: number;
   contentType: string;
+  /**
+   * S3 VersionId of the current version of the key, when the bucket has
+   * versioning enabled (ADR-0022). Captured at complete-time so the
+   * Papierkorb restore flow can `copyFromVersion(key, versionId)`.
+   * Undefined when the bucket is unversioned (legacy / non-prod) or the
+   * provider response omits the field.
+   */
+  versionId: string | undefined;
 }
 
 export interface PresignedPostDescriptor {
@@ -526,6 +534,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         return {
           size: Number(res.ContentLength ?? 0),
           contentType: res.ContentType ?? 'application/octet-stream',
+          versionId: res.VersionId,
         };
       } catch (err) {
         const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };

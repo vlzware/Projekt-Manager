@@ -424,6 +424,21 @@ export const attachments = pgTable(
     originalKey: text('original_key').notNull(),
     thumbKey: text('thumb_key'),
     hasThumbnail: boolean('has_thumbnail').notNull().default(false),
+    /**
+     * S3 VersionId of the current original-key version, captured at
+     * complete-time from the bucket's HEAD response. Persisted so the
+     * Papierkorb restore flow can `copyFromVersion(originalKey, versionId)`
+     * after a hide. Null while status='pending' (no upload yet).
+     * ADR-0022.
+     */
+    versionId: text('version_id'),
+    /**
+     * S3 VersionId of the current thumb-key version. Set in tandem with
+     * `versionId` for photos where `hasThumbnail=true`; null for binaries
+     * (no thumb) and for pending rows. Restore replays both copies so the
+     * gallery preview returns intact.
+     */
+    thumbVersionId: text('thumb_version_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   },
