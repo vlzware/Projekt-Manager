@@ -371,6 +371,10 @@ The reaper TTL is intentionally longer than the presigned-URL TTL so a client th
 
 Why this exists: the Docker-internal hostname is unreachable from the browser. Earlier deployments signed presigned URLs against `http://storage:9000`, which the browser's POST could not resolve, so every upload failed silently at the transport layer and the `pending → ready` transition never fired. The orphan reaper then swept the stuck rows after its TTL. A startup guard — `assertStoragePublicEndpointInProduction()` in `src/server/config/env.ts` — now refuses to boot in production when `STORAGE_ENDPOINT` looks internal (no-dot hostname, non-IP) and `STORAGE_PUBLIC_ENDPOINT` is unset. Caddy reverse-proxies `storage.${DOMAIN}` to `storage:9000`; MinIO's `MINIO_API_CORS_ALLOW_ORIGIN=https://${DOMAIN}` narrows CORS to the app's own origin. See [docs/ops/storage-subdomain.md](docs/ops/storage-subdomain.md).
 
+### Bucket safety probe
+
+`assertStorageBucketSafe()` in `src/server/storage/safety.ts` runs once at startup (before reapers schedule) and refuses to boot on data-corruption-class bucket misconfiguration: versioning off, Object Lock not Compliance with positive default-retention days, lifecycle missing or carrying any rule beyond the canonical `NoncurrentVersionExpiration + ExpiredObjectDeleteMarker` shape (e.g., `Expiration.Days` would auto-hide live data; transitions move storage class). `R > L` reports as a warning only — lifecycle reap retries past retention, so data still gets destroyed; only the trash-bin TTL stretches per [ADR-0022](docs/adr/0022-binary-storage-b2-compliance-object-lock.md). The validator is a pure function over a structured snapshot, so the fail/warn matrix is unit-tested without mocking the S3 SDK; the IO method on the storage client just shapes SDK output. See [docs/ops/object-storage-provisioning.md](docs/ops/object-storage-provisioning.md).
+
 ---
 
 ## Design Decisions (Not ADR-Worthy)

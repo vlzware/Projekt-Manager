@@ -92,6 +92,23 @@ STORAGE_OBJECT_LOCK_DAYS=7              # longer trash window during exploratory
 STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS=14
 ```
 
+## Boot-time safety probe
+
+`assertStorageBucketSafe()` in `src/server/storage/safety.ts` runs once at startup (before reapers schedule) and reads the bucket's actual versioning, Object Lock, and lifecycle config. Behaviour:
+
+- **Refuses to boot** (data-corruption class):
+  - Versioning not Enabled.
+  - Object Lock not Enabled, or default retention not `COMPLIANCE` with positive days.
+  - No lifecycle rule, more than one rule, or a rule that:
+    - is Disabled, or
+    - has a prefix or tag filter (must apply to all objects), or
+    - lacks `NoncurrentVersionExpiration.NoncurrentDays` (hidden versions would never reap), or
+    - lacks `ExpiredObjectDeleteMarker = true` (delete markers would zombie), or
+    - has any other action (`Expiration.Days` would auto-hide live data; `Transitions` move storage class).
+- **Warns only** (UX class): `R > L` — trash-bin TTL stretches per ADR-0022, but reap eventually fires.
+
+This catches drift between the runbook and live bucket state — e.g., an operator who edits lifecycle in the B2 portal without updating the runbook trips the probe at next deploy.
+
 ## Related
 
 - [ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md) — design rationale, layered-defense reasoning, R vs. L sizing.

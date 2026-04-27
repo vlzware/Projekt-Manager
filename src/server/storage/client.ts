@@ -16,11 +16,16 @@ import {
   HeadBucketCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  GetBucketVersioningCommand,
+  GetObjectLockConfigurationCommand,
+  GetBucketLifecycleConfigurationCommand,
+  type LifecycleRule,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createPresignedPost as awsCreatePresignedPost } from '@aws-sdk/s3-presigned-post';
 import type { Readable } from 'node:stream';
 import { STORAGE_CONFIG } from '../config/index.js';
+import type { BucketSafetyConfig, LifecycleRuleSnapshot } from './safety.js';
 
 export interface StorageConfig {
   endpoint: string;
@@ -179,6 +184,13 @@ export interface StorageClient {
    * without needing a second round-trip per object.
    */
   listObjects?: (prefix: string, olderThan?: Date) => Promise<string[]>;
+
+  /**
+   * Boot-time bucket-safety probe (ADR-0022 / docs/ops/object-storage-provisioning.md).
+   * Returns a structured snapshot of versioning + Object Lock + lifecycle
+   * for `assertStorageBucketSafe()` in `./safety.ts` to evaluate.
+   */
+  getBucketSafetyConfig?: () => Promise<BucketSafetyConfig>;
 }
 
 /**
@@ -204,6 +216,7 @@ export interface AttachmentStorageClient extends StorageClient {
   getObject: (key: string) => Promise<Readable>;
   putObject: (key: string, body: Buffer | Uint8Array, contentType: string) => Promise<void>;
   listObjects: (prefix: string, olderThan?: Date) => Promise<string[]>;
+  getBucketSafetyConfig: () => Promise<BucketSafetyConfig>;
 }
 
 /**
@@ -257,6 +270,52 @@ export function buildContentDisposition(fileName: string): string {
     .replace(NON_PRINTABLE_ASCII, '_');
   const utf8Encoded = encodeURIComponent(fileName);
   return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+}
+
+/**
+ * Collapse the SDK's LifecycleRule into the structured snapshot the
+ * safety validator consumes. Filter shape can be `{Prefix}`, `{Tag}`, or
+ * `{And: {Prefix?, Tags?}}` — flatten into `(prefix, hasTagFilter)`.
+ * Disallowed actions are anything beyond the canonical
+ * `NoncurrentVersionExpiration + ExpiredObjectDeleteMarker` pair.
+ */
+function toLifecycleRuleSnapshot(rule: LifecycleRule): LifecycleRuleSnapshot {
+  let prefix = '';
+  let hasTagFilter = false;
+  if (rule.Filter) {
+    if (rule.Filter.Prefix !== undefined) prefix = rule.Filter.Prefix;
+    if (rule.Filter.Tag) hasTagFilter = true;
+    if (rule.Filter.And) {
+      if (rule.Filter.And.Prefix !== undefined) prefix = rule.Filter.And.Prefix;
+      if ((rule.Filter.And.Tags?.length ?? 0) > 0) hasTagFilter = true;
+    }
+  } else if (rule.Prefix !== undefined) {
+    // Legacy non-Filter Prefix shape — pre-2018 S3 API. Still valid.
+    prefix = rule.Prefix;
+  }
+
+  const expiration = rule.Expiration;
+  const expireDeleteMarker = expiration?.ExpiredObjectDeleteMarker === true;
+
+  // `Expiration.Days = 0` is the encoding S3 uses when only
+  // `ExpiredObjectDeleteMarker` is set — treat as absent.
+  const hasExpirationDays = (expiration?.Days ?? 0) > 0;
+  const hasDisallowedActions =
+    hasExpirationDays ||
+    expiration?.Date !== undefined ||
+    (rule.Transitions?.length ?? 0) > 0 ||
+    (rule.NoncurrentVersionTransitions?.length ?? 0) > 0 ||
+    rule.AbortIncompleteMultipartUpload !== undefined;
+
+  return {
+    id: rule.ID,
+    status: rule.Status ?? 'Disabled',
+    prefix,
+    hasTagFilter,
+    noncurrentDays: rule.NoncurrentVersionExpiration?.NoncurrentDays,
+    expireDeleteMarker,
+    hasDisallowedActions,
+  };
 }
 
 export function createStorageClient(config: StorageConfig): AttachmentStorageClient {
@@ -504,6 +563,46 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
           ContentType: contentType,
         }),
       );
+    },
+
+    async getBucketSafetyConfig(): Promise<BucketSafetyConfig> {
+      // Three independent reads — versioning, object-lock, lifecycle.
+      // Each can succeed/fail independently; the validator handles the
+      // "feature not enabled" cases as semantic absence (versioningEnabled=
+      // false, objectLock.enabled=false, lifecycleRules=[]).
+      const ver = await s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
+      const versioningEnabled = ver.Status === 'Enabled';
+
+      let objectLock: BucketSafetyConfig['objectLock'] = { enabled: false };
+      try {
+        const ol = await s3.send(new GetObjectLockConfigurationCommand({ Bucket: bucket }));
+        if (ol.ObjectLockConfiguration?.ObjectLockEnabled === 'Enabled') {
+          objectLock = {
+            enabled: true,
+            defaultMode: ol.ObjectLockConfiguration.Rule?.DefaultRetention?.Mode,
+            defaultDays: ol.ObjectLockConfiguration.Rule?.DefaultRetention?.Days,
+          };
+        }
+      } catch (err) {
+        const e = err as { name?: string };
+        // ObjectLockConfigurationNotFoundError when the bucket was
+        // created without --with-lock. Fall through to enabled:false so
+        // the validator surfaces a structured failure instead of an
+        // opaque SDK error.
+        if (e.name !== 'ObjectLockConfigurationNotFoundError') throw err;
+      }
+
+      let lifecycleRules: BucketSafetyConfig['lifecycleRules'] = [];
+      try {
+        const lc = await s3.send(new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }));
+        lifecycleRules = (lc.Rules ?? []).map(toLifecycleRuleSnapshot);
+      } catch (err) {
+        const e = err as { name?: string };
+        // NoSuchLifecycleConfiguration when no rules — semantic absence.
+        if (e.name !== 'NoSuchLifecycleConfiguration') throw err;
+      }
+
+      return { versioningEnabled, objectLock, lifecycleRules };
     },
 
     async listObjects(prefix: string, olderThan?: Date): Promise<string[]> {

@@ -36,6 +36,7 @@ import { AUDIT_RETENTION } from '../config/auditRetention.js';
 import { ATTACHMENT_CONFIG } from '../config/attachmentConfig.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
+import { assertStorageBucketSafe } from './storage/safety.js';
 
 const HOST = '0.0.0.0';
 
@@ -195,6 +196,16 @@ async function start(): Promise<void> {
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
   });
+
+  // Boot-time bucket-safety probe (ADR-0022 / docs/ops/object-storage-provisioning.md).
+  // Refuses to start on data-corruption-class drift (versioning off,
+  // Object Lock not Compliance, lifecycle missing or with disallowed
+  // actions). Warns on R > L. Runs before reapers so a misconfigured
+  // bucket cannot accumulate side-effects.
+  await assertStorageBucketSafe(attachmentStorageForReaper, {
+    warn: (msg) => console.warn(msg),
+  });
+
   const attachmentReaper = startAttachmentOrphanReaperScheduler({
     db,
     storage: attachmentStorageForReaper,
