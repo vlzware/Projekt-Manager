@@ -262,11 +262,16 @@ jobs:
           POSTGRES_PASSWORD: placeholder
           MINIO_ROOT_USER: placeholder
           MINIO_ROOT_PASSWORD: placeholder
+          # MINIO_APP_* are `:?`-gated in compose because the runtime
+          # app credential is provisioned by docker/init-storage.sh and
+          # has no compose-side default. CI pre-empts the parse failure
+          # the same way real deploys do (via .env / secrets.env.age).
+          MINIO_APP_ACCESS_KEY: placeholder
+          MINIO_APP_SECRET_KEY: placeholder
           CLOUDFLARE_API_TOKEN: placeholder
-          # APP_IMAGE_TAG is `:?`-gated (H2 audit finding — mutable
-          # branch tag defaults removed). A placeholder lets `docker
-          # compose config` parse; real deploys pass a SHA tag via
-          # scripts/deploy.sh.
+          # APP_IMAGE_TAG is `:?`-gated — mutable branch tag defaults
+          # were removed. A placeholder lets `docker compose config`
+          # parse; real deploys pass a SHA tag via scripts/deploy.sh.
           APP_IMAGE_TAG: placeholder
           # DOMAIN is `:?`-gated at the first reference (app service —
           # STORAGE_PUBLIC_ENDPOINT derives `https://storage.${DOMAIN}`).
