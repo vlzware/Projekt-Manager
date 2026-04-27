@@ -88,15 +88,16 @@ Per-upload states rendered in the gallery and list next to the affected row:
 
 Capability-to-region mapping on the project detail page:
 
-| Region                 | Permission required to see / use                                                                                 |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| View gallery + list    | `attachment:read`                                                                                                |
-| Upload photo / binary  | `attachment:write` (worker additionally requires project assignment)                                             |
-| Delete an attachment   | `attachment:delete` (worker additionally requires authorship AND self-delete grace window **[C]** — see §8.15.6) |
-| Bulk download (ZIP)    | `attachment:read`                                                                                                |
-| Assigned-worker editor | read inherent to the page; edit requires `project:update`                                                        |
+| Region                   | Permission required to see / use                                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| View gallery + list      | `attachment:read`                                                                                                                  |
+| Upload photo / binary    | `attachment:write` (worker additionally requires project assignment)                                                               |
+| Hide an attachment       | `attachment:hide` (soft-hide per ADR-0022; worker additionally requires authorship AND self-delete grace window **[C]** — §8.15.6) |
+| Papierkorb tab + restore | `attachment:trash` (list hidden attachments and restore them)                                                                      |
+| Bulk download (ZIP)      | `attachment:read`                                                                                                                  |
+| Assigned-worker editor   | read inherent to the page; edit requires `project:update`                                                                          |
 
-The role → capability mapping (which role holds `attachment:read`, `attachment:write`, `attachment:delete`) is defined by the permission matrix in [api.md §14.3](../api.md#143-authorization-rules) — that is the SSOT. Server-side authorization is authoritative ([api.md §14.2.11](../api.md#14211-attachments)); client-side hiding is a UX convenience per [AC-121](../verification.md#1516-management-views).
+The role → capability mapping (which role holds `attachment:read`, `attachment:write`, `attachment:hide`, `attachment:trash`) is defined by the permission matrix in [api.md §14.3](../api.md#143-authorization-rules) — that is the SSOT. Server-side authorization is authoritative ([api.md §14.2.11](../api.md#14211-attachments)); client-side hiding is a UX convenience per [AC-121](../verification.md#1516-management-views).
 
 ---
 
