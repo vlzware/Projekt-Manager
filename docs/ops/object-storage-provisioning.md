@@ -76,7 +76,7 @@ App-key rotation: create the new key first, deploy the new credentials, verify, 
 
 ## Dev-MinIO parity
 
-Local dev uses MinIO behind the same `STORAGE_*` env interface. The dev bucket mirrors the B2 surface — versioning, object-lock with default retention, lifecycle — so dev tests catch divergence before prod.
+Local dev uses MinIO behind the same `STORAGE_*` env interface. The dev bucket mirrors the B2 surface — versioning, object-lock with default retention, lifecycle — AND the credential capability split, so dev tests catch divergence on either axis before prod.
 
 `docker/init-storage.sh` runs once on `docker compose up` and ensures:
 
@@ -84,13 +84,59 @@ Local dev uses MinIO behind the same `STORAGE_*` env interface. The dev bucket m
 - Versioning enabled.
 - Default Compliance retention = `R` days.
 - Lifecycle rule `daysFromHidingToDeleting = L`.
+- A capability-restricted MinIO user `${MINIO_APP_ACCESS_KEY}` exists with a bucket-scoped IAM policy named `projekt-manager-app` attached.
+
+The B2 prod recipe (separate restricted app key created via `b2 key create … readFiles,writeFiles,listFiles`) and the MinIO dev recipe (separate restricted IAM user created via `mc admin user add` + `mc admin policy attach`) are now structurally parallel — both deny version destruction at the credential layer, so the boot-time capability self-test in `src/server/storage/safety.ts` exercises the same defense in both environments. The app **never** runs as the MinIO root user; root credentials only exist to provision the MinIO process and the app user.
+
+The IAM policy the init script applies (allow list mirrors the B2 app key's `readFiles, writeFiles, listFiles`):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucketLocation",
+        "s3:GetBucketVersioning",
+        "s3:GetBucketObjectLockConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:ListBucket",
+        "s3:ListBucketVersions"
+      ],
+      "Resource": "arn:aws:s3:::${BUCKET}"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::${BUCKET}/*"
+    },
+    {
+      "Effect": "Deny",
+      "Action": [
+        "s3:DeleteObjectVersion",
+        "s3:BypassGovernanceRetention",
+        "s3:PutObjectRetention",
+        "s3:PutObjectLegalHold"
+      ],
+      "Resource": "arn:aws:s3:::${BUCKET}/*"
+    }
+  ]
+}
+```
+
+The explicit `Deny` block is required, not redundant: MinIO's IAM evaluator treats `s3:DeleteObject` as covering a `DeleteObjectCommand` that carries a `VersionId`, so a policy that merely omits `s3:DeleteObjectVersion` is not enough to deny version destruction. MinIO's "deny overrides allow" semantic makes the explicit `Deny` a hard guardrail — even if a downstream policy mutation introduced a broader allow, version destruction would still be blocked.
 
 Override per-developer in `.env`:
 
 ```bash
 STORAGE_OBJECT_LOCK_DAYS=7              # longer trash window during exploratory work
 STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS=14
+MINIO_APP_ACCESS_KEY=pmapp              # username for the app user (default in .env.example)
+MINIO_APP_SECRET_KEY=pmappsecret        # password for the app user (default in .env.example)
 ```
+
+`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` continue to provision the MinIO process and run the init script as the privileged caller — they are NEVER set as `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` on the app container. The compose file `:?`-gates `MINIO_APP_ACCESS_KEY` and `MINIO_APP_SECRET_KEY` so a missing value fails the deploy at parse time rather than booting the app under root credentials by accident.
 
 ## Boot-time safety probe
 
