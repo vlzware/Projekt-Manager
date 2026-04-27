@@ -931,6 +931,159 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(body.message).toContain(attId);
       expect(body.message).toContain('thumb_version_id');
     });
+
+    // -----------------------------------------------------------------
+    // Restore on archived projects (issue #45 Medium).
+    //
+    // Asymmetry by design: hide on archived stays forbidden (read-only
+    // preview), restore on archived is permitted. Without the latter,
+    // binaries in an archived project's trash would silently reap after
+    // L days with no recovery path; archive is a reversible state,
+    // destruction by lifecycle is not.
+    //
+    // Three arms:
+    //   1. Restore against an archived project succeeds.
+    //   2. Hide against an archived project still rejects (regression
+    //      guard for the archive read-only invariant).
+    //   3. The Papierkorb listing is callable on an archived project so
+    //      the user can SEE what's recoverable.
+    // -----------------------------------------------------------------
+    it('restore on an archived project succeeds (hide is irreversible by lifecycle)', async () => {
+      // Seed: ready attachment → hide → archive the project. Restore
+      // must still succeed; without it, lifecycle would silently reap.
+      const attId = await seedReadyAttachment();
+      const hideRes = await authDelete(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}`,
+      );
+      expect(hideRes.statusCode).toBe(204);
+
+      // Archive on a fresh project so we don't poison the shared one.
+      // Move the (already-hidden) attachment over by re-uploading on a
+      // new project, then archiving — simpler to spin a fresh one with
+      // its own hidden row.
+      const customersRes = await authGet(ownerToken, '/api/customers');
+      const customers = customersRes.json().customers ?? customersRes.json().data;
+      const customerId = customers[0].id;
+      const createRes = await authPost(ownerToken, '/api/projects', {
+        number: `${year}-REST-ARCH`,
+        title: 'Restore-on-archived',
+        customerId,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const archProjectId = createRes.json().id;
+
+      // Seed a hidden row directly on the soon-to-be-archived project
+      // so we don't depend on the upload pipeline's archive race.
+      // version_id matches a real storage version we put in the bucket.
+      const archAttId = crypto.randomUUID();
+      const originalKey = `attachments/${archProjectId}/${archAttId}.orig`;
+      const s = storage();
+      const putRes = await s.upload(originalKey, Buffer.from('arch-bytes'), 'application/pdf');
+      expect(putRes).toBeDefined();
+      // Read back the version-id of what we just put — this becomes the
+      // source for copyFromVersion.
+      const head = await s.headObject(originalKey);
+      expect(head.versionId).toBeDefined();
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             version_id, thumb_version_id, hidden_at)
+          VALUES (${archAttId}, ${archProjectId}, 'hidden', 'binary', 'sonstiges',
+                  'arch-doc.pdf', 'application/pdf', 10,
+                  ${originalKey}, NULL, FALSE,
+                  ${head.versionId!}, NULL, NOW())
+        `);
+      } finally {
+        await pool.end();
+      }
+
+      // Archive the project.
+      const archiveRes = await authDelete(ownerToken, `/api/projects/${archProjectId}`);
+      expect(archiveRes.statusCode).toBe(200);
+
+      // Restore must succeed despite archival — that's the whole point.
+      const restoreRes = await authPost(
+        ownerToken,
+        `/api/projects/${archProjectId}/attachments/${archAttId}/restore`,
+      );
+      expect(restoreRes.statusCode).toBe(200);
+      const restored = restoreRes.json() as Attachment;
+      expect(restored.status).toBe('ready');
+      expect(restored.hiddenAt).toBeNull();
+
+      // Cleanup: avoid leaving the archived project hanging — leave the
+      // shared `projectId` arm green. (The archived project itself can
+      // stay; subsequent tests don't care.)
+      void attId; // marker — unused in this arm
+    });
+
+    it('hide on an archived project is rejected (read-only preview invariant)', async () => {
+      // Regression guard for the archive read-only contract. The
+      // restore-on-archived fix must NOT have lifted the hide-side
+      // gate.
+      const customersRes = await authGet(ownerToken, '/api/customers');
+      const customers = customersRes.json().customers ?? customersRes.json().data;
+      const customerId = customers[0].id;
+      const createRes = await authPost(ownerToken, '/api/projects', {
+        number: `${year}-HIDE-ARCH`,
+        title: 'Hide-on-archived rejected',
+        customerId,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const archProjectId = createRes.json().id;
+
+      // Seed a ready row on the project, then archive.
+      const [hideAttId] = await seedReadyAttachments(archProjectId, [{ sizeBytes: 100 }]);
+      const archiveRes = await authDelete(ownerToken, `/api/projects/${archProjectId}`);
+      expect(archiveRes.statusCode).toBe(200);
+
+      // Hide must reject — the gate stays.
+      const hideRes = await authDelete(
+        ownerToken,
+        `/api/projects/${archProjectId}/attachments/${hideAttId}`,
+      );
+      expect(hideRes.statusCode).toBe(404);
+      expect(hideRes.json().code).toBe('NOT_FOUND');
+    });
+
+    it('Papierkorb listing is callable on an archived project (user must see what is recoverable)', async () => {
+      // The user must be able to inspect the archived project's trash
+      // before deciding to restore. This pairs with the restore-on-
+      // archived behaviour — listing without restore would be a
+      // useless cul-de-sac.
+      const customersRes = await authGet(ownerToken, '/api/customers');
+      const customers = customersRes.json().customers ?? customersRes.json().data;
+      const customerId = customers[0].id;
+      const createRes = await authPost(ownerToken, '/api/projects', {
+        number: `${year}-LIST-ARCH`,
+        title: 'List-archived-trash',
+        customerId,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const archProjectId = createRes.json().id;
+
+      // Seed one hidden row so the listing has something visible.
+      const archAttId = await seedHiddenAttachment(archProjectId, {
+        versionId: 'fake-vid',
+        thumbVersionId: null,
+        hasThumbnail: false,
+      });
+
+      const archiveRes = await authDelete(ownerToken, `/api/projects/${archProjectId}`);
+      expect(archiveRes.statusCode).toBe(200);
+
+      const trashRes = await authGet(
+        ownerToken,
+        `/api/projects/${archProjectId}/attachments/trash`,
+      );
+      expect(trashRes.statusCode).toBe(200);
+      const body = trashRes.json() as { data: Attachment[] };
+      expect(body.data.some((it) => it.id === archAttId)).toBe(true);
+    });
   });
 
   // -------------------------------------------------------------------

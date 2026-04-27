@@ -566,12 +566,20 @@ export class AttachmentService {
    * call. The alternative (copy first, compensate on CAS-loss) was
    * rejected because the compensation can itself fail.
    *
+   * Asymmetry with hide (intentional — issue #45 Medium): restore is
+   * permitted on archived projects; hide is not. Archive is a
+   * reversible state (re-activate is a design feature elsewhere);
+   * destruction-by-lifecycle is not. If restore were forbidden during
+   * archival, binaries in an archived project's trash would silently
+   * reap after L days with no recovery path. Hide on an archived
+   * project stays forbidden — read-only previews must not accept new
+   * mutations.
+   *
    * Failure modes (status-code distinctions matter — issue #45 H5):
    *   - Row not in 'hidden' state → 409 (transient: client refetches
    *     and sees the actual state).
-   *   - Row missing or wrong project → 404.
-   *   - Project archived between hide and restore → 404 (matches the
-   *     hide-side gate; an archived project is read-only).
+   *   - Row missing or wrong project → 404 (project itself missing
+   *     also surfaces as 404).
    *   - Storage CopyObject failure → 500 (genuine provider fault; the
    *     transaction rolls back, the row stays hidden, the user can
    *     retry).
@@ -593,8 +601,12 @@ export class AttachmentService {
     if (!(await isProjectInScope(this.db, caller, projectId))) {
       throw notPermitted();
     }
+    // Existence check, but NOT an archive gate — restore is the
+    // un-loss move, permitted on archived projects so binaries in the
+    // trash are not silently reaped by lifecycle. Hide-side keeps the
+    // archive gate (read-only previews refuse new mutations).
     const projectRow = await getProjectRowById(this.db, projectId);
-    if (!projectRow || projectRow.deleted) {
+    if (!projectRow) {
       throw notFound(STRINGS.entities.project);
     }
     const row = await getById(this.db, attachmentId);
