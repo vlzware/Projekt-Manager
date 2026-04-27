@@ -19,6 +19,7 @@ import type {
 } from '@/api/client';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
 import type { ProcessedUpload } from '@/domain/imagePipeline';
+import { useAuthStore } from '@/state/authStore';
 
 type ListResult = ApiResult<{ data: Attachment[] }>;
 type InitResult = ApiResult<AttachmentInitResponse>;
@@ -275,6 +276,91 @@ describe('attachmentStore — error state', () => {
     const state = useAttachmentStore.getState();
     expect(state.error).toBeNull();
     expect(state.byProject['proj-1']).toHaveLength(1);
+  });
+});
+
+describe('attachmentStore — hideAttachment optimistic-with-rollback', () => {
+  // Seed the live list with two rows so each test can assert that the
+  // target row leaves on optimistic success and re-enters on rollback,
+  // without reading order from a single-element list (which would mask
+  // a future bug that swaps the splice for a `slice(1)`).
+  function seedLive(): void {
+    useAttachmentStore.setState({
+      byProject: {
+        'proj-1': [
+          makeAttachment({ id: 'att-keep', fileName: 'keep.jpg' }),
+          makeAttachment({ id: 'att-doomed', fileName: 'doomed.jpg' }),
+        ],
+      },
+      error: null,
+    });
+  }
+
+  it('removes the target row from byProject on success and clears any prior error', async () => {
+    // Seed `error` to a sentinel so a regression that drops the
+    // `set({ error: null })` on success would leave the sentinel
+    // visible — without this seed the assertion would pass even on
+    // such a regression because beforeEach already null-initialises.
+    seedLive();
+    useAttachmentStore.setState({ error: 'stale prior banner' });
+    deleteMock.mockResolvedValueOnce(ok(null));
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const state = useAttachmentStore.getState();
+    expect(state.byProject['proj-1']?.map((a) => a.id)).toEqual(['att-keep']);
+    expect(state.error).toBeNull();
+  });
+
+  it('rolls back the optimistic removal and surfaces the server message on a server error', async () => {
+    seedLive();
+    deleteMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'Ein interner Fehler ist aufgetreten.' },
+      category: 'server_error',
+      sessionExpired: false,
+    });
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const state = useAttachmentStore.getState();
+    expect(state.byProject['proj-1']?.map((a) => a.id)).toEqual(['att-keep', 'att-doomed']);
+    expect(state.error).toBe('Ein interner Fehler ist aufgetreten.');
+  });
+
+  it('rolls back the optimistic removal and surfaces the canonical message on a network throw', async () => {
+    seedLive();
+    deleteMock.mockRejectedValueOnce(new Error('fetch failed'));
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const state = useAttachmentStore.getState();
+    expect(state.byProject['proj-1']?.map((a) => a.id)).toEqual(['att-keep', 'att-doomed']);
+    expect(state.error).toBe('Änderung fehlgeschlagen. Bitte erneut versuchen.');
+  });
+
+  it('rolls back AND fires handleSessionExpired without setting an error on session expiry', async () => {
+    // Regression test for the bug fixed in this commit: the
+    // session-expired branch used to call handleSessionExpired() WITHOUT
+    // rolling back the optimistic removal, leaving an inconsistent UI
+    // (row missing locally while the server still has it) the user
+    // would discover after re-login. Both effects are now asserted.
+    seedLive();
+    const bounce = vi.fn();
+    useAuthStore.setState({ handleSessionExpired: bounce });
+    deleteMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen.' },
+      category: 'authentication',
+      sessionExpired: true,
+    });
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const state = useAttachmentStore.getState();
+    expect(state.byProject['proj-1']?.map((a) => a.id)).toEqual(['att-keep', 'att-doomed']);
+    expect(state.error).toBeNull();
+    expect(bounce).toHaveBeenCalledTimes(1);
   });
 });
 

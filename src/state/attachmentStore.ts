@@ -688,7 +688,12 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
     },
 
     hideAttachment: async (projectId, attachmentId) => {
-      // Optimistic removal — roll back on failure.
+      // Optimistic removal — roll back on every terminal failure.
+      // Centralised so the network-error, server-error, and
+      // session-expired branches share the same recovery — the
+      // session-expired branch previously bounced to login WITHOUT
+      // rolling back the optimistic removal, leaving an inconsistent
+      // UI behind on return. Same shape as `restoreAttachment` below.
       const before = get().byProject[projectId];
       set((s) => ({
         byProject: {
@@ -697,27 +702,37 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         },
       }));
 
+      const rollback = (message: string | null): void => {
+        set((s) => ({
+          byProject: { ...s.byProject, [projectId]: before ?? [] },
+          error: message,
+        }));
+      };
+
       let result;
       try {
         result = await attachmentApi.delete(projectId, attachmentId);
       } catch {
-        set((s) => ({
-          byProject: { ...s.byProject, [projectId]: before ?? [] },
-          error: STRINGS.errors.mutationFailed,
-        }));
+        rollback(STRINGS.errors.mutationFailed);
         return;
       }
       if (!result.ok) {
         if (result.sessionExpired) {
+          // Roll the optimistic removal back BEFORE the central handler
+          // navigates away. Suppress the error string — the login
+          // redirect is the user-facing signal here, an additional
+          // banner would be noise on the way out.
+          rollback(null);
           handleSessionExpired();
           return;
         }
-        set((s) => ({
-          byProject: { ...s.byProject, [projectId]: before ?? [] },
-          error: result.error.message || STRINGS.errors.mutationFailed,
-        }));
+        rollback(result.error.message || STRINGS.errors.mutationFailed);
         return;
       }
+      // Clear any prior error banner — same shape as fetchForProject
+      // and restoreAttachment, so a stale message from an earlier
+      // mutation does not linger after a successful hide.
+      set({ error: null });
     },
 
     requestDownloadUrl: async (projectId, attachmentId, variant) => {
