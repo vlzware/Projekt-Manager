@@ -32,10 +32,16 @@ NODE_ENV=production
 POSTGRES_PASSWORD=test-safe-password
 MINIO_ROOT_USER=testadmin
 MINIO_ROOT_PASSWORD=test-safe-password
+# Capability-restricted MinIO app user (#45 / ADR-0022). docker/init-storage.sh
+# provisions this user; the app runs as it. Distinct from the root creds
+# above so the boot-time capability self-test exercises the same split as
+# prod B2 (writeFiles, readFiles, listFiles — no deleteFiles).
+MINIO_APP_ACCESS_KEY=testapp
+MINIO_APP_SECRET_KEY=test-safe-app-password
 STORAGE_ENDPOINT=http://storage:9000
 STORAGE_BUCKET=projekt-manager
-STORAGE_ACCESS_KEY=testadmin
-STORAGE_SECRET_KEY=test-safe-password
+STORAGE_ACCESS_KEY=testapp
+STORAGE_SECRET_KEY=test-safe-app-password
 DOMAIN=localhost
 PORT=3000
 SEED=false
