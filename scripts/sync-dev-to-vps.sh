@@ -89,10 +89,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[1/8] SSH preflight ($SSH_TARGET)..."
+echo "[1/9] SSH preflight ($SSH_TARGET)..."
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_TARGET" true
 
-echo "[2/8] Local stack check..."
+echo "[2/9] Local stack check..."
 # Use --status running (compose >=2.24) and grep for exact service names. The
 # dev overlay must be active; without it, compose would not know about the
 # exposed ports that the `docker exec` calls below do NOT actually use — but
@@ -111,7 +111,7 @@ for svc in db storage; do
   fi
 done
 
-echo "[3/8] Schema parity check..."
+echo "[3/9] Schema parity check..."
 # The schema is canonically `0000_baseline.sql` (see
 # MEMORY: "DB schema changes collapse into baseline migration"). Hash-compare
 # is the cheapest correct check — if bytes match, Drizzle applies the same
@@ -148,6 +148,51 @@ if [ "$local_users" -lt 1 ]; then
   exit 1
 fi
 
+echo "[4/9] Bucket-pollution check..."
+# Refuse if the local MinIO bucket holds more current-version objects than
+# the DB can justify. Each live attachment row contributes AT MOST orig +
+# thumb (2 objects); the +2 slack covers a transient bulk-download zip and
+# one stray probe artifact.
+#
+# Without this guard, orphan debris (E2E test runs, abandoned upload
+# flows the orphan reaper couldn't reach) gets faithfully mirrored onto
+# B2 — and every PutObject locks for R days under Compliance Object Lock
+# retention regardless of any subsequent delete-marker. That is real
+# money for no benefit. The threshold is deliberately tight (`2 × rows + 2`)
+# because dev should not be hoarding test artifacts; if this trips, clean
+# the local bucket per the error message below before retrying.
+local_attachment_rows=$(docker exec "${COMPOSE_PROJECT}-db-1" \
+  psql -U pm -d projekt_manager -tAc \
+  "SELECT COUNT(*) FROM attachments WHERE status IN ('pending', 'ready');")
+local_bucket_objects=$(docker exec "${COMPOSE_PROJECT}-storage-1" sh -c '
+  mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1
+  mc ls --recursive --summarize "local/'"$LOCAL_BUCKET"'" 2>/dev/null
+' | awk '/^Total Objects:/ {print $3+0; found=1} END {if(!found) print 0}')
+expected_max=$((2 * local_attachment_rows + 2))
+if [ "$local_bucket_objects" -gt "$expected_max" ]; then
+  cat <<ERR >&2
+ERROR: local MinIO bucket holds $local_bucket_objects current-version
+objects but only $local_attachment_rows live attachment rows (status IN
+'pending', 'ready'). Expected ceiling is $expected_max objects
+(2 × rows + 2 slack for in-flight bulk-downloads).
+
+This is dev-environment debris — orphan uploads (E2E runs, abandoned
+upload flows) the orphan reaper could not reach. Mirroring them onto
+B2 costs real money: every PutObject locks for R days under Compliance
+Object Lock retention, regardless of any subsequent delete-marker.
+
+Clean the local bucket before syncing:
+
+  docker exec ${COMPOSE_PROJECT}-storage-1 sh -c \\
+    'mc alias set local http://localhost:9000 "\$MINIO_ROOT_USER" "\$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && mc rm --recursive --force local/${LOCAL_BUCKET}/'
+
+The current-version view goes to zero immediately; noncurrent versions
+reap after R+L days per Object Lock + lifecycle (no extra action needed).
+Then re-run this script.
+ERR
+  exit 1
+fi
+
 if [ "$I_KNOW" != "1" ]; then
   cat <<MSG >&2
 Preflight passed.
@@ -172,7 +217,7 @@ fi
 
 mkdir -p "$LOCAL_TMP"
 
-echo "[4/8] Dumping local database..."
+echo "[5/9] Dumping local database..."
 # Plain SQL with --clean --if-exists generates DROP TABLE IF EXISTS CASCADE +
 # CREATE ... at the top of the dump, which psql applies in order. --no-owner
 # and --no-acl skip ALTER OWNER and GRANT/REVOKE statements so the dump does
@@ -184,7 +229,7 @@ docker exec -i "${COMPOSE_PROJECT}-db-1" \
   > "$LOCAL_TMP/db.sql"
 echo "      db.sql: $(du -h "$LOCAL_TMP/db.sql" | awk '{print $1}')"
 
-echo "[5/8] Dumping local object storage..."
+echo "[6/9] Dumping local object storage..."
 # Read MinIO credentials from the running storage container's env. Same
 # pattern the remote side uses — avoids needing to parse .env here.
 LOCAL_MINIO_USER=$(docker exec "${COMPOSE_PROJECT}-storage-1" printenv MINIO_ROOT_USER)
@@ -202,13 +247,13 @@ docker run --rm \
   mirror --overwrite --remove "src/$LOCAL_BUCKET" /data >/dev/null
 echo "      bucket: $(du -sh "$LOCAL_TMP/bucket" | awk '{print $1}') ($(find "$LOCAL_TMP/bucket" -type f | wc -l) files)"
 
-echo "[6/8] Transferring to VPS..."
+echo "[7/9] Transferring to VPS..."
 ssh "$SSH_TARGET" "mkdir -p $REMOTE_TMP"
 # -a preserves perms/times; -z compresses (SQL and metadata compress well).
 # No --delete — REMOTE_TMP is created fresh this run and cleaned up on exit.
 rsync -az "$LOCAL_TMP/" "$SSH_TARGET:$REMOTE_TMP/"
 
-echo "[7/8] Restoring on VPS..."
+echo "[8/9] Restoring on VPS..."
 # Stream the remote script over SSH rather than copying it to the VPS. This
 # keeps the in-repo copy authoritative and avoids drift between a transferred
 # copy and the committed version. Env vars pass configuration; `bash -s`
@@ -217,4 +262,4 @@ ssh "$SSH_TARGET" \
   "REMOTE_TMP='$REMOTE_TMP' MC_IMAGE='$MC_IMAGE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" \
   < "$REMOTE_SCRIPT"
 
-echo "[8/8] Done — VPS synced at $(date -u -Iseconds)"
+echo "[9/9] Done — VPS synced at $(date -u -Iseconds)"
