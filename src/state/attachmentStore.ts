@@ -688,23 +688,53 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
     },
 
     hideAttachment: async (projectId, attachmentId) => {
-      // Optimistic removal — roll back on every terminal failure.
-      // Centralised so the network-error, server-error, and
-      // session-expired branches share the same recovery — the
-      // session-expired branch previously bounced to login WITHOUT
-      // rolling back the optimistic removal, leaving an inconsistent
-      // UI behind on return. Same shape as `restoreAttachment` below.
-      const before = get().byProject[projectId];
+      // Optimistic move: row leaves the live list and joins Papierkorb.
+      // Mirrors `restoreAttachment` below — both cache slices stay
+      // consistent so a tab switch right after the action shows the
+      // up-to-date view without a refetch flash. ProjectDetailPage
+      // eagerly fetches the trash for owner / office (to populate the
+      // tab badge), so `hiddenByProject[projectId]` is usually a
+      // populated array — Papierkorb's mount-time fetch only fires
+      // when items is undefined, so a one-sided update would leave
+      // Papierkorb showing the stale prefetch result indefinitely.
+      // Roll back BOTH maps on every terminal failure path —
+      // network-error, server-error, session-expired — so a failed
+      // hide doesn't leave the row missing from one side and present
+      // on the other.
+      const beforeLive = get().byProject[projectId];
+      const beforeHidden = get().hiddenByProject[projectId];
+      const target = (beforeLive ?? []).find((a) => a.id === attachmentId);
+      if (!target) return;
+      // Synthetic hidden row — DELETE returns 204 (no body) so we have
+      // no authoritative `hiddenAt` to replace this with on success.
+      // The next listTrash call (page reload, navigation, restore-
+      // triggered refetch) substitutes the server's value. The
+      // relative-time label in Papierkorb collapses both to "vor
+      // wenigen Sekunden gelöscht", so the user-visible difference is
+      // nil.
+      const optimistic: Attachment = {
+        ...target,
+        status: 'hidden',
+        hiddenAt: new Date().toISOString(),
+      };
       set((s) => ({
         byProject: {
           ...s.byProject,
           [projectId]: (s.byProject[projectId] ?? []).filter((a) => a.id !== attachmentId),
         },
+        // Prepend so the just-hidden row sits at the top of Papierkorb
+        // — matches the server's `ORDER BY hidden_at DESC` ordering
+        // (src/server/repositories/attachment.ts:listHiddenByProject).
+        hiddenByProject: {
+          ...s.hiddenByProject,
+          [projectId]: [optimistic, ...(s.hiddenByProject[projectId] ?? [])],
+        },
       }));
 
       const rollback = (message: string | null): void => {
         set((s) => ({
-          byProject: { ...s.byProject, [projectId]: before ?? [] },
+          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
+          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
           error: message,
         }));
       };

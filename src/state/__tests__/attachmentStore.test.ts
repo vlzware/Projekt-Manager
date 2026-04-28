@@ -362,6 +362,50 @@ describe('attachmentStore — hideAttachment optimistic-with-rollback', () => {
     expect(state.error).toBeNull();
     expect(bounce).toHaveBeenCalledTimes(1);
   });
+
+  it('prepends the optimistic hidden row to hiddenByProject so Papierkorb renders without a refetch', async () => {
+    // Regression for the bug where hide only mutated `byProject`. The
+    // page-level eager prefetch populates `hiddenByProject[projectId]`
+    // with `[]` on owner / office sessions, and Papierkorb's mount-
+    // time fetch is skipped when items !== undefined — so a one-sided
+    // hide left Papierkorb showing "Keine gelöschten Dateien" until a
+    // page reload.
+    seedLive();
+    useAttachmentStore.setState({
+      hiddenByProject: {
+        'proj-1': [makeAttachment({ id: 'att-other', fileName: 'other.jpg', status: 'hidden' })],
+      },
+    });
+    deleteMock.mockResolvedValueOnce(ok(null));
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const trash = useAttachmentStore.getState().hiddenByProject['proj-1'];
+    // Just-hidden row sits at the head of the list — matches the
+    // server's `ORDER BY hidden_at DESC` ordering for trash listings.
+    expect(trash?.map((a) => a.id)).toEqual(['att-doomed', 'att-other']);
+    expect(trash?.[0]?.status).toBe('hidden');
+    expect(trash?.[0]?.hiddenAt).toBeTruthy();
+  });
+
+  it('rolls back the optimistic Papierkorb add on a server-error hide', async () => {
+    seedLive();
+    const priorTrash = [
+      makeAttachment({ id: 'att-other', fileName: 'other.jpg', status: 'hidden' }),
+    ];
+    useAttachmentStore.setState({ hiddenByProject: { 'proj-1': priorTrash } });
+    deleteMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'fail' },
+      category: 'server_error',
+      sessionExpired: false,
+    });
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const trash = useAttachmentStore.getState().hiddenByProject['proj-1'];
+    expect(trash?.map((a) => a.id)).toEqual(['att-other']);
+  });
 });
 
 describe('attachmentStore — retry and download URL plumbing', () => {
