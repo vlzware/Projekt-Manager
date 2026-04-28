@@ -187,6 +187,8 @@ jobs:
           STORAGE_BUCKET: projekt-manager
           STORAGE_ACCESS_KEY: pmappci
           STORAGE_SECRET_KEY: pmappcisecret
+          # MinIO accepts any region; us-east-1 is the SDK default.
+          STORAGE_REGION: us-east-1
 
       - name: Build
         run: npm run build
@@ -260,12 +262,21 @@ jobs:
           # default, leave it out so the check can still catch a
           # future removal of that default.
           POSTGRES_PASSWORD: placeholder
+          # Object-storage env, all `:?`-gated in the base file because
+          # values are operator-supplied per provider (B2 in prod, the
+          # in-compose MinIO mirror in dev). Real deploys source them
+          # from `.env` (operator config) and `secrets.env.age` (the
+          # secret half).
+          STORAGE_ENDPOINT: http://placeholder:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: placeholder
+          STORAGE_ACCESS_KEY: placeholder
+          STORAGE_SECRET_KEY: placeholder
+          # MinIO root + restricted-app credentials — only consumed by
+          # the minio overlay. `:?`-gated there for the same operator-
+          # must-supply reason.
           MINIO_ROOT_USER: placeholder
           MINIO_ROOT_PASSWORD: placeholder
-          # MINIO_APP_* are `:?`-gated in compose because the runtime
-          # app credential is provisioned by docker/init-storage.sh and
-          # has no compose-side default. CI pre-empts the parse failure
-          # the same way real deploys do (via .env / secrets.env.age).
           MINIO_APP_ACCESS_KEY: placeholder
           MINIO_APP_SECRET_KEY: placeholder
           CLOUDFLARE_API_TOKEN: placeholder
@@ -273,10 +284,9 @@ jobs:
           # were removed. A placeholder lets `docker compose config`
           # parse; real deploys pass a SHA tag via scripts/deploy.sh.
           APP_IMAGE_TAG: placeholder
-          # DOMAIN is `:?`-gated at the first reference (app service —
-          # STORAGE_PUBLIC_ENDPOINT derives `https://storage.${DOMAIN}`).
-          # Real deploys supply it via `.env` / `secrets.env.age`; CI
-          # needs any non-empty value so compose can parse.
+          # DOMAIN is `:?`-gated at the first reference in the caddy
+          # service. Real deploys supply it via `.env`; CI needs any
+          # non-empty value so compose can parse.
           DOMAIN: placeholder
         run: |
           set -euo pipefail
@@ -296,7 +306,8 @@ jobs:
             fi
           }
           check "prod compose" -f docker-compose.yml
-          check "prod + dev overlay" -f docker-compose.yml -f docker-compose.dev.yml
+          check "prod + minio overlay" -f docker-compose.yml -f docker-compose.minio.yml
+          check "prod + minio + dev overlays" -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml
           # Exercise the backup profile once so variable substitution
           # inside the backup service's environment block is covered.
           check "prod compose, backup profile" -f docker-compose.yml --profile backup
@@ -461,11 +472,21 @@ jobs:
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: smoke123
           # Capability-restricted MinIO app user (#45 / ADR-0022) —
-          # `:?`-gated in compose because the app must NEVER run as root.
-          # storage-init provisions this user; the app and storage-init
-          # services both interpolate these.
+          # `:?`-gated in the minio overlay because the app must NEVER
+          # run as root. storage-init provisions this user.
           MINIO_APP_ACCESS_KEY: pmappsmoke
           MINIO_APP_SECRET_KEY: pmappsmokesecret
+          # Object-storage env consumed by the app. The minio overlay
+          # overrides STORAGE_ENDPOINT / STORAGE_PUBLIC_ENDPOINT /
+          # STORAGE_REGION for the in-compose target; the base file's
+          # `:?` gates need values at parse time so we set them too.
+          # STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY mirror MINIO_APP_*
+          # (the user the app actually runs as).
+          STORAGE_ENDPOINT: http://storage:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: projekt-manager
+          STORAGE_ACCESS_KEY: pmappsmoke
+          STORAGE_SECRET_KEY: pmappsmokesecret
           CLOUDFLARE_API_TOKEN: smoke
           # R2 target points at the in-stack MinIO. The backup
           # container's entrypoint probe (scripts/backup/probe-r2.mjs)
@@ -488,6 +509,12 @@ jobs:
           # App-side env vars normally sourced from .env on the VPS.
           DOMAIN: smoke.invalid
           WG_BIND_IP: 127.0.0.1
+          # COMPOSE_FILE makes every plain `docker compose` call below
+          # implicitly load BOTH the prod base file AND the MinIO mirror
+          # overlay. The base file alone has no `storage` / `storage-init`
+          # services (prod talks to B2); the smoke test stands MinIO in
+          # for B2. `:` is the file separator in COMPOSE_FILE on POSIX.
+          COMPOSE_FILE: docker-compose.yml:docker-compose.minio.yml
         run: |
           set -euo pipefail
           cleanup() {
@@ -505,7 +532,8 @@ jobs:
           # would otherwise dominate the log with ACME retries. Backup
           # is deferred until the R2 bucket exists on MinIO, otherwise
           # the entrypoint probe's HeadBucket would 404 and the
-          # container would restart-loop.
+          # container would restart-loop. COMPOSE_FILE in env: above
+          # picks up the minio overlay automatically.
           docker compose up -d db storage storage-init app
           echo "::endgroup::"
 

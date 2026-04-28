@@ -196,6 +196,7 @@ async function start(): Promise<void> {
     bucket: env.STORAGE_BUCKET,
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
+    region: env.STORAGE_REGION,
   });
 
   // Boot-time bucket-safety probe (ADR-0022 / docs/ops/object-storage-provisioning.md).
@@ -246,6 +247,7 @@ async function start(): Promise<void> {
     bucket: env.STORAGE_BUCKET,
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
+    region: env.STORAGE_REGION,
   });
 
   // Health-check endpoint (outside auth-guarded routes). Real probe — runs

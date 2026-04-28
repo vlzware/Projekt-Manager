@@ -10,9 +10,19 @@
  *   - Object Lock: Enabled, default retention COMPLIANCE for R days
  *   - Lifecycle: exactly one Enabled rule, no prefix/tag filter,
  *     NoncurrentVersionExpiration.NoncurrentDays = L,
- *     Expiration.ExpiredObjectDeleteMarker = true,
  *     no other actions (no Expiration.Days — would auto-hide live data;
  *     no Transitions — wrong storage class semantic).
+ *
+ * `Expiration.ExpiredObjectDeleteMarker = true` is intentionally NOT
+ * required — it is a MinIO / AWS S3 idiom, not a data-integrity invariant.
+ * On Backblaze B2 (the prod target, ADR-0022), the native lifecycle action
+ * `daysFromHidingToDeleting` reaps the hidden version AND its delete
+ * marker together; the S3-compat surface does not surface
+ * `ExpiredObjectDeleteMarker=true` for that case. Requiring the field
+ * would refuse to start against a correctly-configured B2 bucket. MinIO's
+ * `docker/init-storage.sh` still sets `--expire-delete-marker`
+ * unconditionally so dev rules carry the field; that is parity at the
+ * provisioning layer, not a probe-time check.
  *
  * Capability self-test:
  *   The shape check above does not verify the *primary* defense — that
@@ -98,7 +108,12 @@ export interface LifecycleRuleSnapshot {
   hasTagFilter: boolean;
   /** NoncurrentVersionExpiration.NoncurrentDays — the canonical hide-to-delete dial. */
   noncurrentDays?: number;
-  /** Expiration.ExpiredObjectDeleteMarker = true — required to reap zombies. */
+  /**
+   * Expiration.ExpiredObjectDeleteMarker = true if present in the rule.
+   * The validator does NOT require this — see file header. Tracked here
+   * because the field IS load-bearing in tests (and on MinIO it is set by
+   * `docker/init-storage.sh`); the snapshot just doesn't enforce it.
+   */
   expireDeleteMarker: boolean;
   /** Expiration.Days > 0 — auto-hides live data. ADR-0022 deny list. */
   hasExpirationDays: boolean;
@@ -167,11 +182,14 @@ export function evaluateBucketSafety(config: BucketSafetyConfig): SafetyVerdict 
         'lifecycle rule has no NoncurrentVersionExpiration.NoncurrentDays (hidden versions would never reap)',
       );
     }
-    if (!rule.expireDeleteMarker) {
-      failures.push(
-        'lifecycle rule lacks ExpiredObjectDeleteMarker=true (delete markers would accumulate as zombies)',
-      );
-    }
+    // Note: we deliberately do NOT require Expiration.ExpiredObjectDeleteMarker=true.
+    // See file header — B2's native lifecycle reaps delete markers together
+    // with the hidden version, but does not surface that fact through the
+    // S3 API. Requiring the field would refuse to start against a
+    // correctly-configured B2 bucket. The data-integrity guarantee
+    // (versions reap after L days) is enforced by the noncurrentDays
+    // check above; delete-marker zombies are operational clutter, not
+    // data loss, and B2 handles them implicitly anyway.
 
     // Itemized deny list. Each defect emits its own failure so the
     // operator sees exactly which action drifted from the canonical

@@ -44,8 +44,22 @@ The B2 web UI cannot create capability-restricted keys; it grants only coarse Re
 b2 account authorize <masterKeyId> <masterAppKey>
 
 # 2. Create the bucket-scoped app key:
-b2 key create --bucket prmng-object-storage prmng-app readFiles,writeFiles,listFiles
+b2 key create --bucket prmng-object-storage prmng-app \
+  readBuckets,readBucketLifecycleRules,readBucketRetentions,listFiles,readFiles,writeFiles
 ```
+
+Why these six capabilities, no more, no fewer:
+
+| Capability                 | Why it is needed                                                                                                                                                                                                                                                                                                                         |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `listFiles`                | `s3:ListBucket` / `s3:ListBucketVersions` (orphan reaper sweeps + Papierkorb listing) AND `s3:HeadBucket` (storage liveness probe used by `/api/health`).                                                                                                                                                                                |
+| `readFiles`                | `s3:GetObject` / `s3:GetObjectVersion` — download path + restore copy source.                                                                                                                                                                                                                                                            |
+| `writeFiles`               | `s3:PutObject` (uploads + restore via CopyObject) AND `s3:DeleteObject` without `VersionId` — the **hide** path. B2 dispatches version-less `DeleteObject` to `b2_hide_file` which requires `writeFiles` only; the destructive `b2_delete_file_version` requires `deleteFiles`, which this key lacks. The capability split per ADR-0022. |
+| `readBuckets`              | `s3:GetBucketVersioning` — boot-time probe checks Versioning=Enabled.                                                                                                                                                                                                                                                                    |
+| `readBucketLifecycleRules` | `s3:GetBucketLifecycleConfiguration` — boot-time probe walks every lifecycle rule. B2's S3-compat surface gates this op behind its own cap (separate from generic bucket-metadata reads).                                                                                                                                                |
+| `readBucketRetentions`     | `s3:GetObjectLockConfiguration` — boot-time probe checks Compliance retention. Without this cap, B2 returns `not entitled` (the API surface filters retention info per-cap).                                                                                                                                                             |
+
+The boot-time probe is non-negotiable: it runs on every startup and refuses to serve if it can't read the bucket's actual config (ADR-0022 / `src/server/storage/safety.ts`). Three of the six caps above exist solely to let the probe do its three reads.
 
 The create command prints the secret on stdout **once** — listing keys later shows IDs but never the secret again:
 
@@ -53,16 +67,19 @@ The create command prints the secret on stdout **once** — listing keys later s
 <keyId> <applicationKey>
 ```
 
-Capture both values immediately into `secrets.env.age` as `STORAGE_ACCESS_KEY` (= `keyId`) and `STORAGE_SECRET_KEY` (= `applicationKey`).
+Capture both values immediately:
+
+- `STORAGE_ACCESS_KEY` (= `keyId`) → plain `.env` on the VPS (non-secret operator config; B2 keyIds are short opaque identifiers, not credentials by themselves).
+- `STORAGE_SECRET_KEY` (= `applicationKey`) → `secrets.env.age` (the actual secret half; deploy.sh's manifest pre-flight rejects a missing entry).
 
 Verify the key has only the intended capabilities:
 
 ```bash
 b2 key list | grep prmng-app
-# expected: "<keyId> prmng-app … readFiles,writeFiles,listFiles"
+# expected: "<keyId> prmng-app … readBuckets,readBucketLifecycleRules,readBucketRetentions,listFiles,readFiles,writeFiles"
 ```
 
-If `deleteFiles`, `bypassGovernance`, `writeFileRetentions`, `writeFileLegalHolds`, or any `*Bucket*` capability appears — revoke (`b2 key delete <keyId>`) and recreate.
+If `deleteFiles`, `bypassGovernance`, `writeFileRetentions`, `writeFileLegalHolds`, `writeBuckets`, `writeBucketRetentions`, or any other `write*` bucket-config capability appears — revoke (`b2 key delete <keyId>`) and recreate. Those would either break the capability split (version destruction) or let the running app mutate bucket policy out from under itself.
 
 ### Master-key handling
 
@@ -73,6 +90,105 @@ The master key has `deleteFiles` and can destroy versions outside their retentio
 - Never set as `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` on any running service.
 
 App-key rotation: create the new key first, deploy the new credentials, verify, then revoke the old key with `b2 key delete <oldKeyId>`.
+
+## CORS rule on the bucket
+
+The browser uploads attachments directly to B2 via presigned POST and downloads via presigned GET. Same-origin policy still applies, so the bucket must echo `Access-Control-Allow-Origin: https://<your-domain>` on the preflight or every upload aborts client-side with no server-side trace.
+
+In the B2 web UI:
+
+1. Buckets → `prmng-object-storage` → "CORS Rules" → "Add CORS Rule" (or edit the existing one).
+2. Configure exactly one rule:
+   - **Allowed origins**: `https://<your-domain>` (replace with the actual `${DOMAIN}` you set in `.env`). No trailing slash, no wildcard, no scheme variants — exactly one origin.
+   - **Allowed operations**: `s3_put`, `s3_get`, `s3_post`, `s3_head`. (B2 also exposes `b2_*` natives — leave those off; the app only speaks S3.)
+   - **Allowed headers**: `*`.
+   - **Expose headers**: `x-amz-version-id` (lets the client log the version id post-upload; harmless if unused).
+   - **Max age**: `3600`.
+
+Verify the rule landed:
+
+```bash
+b2 bucket get prmng-object-storage | jq '.corsRules'
+# expected: an array with one rule matching the above
+```
+
+## Wire the deploy
+
+The app reads object-storage config via `STORAGE_*` env vars. Three live in plain `.env` (operator config), one lives in `secrets.env.age` (the secret half):
+
+| Variable                  | Source               | Example value                               |
+| ------------------------- | -------------------- | ------------------------------------------- |
+| `STORAGE_ENDPOINT`        | `.env`               | `https://s3.eu-central-003.backblazeb2.com` |
+| `STORAGE_REGION`          | `.env`               | `eu-central-003`                            |
+| `STORAGE_BUCKET`          | `.env`               | `prmng-object-storage`                      |
+| `STORAGE_ACCESS_KEY`      | `.env`               | `<keyId from b2 key create>`                |
+| `STORAGE_PUBLIC_ENDPOINT` | `.env` (leave empty) | (empty — browser hits B2 directly)          |
+| `STORAGE_SECRET_KEY`      | `secrets.env.age`    | `<applicationKey from b2 key create>`       |
+
+`STORAGE_ENDPOINT` and `STORAGE_REGION` must agree on the region. Mismatched values fail SigV4 verification on every call with `SignatureDoesNotMatch`. The endpoint is shown on the bucket's page in the B2 console under "S3 API"; the region is the same string in the host name.
+
+`STORAGE_PUBLIC_ENDPOINT` is intentionally empty for the B2 topology — the app signs presigned URLs against `STORAGE_ENDPOINT` and the browser hits B2 directly with no reverse proxy. (The previous MinIO-on-VPS topology required `https://storage.<DOMAIN>` reverse-proxying through Caddy; that path is gone.)
+
+After updating `.env` and `secrets.env.age`:
+
+```bash
+# On VPS, verify the manifest pre-flight sees STORAGE_SECRET_KEY:
+sudo -u deploy /opt/projekt-manager/scripts/deploy.sh    # aborts before `up` if missing
+```
+
+The deploy's pre-flight CLI re-runs the env validator inside the app container and prints the feature manifest before any container is recreated. A bad `STORAGE_*` value surfaces there, not at first request.
+
+## Verify against the live bucket
+
+Run BEFORE the first deploy that points at this bucket. The boot-time safety probe (`assertStorageBucketSafe()` in `src/server/storage/safety.ts`) will refuse to serve on any drift between the bucket's actual shape and ADR-0022's pinned shape; verifying ahead of time means the next deploy doesn't start crash-looping while you investigate.
+
+Use the **app key** (not the master key) so the capability self-test exercises what the running app will see:
+
+```bash
+# Source ONLY for this shell — the credentials should NOT persist in your env.
+export AWS_ACCESS_KEY_ID="<keyId>"             # STORAGE_ACCESS_KEY
+export AWS_SECRET_ACCESS_KEY="<appKey>"        # STORAGE_SECRET_KEY
+export AWS_DEFAULT_REGION="eu-central-003"     # STORAGE_REGION
+EP="https://s3.eu-central-003.backblazeb2.com" # STORAGE_ENDPOINT
+B="prmng-object-storage"                       # STORAGE_BUCKET (name)
+
+# 1. Versioning — must be Enabled.
+aws --endpoint-url "$EP" s3api get-bucket-versioning --bucket "$B"
+#   expected: { "Status": "Enabled" }
+
+# 2. Object Lock — must be Enabled, COMPLIANCE, positive Days.
+aws --endpoint-url "$EP" s3api get-object-lock-configuration --bucket "$B"
+#   expected: ObjectLockConfiguration.ObjectLockEnabled = "Enabled"
+#             Rule.DefaultRetention.Mode = "COMPLIANCE"
+#             Rule.DefaultRetention.Days >= 1     (this is R)
+
+# 3. Lifecycle — exactly one rule, no filter, NoncurrentDays + ExpiredObjectDeleteMarker.
+aws --endpoint-url "$EP" s3api get-bucket-lifecycle-configuration --bucket "$B"
+#   expected: Rules has length 1, with:
+#     Status = "Enabled"
+#     Filter absent OR Filter.Prefix = ""    (rule applies to all objects)
+#     NoncurrentVersionExpiration.NoncurrentDays > 0   (this is L)
+#     Expiration.ExpiredObjectDeleteMarker = true
+#     no Expiration.Days, no Expiration.Date,
+#     no Transitions[], no NoncurrentVersionTransitions[],
+#     no AbortIncompleteMultipartUpload
+#     ID does NOT contain "daysFromUploadingToHiding"
+
+# 4. R ≤ L invariant — read off the previous two outputs.
+#   R is COMPLIANCE.Days from step 2; L is NoncurrentDays from step 3.
+#   R must be ≤ L. If R > L the probe refuses to start (lifecycle reap is
+#   blocked by Object Lock retention; zombie versions accumulate).
+
+# 5. Capability self-test — the credential MUST NOT be able to destroy versions.
+aws --endpoint-url "$EP" s3api delete-object \
+  --bucket "$B" --key "__probe/safety" \
+  --version-id "00000000-0000-0000-0000-000000000000" 2>&1
+#   expected: "An error occurred (AccessDenied) ..."
+#   any 2xx response → re-issue the app key WITHOUT deleteFiles before deploying;
+#   any other error code → fail-closed (the probe will refuse to serve too).
+```
+
+If every step matches the expected output, the bucket is provisioned correctly and the boot-time probe will pass on first request. If any step deviates: fix in the B2 console (Object Lock and Lifecycle have inline editors), then re-verify before deploying. The probe is fail-closed by design — there is no "deploy and patch in place" path.
 
 ## Dev-MinIO parity
 
@@ -86,7 +202,7 @@ Local dev uses MinIO behind the same `STORAGE_*` env interface. The dev bucket m
 - Lifecycle rule `daysFromHidingToDeleting = L`.
 - A capability-restricted MinIO user `${MINIO_APP_ACCESS_KEY}` exists with a bucket-scoped IAM policy named `projekt-manager-app` attached.
 
-The B2 prod recipe (separate restricted app key created via `b2 key create … readFiles,writeFiles,listFiles`) and the MinIO dev recipe (separate restricted IAM user created via `mc admin user add` + `mc admin policy attach`) are now structurally parallel — both deny version destruction at the credential layer, so the boot-time capability self-test in `src/server/storage/safety.ts` exercises the same defense in both environments. The app **never** runs as the MinIO root user; root credentials only exist to provision the MinIO process and the app user.
+The B2 prod recipe (separate restricted app key created via `b2 key create … readBuckets,readBucketLifecycleRules,readBucketRetentions,listFiles,readFiles,writeFiles`) and the MinIO dev recipe (separate restricted IAM user created via `mc admin user add` + `mc admin policy attach`) are now structurally parallel — both grant the boot probe enough access to read versioning + Object Lock + lifecycle, both deny version destruction at the credential layer, so the boot-time capability self-test in `src/server/storage/safety.ts` exercises the same defense in both environments. The app **never** runs as the MinIO root user; root credentials only exist to provision the MinIO process and the app user.
 
 The IAM policy the init script applies (allow list mirrors the B2 app key's `readFiles, writeFiles, listFiles`):
 

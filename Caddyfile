@@ -32,19 +32,8 @@
 	}
 }
 
-# Storage subdomain — reverse-proxies MinIO so presigned URLs signed by the
-# app (with STORAGE_PUBLIC_ENDPOINT=https://storage.${DOMAIN}) are actually
-# reachable from the browser. The internal `STORAGE_ENDPOINT=http://storage:9000`
-# is unreachable from outside the compose network; without this block the
-# browser's POST to the presigned URL fails DNS and every upload stalls at
-# `pending` until the orphan reaper sweeps it. See docs/ops/storage-subdomain.md.
-#
-# Host-header pass-through is Caddy's default — required for MinIO's SigV4
-# verification against the signed host to succeed.
-storage.{$DOMAIN:localhost} {
-	tls {
-		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
-	}
-
-	reverse_proxy storage:9000
-}
+# Note: object storage is not reverse-proxied. Production talks to an
+# external provider (Backblaze B2) directly from both the app and the
+# browser; the previous `storage.${DOMAIN}` block was a reverse proxy
+# for the in-compose MinIO mirror, which now lives only in
+# docker-compose.dev.yml. See docs/ops/object-storage-provisioning.md.

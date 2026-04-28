@@ -86,13 +86,13 @@ echo "[2/8] Local stack check..."
 # (see docs/ops/local-dev.md). Asserting it here avoids the footgun of
 # running against a partial stack.
 cd "$REPO_DIR"
-running_services=$(docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+running_services=$(docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml \
   ps --services --status running 2>/dev/null || true)
 for svc in db storage; do
   if ! echo "$running_services" | grep -qx "$svc"; then
     echo "ERROR: local service '$svc' is not running." >&2
     echo "  Start the dev stack:" >&2
-    echo "    docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init" >&2
+    echo "    docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init" >&2
     exit 1
   fi
 done

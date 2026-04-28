@@ -36,36 +36,41 @@ services:
       # bare for readability. Pairs with `secrets.manifest.txt` and the
       # deploy-time pre-flight in `scripts/deploy.sh`.
       DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/projekt_manager
-      STORAGE_ENDPOINT: http://storage:9000
-      # Public hostname the browser uses to reach MinIO. Caddy
-      # reverse-proxies `storage.${DOMAIN}` to the internal `storage:9000`
-      # (see Caddyfile) and the app signs presigned upload / download URLs
-      # against this host so they are actually resolvable from the
-      # browser. `:?`-gated here at first reference so compose refuses to
-      # parse without DOMAIN rather than producing a broken
-      # `https://storage./...` URL (same pattern as POSTGRES_PASSWORD
-      # etc. above). Later references (line MINIO_API_CORS_ALLOW_ORIGIN,
-      # the caddy service's env) can stay bare — compose aborts the whole
-      # parse on any `:?` failure.  Defense-in-depth:
-      # `assertStoragePublicEndpointInProduction()` also refuses to boot
-      # when STORAGE_ENDPOINT looks internal and this value is missing.
-      # See docs/ops/storage-subdomain.md.
-      STORAGE_PUBLIC_ENDPOINT: https://storage.${DOMAIN:?DOMAIN must be set}
-      # Default kept in sync with the storage-init service below — both
-      # services must resolve to the same bucket name, otherwise the
-      # init script would create one bucket while the app would read
-      # another.
-      STORAGE_BUCKET: ${STORAGE_BUCKET:-projekt-manager}
-      # Capability-restricted MinIO user (#45 / ADR-0022). Provisioned by
-      # `docker/init-storage.sh` with a bucket-scoped policy that allows
-      # write/read/list/hide but NOT `s3:DeleteObjectVersion` — mirroring
-      # the prod B2 app key (writeFiles, readFiles, listFiles only). The
-      # boot-time capability self-test in src/server/storage/safety.ts
-      # asserts the running credential lacks destroy capability, so the
-      # app MUST run as this user, not as `MINIO_ROOT_USER`. `:?`-gated
-      # so a missing value fails the deploy at compose-parse time.
-      STORAGE_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?MINIO_APP_ACCESS_KEY must be set}
-      STORAGE_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?MINIO_APP_SECRET_KEY must be set}
+      # Object storage endpoint. Operator-supplied per deployment because
+      # the value is provider-specific: B2's S3-compat surface in prod
+      # (`https://s3.<region>.backblazeb2.com`), the in-compose MinIO
+      # service in dev (`http://storage:9000`, set by the dev overlay).
+      # `:?`-gated so a missing value fails compose-parse rather than
+      # silently substituting empty and crash-looping the SDK.
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:?STORAGE_ENDPOINT must be set}
+      # Optional public endpoint the browser uses for presigned URLs.
+      # When unset, the storage client signs against `STORAGE_ENDPOINT` —
+      # correct for B2 prod (browser hits B2 directly) and for dev when
+      # MinIO is exposed on the host. Set to a reverse-proxied hostname
+      # ONLY when `STORAGE_ENDPOINT` is a container-only host the browser
+      # cannot reach. Defense-in-depth:
+      # `assertStoragePublicEndpointInProduction()` refuses to boot when
+      # `STORAGE_ENDPOINT` looks internal and this value is missing.
+      STORAGE_PUBLIC_ENDPOINT: ${STORAGE_PUBLIC_ENDPOINT:-}
+      # Bucket name. `:?`-gated because B2 buckets have operator-chosen
+      # globally-unique names (no sane default), and MinIO dev should
+      # state its bucket explicitly via `.env` rather than relying on a
+      # silent fallback that would diverge from the init script.
+      STORAGE_BUCKET: ${STORAGE_BUCKET:?STORAGE_BUCKET must be set}
+      # SigV4 signing region. MinIO accepts any value (us-east-1 in dev);
+      # B2 verifies against the bucket-bound region (`us-west-002`,
+      # `eu-central-003`, …) and rejects mismatches with
+      # SignatureDoesNotMatch. `:?`-gated so a missing value fails parse
+      # rather than silently signing with the SDK default and 403'ing.
+      STORAGE_REGION: ${STORAGE_REGION:?STORAGE_REGION must be set}
+      # Capability-restricted credential — writeFiles/readFiles/listFiles
+      # only on B2 (per b2 key create in docs/ops/object-storage-provisioning.md);
+      # the equivalent restricted MinIO user in dev (per docker/init-storage.sh).
+      # The boot-time capability self-test in src/server/storage/safety.ts
+      # asserts this credential CANNOT destroy versions and refuses to
+      # serve otherwise — so the app MUST run as the restricted user.
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?STORAGE_ACCESS_KEY must be set}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY must be set}
       NODE_ENV: production
       PORT: '3000'
       SEED: ${SEED:-false}
@@ -149,8 +154,9 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      storage-init:
-        condition: service_completed_successfully
+      # No storage dependency in the base file: prod talks to an external
+      # provider (B2). The dev overlay re-introduces a `storage-init`
+      # dependency for the in-compose MinIO mirror.
     restart: unless-stopped
     logging: *default-logging
 
@@ -172,61 +178,11 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  storage:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    mem_limit: 512m
-    command: server /data --console-address ":9001"
-    volumes:
-      - miniodata:/data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      # Allow only the app's own origin to POST uploads via presigned
-      # URLs. S3 presigned POSTs are "simple" CORS requests, so the
-      # browser still enforces the response's Access-Control-Allow-Origin
-      # before it lets JS read the result. `*` would work but is
-      # needlessly permissive — we know the sole legitimate caller.
-      MINIO_API_CORS_ALLOW_ORIGIN: https://${DOMAIN}
-    restart: unless-stopped
-    logging: *default-logging
-
-  storage-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
-    depends_on:
-      - storage
-    entrypoint: /bin/sh
-    command: /init-storage.sh
-    volumes:
-      # Long-form bind with `create_host_path: false` — see the
-      # rationale on the same pattern in docker-compose.dev.yml's
-      # `db.volumes`. dockerd runs as root and silently materialises
-      # missing bind-mount sources as root-owned directories on the
-      # host. Refusing to auto-create converts that footgun into a
-      # loud "source does not exist" error at compose up time.
-      - type: bind
-        source: ./docker/init-storage.sh
-        target: /init-storage.sh
-        read_only: true
-        bind:
-          create_host_path: false
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      # Capability-restricted app user the init script provisions
-      # (#45 / ADR-0022). Forwarded as required (no `:-` default) so a
-      # missing value fails compose parse rather than producing an empty
-      # username/password in the `mc admin user add` call.
-      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?MINIO_APP_ACCESS_KEY must be set}
-      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?MINIO_APP_SECRET_KEY must be set}
-      # Must match the app service's STORAGE_BUCKET above — see comment
-      # there.
-      STORAGE_BUCKET: ${STORAGE_BUCKET:-projekt-manager}
-      # ADR-0022 / docs/ops/object-storage-provisioning.md — R and L
-      # dials. Forwarded with defaults so unset vars don't collapse to
-      # empty strings (mc rejects "0d").
-      STORAGE_OBJECT_LOCK_DAYS: ${STORAGE_OBJECT_LOCK_DAYS:-1}
-      STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS: ${STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS:-2}
-    restart: 'no'
+  # Note: the in-compose MinIO services (`storage`, `storage-init`) live
+  # in `docker-compose.dev.yml`. Production deploys talk to an external
+  # provider (Backblaze B2) configured via `STORAGE_*` env vars; running
+  # MinIO alongside on the VPS would be dead infrastructure. See
+  # docs/ops/object-storage-provisioning.md.
 
   backup:
     # Layer 2 encrypted backup service — see ADR-0020 and
@@ -376,6 +332,5 @@ services:
 
 volumes:
   pgdata:
-  miniodata:
   caddy_data:
   caddy_config:

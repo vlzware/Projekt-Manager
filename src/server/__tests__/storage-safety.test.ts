@@ -151,10 +151,16 @@ describe('evaluateBucketSafety — lifecycle failures', () => {
     }
   });
 
-  it('fails when ExpiredObjectDeleteMarker is false', () => {
+  // ExpiredObjectDeleteMarker is intentionally not required — see safety.ts
+  // file header. B2's native lifecycle handles delete-marker cleanup
+  // implicitly via daysFromHidingToDeleting, and B2's S3-compat surface
+  // never sets the field. Requiring it would refuse to start against a
+  // correctly-configured B2 bucket. This test pins the relaxed contract:
+  // a rule that has NoncurrentVersionExpiration but no Expiration block at
+  // all is the canonical B2 shape and must pass.
+  it('passes when ExpiredObjectDeleteMarker is absent (B2 native shape)', () => {
     const verdict = evaluateBucketSafety(withRule({ expireDeleteMarker: false }));
-    expect(verdict.ok).toBe(false);
-    if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/ExpiredObjectDeleteMarker/);
+    expect(verdict).toEqual({ ok: true });
   });
 
   // Itemized deny list — one case per disallowed action so a regression
@@ -209,9 +215,11 @@ describe('evaluateBucketSafety — lifecycle failures', () => {
     if (!verdict.ok) expect(verdict.failures.join(' ')).toMatch(/daysFromUploadingToHiding/);
   });
 
-  // The acceptable shape: ONLY NoncurrentVersionExpiration.NoncurrentDays
-  // = L (plus ExpiredObjectDeleteMarker = true). Reaffirmed here as a
-  // dedicated row so a future change that narrows it further trips a
+  // The acceptable shape: NoncurrentVersionExpiration.NoncurrentDays = L
+  // is the only required field on the rule. Both shapes are accepted —
+  // with ExpiredObjectDeleteMarker = true (MinIO/AWS idiom) or without
+  // (B2 native, which reaps delete markers implicitly). Reaffirmed here
+  // as a dedicated row so a future change that narrows it further trips a
   // specific test rather than a side effect.
   it('passes when the only expiration field is NoncurrentVersionExpiration.NoncurrentDays', () => {
     const verdict = evaluateBucketSafety(withRule({ noncurrentDays: 2 }));

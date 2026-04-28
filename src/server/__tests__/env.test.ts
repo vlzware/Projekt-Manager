@@ -36,6 +36,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     STORAGE_BUCKET: 'unused',
     STORAGE_ACCESS_KEY: 'unused',
     STORAGE_SECRET_KEY: 'unused',
+    STORAGE_REGION: 'us-east-1',
     DOMAIN: 'localhost',
     SEED: 'false',
     ALLOW_INSECURE_HTTP: 'false',
@@ -133,6 +134,12 @@ describe('assertAppServerEnv', () => {
     );
   });
 
+  it('throws when STORAGE_REGION is missing', () => {
+    expect(() => assertAppServerEnv(makeEnv({ STORAGE_REGION: undefined }))).toThrow(
+      /STORAGE_REGION/,
+    );
+  });
+
   it('lists every missing field in a single error', () => {
     expect(() =>
       assertAppServerEnv(
@@ -140,12 +147,13 @@ describe('assertAppServerEnv', () => {
           STORAGE_ENDPOINT: undefined,
           STORAGE_ACCESS_KEY: undefined,
           STORAGE_SECRET_KEY: undefined,
+          STORAGE_REGION: undefined,
         }),
       ),
-    ).toThrow(/STORAGE_ENDPOINT.*STORAGE_ACCESS_KEY.*STORAGE_SECRET_KEY/s);
+    ).toThrow(/STORAGE_ENDPOINT.*STORAGE_ACCESS_KEY.*STORAGE_SECRET_KEY.*STORAGE_REGION/s);
   });
 
-  it('passes when all three STORAGE_* are set', () => {
+  it('passes when all STORAGE_* are set', () => {
     expect(() => assertAppServerEnv(makeEnv({}))).not.toThrow();
   });
 });
@@ -408,6 +416,7 @@ describe('dev-default credentials guard in env.ts', () => {
       STORAGE_ACCESS_KEY: 'ak',
       STORAGE_SECRET_KEY: 'sk',
       STORAGE_BUCKET: 'pm',
+      STORAGE_REGION: 'us-east-1',
       ALLOW_INSECURE_HTTP: 'false',
       ...extra,
     };
@@ -536,12 +545,15 @@ describe('guard predicates: throw helper and aggregator agree', () => {
 
   it('checkAppServerEnv: same message in throw and aggregated paths', () => {
     // Input that ONLY trips app-server presence. NODE_ENV=test so the
-    // production-safety + container-host guards stay quiet.
+    // production-safety + container-host guards stay quiet. Every
+    // STORAGE_* the guard inspects is undefined so the message lists
+    // the full set in both paths.
     const env = makeEnv({
       NODE_ENV: 'test',
       STORAGE_ENDPOINT: undefined,
       STORAGE_ACCESS_KEY: undefined,
       STORAGE_SECRET_KEY: undefined,
+      STORAGE_REGION: undefined,
     });
     const throwMsg = captureMessage(() => assertAppServerEnv(env));
     expect(throwMsg, 'expected assertAppServerEnv to throw').not.toBeNull();

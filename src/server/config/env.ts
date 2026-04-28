@@ -49,10 +49,22 @@ export const envSchema = z.object({
   // STORAGE_ENDPOINT, which points at the Docker-internal hostname).
   // Required in production when STORAGE_ENDPOINT is a container-only
   // host — enforced by `assertStoragePublicEndpointInProduction()`.
-  STORAGE_PUBLIC_ENDPOINT: z.string().optional(),
+  // Compose forwards `${STORAGE_PUBLIC_ENDPOINT:-}` so an unset operator
+  // value arrives as the empty string, not undefined. Coerce "" →
+  // undefined so the truthy / `??` checks downstream (CSP origin
+  // extraction in app.ts, the publicEndpoint passthrough in
+  // createStorageClient) treat empty as "fall back to STORAGE_ENDPOINT".
+  STORAGE_PUBLIC_ENDPOINT: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   STORAGE_BUCKET: z.string().min(1).default('projekt-manager'),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
+  // S3 region used for SigV4 signing. MinIO accepts any value (`us-east-1`
+  // is fine in dev); B2's S3-compat surface verifies the bucket-bound
+  // region (`us-west-002`, `eu-central-003`, …) and rejects mismatches
+  // with `SignatureDoesNotMatch`. Optional in the shared schema so the
+  // backup-runner doesn't need it; `assertAppServerEnv()` enforces
+  // presence on the app-server path.
+  STORAGE_REGION: z.string().optional(),
   DOMAIN: z.string().default('localhost'),
   SEED: z.enum(['true', 'false', 'force']).default('false'),
   // First-run admin bootstrap — see ADR-0010 and issue #57. All three are
@@ -328,6 +340,7 @@ type GuardSource = {
   STORAGE_PUBLIC_ENDPOINT?: string | undefined;
   STORAGE_ACCESS_KEY?: string | undefined;
   STORAGE_SECRET_KEY?: string | undefined;
+  STORAGE_REGION?: string | undefined;
 };
 
 const ALLOW_INSECURE_HTTP_IN_PROD_MSG =
@@ -347,8 +360,10 @@ function storagePublicEndpointMsg(endpoint: string): string {
     `Refusing to start: STORAGE_ENDPOINT (${endpoint}) is a container-only ` +
     'hostname but STORAGE_PUBLIC_ENDPOINT is not set. Presigned URLs the browser ' +
     'receives would be unreachable. Set STORAGE_PUBLIC_ENDPOINT to the public ' +
-    'URL that reverse-proxies to MinIO (e.g. https://storage.<your-domain>). ' +
-    'See docs/ops/storage-subdomain.md.'
+    'URL the browser can reach for presigned uploads/downloads. ' +
+    'For B2 prod, leave STORAGE_PUBLIC_ENDPOINT unset and use the public ' +
+    'B2 endpoint as STORAGE_ENDPOINT directly. See ' +
+    'docs/ops/object-storage-provisioning.md.'
   );
 }
 
@@ -377,6 +392,7 @@ function checkAppServerEnv(source: GuardSource): GuardResult {
   if (!source.STORAGE_ENDPOINT) missing.push('STORAGE_ENDPOINT');
   if (!source.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
   if (!source.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
+  if (!source.STORAGE_REGION) missing.push('STORAGE_REGION');
   return missing.length === 0 ? { ok: true } : { ok: false, message: appServerMissingMsg(missing) };
 }
 
@@ -455,6 +471,7 @@ export type AppServerEnv = Env & {
   STORAGE_ENDPOINT: string;
   STORAGE_ACCESS_KEY: string;
   STORAGE_SECRET_KEY: string;
+  STORAGE_REGION: string;
 };
 
 /**

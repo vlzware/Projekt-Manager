@@ -109,7 +109,7 @@ You are about to replace the live backup credentials; this is reversible **only*
    ```bash
    cat > /tmp/secrets.env <<'EOF'
    POSTGRES_PASSWORD='...'
-   MINIO_ROOT_PASSWORD='...'
+   STORAGE_SECRET_KEY='...'
    CLOUDFLARE_API_TOKEN='...'
    R2_ACCESS_KEY_ID='...'
    R2_SECRET_ACCESS_KEY='...'
@@ -120,7 +120,7 @@ You are about to replace the live backup credentials; this is reversible **only*
    EOF
    ```
 
-   The first three come from the current `secrets.env.age` — decrypt it locally first with `age -d secrets.env.age` if you don't have the plaintext handy. The five new keys come from §1.4 (R2 token) and §2 (age recipient).
+   The first three come from the current `secrets.env.age` — decrypt it locally first with `age -d secrets.env.age` if you don't have the plaintext handy. `STORAGE_SECRET_KEY` is the B2 app key's `applicationKey` per [object-storage-provisioning.md § App key](../object-storage-provisioning.md). The five new keys come from §1.4 (R2 token) and §2 (age recipient).
 
 3. Re-encrypt. `age -p` prompts twice for the passphrase (enter + confirm) — reuse the passphrase already stored in the password manager so the VPS decrypt in step 5 and in `scripts/deploy.sh` both keep working:
 
@@ -164,7 +164,7 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 
 `scripts/deploy.sh` decrypts `secrets.env.age`, exports all keys into the compose env, pulls the pinned image, `docker compose up -d` (which includes the `backup` service), and polls `/api/health` ([manual-deploy.md](../manual-deploy.md)).
 
-> Compose operations outside `scripts/deploy.sh` need both `APP_IMAGE_TAG` and the secrets from `secrets.env.age` in shell env — `app` and `backup` are gated by `${APP_IMAGE_TAG:?...}`, and every `${POSTGRES_PASSWORD}` / `${CLOUDFLARE_API_TOKEN}` / `${MINIO_ROOT_PASSWORD}` reference is interpolated eagerly during parse. For the ops patterns in these runbooks, prefer `docker` directly (reads bypass compose parse entirely) or `scripts/deploy.sh` (sources secrets and pins SHA).
+> Compose operations outside `scripts/deploy.sh` need both `APP_IMAGE_TAG` and the secrets from `secrets.env.age` in shell env — `app` and `backup` are gated by `${APP_IMAGE_TAG:?...}`, and every `${POSTGRES_PASSWORD}` / `${CLOUDFLARE_API_TOKEN}` / `${STORAGE_SECRET_KEY}` reference is interpolated eagerly during parse. For the ops patterns in these runbooks, prefer `docker` directly (reads bypass compose parse entirely) or `scripts/deploy.sh` (sources secrets and pins SHA).
 
 After the deploy settles, verify the backup service is healthy. `docker logs` reads the container's log stream without touching compose, so it works from a bare sudo shell:
 

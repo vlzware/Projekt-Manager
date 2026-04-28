@@ -113,6 +113,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     STORAGE_BUCKET: 'unused',
     STORAGE_ACCESS_KEY: 'unused',
     STORAGE_SECRET_KEY: 'unused',
+    STORAGE_REGION: 'us-east-1',
     DOMAIN: 'localhost',
     SEED: 'false',
     ALLOW_INSECURE_HTTP: 'false',

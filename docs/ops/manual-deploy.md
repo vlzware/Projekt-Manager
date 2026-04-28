@@ -52,7 +52,7 @@ The GHCR image must still exist. If pruned, use forward-rollback: `git revert` o
 
 ## Verify a deploy
 
-Reads use `docker` directly rather than `docker compose`. The compose path re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. `docker ps` / `docker exec` / `docker logs` don't parse compose, so they work directly. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
+Reads use `docker` directly rather than `docker compose`. The compose path re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `STORAGE_SECRET_KEY`, `CLOUDFLARE_API_TOKEN`, …) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. `docker ps` / `docker exec` / `docker logs` don't parse compose, so they work directly. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
 ```bash
 # Running commit
@@ -73,12 +73,12 @@ curl -sS https://${DOMAIN}/api/health
 
 ### Contents of `secrets.env.age`
 
-Shell `KEY='value'` format. Three required Layer 1 secrets (app + TLS), one optional Layer 1 secret (push), and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
+Shell `KEY='value'` format. Three required Layer 1 secrets (app + storage + TLS), one optional Layer 1 secret (push), and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
 
 Layer 1 (required):
 
 - `POSTGRES_PASSWORD`
-- `MINIO_ROOT_PASSWORD`
+- `STORAGE_SECRET_KEY` — the `applicationKey` half of the B2 app key (created via `b2 key create … readFiles,writeFiles,listFiles`; see [object-storage-provisioning.md § App key](object-storage-provisioning.md)). The matching `keyId` is `STORAGE_ACCESS_KEY` in plain `.env`.
 - `CLOUDFLARE_API_TOKEN`
 
 Layer 1 (optional — push notifications, ADR-0023):
@@ -93,8 +93,6 @@ Layer 2:
 - `R2_BUCKET` -- optional; defaults to `projekt-manager-backups` in `docker-compose.yml`
 - `R2_REGION` -- optional; defaults to `auto` in `docker-compose.yml`
 - `AGE_RECIPIENT` -- PUBLIC recipient only, for backup encryption at rest. The matching age identity lives on the operator workstation, never on the VPS.
-
-`STORAGE_SECRET_KEY` is NOT in this file -- `docker-compose.yml` derives it from `MINIO_ROOT_PASSWORD` at runtime.
 
 ### Rotate a secret
 
@@ -125,7 +123,7 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 
 1. Regenerate or re-read each secret from its source:
    - `POSTGRES_PASSWORD` -- `ALTER USER` from superuser, or re-provision
-   - `MINIO_ROOT_PASSWORD` -- MinIO admin console or `mc admin user`
+   - `STORAGE_SECRET_KEY` -- B2 console: re-issue the app key (`b2 key delete <oldKeyId>` then `b2 key create … readFiles,writeFiles,listFiles`) and capture the new `applicationKey`. See [object-storage-provisioning.md § App key](object-storage-provisioning.md).
    - `CLOUDFLARE_API_TOKEN` -- Cloudflare dashboard, scope **DNS Write + Zone Read** on the managed zone (legacy names: `Zone:DNS:Edit` + `Zone:Zone:Read`). See [dns-setup.md § Cloudflare API token scope](dns-setup.md#cloudflare-api-token-scope).
    - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` -- issue a new R2 API token in the Cloudflare dashboard; the endpoint URL is listed alongside. Revoke the old token after the rotation deploy.
    - `R2_BUCKET`, `R2_REGION` -- read off the R2 dashboard (or fall back to the compose defaults).

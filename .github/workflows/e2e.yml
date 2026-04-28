@@ -64,6 +64,8 @@ jobs:
       STORAGE_BUCKET: projekt-manager
       STORAGE_ACCESS_KEY: pmappci
       STORAGE_SECRET_KEY: pmappcisecret
+      # MinIO accepts any region; us-east-1 is the SDK default.
+      STORAGE_REGION: us-east-1
       # NODE_ENV=test matches what vitest uses; the env schema accepts it
       # and the safety checks in assertProductionSafe() do NOT fire.
       NODE_ENV: test

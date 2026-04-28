@@ -29,7 +29,7 @@ SSH to the VPS as the admin user, then:
 sudo -u deploy docker exec projekt-manager-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
 
-Caddy's admin API (listens on `localhost:2019` inside the container) re-reads the bind-mounted `/etc/caddy/Caddyfile` and diff-applies the new config — new CA directive, re-provision via the new issuer, no container restart. Prefer this over `docker compose up -d --force-recreate caddy`: `docker compose` re-parses `docker-compose.yml` on every invocation, which requires `CLOUDFLARE_API_TOKEN`, `POSTGRES_PASSWORD`, and `MINIO_ROOT_PASSWORD` in shell env. Those live only in `secrets.env.age`; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
+Caddy's admin API (listens on `localhost:2019` inside the container) re-reads the bind-mounted `/etc/caddy/Caddyfile` and diff-applies the new config — new CA directive, re-provision via the new issuer, no container restart. Prefer this over `docker compose up -d --force-recreate caddy`: `docker compose` re-parses `docker-compose.yml` on every invocation, which requires `CLOUDFLARE_API_TOKEN`, `POSTGRES_PASSWORD`, `STORAGE_SECRET_KEY`, and friends in shell env. Those live only in `secrets.env.age`; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
 ### 3. Verify staging cert
 

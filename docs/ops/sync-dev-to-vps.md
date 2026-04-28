@@ -34,7 +34,7 @@ operator workstation                              VPS (over SSH)
 | Requirement                                | Verify                                                                                                            |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | `ssh hetzner` reachable as `deploy`        | `ssh -o BatchMode=yes hetzner true`                                                                               |
-| Local dev stack running (`db`, `storage`)  | `docker compose -f docker-compose.yml -f docker-compose.dev.yml ps db storage`                                    |
+| Local dev stack running (`db`, `storage`)  | `docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml ps db storage`        |
 | Local DB populated (seeds ran)             | `docker exec projekt-manager-db-1 psql -U pm -d projekt_manager -tAc 'SELECT COUNT(*) FROM users;'` — must be ≥ 1 |
 | VPS deployed at a schema-compatible commit | Hash-compared automatically (`0000_baseline.sql`)                                                                 |
 
@@ -82,7 +82,7 @@ Untouched: VPS filesystem, `secrets.env.age`, Caddy config, VAPID private key un
 | Symptom                                    | Cause / Fix                                                                                                                                                       |
 | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `schema hash mismatch`                     | VPS is on a different commit's schema. Deploy the matching commit first.                                                                                          |
-| `local service 'db' is not running`        | Start the dev stack: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init`.                                              |
+| `local service 'db' is not running`        | Start the dev stack: `docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init`.                  |
 | `local users table is empty`               | Start the app once (`npm run dev`) so migrations + seed run, then retry.                                                                                          |
 | `health check failed after 60s`            | Check `ssh hetzner 'docker logs --tail=80 projekt-manager-app-1'`. DB restore may have partially applied — inspect tables and re-run.                             |
 | Sync aborts mid-way, app stays down on VPS | The trap starts the app back on exit regardless of failure; confirm with `ssh hetzner 'docker ps'`. If not running, `docker start projekt-manager-app-1` by hand. |

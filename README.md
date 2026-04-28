@@ -162,8 +162,8 @@ Check `docs/ops` for the full runbook.
 2. [Set up WireGuard](docs/ops/wireguard-setup.md) - VPN server up, Docker pinned to wait for `wg0` on boot;
 3. [Configure DNS](docs/ops/dns-setup.md) - point the domain's A record at the WireGuard private IP, so it only resolves over VPN;
 4. [Bootstrap TLS](docs/ops/caddy-tls-bootstrap.md) - first Let's Encrypt cert via DNS-01 ACME (staging -> production); interleaves with first deploy;
-5. [Deploy](docs/ops/manual-deploy.md) - pull image from GHCR, start the stack, run first-admin bootstrap;
-6. [Storage subdomain](docs/ops/storage-subdomain.md) - required for attachment uploads;
+5. [Provision object storage](docs/ops/object-storage-provisioning.md) - Backblaze B2 bucket + capability-restricted app key + CORS rule (required for attachment uploads);
+6. [Deploy](docs/ops/manual-deploy.md) - pull image from GHCR, start the stack, run first-admin bootstrap;
 7. [Backups](docs/ops/backup/) - encrypted R2 backups + drills.
 
 ## Tests
