@@ -537,17 +537,26 @@ jobs:
           docker compose up -d db storage storage-init app
           echo "::endgroup::"
 
-          echo "::group::Wait for app health (up to 90s)"
+          echo "::group::Wait for app readiness (up to 90s)"
+          # Probe /api/health from inside the container — the docker
+          # healthcheck was dropped in effaee4 (B2 was billing
+          # ListObjectsV2 every 10 s with no consumer), so the
+          # `.State.Health.Status` field is permanently empty. Same
+          # one-shot probe scripts/deploy.sh and scripts/ops/sync-
+          # restore-vps.sh use; keeping the three smoke consumers
+          # identical avoids drift between them.
+          ready=0
           for i in $(seq 1 45); do
-            status=$(docker inspect projekt-manager-app-1 --format '{{.State.Health.Status}}' 2>/dev/null || echo "starting")
-            echo "  attempt $i: app=$status"
-            if [ "$status" = "healthy" ]; then
+            if docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
+              echo "  attempt $i: ready"
+              ready=1
               break
             fi
+            echo "  attempt $i: not ready"
             sleep 2
           done
-          if [ "$status" != "healthy" ]; then
-            echo "::error::App did not become healthy"
+          if [ "$ready" != "1" ]; then
+            echo "::error::App did not become ready"
             exit 1
           fi
           echo "::endgroup::"
