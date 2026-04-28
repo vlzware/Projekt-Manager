@@ -127,23 +127,15 @@ if [ "$was_backup_running" = "1" ]; then
   was_backup_running=0
 fi
 
-# Poll /api/health via node fetch inside the app container — same probe the
-# deploy script uses. Bypasses Caddy and TLS so a failure here isolates to
-# the app + db + storage triad.
+# Smoke probe via the SSOT script shipped in $REMOTE_TMP by the
+# orchestrator (sync-dev-to-vps.sh). Same probe CI and deploy use; the
+# script logs per-attempt failure reasons so a 503 from a degraded
+# dependency surfaces without grepping app logs.
 echo "  waiting for health..."
-timeout=60
-elapsed=0
-until docker exec "$APP_CONTAINER" node -e \
-  "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
-  2>/dev/null; do
-  sleep 2
-  elapsed=$((elapsed + 2))
-  if [ "$elapsed" -ge "$timeout" ]; then
-    echo "  ERROR: health check failed after ${timeout}s" >&2
-    docker logs --tail=40 "$APP_CONTAINER" >&2
-    exit 1
-  fi
-done
+if ! bash "$REMOTE_TMP/smoke-app-health.sh" "$APP_CONTAINER" 60; then
+  docker logs --tail=40 "$APP_CONTAINER" >&2
+  exit 1
+fi
 
 echo "  healthy"
 trap - EXIT

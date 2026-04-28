@@ -249,6 +249,11 @@ echo "      bucket: $(du -sh "$LOCAL_TMP/bucket" | awk '{print $1}') ($(find "$L
 
 echo "[7/9] Transferring to VPS..."
 ssh "$SSH_TARGET" "mkdir -p $REMOTE_TMP"
+# Ship the SSOT smoke probe alongside the dump so the streamed
+# sync-restore-vps.sh can call it from $REMOTE_TMP. Keeps the smoke probe
+# a single file across CI, deploy, and sync — see
+# scripts/smoke-app-health.sh for why.
+cp "$REPO_DIR/scripts/smoke-app-health.sh" "$LOCAL_TMP/smoke-app-health.sh"
 # -a preserves perms/times; -z compresses (SQL and metadata compress well).
 # No --delete — REMOTE_TMP is created fresh this run and cleaned up on exit.
 rsync -az "$LOCAL_TMP/" "$SSH_TARGET:$REMOTE_TMP/"

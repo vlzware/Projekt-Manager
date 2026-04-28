@@ -538,24 +538,12 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Wait for app readiness (up to 90s)"
-          # Probe /api/health from inside the container — the docker
-          # healthcheck was dropped in effaee4 (B2 was billing
-          # ListObjectsV2 every 10 s with no consumer), so the
-          # `.State.Health.Status` field is permanently empty. Same
-          # one-shot probe scripts/deploy.sh and scripts/ops/sync-
-          # restore-vps.sh use; keeping the three smoke consumers
-          # identical avoids drift between them.
-          ready=0
-          for i in $(seq 1 45); do
-            if docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; then
-              echo "  attempt $i: ready"
-              ready=1
-              break
-            fi
-            echo "  attempt $i: not ready"
-            sleep 2
-          done
-          if [ "$ready" != "1" ]; then
+          # Single source of truth in scripts/smoke-app-health.sh — same
+          # probe deploy and sync-restore use. Per-attempt failure reasons
+          # (HTTP status+body, fetch error) print inline so a smoke that
+          # fails because storage went down doesn't look identical to one
+          # that fails because Fastify never bound :3000.
+          if ! ./scripts/smoke-app-health.sh projekt-manager-app-1 90; then
             echo "::error::App did not become ready"
             exit 1
           fi

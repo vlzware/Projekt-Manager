@@ -213,27 +213,19 @@ docker compose run --rm --no-deps -T app node /app/dist/server/deploy-preflight-
 # scheduled tick. See docs/ops/backup/setup.md §4 and ADR-0020.
 docker compose --profile backup up -d
 
-# Smoke test: probe the app container's /api/health endpoint directly,
-# bypassing Caddy and the TLS chain. Verifies app + db + storage are
-# healthy without depending on the network-layer topology. Since #48 the
-# endpoint runs real liveness probes against the DB (SELECT 1) and object
-# storage (HeadBucket), returning {status:"ok"} with HTTP 200 on a fully
-# healthy stack and {status:"degraded"} with HTTP 503 when any dependency
-# fails. `r.ok` correctly interprets 503 as failure.
-timeout=60
-elapsed=0
-until docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; do
-  sleep 2
-  elapsed=$((elapsed + 2))
-  if [ "$elapsed" -ge "$timeout" ]; then
-    echo "Health check failed after ${timeout}s" >&2
-    # Include the backup container in the failure dump — its profile
-    # must match `up -d` above, otherwise compose filters it out of
-    # the active service set and the logs command silently skips it.
-    docker compose --profile backup logs --tail=50
-    exit 1
-  fi
-done
+# Smoke test: probe /api/health from inside the app container, bypassing
+# Caddy and the TLS chain. Verifies app + db + storage are reachable
+# without depending on the network-layer topology. Single source of truth
+# in scripts/smoke-app-health.sh — same probe CI and sync-restore use.
+# Per-attempt failure reasons surface inline so a degraded-storage 503
+# doesn't look identical to "container still starting".
+if ! ./scripts/smoke-app-health.sh projekt-manager-app-1 60; then
+  # Include the backup container in the failure dump — its profile
+  # must match `up -d` above, otherwise compose filters it out of
+  # the active service set and the logs command silently skips it.
+  docker compose --profile backup logs --tail=50
+  exit 1
+fi
 
 # Caddy graceful reload — re-reads the bind-mounted Caddyfile in place
 # so site-block additions (e.g. the `storage.${DOMAIN}` block introduced
