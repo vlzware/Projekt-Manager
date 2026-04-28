@@ -86,6 +86,13 @@ services:
       # Must match the app's STORAGE_BUCKET — both services point at
       # the same name so the init script provisions what the app reads.
       STORAGE_BUCKET: ${STORAGE_BUCKET:?STORAGE_BUCKET must be set}
+      # Optional isolated bucket for the Playwright suite. When set, the
+      # init script provisions it alongside the dev bucket and grants the
+      # app user access to both via the same IAM policy. The playwright
+      # webServer overrides STORAGE_BUCKET to this value so test runs
+      # never touch the dev bucket. Defaulted here so the dev compose
+      # stack always provisions both buckets, even when .env omits it.
+      STORAGE_BUCKET_E2E: ${STORAGE_BUCKET_E2E:-projekt-manager-e2e}
       # R / L sizing dials (docs/ops/object-storage-provisioning.md).
       # Forwarded with defaults so unset vars don't collapse to empty
       # strings (mc rejects "0d").
