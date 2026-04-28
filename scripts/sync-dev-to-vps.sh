@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 #
-# Destructively overwrite the VPS's Postgres database and MinIO bucket with
-# whatever is currently in the operator's local dev stack. See
+# Destructively overwrite the VPS's Postgres database and Backblaze B2
+# bucket with whatever is currently in the operator's local dev stack. See
 # docs/ops/sync-dev-to-vps.md for the runbook, preconditions, and failure
 # modes.
 #
 # Why this exists: the /api/export → /api/import flow carries only business
 # data (customers/projects/assignments) and validates createdBy/updatedBy
-# refs against the target user table — so any sync through that API path has
-# to manually reconstruct the same user UUIDs on the VPS first. Dumping the
-# whole DB sidesteps that entirely and also carries attachment rows that
-# match the MinIO objects we mirror alongside it.
+# refs against the target user table — so any sync through that API path
+# has to manually reconstruct the same user UUIDs on the VPS first.
+# Dumping the whole DB sidesteps that entirely and also carries attachment
+# rows that match the bucket objects we mirror alongside it.
+#
+# Topology note: dev mirrors prod through MinIO via docker-compose.minio.yml
+# (ADR-0022 / ddff944). Locally we read the dump from MinIO; on the VPS we
+# write the mirror to B2. The dump-and-mirror logic stays bucket-shape-only;
+# the only provider-specific code lives in scripts/ops/sync-restore-vps.sh.
 #
 # Usage:
 #   scripts/sync-dev-to-vps.sh            # runs preflight only, then refuses
@@ -18,8 +23,10 @@
 #
 # Preconditions (enforced):
 #   - ssh hetzner is reachable as the deploy user
-#   - local docker compose stack has `db` and `storage` running
-#   - the local dev overlay is in use (docker-compose.dev.yml)
+#   - local docker compose stack has `db` and `storage` running (the
+#     `storage` service is the dev MinIO mirror)
+#   - the local dev overlay is in use (docker-compose.dev.yml +
+#     docker-compose.minio.yml)
 #   - the baseline migration hash matches between local and VPS — i.e. the
 #     VPS is deployed at a commit with a compatible schema. If not, deploy
 #     the matching commit first (docs/ops/manual-deploy.md) and retry.
@@ -27,18 +34,25 @@
 # What gets overwritten on the VPS:
 #   - Postgres database `projekt_manager` (all tables DROPped and recreated
 #     from the local dump — includes users, sessions, audit logs, etc.)
-#   - MinIO bucket `projekt-manager` (mirrored; objects not present locally
-#     are deleted)
+#   - B2 bucket configured as STORAGE_BUCKET in the VPS app env (mirrored;
+#     keys not present locally get a delete-marker on B2, original versions
+#     are preserved by Compliance Object Lock per ADR-0022)
 #
 # What does NOT get touched:
 #   - VPS filesystem, secrets, Caddy, backup cron state
 #   - VPS-issued VAPID keys (stored outside the DB — unaffected)
+#   - Older B2 versions of any object — `--remove` and `--overwrite` both
+#     create new versions / delete markers; nothing is destroyed.
 
 set -euo pipefail
 
 SSH_TARGET="${SSH_TARGET:-hetzner}"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BUCKET="projekt-manager"
+# Local MinIO bucket name — the VPS bucket name lives in the VPS app
+# container's env (read by scripts/ops/sync-restore-vps.sh) since prod is
+# Backblaze B2 with an operator-chosen bucket name (typically
+# `prmng-object-storage`).
+LOCAL_BUCKET="projekt-manager"
 COMPOSE_PROJECT="projekt-manager"
 # Must match docker/init-storage.sh (same image, so we rely on it being
 # present on the VPS — it was pulled on the first deploy that ran
@@ -140,10 +154,16 @@ Preflight passed.
 
 This command will DESTRUCTIVELY OVERWRITE on $SSH_TARGET:
   - Postgres database: projekt_manager (all tables dropped and recreated)
-  - MinIO bucket:      $BUCKET (objects absent locally are deleted)
+  - Object storage:    the VPS B2 bucket configured as STORAGE_BUCKET in
+                       the app container env. Keys absent locally get a
+                       delete-marker on B2; older versions are preserved
+                       by Compliance Object Lock per ADR-0022.
 
-No VPS-side backup is taken by this script. If you need one, run it
-through the Layer 2 backup before syncing (docs/ops/backup/overview.md).
+No VPS-side backup is taken by this script. If you need a separate one,
+run it through the Layer 2 backup before syncing
+(docs/ops/backup/overview.md). The B2 bucket itself is versioned and
+Compliance-locked, so this sync's writes are recoverable until R + L
+days pass per the bucket's retention configuration.
 
 Re-run with --i-know to proceed.
 MSG
@@ -179,7 +199,7 @@ docker run --rm \
   -v "$LOCAL_TMP/bucket:/data" \
   -e MC_HOST_src="http://${LOCAL_MINIO_USER}:${LOCAL_MINIO_PASS}@storage:9000" \
   "$MC_IMAGE" \
-  mirror --overwrite --remove "src/$BUCKET" /data >/dev/null
+  mirror --overwrite --remove "src/$LOCAL_BUCKET" /data >/dev/null
 echo "      bucket: $(du -sh "$LOCAL_TMP/bucket" | awk '{print $1}') ($(find "$LOCAL_TMP/bucket" -type f | wc -l) files)"
 
 echo "[6/8] Transferring to VPS..."
@@ -194,7 +214,7 @@ echo "[7/8] Restoring on VPS..."
 # copy and the committed version. Env vars pass configuration; `bash -s`
 # reads the script from stdin and runs it in a fresh login shell.
 ssh "$SSH_TARGET" \
-  "REMOTE_TMP='$REMOTE_TMP' MC_IMAGE='$MC_IMAGE' BUCKET='$BUCKET' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" \
+  "REMOTE_TMP='$REMOTE_TMP' MC_IMAGE='$MC_IMAGE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" \
   < "$REMOTE_SCRIPT"
 
 echo "[8/8] Done — VPS synced at $(date -u -Iseconds)"

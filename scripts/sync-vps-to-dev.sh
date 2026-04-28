@@ -9,20 +9,26 @@
 # a known-good deployed state without manually recreating users +
 # re-uploading attachments.
 #
+# Topology note: prod's bucket is on Backblaze B2 since ddff944 (ADR-0022);
+# the VPS-side dump helper reads B2 credentials from the running app
+# container's env and pulls the bucket via mc. The local restore writes
+# into the dev MinIO mirror (docker-compose.minio.yml).
+#
 # Usage:
 #   scripts/sync-vps-to-dev.sh            # runs preflight only, then refuses
 #   scripts/sync-vps-to-dev.sh --i-know   # proceeds after preflight
 #
 # Preconditions (enforced):
 #   - ssh hetzner is reachable as the deploy user
-#   - local docker compose stack has `db` and `storage` running
+#   - local docker compose stack has `db` and `storage` running (the
+#     `storage` service is the dev MinIO mirror)
 #   - the baseline migration hash matches between local and VPS
 #   - the VPS DB has at least one user (would be pointless to pull an
 #     empty/uninitialised DB over the top of local)
 #
 # What gets overwritten on LOCAL:
 #   - Postgres database `projekt_manager` (all tables DROPped and recreated)
-#   - MinIO bucket `projekt-manager` (objects absent on VPS are deleted)
+#   - Local MinIO bucket `projekt-manager` (objects absent on VPS are deleted)
 #
 # Stop `npm run dev` before running; restart it afterwards. The restore
 # drops tables while your dev server may hold open connections, which at
@@ -35,7 +41,11 @@ set -euo pipefail
 
 SSH_TARGET="${SSH_TARGET:-hetzner}"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BUCKET="projekt-manager"
+# Local MinIO bucket name — the VPS bucket name lives in the VPS app
+# container's env (read by scripts/ops/sync-dump-vps.sh) since prod is
+# Backblaze B2 with an operator-chosen bucket name (typically
+# `prmng-object-storage`).
+LOCAL_BUCKET="projekt-manager"
 COMPOSE_PROJECT="projekt-manager"
 # Must match docker/init-storage.sh. Used locally (for the restore mc run)
 # and on the VPS (for the dump mc run). Tag drift would break both legs
@@ -115,7 +125,7 @@ Preflight passed.
 
 This command will DESTRUCTIVELY OVERWRITE LOCAL:
   - Postgres database: projekt_manager (all tables dropped and recreated)
-  - MinIO bucket:      $BUCKET (objects absent on VPS are deleted)
+  - MinIO bucket:      $LOCAL_BUCKET (objects absent on VPS are deleted)
 
 Any local-only state will be lost. Stop 'npm run dev' first to release
 DB connections, and restart it afterwards.
@@ -132,7 +142,7 @@ echo "[4/7] Dumping VPS state..."
 # script's restore helper. Env vars pass configuration. The script writes
 # db.sql and bucket/ under $REMOTE_TMP on the VPS.
 ssh "$SSH_TARGET" \
-  "REMOTE_TMP='$REMOTE_TMP' MC_IMAGE='$MC_IMAGE' BUCKET='$BUCKET' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" \
+  "REMOTE_TMP='$REMOTE_TMP' MC_IMAGE='$MC_IMAGE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" \
   < "$REMOTE_SCRIPT"
 
 echo "[5/7] Transferring from VPS..."
@@ -163,7 +173,7 @@ docker run --rm \
   -v "$LOCAL_TMP/bucket:/data:ro" \
   -e MC_HOST_dst="http://${LOCAL_MINIO_USER}:${LOCAL_MINIO_PASS}@storage:9000" \
   "$MC_IMAGE" \
-  mirror --overwrite --remove /data "dst/$BUCKET" >/dev/null
+  mirror --overwrite --remove /data "dst/$LOCAL_BUCKET" >/dev/null
 
 echo "[7/7] Done — local synced from VPS at $(date -u -Iseconds)"
 echo

@@ -1,18 +1,20 @@
 # Sync Dev → VPS
 
-Destructively overwrites the VPS's Postgres database and MinIO bucket with whatever is in the operator's local dev stack. Useful while the VPS holds no production data and the iteration requires quickly mirroring local state (seed users, demo customers/projects, attachments) to a live deployment for end-to-end validation.
+Destructively overwrites the VPS's Postgres database and object-storage bucket with whatever is in the operator's local dev stack. Useful while the VPS holds no production data and the iteration requires quickly mirroring local state (seed users, demo customers/projects, attachments) to a live deployment for end-to-end validation.
+
+The local dev mirror is MinIO (via `docker-compose.minio.yml`); the VPS bucket is Backblaze B2 since the ddff944 topology switch (ADR-0022). The script reads VPS B2 credentials from the running app container's env — no `secrets.env.age` decryption needed during a sync.
 
 ```
 operator workstation                              VPS (over SSH)
   docker compose -f .dev.yml running                 docker compose running (deploy flow)
     │                                                   │
     │  pg_dump (plain SQL) ──┐                          │
-    │  mc mirror bucket → dir│                          │
+    │  mc mirror MinIO → dir │                          │
     │                        ├─ rsync ──►  /tmp/pm-sync-<ts>/
     │                                                   │
     │                           ssh bash -s ──► stop app+backup
     │                                           psql < db.sql
-    │                                           mc mirror → bucket
+    │                                           mc mirror → B2 bucket
     │                                           start app+backup
     │                                           /api/health probe
 ```
@@ -63,19 +65,19 @@ End-to-end typical timing on a small dataset: ~40 seconds. App downtime on the V
 1. Preflight — SSH, local stack, schema parity, non-empty local DB.
 2. Refuses without `--i-know`; prints exactly what will be overwritten.
 3. `pg_dump --clean --if-exists --no-owner --no-acl` into `/tmp/pm-sync-<ts>/db.sql`.
-4. `mc mirror --overwrite --remove` local bucket into `/tmp/pm-sync-<ts>/bucket/`.
+4. `mc mirror --overwrite --remove` local MinIO bucket into `/tmp/pm-sync-<ts>/bucket/`.
 5. `rsync -az` the temp directory to the VPS.
-6. On VPS: stop `app` (and `backup` if running) → `psql -v ON_ERROR_STOP=1 < db.sql` → `mc mirror` onto the VPS bucket → start `app` (and `backup`) → poll `/api/health` for 60s.
+6. On VPS: read STORAGE\_\* from the running `app` container's env → stop `app` (and `backup` if running) → `psql -v ON_ERROR_STOP=1 < db.sql` → `mc mirror` onto the B2 bucket → start `app` (and `backup`) → poll `/api/health` for 60s.
 7. Trap-based cleanup: restarts stopped containers even on failure; removes `/tmp/pm-sync-<ts>/` on both ends.
 
-MinIO credentials on both ends are read from the running `storage` container's env so neither side needs secrets decrypted.
+Credentials on both ends are read from the running containers' env: local MinIO via `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` on the `storage` container; VPS B2 via `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` (and the bucket name + endpoint) on the `app` container. Neither side needs `secrets.env.age` decrypted during the sync.
 
 ## What gets overwritten
 
 - Postgres database `projekt_manager` — every table is dropped and recreated from the dump, including `users`, `sessions`, `audit_log`, `customers`, `projects`, `attachments`, etc.
-- MinIO bucket `projekt-manager` — objects absent in local are deleted, objects present locally are overwritten by key.
+- VPS object-storage bucket (configured as `STORAGE_BUCKET` in the app env — typically `prmng-object-storage` on B2) — keys absent locally get a delete-marker, keys present locally are written as new versions. Per ADR-0022's Compliance Object Lock + capability split, no underlying versions are destroyed; lifecycle reaps them after the configured retention + hide-to-delete window.
 
-Untouched: VPS filesystem, `secrets.env.age`, Caddy config, VAPID private key under `data/.vapid/`, R2 backup archives.
+Untouched: VPS filesystem, `secrets.env.age`, Caddy config, VAPID private key under `data/.vapid/`, R2 backup archives, B2 bucket configuration (versioning, Object Lock, lifecycle, CORS — none of those are mc-writable with the bucket-scoped app key).
 
 ## Failure modes
 

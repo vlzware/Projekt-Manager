@@ -2,19 +2,21 @@
 
 Destructively overwrites the operator's local dev Postgres database and MinIO bucket with whatever is on the VPS. Mirror of [sync-dev-to-vps.md](sync-dev-to-vps.md) for the opposite direction.
 
+The VPS bucket is Backblaze B2 since the ddff944 topology switch (ADR-0022); the local dev mirror is MinIO. The VPS-side dump helper reads B2 credentials from the running app container's env — no `secrets.env.age` decryption needed during a sync.
+
 ```
 VPS (over SSH)                                    operator workstation
   docker compose running                            docker compose -f .dev.yml running
     │                                                   │
     │  ssh bash -s ──► pg_dump              (on VPS)    │
-    │                  mc mirror bucket → dir (on VPS)  │
+    │                  mc mirror B2 → dir   (on VPS)    │
     │                                                   │
     │                  /tmp/pm-rsync-<ts>/              │
     │                        ◄── rsync ──┤              │
     │                                                   │
     │                                    terminate stray backends
     │                                    psql < db.sql
-    │                                    mc mirror → bucket
+    │                                    mc mirror → MinIO bucket
 ```
 
 ## When to use
@@ -58,13 +60,13 @@ Overrides via env:
 1. Preflight — SSH, local stack, schema parity, non-empty VPS DB.
 2. Refuses without `--i-know`; prints exactly what will be overwritten.
 3. On VPS: `pg_dump --clean --if-exists --no-owner --no-acl` into `$REMOTE_TMP/db.sql`.
-4. On VPS: `mc mirror --overwrite --remove` bucket into `$REMOTE_TMP/bucket/`.
+4. On VPS: read STORAGE\_\* from the running `app` container's env, then `mc mirror --overwrite --remove` the B2 bucket into `$REMOTE_TMP/bucket/`.
 5. `rsync -az` the VPS temp directory down to local.
 6. Locally: `pg_terminate_backend` on every `projekt_manager` connection except our own, then `psql -v ON_ERROR_STOP=1 < db.sql`.
-7. Locally: `mc mirror` the pulled bucket into local MinIO.
+7. Locally: `mc mirror` the pulled bucket into local MinIO (creds read from the local `storage` container's env).
 8. Trap-based cleanup: removes `/tmp/pm-rsync-<ts>/` on both ends regardless of outcome.
 
-The VPS-side dump holds a consistent snapshot (pg_dump's default single-transaction mode) and doesn't stop the app — a live user hitting the VPS during sync won't corrupt the dump, they'll just be captured at the snapshot boundary.
+The VPS-side dump holds a consistent snapshot (pg_dump's default single-transaction mode) and doesn't stop the app — a live user hitting the VPS during sync won't corrupt the dump, they'll just be captured at the snapshot boundary. The B2 mirror is read-only on the VPS side (uses the bucket-scoped app key's `listFiles` + `readFiles` capabilities).
 
 ## What gets overwritten
 
