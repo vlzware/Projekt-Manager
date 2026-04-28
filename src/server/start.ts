@@ -37,6 +37,7 @@ import { ATTACHMENT_CONFIG } from '../config/attachmentConfig.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
 import { assertStorageBucketSafe } from './storage/safety.js';
+import { staticCacheControl } from './staticCache.js';
 
 const HOST = '0.0.0.0';
 
@@ -264,6 +265,10 @@ async function start(): Promise<void> {
     await app.register(fastifyStatic, {
       root: distFolder,
       wildcard: false,
+      cacheControl: false,
+      setHeaders: (res, filePath) => {
+        res.setHeader('Cache-Control', staticCacheControl(filePath));
+      },
     });
 
     // SPA fallback: serve index.html for non-API routes
