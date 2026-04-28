@@ -343,9 +343,14 @@ function toLifecycleRuleSnapshot(rule: LifecycleRule): LifecycleRuleSnapshot {
       if (rule.Filter.And.Prefix !== undefined) prefix = rule.Filter.And.Prefix;
       if ((rule.Filter.And.Tags?.length ?? 0) > 0) hasTagFilter = true;
     }
-  } else if (rule.Prefix !== undefined) {
-    // Legacy non-Filter Prefix shape — pre-2018 S3 API. Still valid.
-    prefix = rule.Prefix;
+  } else {
+    // Legacy non-Filter Prefix shape — pre-2018 S3 API. The SDK marks the
+    // top-level `Prefix` field deprecated; we keep the read for defensive
+    // parity with older buckets and S3-compatible providers that still
+    // surface this shape. Routed through a structural cast so the
+    // deprecation marker doesn't propagate to the editor on every read.
+    const legacyPrefix = (rule as { Prefix?: string }).Prefix;
+    if (legacyPrefix !== undefined) prefix = legacyPrefix;
   }
 
   const expiration = rule.Expiration;
