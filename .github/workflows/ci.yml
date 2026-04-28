@@ -460,6 +460,12 @@ jobs:
           POSTGRES_PASSWORD: smoke
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: smoke123
+          # Capability-restricted MinIO app user (#45 / ADR-0022) —
+          # `:?`-gated in compose because the app must NEVER run as root.
+          # storage-init provisions this user; the app and storage-init
+          # services both interpolate these.
+          MINIO_APP_ACCESS_KEY: pmappsmoke
+          MINIO_APP_SECRET_KEY: pmappsmokesecret
           CLOUDFLARE_API_TOKEN: smoke
           # R2 target points at the in-stack MinIO. The backup
           # container's entrypoint probe (scripts/backup/probe-r2.mjs)
