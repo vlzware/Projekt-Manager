@@ -1,9 +1,19 @@
 /**
  * S3-compatible object storage client.
  *
- * Wraps @aws-sdk/client-s3 with a minimal interface for upload, download,
- * delete, and signed URL generation. Configured with forcePathStyle for
- * MinIO compatibility.
+ * Wraps @aws-sdk/client-s3 with a minimal interface for upload, hide,
+ * restore, presign, and signed URL generation. Configured with
+ * forcePathStyle for MinIO compatibility.
+ *
+ * Per ADR-0022, the app key cannot destroy versions. The mutating
+ * surface is `hide()` (DeleteObject without VersionId, creates a marker)
+ * and `copyFromVersion()` (CopyObject from a specific noncurrent version
+ * — the restore primitive). There is no `delete()` / `deleteObject()`
+ * by design: a method named "delete" that cannot actually destroy is
+ * misleading, and the architecture test at
+ * `src/server/__tests__/storage-architecture.test.ts` enforces that no
+ * `DeleteObjectCommand` / `DeleteObjectsCommand` carries a `VersionId`
+ * anywhere in the codebase.
  *
  * See architecture.md §11.4 for the module boundary definition.
  */
@@ -16,11 +26,23 @@ import {
   HeadBucketCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  GetBucketVersioningCommand,
+  GetObjectLockConfigurationCommand,
+  GetBucketLifecycleConfigurationCommand,
+  CopyObjectCommand,
+  type LifecycleRule,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createPresignedPost as awsCreatePresignedPost } from '@aws-sdk/s3-presigned-post';
 import type { Readable } from 'node:stream';
 import { STORAGE_CONFIG } from '../config/index.js';
+import {
+  CAPABILITY_PROBE_KEY,
+  CAPABILITY_PROBE_VERSION_ID,
+  type BucketSafetyConfig,
+  type CapabilityProbeResult,
+  type LifecycleRuleSnapshot,
+} from './safety.js';
 
 export interface StorageConfig {
   endpoint: string;
@@ -59,6 +81,14 @@ export interface DownloadResult {
 export interface HeadObjectResult {
   size: number;
   contentType: string;
+  /**
+   * S3 VersionId of the current version of the key, when the bucket has
+   * versioning enabled (ADR-0022). Captured at complete-time so the
+   * Papierkorb restore flow can `copyFromVersion(key, versionId)`.
+   * Undefined when the bucket is unversioned (legacy / non-prod) or the
+   * provider response omits the field.
+   */
+  versionId: string | undefined;
 }
 
 export interface PresignedPostDescriptor {
@@ -91,7 +121,6 @@ export class StorageObjectNotFoundError extends Error {
 export interface StorageClient {
   upload(key: string, data: Buffer | Uint8Array, contentType: string): Promise<UploadResult>;
   download(key: string): Promise<DownloadResult>;
-  delete(key: string): Promise<void>;
   getSignedUrl(key: string, expirySeconds: number): Promise<string>;
   /**
    * Liveness probe — verifies the configured bucket is reachable and
@@ -146,9 +175,24 @@ export interface StorageClient {
    */
   headObject?: (key: string) => Promise<HeadObjectResult>;
 
-  /** Explicit delete. Same semantic as `delete`; distinct name so
-   * attachment-flow call sites read naturally. */
-  deleteObject?: (key: string) => Promise<void>;
+  /**
+   * Hide the object — DeleteObject on a versioned bucket without a
+   * VersionId, which writes a delete marker instead of destroying the
+   * underlying version (ADR-0022). The app key has only `writeFiles`
+   * (no `deleteFiles`), so a destructive call would be refused at the
+   * capability layer regardless; the method name reflects what actually
+   * happens on the wire.
+   */
+  hide?: (key: string) => Promise<void>;
+
+  /**
+   * Restore primitive — CopyObject with a versionId in `CopySource`,
+   * promoting an older noncurrent version back to current. Returns the
+   * new version id of the resulting current version (the bucket is
+   * versioned, so each PUT — including this server-side copy — produces
+   * a fresh version). Used by the Papierkorb restore flow (ADR-0022).
+   */
+  copyFromVersion?: (key: string, sourceVersionId: string) => Promise<string | undefined>;
 
   /**
    * Stream the raw bytes of an object. The returned Readable carries the
@@ -179,6 +223,26 @@ export interface StorageClient {
    * without needing a second round-trip per object.
    */
   listObjects?: (prefix: string, olderThan?: Date) => Promise<string[]>;
+
+  /**
+   * Boot-time bucket-safety probe (ADR-0022 / docs/ops/object-storage-provisioning.md).
+   * Returns a structured snapshot of versioning + Object Lock + lifecycle
+   * for `assertStorageBucketSafe()` in `./safety.ts` to evaluate.
+   */
+  getBucketSafetyConfig?: () => Promise<BucketSafetyConfig>;
+
+  /**
+   * Boot-time capability self-test (see `safety.ts` header for the
+   * full rationale). Issues a destructive call against a sentinel
+   * non-existent version and classifies the response — AccessDenied
+   * means the capability split is intact, anything else is structured
+   * back to the validator for fail-closed handling.
+   *
+   * Implementations MUST return a structured `CapabilityProbeResult`
+   * even on AccessDenied — the probe is a measurement, not an
+   * exception flow.
+   */
+  probeDeleteVersionCapability?: () => Promise<CapabilityProbeResult>;
 }
 
 /**
@@ -200,10 +264,13 @@ export interface AttachmentStorageClient extends StorageClient {
     attachmentFileName?: string,
   ) => Promise<PresignedGetDescriptor>;
   headObject: (key: string) => Promise<HeadObjectResult>;
-  deleteObject: (key: string) => Promise<void>;
+  hide: (key: string) => Promise<void>;
+  copyFromVersion: (key: string, sourceVersionId: string) => Promise<string | undefined>;
   getObject: (key: string) => Promise<Readable>;
   putObject: (key: string, body: Buffer | Uint8Array, contentType: string) => Promise<void>;
   listObjects: (prefix: string, olderThan?: Date) => Promise<string[]>;
+  getBucketSafetyConfig: () => Promise<BucketSafetyConfig>;
+  probeDeleteVersionCapability: () => Promise<CapabilityProbeResult>;
 }
 
 /**
@@ -257,6 +324,49 @@ export function buildContentDisposition(fileName: string): string {
     .replace(NON_PRINTABLE_ASCII, '_');
   const utf8Encoded = encodeURIComponent(fileName);
   return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
+}
+
+/**
+ * Collapse the SDK's LifecycleRule into the structured snapshot the
+ * safety validator consumes. Filter shape can be `{Prefix}`, `{Tag}`, or
+ * `{And: {Prefix?, Tags?}}` — flatten into `(prefix, hasTagFilter)`.
+ * Action fields are surfaced individually so the validator can emit a
+ * specific failure per defect (Expiration.Days vs Transitions vs …),
+ * matching the itemized runbook deny list.
+ */
+function toLifecycleRuleSnapshot(rule: LifecycleRule): LifecycleRuleSnapshot {
+  let prefix = '';
+  let hasTagFilter = false;
+  if (rule.Filter) {
+    if (rule.Filter.Prefix !== undefined) prefix = rule.Filter.Prefix;
+    if (rule.Filter.Tag) hasTagFilter = true;
+    if (rule.Filter.And) {
+      if (rule.Filter.And.Prefix !== undefined) prefix = rule.Filter.And.Prefix;
+      if ((rule.Filter.And.Tags?.length ?? 0) > 0) hasTagFilter = true;
+    }
+  } else if (rule.Prefix !== undefined) {
+    // Legacy non-Filter Prefix shape — pre-2018 S3 API. Still valid.
+    prefix = rule.Prefix;
+  }
+
+  const expiration = rule.Expiration;
+  const expireDeleteMarker = expiration?.ExpiredObjectDeleteMarker === true;
+
+  // `Expiration.Days = 0` is the encoding S3 uses when only
+  // `ExpiredObjectDeleteMarker` is set — treat as absent.
+  return {
+    id: rule.ID,
+    status: rule.Status ?? 'Disabled',
+    prefix,
+    hasTagFilter,
+    noncurrentDays: rule.NoncurrentVersionExpiration?.NoncurrentDays,
+    expireDeleteMarker,
+    hasExpirationDays: (expiration?.Days ?? 0) > 0,
+    hasExpirationDate: expiration?.Date !== undefined,
+    hasTransitions: (rule.Transitions?.length ?? 0) > 0,
+    hasNoncurrentTransitions: (rule.NoncurrentVersionTransitions?.length ?? 0) > 0,
+    hasAbortMpu: rule.AbortIncompleteMultipartUpload !== undefined,
+  };
 }
 
 export function createStorageClient(config: StorageConfig): AttachmentStorageClient {
@@ -336,17 +446,6 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         data,
         contentType: response.ContentType ?? 'application/octet-stream',
       };
-    },
-
-    async delete(key: string): Promise<void> {
-      validateKey(key);
-      // S3 DeleteObject is idempotent — does not throw for missing keys.
-      await s3.send(
-        new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: key,
-        }),
-      );
     },
 
     async getSignedUrl(key: string, expirySeconds: number): Promise<string> {
@@ -452,6 +551,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         return {
           size: Number(res.ContentLength ?? 0),
           contentType: res.ContentType ?? 'application/octet-stream',
+          versionId: res.VersionId,
         };
       } catch (err) {
         const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
@@ -462,9 +562,33 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       }
     },
 
-    async deleteObject(key: string): Promise<void> {
+    async hide(key: string): Promise<void> {
       validateKey(key);
+      // DeleteObject WITHOUT VersionId on a versioned bucket creates a
+      // delete marker — the version becomes "noncurrent" and reads return
+      // 404, but the bytes survive until the lifecycle reap (ADR-0022).
+      // Idempotent like S3 DeleteObject — succeeds on missing keys.
       await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    },
+
+    async copyFromVersion(key: string, sourceVersionId: string): Promise<string | undefined> {
+      validateKey(key);
+      if (!sourceVersionId) {
+        throw new Error('copyFromVersion: sourceVersionId is required');
+      }
+      // CopySource format per AWS S3 docs: "<bucket>/<key>?versionId=<vid>".
+      // The bucket and version-id are app-controlled; the key is already
+      // validated by validateKey() against STORAGE_CONFIG.validKeyPattern.
+      // Slashes inside the key remain raw — encoding them would change the
+      // semantic CopySource path. The SDK URL-encodes the rest.
+      const response = await s3.send(
+        new CopyObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          CopySource: `${bucket}/${key}?versionId=${encodeURIComponent(sourceVersionId)}`,
+        }),
+      );
+      return response.VersionId;
     },
 
     async getObject(key: string): Promise<Readable> {
@@ -504,6 +628,93 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
           ContentType: contentType,
         }),
       );
+    },
+
+    async getBucketSafetyConfig(): Promise<BucketSafetyConfig> {
+      // Three independent reads — versioning, object-lock, lifecycle.
+      // Each can succeed/fail independently; the validator handles the
+      // "feature not enabled" cases as semantic absence (versioningEnabled=
+      // false, objectLock.enabled=false, lifecycleRules=[]).
+      const ver = await s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
+      const versioningEnabled = ver.Status === 'Enabled';
+
+      let objectLock: BucketSafetyConfig['objectLock'] = { enabled: false };
+      try {
+        const ol = await s3.send(new GetObjectLockConfigurationCommand({ Bucket: bucket }));
+        if (ol.ObjectLockConfiguration?.ObjectLockEnabled === 'Enabled') {
+          objectLock = {
+            enabled: true,
+            defaultMode: ol.ObjectLockConfiguration.Rule?.DefaultRetention?.Mode,
+            defaultDays: ol.ObjectLockConfiguration.Rule?.DefaultRetention?.Days,
+          };
+        }
+      } catch (err) {
+        const e = err as { name?: string };
+        // ObjectLockConfigurationNotFoundError when the bucket was
+        // created without --with-lock. Fall through to enabled:false so
+        // the validator surfaces a structured failure instead of an
+        // opaque SDK error.
+        if (e.name !== 'ObjectLockConfigurationNotFoundError') throw err;
+      }
+
+      let lifecycleRules: BucketSafetyConfig['lifecycleRules'] = [];
+      try {
+        const lc = await s3.send(new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }));
+        lifecycleRules = (lc.Rules ?? []).map(toLifecycleRuleSnapshot);
+      } catch (err) {
+        const e = err as { name?: string };
+        // NoSuchLifecycleConfiguration when no rules — semantic absence.
+        if (e.name !== 'NoSuchLifecycleConfiguration') throw err;
+      }
+
+      return { versioningEnabled, objectLock, lifecycleRules };
+    },
+
+    async probeDeleteVersionCapability(): Promise<CapabilityProbeResult> {
+      // Capability self-test — see safety.ts header for the rationale.
+      // The call is constructed to be intentionally destructive in
+      // shape (DeleteObjectCommand + VersionId) but pointed at a
+      // non-existent key with a non-existent VersionId, so a properly-
+      // restricted credential responds with AccessDenied at the
+      // capability layer before any object resolution happens.
+      //
+      // This is the ONE legitimate site in the codebase that constructs
+      // a `DeleteObjectCommand` carrying a `VersionId` — the architecture
+      // test (`src/server/__tests__/storage-architecture.test.ts`)
+      // exempts it via an explicit `SITE_ALLOWLIST` entry keyed on
+      // `{ file: 'src/server/storage/client.ts', functionName:
+      // 'probeDeleteVersionCapability' }`. The exception is architectural,
+      // not an evasion: this is the call the probe MUST make to validate
+      // the capability split. If the function is renamed or moved, the
+      // allowlist entry must change at the same commit — the test
+      // enforces no other file may declare a function with this name.
+      try {
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: CAPABILITY_PROBE_KEY,
+            VersionId: CAPABILITY_PROBE_VERSION_ID,
+          }),
+        );
+        // 2xx success — the credential CAN destroy versions. This is
+        // the catastrophic case the probe was added to catch.
+        return { kind: 'unexpected-success' };
+      } catch (err) {
+        const e = err as { name?: string; message?: string; Code?: string };
+        // The SDK exposes the modelled `AccessDenied` exception class
+        // by `name === 'AccessDenied'`. B2's S3-compat surface returns
+        // the same name with `not entitled` in the message; MinIO
+        // restricted users return the same name from IAM denial. AWS
+        // S3 also returns this name. One uniform check across providers.
+        if (e.name === 'AccessDenied' || e.Code === 'AccessDenied') {
+          return { kind: 'access-denied' };
+        }
+        return {
+          kind: 'unexpected-error',
+          errorName: e.name ?? 'UnknownError',
+          message: e.message ?? String(err),
+        };
+      }
     },
 
     async listObjects(prefix: string, olderThan?: Date): Promise<string[]> {

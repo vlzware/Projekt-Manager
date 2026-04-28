@@ -61,7 +61,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
   const fetchForProject = useAttachmentStore((s) => s.fetchForProject);
   const requestDownloadUrl = useAttachmentStore((s) => s.requestDownloadUrl);
   const requestBulkDownloadUrl = useAttachmentStore((s) => s.requestBulkDownloadUrl);
-  const deleteAttachment = useAttachmentStore((s) => s.deleteAttachment);
+  const hideAttachment = useAttachmentStore((s) => s.hideAttachment);
   const authUser = useAuthStore((s) => s.authUser);
 
   const handleDelete = async (bin: Attachment) => {
@@ -69,7 +69,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
       title: STRINGS.attachments.deleteConfirmTitle,
     });
     if (!ok) return;
-    await deleteAttachment(projectId, bin.id);
+    await hideAttachment(projectId, bin.id);
   };
 
   const [selected, setSelected] = useState<Set<string>>(new Set());

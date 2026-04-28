@@ -7,9 +7,9 @@
  *   - Init writes exactly one `attachment:add` audit row with
  *     `entityType='attachment'`, `entityId=attachmentId`, and a payload
  *     `after` naming projectId, attachmentId, label, mimeType, sizeBytes.
- *   - Delete writes exactly one `attachment:remove` audit row with
- *     `entityType='attachment'`, `entityId=attachmentId`, and a payload
- *     `before` naming the same fields.
+ *   - Delete (= soft-hide, ADR-0022) writes exactly one `attachment:hide`
+ *     audit row with `entityType='attachment'`, `entityId=attachmentId`,
+ *     and a payload `before` naming the same fields.
  *   - Complete is a state-machine finalize — it produces NO audit
  *     row. The `attachment:add` entry is the authoritative record.
  *
@@ -176,12 +176,12 @@ describe('Attachment audit contract (AC-219)', () => {
   });
 
   // -------------------------------------------------------------------
-  // delete → exactly one `attachment:remove` audit row
+  // delete → exactly one `attachment:hide` audit row
   // -------------------------------------------------------------------
-  it('delete writes exactly one attachment:remove row with before payload fields', async () => {
+  it('delete writes exactly one attachment:hide row with before payload fields', async () => {
     // Seed directly — we don't need the real upload path here; the
-    // delete API takes a ready row and removes it. Raw SQL is
-    // allowlisted under __tests__/.
+    // delete API takes a ready row and flips it to status='hidden'
+    // (ADR-0022). Raw SQL is allowlisted under __tests__/.
     const { db, pool } = createDatabase();
     const attachmentId = crypto.randomUUID();
     try {
@@ -208,11 +208,11 @@ describe('Attachment audit contract (AC-219)', () => {
     const after = await countAuditRows();
     expect(after - before).toBe(1);
 
-    const row = await fetchLatestAuditRow(attachmentId, 'attachment:remove');
+    const row = await fetchLatestAuditRow(attachmentId, 'attachment:hide');
     expect(row).not.toBeNull();
     expect(row!.entity_type).toBe('attachment');
     expect(row!.entity_id).toBe(attachmentId);
-    expect(row!.action).toBe('attachment:remove');
+    expect(row!.action).toBe('attachment:hide');
     expect(row!.actor_kind).toBe('user');
     // Ancestor link (architecture.md §11.12).
     expect(row!.ancestor_entity_type).toBe('project');

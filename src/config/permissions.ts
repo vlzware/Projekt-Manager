@@ -18,7 +18,8 @@ export type Permission =
   | 'notifications:manage'
   | 'attachment:read'
   | 'attachment:write'
-  | 'attachment:delete'
+  | 'attachment:hide'
+  | 'attachment:trash'
   | 'auth:change-password';
 
 export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
@@ -58,7 +59,12 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'notifications:manage',
     'attachment:read',
     'attachment:write',
-    'attachment:delete',
+    'attachment:hide',
+    // attachment:trash gates the Papierkorb (list hidden + restore).
+    // Owner + office only — workers can hide their own uploads inside
+    // the AC-215 grace window but do not browse or restore the trash.
+    // Bookkeepers are read-only on attachments.
+    'attachment:trash',
     'auth:change-password',
   ],
   office: [
@@ -75,7 +81,8 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'audit:read',
     'attachment:read',
     'attachment:write',
-    'attachment:delete',
+    'attachment:hide',
+    'attachment:trash',
     'auth:change-password',
   ],
   worker: [
@@ -83,7 +90,7 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'customer:read',
     'attachment:read',
     'attachment:write',
-    'attachment:delete',
+    'attachment:hide',
     'auth:change-password',
   ],
   bookkeeper: ['project:read', 'customer:read', 'attachment:read', 'auth:change-password'],

@@ -27,6 +27,7 @@ import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
 import { PhotoGallery } from './PhotoGallery';
 import { BinaryList } from './BinaryList';
+import { Papierkorb } from './Papierkorb';
 import { AssignedWorkerEditor } from './AssignedWorkerEditor';
 import { UploadCta } from './UploadCta';
 import { dateInputValue } from './dateInputValue';
@@ -79,6 +80,7 @@ export function ProjectDetailPage() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const canReadAudit = usePermission('audit:read');
   const canWrite = usePermission('attachment:write');
+  const canTrash = usePermission('attachment:trash');
   const canUpdate = usePermission('project:update');
   const canUpdateDates = usePermission('project:dates');
   const canDelete = usePermission('project:delete');
@@ -96,6 +98,22 @@ export function ProjectDetailPage() {
 
   const requestBulkDownloadUrl = useAttachmentStore((s) => s.requestBulkDownloadUrl);
   const attachmentsByProject = useAttachmentStore((s) => s.byProject[projectId]);
+  const trashCount = useAttachmentStore((s) => s.hiddenByProject[projectId]?.length ?? 0);
+  const fetchTrashForProject = useAttachmentStore((s) => s.fetchTrashForProject);
+
+  // Active attachment tab. Workers / bookkeepers never see the tab
+  // strip; for owner / office the default lands on the live "Anhänge"
+  // view. Switching to Papierkorb is a one-click toggle, no URL state
+  // — same level of persistence as the gallery / list scroll position.
+  const [attachmentTab, setAttachmentTab] = useState<'attachments' | 'papierkorb'>('attachments');
+
+  // Eagerly fetch the Papierkorb count for owner / office so the tab
+  // badge is accurate on first render. Workers don't have the
+  // permission and would just 403; skip the GET for them.
+  useEffect(() => {
+    if (!canTrash) return;
+    void fetchTrashForProject(projectId);
+  }, [canTrash, fetchTrashForProject, projectId]);
 
   const navigate = useNavigate();
 
@@ -465,9 +483,55 @@ export function ProjectDetailPage() {
 
       {canWrite && !isArchived && <UploadCta projectId={project.id} />}
 
-      <PhotoGallery projectId={project.id} archived={isArchived} />
-
-      <BinaryList projectId={project.id} archived={isArchived} />
+      {canTrash ? (
+        <>
+          <div
+            role="tablist"
+            aria-label={STRINGS.attachments.tabAttachments}
+            className={styles.attachmentTabs}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={attachmentTab === 'attachments'}
+              onClick={() => setAttachmentTab('attachments')}
+              data-testid="attachment-tab-anhaenge"
+              className={
+                attachmentTab === 'attachments' ? styles.attachmentTabActive : styles.attachmentTab
+              }
+            >
+              {STRINGS.attachments.tabAttachments}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={attachmentTab === 'papierkorb'}
+              onClick={() => setAttachmentTab('papierkorb')}
+              data-testid="attachment-tab-papierkorb"
+              className={
+                attachmentTab === 'papierkorb' ? styles.attachmentTabActive : styles.attachmentTab
+              }
+            >
+              {trashCount > 0
+                ? STRINGS.attachments.tabPapierkorbWithCount(trashCount)
+                : STRINGS.attachments.tabPapierkorb}
+            </button>
+          </div>
+          {attachmentTab === 'attachments' ? (
+            <>
+              <PhotoGallery projectId={project.id} archived={isArchived} />
+              <BinaryList projectId={project.id} archived={isArchived} />
+            </>
+          ) : (
+            <Papierkorb projectId={project.id} />
+          )}
+        </>
+      ) : (
+        <>
+          <PhotoGallery projectId={project.id} archived={isArchived} />
+          <BinaryList projectId={project.id} archived={isArchived} />
+        </>
+      )}
 
       <section
         aria-label={STRINGS.attachments.activity}

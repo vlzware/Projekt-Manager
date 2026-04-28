@@ -164,9 +164,9 @@ describe('describeAuditRow', () => {
     expect(out).toBe('Datei hinzugefügt');
   });
 
-  it('renders an attachment:remove row via the config-layer label', () => {
+  it('renders an attachment:hide row via the config-layer label', () => {
     const out = describeAuditRow({
-      action: 'attachment:remove',
+      action: 'attachment:hide',
       entityType: 'attachment',
       payload: {
         before: {
@@ -178,7 +178,7 @@ describe('describeAuditRow', () => {
         },
       },
     });
-    expect(out).toBe('Datei entfernt');
+    expect(out).toBe('In Papierkorb verschoben');
   });
 
   it('returns the raw action string for unknown actions (forward-compat)', () => {

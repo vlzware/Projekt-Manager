@@ -47,7 +47,7 @@ import { isOutOfScope } from '../repositories/scope.js';
 import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
-import { bestEffortDeleteStorageKeys } from './AttachmentService.js';
+import { bestEffortHideStorageKeys } from './AttachmentService.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
@@ -708,7 +708,7 @@ export class ProjectCrudService {
       // abort the DB cascade — the rows are already gone; orphaned
       // keys are logged for operator cleanup.
       if (this.storage && collectedKeys.length > 0) {
-        await bestEffortDeleteStorageKeys(this.storage, collectedKeys, log);
+        await bestEffortHideStorageKeys(this.storage, collectedKeys, log);
       }
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);

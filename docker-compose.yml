@@ -51,9 +51,21 @@ services:
       # when STORAGE_ENDPOINT looks internal and this value is missing.
       # See docs/ops/storage-subdomain.md.
       STORAGE_PUBLIC_ENDPOINT: https://storage.${DOMAIN:?DOMAIN must be set}
-      STORAGE_BUCKET: projekt-manager
-      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
-      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      # Default kept in sync with the storage-init service below — both
+      # services must resolve to the same bucket name, otherwise the
+      # init script would create one bucket while the app would read
+      # another.
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-projekt-manager}
+      # Capability-restricted MinIO user (#45 / ADR-0022). Provisioned by
+      # `docker/init-storage.sh` with a bucket-scoped policy that allows
+      # write/read/list/hide but NOT `s3:DeleteObjectVersion` — mirroring
+      # the prod B2 app key (writeFiles, readFiles, listFiles only). The
+      # boot-time capability self-test in src/server/storage/safety.ts
+      # asserts the running credential lacks destroy capability, so the
+      # app MUST run as this user, not as `MINIO_ROOT_USER`. `:?`-gated
+      # so a missing value fails the deploy at compose-parse time.
+      STORAGE_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?MINIO_APP_ACCESS_KEY must be set}
+      STORAGE_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?MINIO_APP_SECRET_KEY must be set}
       NODE_ENV: production
       PORT: '3000'
       SEED: ${SEED:-false}
@@ -200,7 +212,20 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      STORAGE_BUCKET: projekt-manager
+      # Capability-restricted app user the init script provisions
+      # (#45 / ADR-0022). Forwarded as required (no `:-` default) so a
+      # missing value fails compose parse rather than producing an empty
+      # username/password in the `mc admin user add` call.
+      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?MINIO_APP_ACCESS_KEY must be set}
+      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?MINIO_APP_SECRET_KEY must be set}
+      # Must match the app service's STORAGE_BUCKET above — see comment
+      # there.
+      STORAGE_BUCKET: ${STORAGE_BUCKET:-projekt-manager}
+      # ADR-0022 / docs/ops/object-storage-provisioning.md — R and L
+      # dials. Forwarded with defaults so unset vars don't collapse to
+      # empty strings (mc rejects "0d").
+      STORAGE_OBJECT_LOCK_DAYS: ${STORAGE_OBJECT_LOCK_DAYS:-1}
+      STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS: ${STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS:-2}
     restart: 'no'
 
   backup:

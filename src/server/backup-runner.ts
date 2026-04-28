@@ -193,10 +193,10 @@ async function drillSubcommand(env: Env): Promise<number> {
     );
     return 1;
   } catch (err) {
-    // H3 audit finding: `age -d` today does not echo the identity path,
-    // but a future age release might. Scrub credential-shaped strings
-    // (via sanitizeErrorMessage) AND any literal substring matching
-    // the tmpfs identity prefix before logging. Defense in depth.
+    // `age -d` today does not echo the identity path, but a future
+    // age release might. Scrub credential-shaped strings (via
+    // sanitizeErrorMessage) AND any literal substring matching the
+    // tmpfs identity prefix before logging. Defense in depth.
     const raw = errorMessage(err);
     const scrubbed = sanitizeErrorMessage(raw).replace(
       /\/run\/drill-key\/[^\s"'`]*/g,

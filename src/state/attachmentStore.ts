@@ -28,6 +28,20 @@ import { runImagePipeline, exceedsRawCap, type ProcessedUpload } from '@/domain/
 import { handleSessionExpired } from './sessionExpired';
 import { useToastStore } from './toastStore';
 
+/**
+ * Outcome of a Papierkorb fetch.
+ *
+ * Discriminated union so the component can render four distinct surfaces
+ * without inferring intent from a shared error string. `forbidden` is
+ * surfaced separately from `error` because the user copy differs ("Sie
+ * haben keinen Zugriff" vs "Erneut versuchen") and the retry affordance
+ * makes no sense for a permission denial.
+ */
+export type TrashFetchOutcome =
+  | { kind: 'ok' }
+  | { kind: 'forbidden' }
+  | { kind: 'error'; message: string };
+
 export interface PendingUpload {
   clientId: string;
   projectId: string;
@@ -42,10 +56,41 @@ export interface PendingUpload {
 
 interface AttachmentState {
   byProject: Record<string, Attachment[]>;
+  /**
+   * Hidden (Papierkorb) rows per project, fetched lazily on tab open.
+   * Separate map from `byProject` so the live gallery / binary list never
+   * accidentally read trash entries. Owner / office only — workers
+   * trigger 403 on the GET /trash endpoint and never fill this map.
+   */
+  hiddenByProject: Record<string, Attachment[]>;
   pendingUploads: Record<string, PendingUpload>;
   error: string | null;
 
   fetchForProject: (projectId: string) => Promise<void>;
+  /**
+   * Fetch the project's Papierkorb.
+   *
+   * Returns a discriminated outcome so the UI can render distinct
+   * loading / error / forbidden / empty surfaces. The previous
+   * void-returning shape forced the component to read the shared
+   * `state.error` field which any other action could overwrite, and
+   * left the "fetch in progress vs. fetch errored" cases visually
+   * indistinguishable.
+   *
+   * 403 leaves `hiddenByProject` untouched; the tab is permission-gated
+   * upstream, so this branch is defense-in-depth for direct API calls
+   * from an unprivileged caller.
+   */
+  fetchTrashForProject: (projectId: string) => Promise<TrashFetchOutcome>;
+  /**
+   * Restore a hidden attachment. Optimistic — the row leaves
+   * `hiddenByProject` and joins `byProject` immediately; rollback on
+   * failure restores the maps to their prior state and surfaces a
+   * German error toast. The session-expired branch rolls the maps back
+   * before the central handler bounces to the login page so the user
+   * does not return to a half-applied UI.
+   */
+  restoreAttachment: (projectId: string, attachmentId: string) => Promise<void>;
   uploadFile: (
     projectId: string,
     file: File,
@@ -77,7 +122,7 @@ interface AttachmentState {
   cancelUpload: (clientId: string) => void;
   /** Cancel every in-flight upload for `projectId`. */
   cancelUploadsForProject: (projectId: string) => void;
-  deleteAttachment: (projectId: string, attachmentId: string) => Promise<void>;
+  hideAttachment: (projectId: string, attachmentId: string) => Promise<void>;
   requestDownloadUrl: (
     projectId: string,
     attachmentId: string,
@@ -446,6 +491,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
   return {
     byProject: {},
+    hiddenByProject: {},
     pendingUploads: {},
     error: null,
 
@@ -467,6 +513,104 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       }
       set((s) => ({
         byProject: { ...s.byProject, [projectId]: result.data.data },
+        error: null,
+      }));
+    },
+
+    fetchTrashForProject: async (projectId: string) => {
+      let result;
+      try {
+        result = await attachmentApi.listTrash(projectId);
+      } catch {
+        set({ error: STRINGS.errors.mutationFailed });
+        return { kind: 'error', message: STRINGS.errors.mutationFailed };
+      }
+      if (!result.ok) {
+        if (result.sessionExpired) {
+          handleSessionExpired();
+          return { kind: 'error', message: STRINGS.auth.sessionExpiredLogin };
+        }
+        // 403 (caller lacks attachment:trash) leaves the map untouched —
+        // the UI gates the tab on permission anyway, so this branch only
+        // fires on a direct API call by an unprivileged caller.
+        if (result.category === 'authorization') {
+          set({ error: result.error.message || STRINGS.auth.notPermitted });
+          return { kind: 'forbidden' };
+        }
+        const message = result.error.message || STRINGS.errors.mutationFailed;
+        set({ error: message });
+        return { kind: 'error', message };
+      }
+      set((s) => ({
+        hiddenByProject: { ...s.hiddenByProject, [projectId]: result.data.data },
+        error: null,
+      }));
+      return { kind: 'ok' };
+    },
+
+    restoreAttachment: async (projectId, attachmentId) => {
+      // Optimistic move: row leaves Papierkorb and joins the live list.
+      // Rollback both maps on failure.
+      const beforeHidden = get().hiddenByProject[projectId];
+      const beforeLive = get().byProject[projectId];
+      const target = (beforeHidden ?? []).find((a) => a.id === attachmentId);
+      if (!target) return;
+      const optimistic: Attachment = { ...target, status: 'ready', hiddenAt: null };
+      set((s) => ({
+        hiddenByProject: {
+          ...s.hiddenByProject,
+          [projectId]: (s.hiddenByProject[projectId] ?? []).filter((a) => a.id !== attachmentId),
+        },
+        byProject: {
+          ...s.byProject,
+          [projectId]: [optimistic, ...(s.byProject[projectId] ?? [])],
+        },
+      }));
+
+      // Roll back both maps and surface the toast on a terminal failure.
+      // Centralised here so the network-error, server-error, and
+      // session-expired branches share the same recovery — the previous
+      // session-expired branch bounced to login WITHOUT rolling back the
+      // optimistic move, leaving an inconsistent UI behind.
+      const rollback = (message: string | null): void => {
+        set((s) => ({
+          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
+          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
+          error: message,
+        }));
+        if (message) useToastStore.getState().show('error', message);
+      };
+
+      let result;
+      try {
+        result = await attachmentApi.restore(projectId, attachmentId);
+      } catch {
+        rollback(STRINGS.attachments.restoreFailed);
+        return;
+      }
+      if (!result.ok) {
+        if (result.sessionExpired) {
+          // Roll the optimistic move back BEFORE the central handler
+          // navigates away. Suppress the toast — the login redirect is
+          // the user-facing signal here, a duplicate error toast would
+          // be noise.
+          rollback(null);
+          handleSessionExpired();
+          return;
+        }
+        rollback(result.error.message || STRINGS.attachments.restoreFailed);
+        return;
+      }
+      // Server response carries the authoritative row (with new
+      // version-ids). Replace the optimistic placeholder.
+      const restored = result.data;
+      set((s) => ({
+        byProject: {
+          ...s.byProject,
+          [projectId]: (s.byProject[projectId] ?? []).map((a) =>
+            a.id === attachmentId ? restored : a,
+          ),
+        },
         error: null,
       }));
     },
@@ -543,8 +687,13 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       });
     },
 
-    deleteAttachment: async (projectId, attachmentId) => {
-      // Optimistic removal — roll back on failure.
+    hideAttachment: async (projectId, attachmentId) => {
+      // Optimistic removal — roll back on every terminal failure.
+      // Centralised so the network-error, server-error, and
+      // session-expired branches share the same recovery — the
+      // session-expired branch previously bounced to login WITHOUT
+      // rolling back the optimistic removal, leaving an inconsistent
+      // UI behind on return. Same shape as `restoreAttachment` below.
       const before = get().byProject[projectId];
       set((s) => ({
         byProject: {
@@ -553,27 +702,37 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         },
       }));
 
+      const rollback = (message: string | null): void => {
+        set((s) => ({
+          byProject: { ...s.byProject, [projectId]: before ?? [] },
+          error: message,
+        }));
+      };
+
       let result;
       try {
         result = await attachmentApi.delete(projectId, attachmentId);
       } catch {
-        set((s) => ({
-          byProject: { ...s.byProject, [projectId]: before ?? [] },
-          error: STRINGS.errors.mutationFailed,
-        }));
+        rollback(STRINGS.errors.mutationFailed);
         return;
       }
       if (!result.ok) {
         if (result.sessionExpired) {
+          // Roll the optimistic removal back BEFORE the central handler
+          // navigates away. Suppress the error string — the login
+          // redirect is the user-facing signal here, an additional
+          // banner would be noise on the way out.
+          rollback(null);
           handleSessionExpired();
           return;
         }
-        set((s) => ({
-          byProject: { ...s.byProject, [projectId]: before ?? [] },
-          error: result.error.message || STRINGS.errors.mutationFailed,
-        }));
+        rollback(result.error.message || STRINGS.errors.mutationFailed);
         return;
       }
+      // Clear any prior error banner — same shape as fetchForProject
+      // and restoreAttachment, so a stale message from an earlier
+      // mutation does not linger after a successful hide.
+      set({ error: null });
     },
 
     requestDownloadUrl: async (projectId, attachmentId, variant) => {

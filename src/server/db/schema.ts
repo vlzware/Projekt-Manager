@@ -424,6 +424,28 @@ export const attachments = pgTable(
     originalKey: text('original_key').notNull(),
     thumbKey: text('thumb_key'),
     hasThumbnail: boolean('has_thumbnail').notNull().default(false),
+    /**
+     * S3 VersionId of the current original-key version, captured at
+     * complete-time from the bucket's HEAD response. Persisted so the
+     * Papierkorb restore flow can `copyFromVersion(originalKey, versionId)`
+     * after a hide. Null while status='pending' (no upload yet).
+     * ADR-0022.
+     */
+    versionId: text('version_id'),
+    /**
+     * S3 VersionId of the current thumb-key version. Set in tandem with
+     * `versionId` for photos where `hasThumbnail=true`; null for binaries
+     * (no thumb) and for pending rows. Restore replays both copies so the
+     * gallery preview returns intact.
+     */
+    thumbVersionId: text('thumb_version_id'),
+    /**
+     * Set when the attachment is moved to the Papierkorb (status =
+     * 'hidden'). Null while live or pending. Bucket lifecycle reaps the
+     * underlying noncurrent versions after L days from this timestamp;
+     * the row itself persists so restore is auditable.
+     */
+    hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
   },
@@ -431,7 +453,7 @@ export const attachments = pgTable(
     index('attachments_project_id_idx').on(table.projectId),
     index('attachments_created_by_idx').on(table.createdBy),
     uniqueIndex('attachments_original_key_uq').on(table.originalKey),
-    check('attachments_valid_status', sql`${table.status} IN ('pending', 'ready')`),
+    check('attachments_valid_status', sql`${table.status} IN ('pending', 'ready', 'hidden')`),
     check('attachments_valid_kind', sql`${table.kind} IN ('photo', 'binary')`),
     check(
       'attachments_valid_label',

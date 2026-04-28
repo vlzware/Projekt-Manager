@@ -465,6 +465,20 @@ export const STRINGS = {
     upload: 'Hochladen',
     activity: 'Aktivität',
 
+    // Tabs (ADR-0022 — Papierkorb)
+    tabAttachments: 'Anhänge',
+    tabPapierkorb: 'Papierkorb',
+    tabPapierkorbWithCount: (n: number) => `Papierkorb (${n})`,
+
+    // Papierkorb listing
+    papierkorbHeading: 'Papierkorb',
+    papierkorbEmpty: 'Keine gelöschten Dateien.',
+    restore: 'Wiederherstellen',
+    restoreFailed: 'Wiederherstellen fehlgeschlagen.',
+    /** Relative-time label on a hidden item — uses Intl.RelativeTimeFormat
+     *  for stable German output ("vor 3 Tagen", "vor 5 Stunden"). */
+    hiddenAtLabel: (relative: string) => `${relative} gelöscht`,
+
     // Worker editor
     addWorker: 'Mitarbeiter hinzufügen',
     removeWorker: 'Entfernen',
@@ -509,9 +523,27 @@ export const STRINGS = {
     // Missing-file placeholder (AC-224)
     fileMissing: 'Datei fehlt',
 
-    // Deletion
+    // Deletion (soft-hide → Papierkorb, ADR-0022)
     deleteConfirmTitle: 'Datei löschen?',
-    deleteConfirmMessage: 'Diese Aktion kann nicht rückgängig gemacht werden.',
+    deleteConfirmMessage:
+      'Die Datei wird in den Papierkorb verschoben. Sie kann innerhalb der Aufbewahrungsfrist wiederhergestellt werden; danach wird sie endgültig gelöscht und ist nicht mehr wiederherstellbar.',
+
+    /**
+     * Restore-side data-integrity surfaces. A row in 'hidden' state
+     * with a missing `version_id` (or, for photos with a thumb, a
+     * missing `thumb_version_id`) cannot be restored — there is no
+     * source version to copy from. Each branch names the affected
+     * row id so an operator triaging the activity feed sees the cause
+     * without spelunking the DB.
+     *
+     * Distinct from a CAS-loss (transient race, retry resolves it) and
+     * from a missing/wrong-project row (404). These are 422 — the
+     * request is structurally unprocessable.
+     */
+    restoreMissingVersionId: (id: string) =>
+      `Wiederherstellen nicht möglich: Anhang ${id} hat keine version_id (Datenintegritätsproblem).`,
+    restoreMissingThumbVersionId: (id: string) =>
+      `Wiederherstellen nicht möglich: Anhang ${id} hat keine thumb_version_id (Datenintegritätsproblem).`,
 
     // Download actions
     download: 'Herunterladen',
@@ -539,6 +571,8 @@ export const STRINGS = {
     colLabel: 'Beschriftung',
     colUploader: 'Hochgeladen von',
     colUploaded: 'Hochgeladen am',
+    /** Papierkorb-only column: timestamp the row was hidden (not uploaded). */
+    colHidden: 'Gelöscht am',
   },
 
   backup: {

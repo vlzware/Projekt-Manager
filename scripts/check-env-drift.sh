@@ -269,8 +269,8 @@ PORT                  # compose hardcodes "3000"; not an operator-tunable surfac
 STORAGE_ENDPOINT      # compose hardcodes the Docker-internal hostname http://storage:9000
 STORAGE_PUBLIC_ENDPOINT # compose builds from DOMAIN as https://storage.${DOMAIN}
 STORAGE_BUCKET        # compose hardcodes "projekt-manager"
-STORAGE_ACCESS_KEY    # compose interpolates from MINIO_ROOT_USER (documented in .env.production.example)
-STORAGE_SECRET_KEY    # compose interpolates from MINIO_ROOT_PASSWORD (documented in secrets.manifest.txt)
+STORAGE_ACCESS_KEY    # compose interpolates from MINIO_APP_ACCESS_KEY (documented in .env.production.example)
+STORAGE_SECRET_KEY    # compose interpolates from MINIO_APP_SECRET_KEY (documented in secrets.manifest.txt)
 EOF
 )
 
@@ -280,8 +280,10 @@ EOF
 # downstream value compose builds (e.g. DATABASE_URL).
 DOC_SCHEMA_EXCLUDE=$(cat <<'EOF'
 POSTGRES_PASSWORD     # compose interpolation source for DATABASE_URL; app sees the URL, not the password
-MINIO_ROOT_USER       # compose interpolation source for STORAGE_ACCESS_KEY
-MINIO_ROOT_PASSWORD   # compose interpolation source for STORAGE_SECRET_KEY
+MINIO_ROOT_USER       # provisions the MinIO process and the app user; never used by the app at runtime
+MINIO_ROOT_PASSWORD   # provisions the MinIO process and the app user; never used by the app at runtime
+MINIO_APP_ACCESS_KEY  # compose interpolation source for STORAGE_ACCESS_KEY
+MINIO_APP_SECRET_KEY  # compose interpolation source for STORAGE_SECRET_KEY
 CLOUDFLARE_API_TOKEN  # consumed only by the caddy service for ACME-DNS-01; no app-schema footprint
 WG_BIND_IP            # consumed only by the caddy service's port binding (${WG_BIND_IP:-127.0.0.1})
 EOF

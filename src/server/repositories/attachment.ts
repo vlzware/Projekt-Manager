@@ -126,21 +126,32 @@ export async function createPending(
 }
 
 /**
- * Flip `pending` → `ready` conditionally. Returns the updated row when
- * the status transition was applied; returns null when the row is gone
- * OR already at `ready` — the service layer distinguishes those cases
- * via a follow-up read (404 vs 409 per AC-212).
+ * Flip `pending` → `ready` conditionally and persist the per-version-id
+ * pair captured at HEAD-verify time (ADR-0022). Returns the updated row
+ * when the status transition was applied; returns null when the row is
+ * gone OR already at `ready` — the service layer distinguishes those
+ * cases via a follow-up read (404 vs 409 per AC-212).
  *
  * The WHERE predicate on `status = 'pending'` is the atomic guard that
  * turns the two-call flow (read → write) into a single CAS.
+ *
+ * `thumbVersionId` is set in tandem with `versionId` for photos
+ * (`hasThumbnail=true`); for binaries it is null, mirroring `thumbKey`.
+ * Both are captured from the bucket's HEAD response — the version that
+ * is current immediately post-upload is what restore must recreate.
  */
 export async function markReady(
   db: MutatingDatabase,
   id: string,
+  versions: { versionId: string | null; thumbVersionId: string | null },
 ): Promise<AttachmentRowWithUploader | null> {
   const rows = await db
     .update(attachments)
-    .set({ status: 'ready' })
+    .set({
+      status: 'ready',
+      versionId: versions.versionId,
+      thumbVersionId: versions.thumbVersionId,
+    })
     .where(and(eq(attachments.id, id), eq(attachments.status, 'pending')))
     .returning();
   if (!rows[0]) return null;
@@ -152,10 +163,114 @@ export async function markReady(
 /**
  * Hard-delete by id. Returns the deleted row (for audit-payload capture)
  * or null when the row did not exist.
+ *
+ * Used by the orphan reaper (pending rows that never reached the audit
+ * chain) and by the project-delete cascade (the project row's audit
+ * carries the destruction; per-attachment audit rows would duplicate
+ * that). User-initiated removals go through `markHidden` instead —
+ * those are reversible and need their own audit row.
  */
 export async function deleteById(db: MutatingDatabase, id: string): Promise<AttachmentRow | null> {
   const rows = await db.delete(attachments).where(eq(attachments.id, id)).returning();
   return rows[0] ?? null;
+}
+
+/**
+ * Flip `ready` → `hidden`, stamp `hidden_at = now()`. Returns the updated
+ * row when the transition was applied; null when the row is gone or
+ * already in another state. Atomic CAS via the WHERE on `status='ready'`.
+ *
+ * Pending rows can never reach hidden — they are reaped by the orphan
+ * reaper (their backing upload never completed; there is nothing to
+ * restore). Hidden rows are idempotent at the API level — a second
+ * DELETE returns 409 because this returns null.
+ */
+export async function markHidden(
+  db: MutatingDatabase,
+  id: string,
+): Promise<AttachmentRowWithUploader | null> {
+  const rows = await db
+    .update(attachments)
+    .set({ status: 'hidden', hiddenAt: new Date() })
+    .where(and(eq(attachments.id, id), eq(attachments.status, 'ready')))
+    .returning();
+  if (!rows[0]) return null;
+  return getById(db, id);
+}
+
+/**
+ * Flip `hidden` → `ready` and clear `hidden_at`. Atomic CAS on
+ * `status='hidden'` — the WHERE predicate turns the read+write into a
+ * single conditional update. Returns the updated row when the
+ * transition was applied; null on CAS-loss (the row was not in
+ * `hidden` at the moment of the UPDATE).
+ *
+ * The version_id pair is intentionally NOT touched here. Restore is a
+ * two-phase operation: this CAS locks the row first, then the service
+ * issues `copyFromVersion` (storage round-trip), then writes the
+ * fresh version-ids via `setVersionIds`. Splitting the writes lets a
+ * storage failure roll back the status flip via the surrounding
+ * transaction without producing orphan storage versions.
+ */
+export async function markRestored(
+  db: MutatingDatabase,
+  id: string,
+): Promise<AttachmentRowWithUploader | null> {
+  const rows = await db
+    .update(attachments)
+    .set({ status: 'ready', hiddenAt: null })
+    .where(and(eq(attachments.id, id), eq(attachments.status, 'hidden')))
+    .returning();
+  if (!rows[0]) return null;
+  return getById(db, id);
+}
+
+/**
+ * Overwrite the `version_id` / `thumb_version_id` pair on a row that
+ * the caller already holds a row-level lock on (typically via a prior
+ * CAS in the same transaction). No status predicate — this is the
+ * second phase of the restore flow where the surrounding transaction's
+ * lock guarantees no concurrent writer is racing the same row.
+ *
+ * Returns the updated row (with uploader display name re-fetched) or
+ * null when the id does not exist.
+ */
+export async function setVersionIds(
+  db: MutatingDatabase,
+  id: string,
+  versions: { versionId: string | null; thumbVersionId: string | null },
+): Promise<AttachmentRowWithUploader | null> {
+  const rows = await db
+    .update(attachments)
+    .set({ versionId: versions.versionId, thumbVersionId: versions.thumbVersionId })
+    .where(eq(attachments.id, id))
+    .returning();
+  if (!rows[0]) return null;
+  return getById(db, id);
+}
+
+/**
+ * List rows in the project's Papierkorb — `status='hidden'`, ordered by
+ * `hiddenAt` desc so the most-recent removals surface first. Same scope
+ * predicate as the live list (worker visibility narrowing) so the type
+ * shape is consistent; the calling service layer enforces "owner / office
+ * only" via `attachment:trash` permission, so workers never reach this.
+ */
+export async function listHiddenByProject(
+  db: Database,
+  projectId: string,
+  caller: AuthUser,
+): Promise<AttachmentRowWithUploader[]> {
+  const scope = attachmentScopeForCaller(caller);
+  const conditions = [eq(attachments.projectId, projectId), eq(attachments.status, 'hidden')];
+  if (scope) conditions.push(scope);
+  const rows = await db
+    .select({ attachments, users: { displayName: users.displayName } })
+    .from(attachments)
+    .leftJoin(users, eq(attachments.createdBy, users.id))
+    .where(and(...conditions))
+    .orderBy(desc(attachments.hiddenAt), desc(attachments.id));
+  return rows.map(flattenWithUploader);
 }
 
 /**

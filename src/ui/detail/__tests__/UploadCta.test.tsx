@@ -71,6 +71,7 @@ function makeAttachment(): Attachment {
     originalKey: 'proj/p-42/att-new/o.jpg',
     thumbKey: 'proj/p-42/att-new/thumb.webp',
     hasThumbnail: true,
+    hiddenAt: null,
     createdAt: '2026-04-20T10:00:00Z',
     createdBy: { id: 'u-1', displayName: 'Test User' },
   };

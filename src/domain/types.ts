@@ -109,7 +109,7 @@ export type ViewMode =
   | 'benachrichtigungen'
   | 'projektDetail';
 
-export type AttachmentStatus = 'pending' | 'ready';
+export type AttachmentStatus = 'pending' | 'ready' | 'hidden';
 
 export type AttachmentKind = 'photo' | 'binary';
 
@@ -133,6 +133,9 @@ export interface Attachment {
   originalKey: string;
   thumbKey: string | null;
   hasThumbnail: boolean;
+  /** ISO 8601 — set iff status='hidden'; null otherwise. Drives the
+   *  Papierkorb's "vor X Tagen gelöscht" label. */
+  hiddenAt: string | null;
   createdAt: string;
   createdBy: { id: string; displayName: string } | null;
 }

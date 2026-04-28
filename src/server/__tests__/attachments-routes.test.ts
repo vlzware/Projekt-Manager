@@ -29,7 +29,11 @@ import { startApp, stopApp, login, authGet, authPost, authDelete } from '../../t
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import { createStorageClient } from '../storage/client.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
+import { AttachmentService } from '../services/AttachmentService.js';
+import type { AuthUser } from '../middleware/auth.js';
 import { getEnv } from '../config/env.js';
+import type { Attachment } from '../../domain/types.js';
 
 const year = new Date().getFullYear();
 
@@ -293,6 +297,26 @@ describe('Attachment routes — integration (issue #108)', () => {
       const body = res.json();
       expect(body.id).toBe(attId);
       expect(body.status).toBe('ready');
+    });
+
+    it('persists original + thumb version-ids on complete (ADR-0022)', async () => {
+      // The bucket is versioned; every PUT (browser or test setup) yields
+      // a fresh VersionId in the HEAD response. complete() captures both
+      // ids and writes them to attachments.version_id / thumb_version_id
+      // — the row is the sole source of truth for the future restore
+      // copyFromVersion call. Pending → null; ready (with thumb) → both
+      // non-null, well-formed (non-empty strings).
+      const attId = await seedPendingWithBackingBytes();
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/complete`,
+      );
+      expect(res.statusCode).toBe(200);
+
+      const versions = await fetchAttachmentVersions(attId);
+      expect(versions).not.toBeNull();
+      expect(versions?.versionId).toMatch(/.+/);
+      expect(versions?.thumbVersionId).toMatch(/.+/);
     });
 
     it('returns 409 CONFLICT and leaves the row pending when the original object is missing', async () => {
@@ -694,6 +718,469 @@ describe('Attachment routes — integration (issue #108)', () => {
   });
 
   // -------------------------------------------------------------------
+  // Papierkorb — soft-hide round-trip (ADR-0022).
+  //
+  // Verifies the full hide→trash→restore cycle exercises the new wire:
+  // delete writes status='hidden' + hiddenAt; the trash listing surfaces
+  // it; restore returns it to ready with freshly-issued version-ids.
+  // Permission gate (`attachment:trash`) keeps workers off the trash
+  // surface entirely.
+  // -------------------------------------------------------------------
+  describe('Papierkorb — soft-hide round-trip', () => {
+    async function seedReadyAttachment(): Promise<string> {
+      const initRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        photoInit(projectId),
+      );
+      expect(initRes.statusCode).toBe(201);
+      const body = initRes.json();
+      const s = storage();
+      const payload = Buffer.alloc(120_000, 0xff);
+      await s.upload(body.attachment.originalKey, payload, 'image/jpeg');
+      await s.upload(body.attachment.thumbKey, Buffer.from('webp-thumb'), 'image/webp');
+      const completeRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${body.attachment.id}/complete`,
+      );
+      expect(completeRes.statusCode).toBe(200);
+      return body.attachment.id;
+    }
+
+    it('hide → trash → restore round-trip: status flips, version-ids re-issued', async () => {
+      const attId = await seedReadyAttachment();
+      const beforeVersions = await fetchAttachmentVersions(attId);
+      expect(beforeVersions?.versionId).toMatch(/.+/);
+
+      // Hide.
+      const hideRes = await authDelete(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}`,
+      );
+      expect(hideRes.statusCode).toBe(204);
+
+      const hiddenStatus = await fetchAttachmentStatus(attId);
+      expect(hiddenStatus).toBe('hidden');
+
+      // Trash listing contains the row, with hiddenAt populated.
+      const trashRes = await authGet(ownerToken, `/api/projects/${projectId}/attachments/trash`);
+      expect(trashRes.statusCode).toBe(200);
+      const trashBody = trashRes.json() as { data: Attachment[] };
+      const found = trashBody.data.find((it) => it.id === attId);
+      expect(found).toBeDefined();
+      expect(found!.status).toBe('hidden');
+      expect(found!.hiddenAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+      // Live list excludes it.
+      const listRes = await authGet(ownerToken, `/api/projects/${projectId}/attachments`);
+      expect(listRes.statusCode).toBe(200);
+      const listBody = listRes.json() as { data: Attachment[] };
+      expect(listBody.data.some((it) => it.id === attId)).toBe(false);
+
+      // Restore.
+      const restoreRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(restoreRes.statusCode).toBe(200);
+      const restored = restoreRes.json() as Attachment;
+      expect(restored.status).toBe('ready');
+      expect(restored.hiddenAt).toBeNull();
+
+      // Fresh version-ids — copyFromVersion produced new current versions.
+      const afterVersions = await fetchAttachmentVersions(attId);
+      expect(afterVersions?.versionId).toMatch(/.+/);
+      // The new ones may equal the old ones only if the bucket is
+      // unversioned (test mis-config); on a versioned bucket every PUT
+      // produces a fresh id, including the server-side copy.
+      expect(afterVersions?.versionId).not.toBe(beforeVersions?.versionId);
+
+      // Trash listing no longer carries it.
+      const trashAfter = await authGet(ownerToken, `/api/projects/${projectId}/attachments/trash`);
+      expect((trashAfter.json() as { data: Attachment[] }).data.some((it) => it.id === attId)).toBe(
+        false,
+      );
+    });
+
+    it('restore on a ready row returns 409 CONFLICT (idempotent guard)', async () => {
+      const attId = await seedReadyAttachment();
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('CONFLICT');
+    });
+
+    // -----------------------------------------------------------------
+    // CAS-loss atomicity. Two concurrent restores on the same hidden
+    // row: one must succeed (200, 'ready'), one must lose
+    // the CAS (409). After the dust settles, the row's persisted
+    // version_id MUST equal storage's actual current version — i.e. the
+    // failed restore must NOT have produced an orphan current version.
+    //
+    // This pins the atomicity invariant: storage advances ONLY when the
+    // DB CAS commits. A regression that runs copyFromVersion before the
+    // CAS would leave the bucket's current version pointing at the
+    // loser's copy while the DB version_id reflects the winner's — a
+    // silent storage/DB drift that tests on the happy path can't catch.
+    // -----------------------------------------------------------------
+    it('two concurrent restores: one wins, one loses CAS, storage and DB stay consistent', async () => {
+      const attId = await seedReadyAttachment();
+
+      // Hide the row first so both concurrent calls hit the restore path.
+      const hideRes = await authDelete(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}`,
+      );
+      expect(hideRes.statusCode).toBe(204);
+
+      // Read the keys so we can probe storage afterward.
+      const keys = await fetchAttachmentKeys(attId);
+      expect(keys).not.toBeNull();
+
+      // Fire both restores in parallel. Postgres will serialize the
+      // CAS UPDATEs at the row-level lock acquired by the first to
+      // reach `markRestored`; the second blocks, then finds status
+      // already flipped to 'ready' and returns null (CAS-loss).
+      const [r1, r2] = await Promise.all([
+        authPost(ownerToken, `/api/projects/${projectId}/attachments/${attId}/restore`),
+        authPost(ownerToken, `/api/projects/${projectId}/attachments/${attId}/restore`),
+      ]);
+      const codes = [r1.statusCode, r2.statusCode].sort();
+      expect(codes).toEqual([200, 409]);
+
+      // Storage's actual current version of the original key —
+      // determined by HEAD, which reports the bucket's current
+      // VersionId. With the atomicity fix, exactly one copyFromVersion
+      // ran (the winner's), so this version_id is the winner's.
+      const s = storage();
+      const head = await s.headObject(keys!.originalKey);
+
+      // The DB's persisted version_id must match storage. Mismatch ⇒
+      // an orphan current version exists from the failed restore =>
+      // C-DATA invariant violated.
+      const dbVersions = await fetchAttachmentVersions(attId);
+      expect(dbVersions?.versionId).toBe(head.versionId);
+    });
+
+    it('worker is rejected from the trash listing with 403 NOT_PERMITTED', async () => {
+      const res = await authGet(workerToken, `/api/projects/${projectId}/attachments/trash`);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    it('worker is rejected from restore with 403 NOT_PERMITTED', async () => {
+      const attId = await seedReadyAttachment();
+      const res = await authPost(
+        workerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(res.statusCode).toBe(403);
+      expect(res.json().code).toBe('NOT_PERMITTED');
+    });
+
+    // -----------------------------------------------------------------
+    // Restore — error-semantic distinctions.
+    //
+    // 422 (data integrity, structurally unrestorable) vs 409 (transient
+    // race, retry resolves) carries operator meaning: an operator
+    // fielding 422 inspects the row; an operator fielding 409 retries.
+    // Reusing 409 for both buries the integrity case under the noise
+    // of routine race conflicts.
+    // -----------------------------------------------------------------
+    it('returns 422 VALIDATION_ERROR when a hidden row has no version_id (data integrity)', async () => {
+      // Seed a hidden row directly with version_id=NULL — simulates a
+      // legacy hide before version capture, or any future regression
+      // that drops the version capture. Restore must surface this as
+      // 422, not 409: 409 says "retry" and the row will not become
+      // restorable on retry.
+      const attId = await seedHiddenAttachment(projectId, {
+        versionId: null,
+        thumbVersionId: null,
+        hasThumbnail: false,
+      });
+
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+      // The operator-visible message names the row id so the activity
+      // feed entry is actionable without spelunking the DB.
+      expect(res.json().message).toContain(attId);
+    });
+
+    it('returns 422 VALIDATION_ERROR when hasThumbnail=true and thumb_version_id is null', async () => {
+      // Seed a hidden photo row with version_id set but
+      // thumb_version_id null. Without the integrity check, the service
+      // would silently restore only the original and the gallery
+      // preview would be permanently lost.
+      const attId = await seedHiddenAttachment(projectId, {
+        versionId: 'fake-original-version-id',
+        thumbVersionId: null,
+        hasThumbnail: true,
+      });
+
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/restore`,
+      );
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+      // Distinct message from the original-side branch — names the
+      // affected row id and identifies the missing field.
+      const body = res.json();
+      expect(body.message).toContain(attId);
+      expect(body.message).toContain('thumb_version_id');
+    });
+
+    // -----------------------------------------------------------------
+    // Restore on archived projects.
+    //
+    // Asymmetry by design: hide on archived stays forbidden (read-only
+    // preview), restore on archived is permitted. Without the latter,
+    // binaries in an archived project's trash would silently reap after
+    // L days with no recovery path; archive is a reversible state,
+    // destruction by lifecycle is not.
+    //
+    // Three arms:
+    //   1. Restore against an archived project succeeds.
+    //   2. Hide against an archived project still rejects (regression
+    //      guard for the archive read-only invariant).
+    //   3. The Papierkorb listing is callable on an archived project so
+    //      the user can SEE what's recoverable.
+    // -----------------------------------------------------------------
+    it('restore on an archived project succeeds (hide is irreversible by lifecycle)', async () => {
+      // Seed: ready attachment → hide → archive the project. Restore
+      // must still succeed; without it, lifecycle would silently reap.
+      const attId = await seedReadyAttachment();
+      const hideRes = await authDelete(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}`,
+      );
+      expect(hideRes.statusCode).toBe(204);
+
+      // Archive on a fresh project so we don't poison the shared one.
+      // Move the (already-hidden) attachment over by re-uploading on a
+      // new project, then archiving — simpler to spin a fresh one with
+      // its own hidden row.
+      const customersRes = await authGet(ownerToken, '/api/customers');
+      const customers = customersRes.json().customers ?? customersRes.json().data;
+      const customerId = customers[0].id;
+      const createRes = await authPost(ownerToken, '/api/projects', {
+        number: `${year}-REST-ARCH`,
+        title: 'Restore-on-archived',
+        customerId,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const archProjectId = createRes.json().id;
+
+      // Seed a hidden row directly on the soon-to-be-archived project
+      // so we don't depend on the upload pipeline's archive race.
+      // version_id matches a real storage version we put in the bucket.
+      const archAttId = crypto.randomUUID();
+      const originalKey = `attachments/${archProjectId}/${archAttId}.orig`;
+      const s = storage();
+      const putRes = await s.upload(originalKey, Buffer.from('arch-bytes'), 'application/pdf');
+      expect(putRes).toBeDefined();
+      // Read back the version-id of what we just put — this becomes the
+      // source for copyFromVersion.
+      const head = await s.headObject(originalKey);
+      expect(head.versionId).toBeDefined();
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             version_id, thumb_version_id, hidden_at)
+          VALUES (${archAttId}, ${archProjectId}, 'hidden', 'binary', 'sonstiges',
+                  'arch-doc.pdf', 'application/pdf', 10,
+                  ${originalKey}, NULL, FALSE,
+                  ${head.versionId!}, NULL, NOW())
+        `);
+      } finally {
+        await pool.end();
+      }
+
+      // Archive the project.
+      const archiveRes = await authDelete(ownerToken, `/api/projects/${archProjectId}`);
+      expect(archiveRes.statusCode).toBe(200);
+
+      // Restore must succeed despite archival — that's the whole point.
+      const restoreRes = await authPost(
+        ownerToken,
+        `/api/projects/${archProjectId}/attachments/${archAttId}/restore`,
+      );
+      expect(restoreRes.statusCode).toBe(200);
+      const restored = restoreRes.json() as Attachment;
+      expect(restored.status).toBe('ready');
+      expect(restored.hiddenAt).toBeNull();
+
+      // Cleanup: avoid leaving the archived project hanging — leave the
+      // shared `projectId` arm green. (The archived project itself can
+      // stay; subsequent tests don't care.)
+      void attId; // marker — unused in this arm
+    });
+
+    it('hide on an archived project is rejected (read-only preview invariant)', async () => {
+      // Regression guard for the archive read-only contract. The
+      // restore-on-archived fix must NOT have lifted the hide-side
+      // gate.
+      const customersRes = await authGet(ownerToken, '/api/customers');
+      const customers = customersRes.json().customers ?? customersRes.json().data;
+      const customerId = customers[0].id;
+      const createRes = await authPost(ownerToken, '/api/projects', {
+        number: `${year}-HIDE-ARCH`,
+        title: 'Hide-on-archived rejected',
+        customerId,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const archProjectId = createRes.json().id;
+
+      // Seed a ready row on the project, then archive.
+      const [hideAttId] = await seedReadyAttachments(archProjectId, [{ sizeBytes: 100 }]);
+      const archiveRes = await authDelete(ownerToken, `/api/projects/${archProjectId}`);
+      expect(archiveRes.statusCode).toBe(200);
+
+      // Hide must reject — the gate stays.
+      const hideRes = await authDelete(
+        ownerToken,
+        `/api/projects/${archProjectId}/attachments/${hideAttId}`,
+      );
+      expect(hideRes.statusCode).toBe(404);
+      expect(hideRes.json().code).toBe('NOT_FOUND');
+    });
+
+    it('Papierkorb listing is callable on an archived project (user must see what is recoverable)', async () => {
+      // The user must be able to inspect the archived project's trash
+      // before deciding to restore. This pairs with the restore-on-
+      // archived behaviour — listing without restore would be a
+      // useless cul-de-sac.
+      const customersRes = await authGet(ownerToken, '/api/customers');
+      const customers = customersRes.json().customers ?? customersRes.json().data;
+      const customerId = customers[0].id;
+      const createRes = await authPost(ownerToken, '/api/projects', {
+        number: `${year}-LIST-ARCH`,
+        title: 'List-archived-trash',
+        customerId,
+      });
+      expect(createRes.statusCode).toBe(201);
+      const archProjectId = createRes.json().id;
+
+      // Seed one hidden row so the listing has something visible.
+      const archAttId = await seedHiddenAttachment(archProjectId, {
+        versionId: 'fake-vid',
+        thumbVersionId: null,
+        hasThumbnail: false,
+      });
+
+      const archiveRes = await authDelete(ownerToken, `/api/projects/${archProjectId}`);
+      expect(archiveRes.statusCode).toBe(200);
+
+      const trashRes = await authGet(
+        ownerToken,
+        `/api/projects/${archProjectId}/attachments/trash`,
+      );
+      expect(trashRes.statusCode).toBe(200);
+      const body = trashRes.json() as { data: Attachment[] };
+      expect(body.data.some((it) => it.id === archAttId)).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Hide — storage-first atomicity.
+  //
+  // The atomicity contract: storage hide runs BEFORE the DB CAS. A
+  // storage failure throws, the DB row stays in `ready`, and no
+  // `attachment:hide` audit row is written. The user retries; storage
+  // hide is idempotent (S3 DeleteObject without VersionId on a
+  // versioned bucket).
+  //
+  // The earlier (broken) shape ran storage AFTER the CAS commit and
+  // swallowed errors — a storage outage left a `hidden` row whose
+  // backing object was still the bucket's CURRENT version. The
+  // bucket lifecycle reaps NONCURRENT versions only, so the file
+  // would persist indefinitely with no UI affordance to retry.
+  //
+  // This block bypasses the route layer and constructs `AttachmentService`
+  // directly so a flaky storage proxy can inject the failure.
+  // -------------------------------------------------------------------
+  describe('Hide — storage-first atomicity', () => {
+    it('storage.hide failure leaves the row in ready, writes no audit row, and surfaces the error', async () => {
+      // Seed one ready row directly. The seeded row has no real
+      // backing bytes, but the contract under test never reaches
+      // storage successfully — the proxy throws on the first call.
+      const [attId] = await seedReadyAttachments(projectId, [{ sizeBytes: 100 }]);
+
+      // Resolve the owner user id from the same DB the service will
+      // see — the service expects a real user id for the audit
+      // actor, even though no audit row should be written here.
+      const { db, pool } = createDatabase();
+      let ownerId: string;
+      try {
+        const res = await db.execute(
+          sql`SELECT id FROM users WHERE username = ${SEED_USERS.owner.username} LIMIT 1`,
+        );
+        const row = res.rows[0] as { id: string } | undefined;
+        if (!row) throw new Error('owner user missing from seed');
+        ownerId = row.id;
+      } finally {
+        await pool.end();
+      }
+
+      // Audit-row count snapshot — under the new contract a storage
+      // failure must produce no audit row at all.
+      const auditBefore = await countAuditRows();
+
+      // Build a storage proxy that throws on `hide` but delegates
+      // every other call. Mirrors the proxy pattern used in
+      // attachments-bulk-download-reaper.test.ts.
+      const realStorage = storage();
+      const flakyStorage: AttachmentStorageClient = {
+        ...realStorage,
+        hide: async () => {
+          throw new Error('simulated-storage-flake');
+        },
+      };
+
+      // Construct the service with the flaky storage; reuse the
+      // app's DB. We bypass the route layer because the live route
+      // wiring uses the real storage client.
+      const { db: serviceDb, pool: servicePool } = createDatabase();
+      try {
+        const service = new AttachmentService({ db: serviceDb, storage: flakyStorage });
+        const owner: AuthUser = {
+          id: ownerId,
+          username: SEED_USERS.owner.username,
+          displayName: SEED_USERS.owner.displayName,
+          roles: [...SEED_USERS.owner.roles],
+          email: null,
+          themePreference: 'system',
+          pushMuted: false,
+        };
+        const noopLog = { info: () => {}, error: () => {} };
+
+        await expect(
+          service.hideAttachment(owner, projectId, attId, noopLog, null),
+        ).rejects.toThrow('simulated-storage-flake');
+      } finally {
+        await servicePool.end();
+      }
+
+      // Row stays in `ready` — no DB CAS happened.
+      const status = await fetchAttachmentStatus(attId);
+      expect(status).toBe('ready');
+
+      // No audit row was written.
+      const auditAfter = await countAuditRows();
+      expect(auditAfter).toBe(auditBefore);
+    });
+  });
+
+  // -------------------------------------------------------------------
   // Download URL surface — validation arms.
   // (Happy-path scoping lives in attachments-scope.test.ts.)
   // -------------------------------------------------------------------
@@ -721,8 +1208,8 @@ describe('Attachment routes — integration (issue #108)', () => {
     });
 
     // -----------------------------------------------------------------
-    // Pending-row invisibility (review H6). `listByProject` only
-    // surfaces ready rows; `issueDownloadUrl` must mirror that, or a
+    // Pending-row invisibility. `listByProject` only surfaces ready
+    // rows; `issueDownloadUrl` must mirror that, or a
     // caller could fetch a presigned GET for partially-uploaded bytes
     // before the HEAD-verify gate ran. 404 matches the reaper-removed
     // branch from the caller's point of view.
@@ -870,6 +1357,86 @@ async function fetchAttachmentStatus(id: string): Promise<string | null> {
     const res = await db.execute(sql`SELECT status FROM attachments WHERE id = ${id} LIMIT 1`);
     const row = res.rows[0] as { status: string } | undefined;
     return row?.status ?? null;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function countAuditRows(): Promise<number> {
+  const { db, pool } = createDatabase();
+  try {
+    const res = await db.execute(sql`SELECT COUNT(*)::int AS c FROM audit_log`);
+    return (res.rows[0] as { c: number }).c;
+  } finally {
+    await pool.end();
+  }
+}
+
+async function fetchAttachmentKeys(
+  id: string,
+): Promise<{ originalKey: string; thumbKey: string | null } | null> {
+  const { db, pool } = createDatabase();
+  try {
+    const res = await db.execute(
+      sql`SELECT original_key, thumb_key FROM attachments WHERE id = ${id} LIMIT 1`,
+    );
+    const row = res.rows[0] as { original_key: string; thumb_key: string | null } | undefined;
+    if (!row) return null;
+    return { originalKey: row.original_key, thumbKey: row.thumb_key };
+  } finally {
+    await pool.end();
+  }
+}
+
+async function fetchAttachmentVersions(
+  id: string,
+): Promise<{ versionId: string | null; thumbVersionId: string | null } | null> {
+  const { db, pool } = createDatabase();
+  try {
+    const res = await db.execute(
+      sql`SELECT version_id, thumb_version_id FROM attachments WHERE id = ${id} LIMIT 1`,
+    );
+    const row = res.rows[0] as
+      | { version_id: string | null; thumb_version_id: string | null }
+      | undefined;
+    if (!row) return null;
+    return { versionId: row.version_id, thumbVersionId: row.thumb_version_id };
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
+ * Insert one row directly in `hidden` state with explicit version_id
+ * shape so the integrity-error arms can exercise the unrestorable-row
+ * branches. The route-driven path always commits non-null version_ids,
+ * so DB-level seeding is the only way to land the regression shape
+ * these tests pin.
+ */
+async function seedHiddenAttachment(
+  projectId: string,
+  spec: { versionId: string | null; thumbVersionId: string | null; hasThumbnail: boolean },
+): Promise<string> {
+  const { db, pool } = createDatabase();
+  try {
+    const id = crypto.randomUUID();
+    const kind = spec.hasThumbnail ? 'photo' : 'binary';
+    const label = spec.hasThumbnail ? 'foto' : 'sonstiges';
+    const mimeType = spec.hasThumbnail ? 'image/jpeg' : 'application/pdf';
+    const filename = `hidden-${id.slice(0, 6)}.${spec.hasThumbnail ? 'jpg' : 'pdf'}`;
+    const originalKey = `attachments/${projectId}/${id}.orig`;
+    const thumbKey = spec.hasThumbnail ? `attachments/${projectId}/${id}.thumb` : null;
+    await db.execute(sql`
+      INSERT INTO attachments
+        (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+         original_key, thumb_key, has_thumbnail,
+         version_id, thumb_version_id, hidden_at)
+      VALUES (${id}, ${projectId}, 'hidden', ${kind}, ${label},
+              ${filename}, ${mimeType}, 100,
+              ${originalKey}, ${thumbKey}, ${spec.hasThumbnail},
+              ${spec.versionId}, ${spec.thumbVersionId}, NOW())
+    `);
+    return id;
   } finally {
     await pool.end();
   }
