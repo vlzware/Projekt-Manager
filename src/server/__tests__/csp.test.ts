@@ -47,7 +47,7 @@ describe('CSP for attachment upload pipeline', () => {
     return String(header);
   }
 
-  it('connect-src includes the public storage origin so presigned POST uploads are not CSP-blocked', async () => {
+  it('connect-src includes the public storage origin so presigned PUT uploads are not CSP-blocked', async () => {
     const csp = await getCsp();
     expect(csp).toMatch(/connect-src[^;]*'self'[^;]*https:\/\/storage\.example\.com/);
   });

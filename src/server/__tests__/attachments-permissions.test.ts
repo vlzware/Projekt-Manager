@@ -37,6 +37,7 @@ import {
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import { ATTACHMENT_CONFIG } from '../../config/attachmentConfig.js';
+import { binaryInitBody } from '../../test/fixtures/attachmentInit.js';
 
 const year = new Date().getFullYear();
 
@@ -124,25 +125,21 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
   // -------------------------------------------------------------------
   describe('write (init) — attachment:write gate', () => {
     it('bookkeeper is rejected with 403 NOT_PERMITTED — lacks attachment:write', async () => {
-      const res = await authPost(bookkeeperToken, `/api/projects/${projectId}/attachments/init`, {
-        fileName: 'x.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 100,
-        label: 'rechnung',
-        hasThumbnail: false,
-      });
+      const res = await authPost(
+        bookkeeperToken,
+        `/api/projects/${projectId}/attachments/init`,
+        binaryInitBody({ fileName: 'x.pdf', sizeBytes: 100 }),
+      );
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe('NOT_PERMITTED');
     });
 
     it('user with no roles is rejected with 403 NOT_PERMITTED', async () => {
-      const res = await authPost(noPermsToken, `/api/projects/${projectId}/attachments/init`, {
-        fileName: 'x.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 100,
-        label: 'rechnung',
-        hasThumbnail: false,
-      });
+      const res = await authPost(
+        noPermsToken,
+        `/api/projects/${projectId}/attachments/init`,
+        binaryInitBody({ fileName: 'x.pdf', sizeBytes: 100 }),
+      );
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe('NOT_PERMITTED');
     });
@@ -153,13 +150,11 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
     ] as const)(
       '%s passes the permission gate (expected 201 on a valid payload)',
       async (_label, getToken) => {
-        const res = await authPost(getToken(), `/api/projects/${projectId}/attachments/init`, {
-          fileName: 'gate.pdf',
-          mimeType: 'application/pdf',
-          sizeBytes: 100,
-          label: 'sonstiges',
-          hasThumbnail: false,
-        });
+        const res = await authPost(
+          getToken(),
+          `/api/projects/${projectId}/attachments/init`,
+          binaryInitBody({ fileName: 'gate.pdf', sizeBytes: 100, label: 'sonstiges' }),
+        );
         // The gate must not reject with 403, AND the payload is valid,
         // so the only acceptable non-gate outcomes are 201 (success) or
         // 422 (a future validator gets stricter). Asserting a specific
@@ -170,13 +165,11 @@ describe('Attachment permission matrix (api.md §14.3 + AC-215)', () => {
     );
 
     it('worker assigned to the project passes the permission gate', async () => {
-      const res = await authPost(workerToken, `/api/projects/${projectId}/attachments/init`, {
-        fileName: 'worker.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 100,
-        label: 'sonstiges',
-        hasThumbnail: false,
-      });
+      const res = await authPost(
+        workerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        binaryInitBody({ fileName: 'worker.pdf', sizeBytes: 100, label: 'sonstiges' }),
+      );
       // Same tight contract as the owner/office arm — the gate passes
       // and the valid payload produces 201 (or 422 if a validator
       // tightens); 5xx must be a failure.

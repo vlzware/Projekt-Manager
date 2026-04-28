@@ -12,15 +12,16 @@
  *     (behavior.md §9.5).
  *
  * Upload orchestration (`uploadFile` + `retryUpload`) runs the full
- * happy-path: pipeline → init → POST original → POST thumbnail →
+ * happy-path: pipeline → MD5 → init → PUT original → PUT thumbnail →
  * complete → refetch. Any failure marks the pending row `failed` with
  * a German message — the UI reads that state to render the banner.
  * Retries are always deliberate user actions (spec §8.15.8: "No
  * silent retry").
  */
 
+import SparkMD5 from 'spark-md5';
 import { create } from 'zustand';
-import { attachmentApi, type PresignedPost } from '@/api/client';
+import { attachmentApi, type PresignedUpload } from '@/api/client';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
@@ -177,25 +178,58 @@ function newClientId(): string {
 }
 
 /**
- * POST a blob to object storage using the presigned-POST descriptor.
- * The standard S3 / MinIO POST form echoes each `fields` entry and
- * then the file itself. A non-2xx response is surfaced as a failure
- * so the caller marks the pending row `failed`.
+ * Compute the MD5 of a Blob and return it as RFC 1864 base64 (24-char
+ * `==`-padded). Streams the blob through `SparkMD5.ArrayBuffer`'s
+ * incremental API in 2 MiB chunks so the full bytes never materialize
+ * twice in memory — cheap on phones, fast enough that no Web Worker is
+ * warranted at our per-file cap.
  */
-async function postPresignedForm(
-  descriptor: PresignedPost,
+async function computeMd5Base64(blob: Blob): Promise<string> {
+  const CHUNK = 2 * 1024 * 1024;
+  const hasher = new SparkMD5.ArrayBuffer();
+  for (let offset = 0; offset < blob.size; offset += CHUNK) {
+    const slice = blob.slice(offset, Math.min(offset + CHUNK, blob.size));
+    const buf = await slice.arrayBuffer();
+    hasher.append(buf);
+  }
+  // SparkMD5 yields the 16-byte digest as a hex string; convert to
+  // base64 by walking pairs of hex chars into bytes. Browsers don't
+  // ship a hex→base64 helper, but `btoa` over a binary string does.
+  const hex = hasher.end();
+  let bin = '';
+  for (let i = 0; i < hex.length; i += 2) {
+    bin += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+  }
+  return btoa(bin);
+}
+
+/**
+ * PUT a blob to object storage using the presigned-PUT descriptor. The
+ * descriptor's `headers` (Content-Type + Content-Length + Content-MD5)
+ * are signed by SigV4; the browser sends them verbatim, the storage
+ * provider verifies the signature, then verifies Content-MD5 against
+ * the received bytes (`BadDigest` on mismatch). A non-2xx response is
+ * surfaced as a failure so the caller marks the pending row `failed`.
+ *
+ * `Content-Length` is in the descriptor for transparency but stripped
+ * from the actual fetch headers — the browser refuses to honor an
+ * explicit value (forbidden header per the fetch spec) and computes it
+ * from the body itself. The browser-computed length matches what the
+ * server signed because the body is the exact `Blob` whose size went
+ * into the init call.
+ */
+async function putPresigned(
+  descriptor: PresignedUpload,
   blob: Blob,
-  fileName: string,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; status: number; aborted: boolean }> {
-  const form = new FormData();
-  for (const [k, v] of Object.entries(descriptor.fields)) {
-    form.append(k, v);
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(descriptor.headers)) {
+    if (k.toLowerCase() === 'content-length') continue;
+    headers[k] = v;
   }
-  // S3 form-upload contract: `file` must be the LAST field.
-  form.append('file', blob, fileName);
   try {
-    const res = await fetch(descriptor.url, { method: 'POST', body: form, signal });
+    const res = await fetch(descriptor.url, { method: 'PUT', headers, body: blob, signal });
     return { ok: res.ok, status: res.status, aborted: false };
   } catch (err) {
     // `AbortError` surfaces here when the signal fires mid-flight.
@@ -326,9 +360,11 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       }
       if (wasAborted()) return;
 
-      // Step 2 — per-file size cap. Enforced server-side by the
-      // presigned policy's `content-length-range`; mismatch here is a
-      // client bug, not a security gap (ui/project-detail.md §8.15.4).
+      // Step 2 — per-file size cap. Enforced server-side at init by
+      // the same cap (the route/service rejects with 422) and at the
+      // signed `Content-Length` header on the PUT itself; mismatch
+      // here is a client bug, not a security gap
+      // (ui/project-detail.md §8.15.4).
       if (processed.sizeBytes > ATTACHMENT_PIPELINE.perFileSizeCapBytes) {
         markFailed(clientId, STRINGS.attachments.uploadFileTooLarge, {
           stage: 'post-pipeline-size-cap',
@@ -340,16 +376,37 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         return;
       }
 
-      // Step 3 — init (creates a `pending` row + presigned POST
-      // descriptors).
+      // Step 3 — compute MD5 over each blob. The init route signs the
+      // PUT URLs with `Content-MD5` bound to these exact values; the
+      // storage provider then verifies the body's MD5 against the
+      // signed header on receipt (`BadDigest` on mismatch). MD5 is
+      // also the integrity header B2 demands on every PutObject under
+      // bucket-default Compliance retention (ADR-0022).
+      const willUploadThumb = hasThumbnail && processed.thumbnail !== null;
+      const originalMd5 = await computeMd5Base64(processed.original);
+      const thumbMd5 = willUploadThumb
+        ? await computeMd5Base64(processed.thumbnail as Blob)
+        : undefined;
+      if (wasAborted()) return;
+
+      // Step 4 — init (creates a `pending` row + presigned PUT
+      // descriptors). Sizes + MD5s travel with the request so the
+      // server can sign each PUT with the exact body it commits to.
       const initResult = await attachmentApi.initUpload(
         projectId,
         {
           fileName: file.name,
           mimeType: processed.mimeType,
           sizeBytes: processed.sizeBytes,
+          contentMd5: originalMd5,
           label,
-          hasThumbnail: hasThumbnail && processed.thumbnail !== null,
+          hasThumbnail: willUploadThumb,
+          ...(willUploadThumb && processed.thumbnail
+            ? {
+                thumbSizeBytes: processed.thumbnail.size,
+                thumbContentMd5: thumbMd5,
+              }
+            : {}),
         },
         signal,
       );
@@ -374,41 +431,31 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         sizeBytes: processed.sizeBytes,
       });
 
-      // Step 4 — POST the original bytes to storage.
-      const originalResp = await postPresignedForm(
-        initData.originalUpload,
-        processed.original,
-        file.name,
-        signal,
-      );
+      // Step 5 — PUT the original bytes to storage.
+      const originalResp = await putPresigned(initData.originalUpload, processed.original, signal);
       if (originalResp.aborted || wasAborted()) return;
       if (!originalResp.ok) {
         markFailed(clientId, STRINGS.errors.mutationFailed, {
-          stage: 'original-upload-post',
+          stage: 'original-upload-put',
           details: { status: originalResp.status, url: initData.originalUpload.url },
         });
         return;
       }
 
-      // Step 5 — POST the thumbnail (when present).
+      // Step 6 — PUT the thumbnail (when present).
       if (processed.thumbnail && initData.thumbnailUpload) {
-        const thumbResp = await postPresignedForm(
-          initData.thumbnailUpload,
-          processed.thumbnail,
-          file.name,
-          signal,
-        );
+        const thumbResp = await putPresigned(initData.thumbnailUpload, processed.thumbnail, signal);
         if (thumbResp.aborted || wasAborted()) return;
         if (!thumbResp.ok) {
           markFailed(clientId, STRINGS.errors.mutationFailed, {
-            stage: 'thumbnail-upload-post',
+            stage: 'thumbnail-upload-put',
             details: { status: thumbResp.status, url: initData.thumbnailUpload.url },
           });
           return;
         }
       }
 
-      // Step 6 — complete (server verifies bytes via HEAD).
+      // Step 7 — complete (server verifies bytes via HEAD).
       updatePending(clientId, { status: 'completing' });
       const completeResult = await attachmentApi.completeUpload(
         projectId,
@@ -430,7 +477,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         return;
       }
 
-      // Step 7 — success. Fire a success toast with the file name (the
+      // Step 8 — success. Fire a success toast with the file name (the
       // pending row is about to be dropped, so grab it before removal),
       // remove the pending entry, sweep any stale failed rows for this
       // project, and refresh the list.

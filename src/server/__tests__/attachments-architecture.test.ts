@@ -12,7 +12,7 @@
  *     that AC-179 forbids.
  *
  *   - AC-221: no attachment route handler accepts a raw/multipart
- *     body. The upload path is presigned-POST direct-to-storage; the
+ *     body. The upload path is presigned-PUT direct-to-storage; the
  *     only attachment endpoints on the app are init, complete, delete,
  *     list, download-url, bulk-download — all JSON control plane.
  *     "No byte traffic through the app" (api.md §14.2.11 design note)

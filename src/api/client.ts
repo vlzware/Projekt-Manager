@@ -549,16 +549,22 @@ export const pushApi = {
   },
 };
 
-export interface PresignedPost {
+/**
+ * Presigned PUT descriptor returned by the init endpoint for each blob.
+ * The client must PUT the body to `url` with these exact `headers`;
+ * SigV4 binds Content-Type, Content-Length, and Content-MD5 into the
+ * signature, so any divergence is rejected by the storage provider.
+ */
+export interface PresignedUpload {
   url: string;
-  fields: Record<string, string>;
+  headers: Record<string, string>;
   expiresAt: string;
 }
 
 export interface AttachmentInitResponse {
   attachment: Attachment;
-  originalUpload: PresignedPost;
-  thumbnailUpload?: PresignedPost;
+  originalUpload: PresignedUpload;
+  thumbnailUpload?: PresignedUpload;
 }
 
 export interface AttachmentDownloadUrlResponse {
@@ -580,8 +586,11 @@ export const attachmentApi = {
       fileName: string;
       mimeType: string;
       sizeBytes: number;
+      contentMd5: string;
       label: AttachmentLabel;
       hasThumbnail: boolean;
+      thumbSizeBytes?: number;
+      thumbContentMd5?: string;
     },
     signal?: AbortSignal,
   ) =>

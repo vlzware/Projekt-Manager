@@ -394,7 +394,7 @@ interface Attachment {
 Design notes:
 
 - **State machine.** `pending → ready → hidden → ready` (restore re-flips to `ready`).
-  - `pending` on successful init (row + presigned-POST URLs issued).
+  - `pending` on successful init (row + presigned-PUT URLs issued, one per blob).
   - `ready` after the complete call verifies both objects exist via HEAD against object storage; `versionId` and (for photos) `thumbVersionId` are captured from the HEAD response at this moment.
   - `hidden` after a user-DELETE (soft-hide per [ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)): the row stays, `hiddenAt` is set, and a delete marker is written on the versioned bucket so the prior version is preserved.
   - Restore from `hidden` re-flips to `ready` via `copyFromVersion` from the persisted `versionId` / `thumbVersionId`; the freshly-issued current-version ids replace the old pair.

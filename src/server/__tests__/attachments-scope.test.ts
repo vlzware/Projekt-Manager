@@ -28,6 +28,7 @@ import { sql } from 'drizzle-orm';
 import crypto from 'node:crypto';
 import { startApp, stopApp, login, authGet, authPost, authDelete } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
+import { binaryInitBody } from '../../test/fixtures/attachmentInit.js';
 import { createDatabase } from '../db/connection.js';
 
 const year = new Date().getFullYear();
@@ -97,13 +98,7 @@ describe('Attachment scope (AC-214, AC-217)', () => {
       const res = await authPost(
         workerToken,
         `/api/projects/${unassignedProjectId}/attachments/init`,
-        {
-          fileName: 'x.pdf',
-          mimeType: 'application/pdf',
-          sizeBytes: 100,
-          label: 'sonstiges',
-          hasThumbnail: false,
-        },
+        binaryInitBody({ fileName: 'x.pdf', sizeBytes: 100, label: 'sonstiges' }),
       );
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe('NOT_PERMITTED');

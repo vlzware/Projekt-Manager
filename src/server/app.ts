@@ -50,7 +50,7 @@ function pickPushDispatcher(material: VapidKeyMaterial | null): PushDispatcher {
 /**
  * Return the scheme+host+port of `endpoint`, or `null` if it isn't a
  * parseable URL. Used by the CSP assembly to whitelist the object-storage
- * origin for presigned POST / GET traffic without hard-coding the
+ * origin for presigned PUT / GET traffic without hard-coding the
  * hostname.
  */
 function extractOrigin(endpoint: string | undefined): string | null {

@@ -6,7 +6,7 @@
  * and the error paths in §14.4.1.
  *
  * AC coverage in this file:
- *   - AC-211: init — presigned-POST policy constraints + validation
+ *   - AC-211: init — presigned-PUT signed-header pins + validation
  *             rejects on MIME / label / size / fileName.
  *   - AC-212: complete — HEAD-verify state machine, 409 on pending→ready
  *             conflict (double ack, size/mime mismatch), 404 when the
@@ -38,8 +38,19 @@ import type { Attachment } from '../../domain/types.js';
 const year = new Date().getFullYear();
 
 /**
+ * RFC 1864 base64 of MD5 — 16 bytes, base64-padded to 24 chars
+ * (`==`-suffixed). The init route validates with the same regex; any
+ * body matching this shape is accepted at schema validation. Tests that
+ * exercise integrity at storage level supply the real MD5 of the body.
+ */
+const STUB_MD5_BASE64 = '1B2M2Y8AsgTpgAmY7PhCfg=='; // MD5("") — shape-valid placeholder
+
+/**
  * Minimal photo-mime init payload used by every happy-path test. The
  * server fixes `originalKey` / `thumbKey` — clients never send them.
+ * `contentMd5` / `thumbContentMd5` are RFC 1864 base64 of the body MD5
+ * — pinned into the presigned PUT signature so a body whose hash
+ * differs is rejected at upload time (`BadDigest`).
  */
 function photoInit(projectId: string) {
   return {
@@ -47,8 +58,11 @@ function photoInit(projectId: string) {
     fileName: `test-${crypto.randomUUID().slice(0, 8)}.jpg`,
     mimeType: 'image/jpeg',
     sizeBytes: 120_000,
+    contentMd5: STUB_MD5_BASE64,
     label: 'foto' as const,
     hasThumbnail: true,
+    thumbSizeBytes: 8_000,
+    thumbContentMd5: STUB_MD5_BASE64,
   };
 }
 
@@ -105,10 +119,10 @@ describe('Attachment routes — integration (issue #108)', () => {
   });
 
   // -------------------------------------------------------------------
-  // AC-211 — Init validates inputs and returns a signed policy.
+  // AC-211 — Init validates inputs and returns a signed presigned PUT.
   // -------------------------------------------------------------------
-  describe('AC-211: init validation + presigned-POST policy', () => {
-    it('returns 201 with a pending row and two presigned descriptors for a photo', async () => {
+  describe('AC-211: init validation + presigned-PUT signature', () => {
+    it('returns 201 with a pending row and two presigned PUT descriptors for a photo', async () => {
       const res = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/init`,
@@ -136,10 +150,18 @@ describe('Attachment routes — integration (issue #108)', () => {
 
       expect(body.originalUpload).toBeDefined();
       expect(typeof body.originalUpload.url).toBe('string');
-      expect(typeof body.originalUpload.fields).toBe('object');
-      expect(body.originalUpload.fields).not.toBeNull();
+      expect(typeof body.originalUpload.headers).toBe('object');
+      expect(body.originalUpload.headers).not.toBeNull();
       expect(typeof body.originalUpload.expiresAt).toBe('string');
+      // Three signed headers — Content-Type, Content-Length, Content-MD5
+      // — every PUT must echo verbatim.
+      expect(body.originalUpload.headers['Content-Type']).toBe('image/jpeg');
+      expect(body.originalUpload.headers['Content-Length']).toBe('120000');
+      expect(body.originalUpload.headers['Content-MD5']).toBe(STUB_MD5_BASE64);
       expect(body.thumbnailUpload).toBeDefined();
+      expect(body.thumbnailUpload.headers['Content-Type']).toBe('image/webp');
+      expect(body.thumbnailUpload.headers['Content-Length']).toBe('8000');
+      expect(body.thumbnailUpload.headers['Content-MD5']).toBe(STUB_MD5_BASE64);
     });
 
     it('returns exactly one descriptor (no thumbnail) for a non-photo MIME', async () => {
@@ -147,6 +169,7 @@ describe('Attachment routes — integration (issue #108)', () => {
         fileName: 'vertrag.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 50_000,
+        contentMd5: STUB_MD5_BASE64,
         label: 'rechnung',
         hasThumbnail: false,
       });
@@ -157,7 +180,7 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(body.thumbnailUpload).toBeUndefined();
     });
 
-    it('pins the presigned policy to the exact originalKey issued on the row', async () => {
+    it('pins the presigned PUT URL to the exact originalKey issued on the row', async () => {
       const res = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/init`,
@@ -165,13 +188,43 @@ describe('Attachment routes — integration (issue #108)', () => {
       );
       expect(res.statusCode).toBe(201);
       const body = res.json();
-      // The policy's key condition must equal the row's key — a client
-      // that swaps the key before POSTing has its upload rejected by
-      // storage. Fields carry `key` per S3 presigned-POST shape.
-      expect(body.originalUpload.fields.key).toBe(body.attachment.originalKey);
+      // The PUT URL's path encodes the storage key (S3 path-style:
+      // `<endpoint>/<bucket>/<key>?X-Amz-…`). A client that swaps the
+      // key would hit a different signed URL — keep the assertion at
+      // the URL level rather than the fields level (which presigned PUT
+      // doesn't have).
+      expect(body.originalUpload.url).toContain(
+        encodeURI(body.attachment.originalKey).replace(/%2F/gi, '/'),
+      );
       if (body.thumbnailUpload) {
-        expect(body.thumbnailUpload.fields.key).toBe(body.attachment.thumbKey);
+        expect(body.thumbnailUpload.url).toContain(
+          encodeURI(body.attachment.thumbKey).replace(/%2F/gi, '/'),
+        );
       }
+    });
+
+    it('rejects a missing/malformed contentMd5 with 422 VALIDATION_ERROR (no row)', async () => {
+      const before = await countAttachmentRows();
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInit(projectId),
+        contentMd5: 'not-a-base64-md5',
+      });
+      // JSON-schema pattern fires before service-level checks; the gate
+      // produces 422 either way.
+      expect(res.statusCode).toBe(422);
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
+    it('rejects hasThumbnail=true with no thumbContentMd5 with 422 (no row)', async () => {
+      const before = await countAttachmentRows();
+      const { thumbContentMd5: _omit, ...payload } = photoInit(projectId);
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        payload,
+      );
+      expect(res.statusCode).toBe(422);
+      expect(await countAttachmentRows()).toBe(before);
     });
 
     it('rejects a MIME outside the whitelist with 422 VALIDATION_ERROR (no row)', async () => {
@@ -354,11 +407,11 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(initRes.statusCode).toBe(201);
       const body = initRes.json();
       const s = storage();
-      // Upload 2 MB under the issued key (note: the presigned POST
-      // policy would reject this via `content-length-range`; we bypass
-      // that by direct-storage upload to exercise the complete-side
-      // guard). HEAD reports 2 MB, row says 100 → declared-size
-      // mismatch → 409.
+      // Upload 2 MB under the issued key (note: the presigned PUT
+      // would reject this via the signed `Content-Length` header; we
+      // bypass that by direct-storage upload to exercise the
+      // complete-side guard). HEAD reports 2 MB, row says 100 →
+      // declared-size mismatch → 409.
       await s.upload(body.attachment.originalKey, Buffer.alloc(2 * 1024 * 1024, 1), 'image/jpeg');
       await s.upload(body.attachment.thumbKey, Buffer.from('t'), 'image/webp');
 
@@ -1325,6 +1378,7 @@ describe('Attachment routes — integration (issue #108)', () => {
         fileName: 'Angebot Müller.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 100,
+        contentMd5: STUB_MD5_BASE64,
         label: 'angebot',
         hasThumbnail: false,
       });

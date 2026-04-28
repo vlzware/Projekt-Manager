@@ -93,7 +93,7 @@ App-key rotation: create the new key first, deploy the new credentials, verify, 
 
 ## CORS rule on the bucket
 
-The browser uploads attachments directly to B2 via presigned POST and downloads via presigned GET. Same-origin policy still applies, so the bucket must echo `Access-Control-Allow-Origin: https://<your-domain>` on the preflight or every upload aborts client-side with no server-side trace.
+The browser uploads attachments directly to B2 via presigned PUT and downloads via presigned GET. Same-origin policy still applies, so the bucket must echo `Access-Control-Allow-Origin: https://<your-domain>` on the preflight or every upload aborts client-side with no server-side trace.
 
 Use the `b2` CLI — the web UI's CORS form does not surface every required field (`exposeHeaders`, `maxAgeSeconds`, multiple `allowedOperations`) and silently saves a partial rule that the app's presigned uploads will fail against:
 
@@ -102,7 +102,7 @@ b2 bucket update prmng-object-storage allPrivate --cors-rules '[
   {
     "corsRuleName": "prmng-presigned",
     "allowedOrigins": ["https://<your-domain>"],
-    "allowedOperations": ["s3_put", "s3_get", "s3_post", "s3_head"],
+    "allowedOperations": ["s3_put", "s3_get", "s3_head"],
     "allowedHeaders": ["*"],
     "exposeHeaders": ["x-amz-version-id"],
     "maxAgeSeconds": 3600
@@ -114,7 +114,7 @@ Notes on the arguments:
 
 - `allPrivate` is the bucket's **type**, not a flag — `b2 bucket update` requires it as a positional even when the type is unchanged.
 - `allowedOrigins` is exactly one origin: replace `<your-domain>` with the actual `${DOMAIN}` you set in `.env`. No trailing slash, no wildcard, no scheme variants.
-- `allowedOperations` lists the four S3 verbs the presigned flows use. B2 also exposes `b2_*` natives — leave those off; the app only speaks S3.
+- `allowedOperations` lists the three S3 verbs the presigned flows use: `s3_put` (browser uploads), `s3_get` (downloads + bulk-zip pickup), `s3_head` (rare CORS-preflight headers). `s3_post` is deliberately omitted — B2 does not implement browser-based POST uploads (it returns 501 NotImplemented), and the app uses presigned PUT instead. Leaving `s3_post` in the rule is harmless but misleading. B2 also exposes `b2_*` natives — leave those off; the app only speaks S3.
 - `exposeHeaders` includes `x-amz-version-id` so the client can log the version id post-upload. Harmless if unused.
 
 Verify the rule landed:

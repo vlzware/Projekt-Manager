@@ -12,8 +12,9 @@
  *     with `hasThumbnail = false`.
  *   - `mimeType` — the final MIME of the original (unchanged from input
  *     for JPEG/PNG/WebP; kind is pinned by `classifyKind`).
- *   - `sizeBytes` — the final byte size of the original (matches what
- *     the presigned-POST policy expects at `init` time).
+ *   - `sizeBytes` — the final byte size of the original (matches the
+ *     `Content-Length` value the init route signs into the presigned
+ *     PUT URL).
  *
  * The pipeline is a pure module: it takes a `File` and settings, and
  * returns processed blobs. It never touches the store or API.

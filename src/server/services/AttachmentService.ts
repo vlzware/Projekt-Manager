@@ -5,9 +5,10 @@
  * The state machine is pinned by api.md §14.2.11, data-model.md §5.13
  * and ADR-0022 (capability split + Papierkorb):
  *
- *   init        → row created at `status = 'pending'`; presigned POST(s)
- *                 issued for original (+thumb). Audit row (`attachment:add`)
- *                 via `mutate()`.
+ *   init        → row created at `status = 'pending'`; presigned PUT(s)
+ *                 issued for original (+thumb), pinning Content-Type,
+ *                 Content-Length, and Content-MD5 via SigV4. Audit row
+ *                 (`attachment:add`) via `mutate()`.
  *   complete    → HEAD verify both objects; flip to `status = 'ready'`
  *                 and persist the per-version-id pair (ADR-0022).
  *                 No audit row (AC-219 — state-machine finalize).
@@ -49,7 +50,11 @@ import {
   classifyKind,
   isSafeFileName,
 } from '../../domain/attachments.js';
-import { type AttachmentStorageClient, StorageObjectNotFoundError } from '../storage/client.js';
+import {
+  type AttachmentStorageClient,
+  type PresignedPutDescriptor,
+  StorageObjectNotFoundError,
+} from '../storage/client.js';
 import { isProjectInScope } from '../repositories/scope.js';
 import {
   createPending,
@@ -76,24 +81,37 @@ const FILE_NAME_MAX = 255;
 const LABEL_VALUES = new Set<string>(ATTACHMENT_LABELS.map((entry) => entry.value));
 const MIME_WHITELIST = new Set<string>(ATTACHMENT_MIME_WHITELIST);
 
-export interface PresignedPost {
-  url: string;
-  fields: Record<string, string>;
-  expiresAt: string;
-}
+/**
+ * Wire shape returned by `POST /api/projects/:id/attachments/init` for
+ * each upload (original + optional thumbnail). Identical to the storage
+ * client's `PresignedPutDescriptor` — re-exported under a verb-neutral
+ * name so the API contract reads naturally.
+ */
+export type PresignedUpload = PresignedPutDescriptor;
 
 export interface InitUploadInput {
   fileName: string;
   mimeType: string;
   sizeBytes: number;
+  /** RFC 1864 base64 of the original blob's MD5 (24 chars, ends `==`). */
+  contentMd5: string;
   label: AttachmentLabel;
   hasThumbnail: boolean;
+  /**
+   * Required when `hasThumbnail = true`. The client computes the
+   * thumbnail before init so the server can sign a tight, exact-size
+   * PUT (parity with the original-upload pin) instead of a liberal
+   * `[1, perFileCap]` range that the POST policy used to express.
+   */
+  thumbSizeBytes?: number;
+  /** Required when `hasThumbnail = true`. RFC 1864 base64 MD5. */
+  thumbContentMd5?: string;
 }
 
 export interface InitUploadResult {
   attachment: Attachment;
-  originalUpload: PresignedPost;
-  thumbnailUpload?: PresignedPost;
+  originalUpload: PresignedUpload;
+  thumbnailUpload?: PresignedUpload;
 }
 
 export interface DownloadUrlResult {
@@ -177,6 +195,17 @@ function storageKey(projectId: string, attachmentId: string, suffix: 'orig' | 't
   return `attachments/${projectId}/${attachmentId}.${suffix}`;
 }
 
+/**
+ * RFC 1864 base64 of an MD5 digest is exactly 24 chars: 22 of
+ * [A-Za-z0-9+/] followed by `==` (16-byte digest, base64-padded).
+ * Used to validate `contentMd5` before it reaches the storage signer.
+ */
+const MD5_BASE64_RE = /^[A-Za-z0-9+/]{22}==$/;
+
+function isMd5Base64(value: unknown): value is string {
+  return typeof value === 'string' && MD5_BASE64_RE.test(value);
+}
+
 function attachmentAuditLabel(row: AttachmentRow): string {
   return row.filename;
 }
@@ -198,7 +227,7 @@ export class AttachmentService {
 
   /**
    * Init: validate inputs, ensure caller scope, write a pending row via
-   * `mutate()`, issue presigned POST descriptors.
+   * `mutate()`, issue presigned PUT descriptors (one per blob).
    */
   async initUpload(
     caller: AuthUser,
@@ -250,11 +279,41 @@ export class AttachmentService {
     ) {
       throw validationError(STRINGS.attachments.uploadFileTooLarge);
     }
+    // RFC 1864 base64 of 16-byte MD5 → 24 chars, last two `==`. Reject
+    // anything else here so the storage signer cannot be handed a
+    // malformed value. The storage provider's `BadDigest` check is the
+    // next layer.
+    if (!isMd5Base64(input.contentMd5)) {
+      throw validationError(STRINGS.errors.invalidInput);
+    }
 
     const kind = classifyKind(input.mimeType);
     // The client signals `hasThumbnail`. A photo without a thumbnail is
     // legal (no gallery render), but a binary with a thumbnail is not.
     const hasThumbnail = kind === 'photo' ? input.hasThumbnail : false;
+
+    // Thumbnail size + MD5 are required when a thumbnail is being
+    // signed. The client must run the image pipeline to know the
+    // thumbnail blob's exact bytes before calling init — that gives us
+    // the same exact-size pin on the thumbnail upload that we already
+    // have on the original.
+    let thumbSizeBytes: number | undefined;
+    let thumbContentMd5: string | undefined;
+    if (hasThumbnail) {
+      if (
+        typeof input.thumbSizeBytes !== 'number' ||
+        !Number.isInteger(input.thumbSizeBytes) ||
+        input.thumbSizeBytes <= 0 ||
+        input.thumbSizeBytes > caps.perFileCapBytes
+      ) {
+        throw validationError(STRINGS.attachments.uploadFileTooLarge);
+      }
+      if (!isMd5Base64(input.thumbContentMd5)) {
+        throw validationError(STRINGS.errors.invalidInput);
+      }
+      thumbSizeBytes = input.thumbSizeBytes;
+      thumbContentMd5 = input.thumbContentMd5;
+    }
 
     const attachmentId = crypto.randomUUID();
     const originalKey = storageKey(projectId, attachmentId, 'orig');
@@ -303,20 +362,27 @@ export class AttachmentService {
 
     log.info({ attachmentId: row.id, projectId }, 'attachment_init');
 
-    // Main upload: pin content-length-range to the declared size exactly
-    // so storage rejects any size-substitution attempt before the
-    // complete() HEAD runs. Thumbnail upload: the true size is not
-    // declared at init, so leave a [1, cap] range.
-    const originalUpload = await this.storage.createPresignedPost(originalKey, input.mimeType, {
-      minBytes: input.sizeBytes,
-      maxBytes: input.sizeBytes,
-    });
-    const thumbnailUpload = thumbKey
-      ? await this.storage.createPresignedPost(thumbKey, 'image/webp', {
-          minBytes: 1,
-          maxBytes: caps.perFileCapBytes,
-        })
-      : undefined;
+    // Sign one presigned PUT per blob. Each binds Content-Type +
+    // Content-Length + Content-MD5 (see `createPresignedPut`); a client
+    // that mutates any of the three fails signature verification. The
+    // body MD5 is verified against received bytes by the storage
+    // provider (`BadDigest`), so the URL is reusable only for the exact
+    // bytes the client committed to at init time.
+    const originalUpload = await this.storage.createPresignedPut(
+      originalKey,
+      input.mimeType,
+      input.sizeBytes,
+      input.contentMd5,
+    );
+    const thumbnailUpload =
+      thumbKey && thumbSizeBytes !== undefined && thumbContentMd5 !== undefined
+        ? await this.storage.createPresignedPut(
+            thumbKey,
+            'image/webp',
+            thumbSizeBytes,
+            thumbContentMd5,
+          )
+        : undefined;
 
     return {
       // Newly created row — uploader display name comes from the live
@@ -373,10 +439,10 @@ export class AttachmentService {
     try {
       const head = await this.storage.headObject(row.originalKey);
       // Declared-size pin first (AC-212, spec §14.2.11 error paths).
-      // The presigned POST's content-length-range already rejects this
-      // at storage, so reaching this branch means a policy bypass —
-      // refuse the flip so a size-substitution upload cannot become
-      // canonical.
+      // The presigned PUT's signed `Content-Length` already rejects a
+      // size deviation at the signature layer, so reaching this branch
+      // means a signature bypass — refuse the flip so a size-substituted
+      // upload cannot become canonical.
       if (head.size !== row.sizeBytes) {
         throw conflict(STRINGS.errors.invalidInput);
       }
@@ -399,10 +465,10 @@ export class AttachmentService {
     let thumbVersionId: string | null = null;
     if (row.hasThumbnail && row.thumbKey) {
       try {
-        // Defense in depth: the presigned POST policy already pins
-        // size ≤ cap and content-type starts-with image/webp. Re-assert
-        // at HEAD so a policy bypass that slipped past storage is still
-        // caught at state-flip time.
+        // Defense in depth: the presigned PUT already pins
+        // Content-Length to the exact thumb size and Content-Type to
+        // image/webp via SigV4. Re-assert at HEAD so a signature bypass
+        // that slipped past storage is still caught at state-flip time.
         const thumbHead = await this.storage.headObject(row.thumbKey);
         if (thumbHead.size > caps.perFileCapBytes) {
           throw conflict(STRINGS.errors.invalidInput);

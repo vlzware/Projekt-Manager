@@ -45,7 +45,7 @@ export const envSchema = z.object({
   // below (called only from start.ts) enforces presence for the app path.
   STORAGE_ENDPOINT: z.string().optional(),
   // Optional public hostname the browser uses to reach MinIO. The app
-  // signs presigned POST / GET URLs against this endpoint (not
+  // signs presigned PUT / GET URLs against this endpoint (not
   // STORAGE_ENDPOINT, which points at the Docker-internal hostname).
   // Required in production when STORAGE_ENDPOINT is a container-only
   // host — enforced by `assertStoragePublicEndpointInProduction()`.

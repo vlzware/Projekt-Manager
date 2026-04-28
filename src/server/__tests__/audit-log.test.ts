@@ -45,6 +45,7 @@ import {
   authDelete,
 } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
+import { binaryInitBody } from '../../test/fixtures/attachmentInit.js';
 import { createDatabase } from '../db/connection.js';
 import { bootstrapAdminIfEmpty } from '../bootstrap.js';
 import {
@@ -1175,13 +1176,11 @@ describe('AT-124: ancestor-scoped filter unions project + nested entities', () =
     // allowlisted under __tests__/; using the real API path keeps the
     // ancestor-write assertion covering the production `AttachmentService`
     // mutation rather than a raw-insert stand-in.
-    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-      fileName: 'ancestor.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 123,
-      label: 'rechnung',
-      hasThumbnail: false,
-    });
+    const initRes = await authPost(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/init`,
+      binaryInitBody({ fileName: 'ancestor.pdf', sizeBytes: 123 }),
+    );
     expect(initRes.statusCode).toBe(201);
     attachmentId = initRes.json().attachment.id as string;
   });

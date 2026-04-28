@@ -35,6 +35,7 @@ import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js
 import { createDatabase } from '../db/connection.js';
 import { createStorageClient } from '../storage/client.js';
 import { getEnv } from '../config/env.js';
+import { binaryInitBody, photoInitBody } from '../../test/fixtures/attachmentInit.js';
 
 const year = new Date().getFullYear();
 
@@ -95,13 +96,11 @@ describe('Attachment audit contract (AC-219)', () => {
   it('init writes exactly one attachment:add row with entityType=attachment and expected payload fields', async () => {
     const before = await countAuditRows();
 
-    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-      fileName: 'vertrag-audit.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 4321,
-      label: 'rechnung',
-      hasThumbnail: false,
-    });
+    const initRes = await authPost(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/init`,
+      binaryInitBody({ fileName: 'vertrag-audit.pdf', sizeBytes: 4321 }),
+    );
     expect(initRes.statusCode).toBe(201);
     const attachmentId = initRes.json().attachment.id as string;
 
@@ -140,13 +139,11 @@ describe('Attachment audit contract (AC-219)', () => {
     // succeeds. Counting audit rows must include whatever init
     // produced; we record the "after init" mark and compare after
     // complete.
-    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-      fileName: 'complete-zero-audit.jpg',
-      mimeType: 'image/jpeg',
-      sizeBytes: 120_000,
-      label: 'foto',
-      hasThumbnail: true,
-    });
+    const initRes = await authPost(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/init`,
+      photoInitBody({ fileName: 'complete-zero-audit.jpg' }),
+    );
     expect(initRes.statusCode).toBe(201);
     const body = initRes.json();
     const attachmentId = body.attachment.id as string;
@@ -242,13 +239,11 @@ describe('Attachment audit contract (AC-219)', () => {
   // -------------------------------------------------------------------
   it('attachment and non-attachment writes produce distinct entity_type audit rows', async () => {
     // Attachment write → `entity_type='attachment'`.
-    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-      fileName: 'cross-entity.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 1000,
-      label: 'sonstiges',
-      hasThumbnail: false,
-    });
+    const initRes = await authPost(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/init`,
+      binaryInitBody({ fileName: 'cross-entity.pdf', sizeBytes: 1000, label: 'sonstiges' }),
+    );
     expect(initRes.statusCode).toBe(201);
     const attachmentId = initRes.json().attachment.id as string;
 

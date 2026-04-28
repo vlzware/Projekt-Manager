@@ -9,8 +9,8 @@
  * Consumers:
  *   - `src/domain/imagePipeline.ts` reads the image/thumbnail encoding
  *     parameters and the per-file byte cap to enforce the size gate
- *     before calling `init` (matches the server-side presigned policy
- *     `content-length-range`, see
+ *     before calling `init` (matches the server-side cap that the
+ *     presigned PUT pins via signed `Content-Length`, see
  *     [api.md §14.2.11](../../docs/spec/api.md#14211-attachments)).
  *   - `src/ui/detail/BinaryList.tsx` reads the bulk-download caps to
  *     block client-side selections exceeding either cap (AC-223).

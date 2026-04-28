@@ -195,8 +195,10 @@ describe('attachmentStore — pending uploads keyed by client id', () => {
       .getState()
       .uploadFile('proj-1', file, { label: 'foto', hasThumbnail: true });
 
-    // Microtask flush so the store's synchronous initializing-write lands.
-    await Promise.resolve();
+    // Wait until the orchestrator has run pipeline + MD5 + reached
+    // init. The pending row is written synchronously before runUpload
+    // begins, but `resolveInit` is only assigned once the mock fires.
+    await vi.waitFor(() => expect(initMock).toHaveBeenCalled());
 
     const pending = Object.values(useAttachmentStore.getState().pendingUploads);
     expect(pending).toHaveLength(1);
@@ -524,11 +526,9 @@ describe('attachmentStore — cancellation', () => {
       .getState()
       .uploadFile('proj-1', file, { label: 'foto', hasThumbnail: false });
 
-    // Let the synchronous insert + pipeline microtasks settle so the
-    // AbortController is installed and `initUpload` is awaiting.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Wait until the orchestrator has run pipeline + MD5 and reached
+    // the init call so `capturedSignal` is set.
+    await vi.waitFor(() => expect(initMock).toHaveBeenCalled());
 
     const clientId = Object.keys(useAttachmentStore.getState().pendingUploads)[0];
     expect(clientId).toBeDefined();
@@ -588,11 +588,13 @@ describe('attachmentStore — cancellation', () => {
         .uploadFile('proj-B', files[2], { label: 'foto', hasThumbnail: false }),
     ];
 
-    // Let the three orchestrators advance to the init step.
-    for (let i = 0; i < 6; i += 1) await Promise.resolve();
-
-    expect(signalsByProject['proj-A']).toHaveLength(2);
-    expect(signalsByProject['proj-B']).toHaveLength(1);
+    // Let the three orchestrators advance to the init step. MD5
+    // computation runs before init now, so `vi.waitFor` is more robust
+    // than counting microtask flushes.
+    await vi.waitFor(() => {
+      expect(signalsByProject['proj-A']).toHaveLength(2);
+      expect(signalsByProject['proj-B']).toHaveLength(1);
+    });
 
     useAttachmentStore.getState().cancelUploadsForProject('proj-A');
 
@@ -709,7 +711,11 @@ describe('attachmentStore — image processing failures and stale-row sweep', ()
         attachment: makeAttachment({ id: 'att-new', projectId: 'proj-1' }),
         originalUpload: {
           url: 'https://storage/orig',
-          fields: {},
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Content-Length': '3',
+            'Content-MD5': '1B2M2Y8AsgTpgAmY7PhCfg==',
+          },
           expiresAt: '2026-04-23T10:05:00Z',
         },
       }),
@@ -756,7 +762,11 @@ describe('attachmentStore — image processing failures and stale-row sweep', ()
         attachment: makeAttachment({ id: 'att-new', projectId: 'proj-1' }),
         originalUpload: {
           url: 'https://storage/orig',
-          fields: {},
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Content-Length': '3',
+            'Content-MD5': '1B2M2Y8AsgTpgAmY7PhCfg==',
+          },
           expiresAt: '2026-04-23T10:05:00Z',
         },
       }),

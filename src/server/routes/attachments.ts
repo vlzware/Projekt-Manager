@@ -66,7 +66,7 @@ export function attachmentRoutes(db: Database) {
           },
           body: {
             type: 'object',
-            required: ['fileName', 'mimeType', 'sizeBytes', 'label'],
+            required: ['fileName', 'mimeType', 'sizeBytes', 'contentMd5', 'label'],
             // Deliberately permissive on extra properties so a stray
             // `originalKey` / `projectId` in the payload round-trips as
             // a silent discard (route + service never read them). The
@@ -77,8 +77,15 @@ export function attachmentRoutes(db: Database) {
               fileName: { type: 'string', minLength: 1 },
               mimeType: { type: 'string', minLength: 1 },
               sizeBytes: { type: 'integer', minimum: 1 },
+              // RFC 1864 base64 of MD5 (16-byte digest → 24 chars,
+              // ending `==`). Service re-validates with the same regex;
+              // schema-level pattern keeps a malformed payload from
+              // reaching service layer state-machine setup.
+              contentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{22}==$' },
               label: { type: 'string' },
               hasThumbnail: { type: 'boolean' },
+              thumbSizeBytes: { type: 'integer', minimum: 1 },
+              thumbContentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{22}==$' },
             },
           },
         },
@@ -90,8 +97,11 @@ export function attachmentRoutes(db: Database) {
           fileName: string;
           mimeType: string;
           sizeBytes: number;
+          contentMd5: string;
           label: string;
           hasThumbnail?: boolean;
+          thumbSizeBytes?: number;
+          thumbContentMd5?: string;
         };
         const result = await service.initUpload(
           request.user!,
@@ -100,11 +110,14 @@ export function attachmentRoutes(db: Database) {
             fileName: body.fileName,
             mimeType: body.mimeType,
             sizeBytes: body.sizeBytes,
+            contentMd5: body.contentMd5,
             // The service re-validates `label` against the closed enum;
             // the typing here is intentionally wide so invalid payloads
             // reach the validator path (AC-211 422 VALIDATION_ERROR).
             label: body.label as never,
             hasThumbnail: Boolean(body.hasThumbnail),
+            thumbSizeBytes: body.thumbSizeBytes,
+            thumbContentMd5: body.thumbContentMd5,
           },
           request.log,
           request.id ?? null,

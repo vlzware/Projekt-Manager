@@ -32,7 +32,6 @@ import {
   type LifecycleRule,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { createPresignedPost as awsCreatePresignedPost } from '@aws-sdk/s3-presigned-post';
 import type { Readable } from 'node:stream';
 import { STORAGE_CONFIG } from '../config/index.js';
 import {
@@ -47,7 +46,7 @@ export interface StorageConfig {
   endpoint: string;
   /**
    * Optional public endpoint used only when signing URLs returned to the
-   * browser (presigned POST for init uploads, presigned GET for downloads
+   * browser (presigned PUT for init uploads, presigned GET for downloads
    * and bulk-zip pickup). When present, the signing client substitutes
    * this URL so the browser receives a host it can actually resolve —
    * typically a reverse-proxied subdomain (`https://storage.<domain>`)
@@ -90,11 +89,32 @@ export interface HeadObjectResult {
   versionId: string | undefined;
 }
 
-export interface PresignedPostDescriptor {
-  /** POST target URL. */
+export interface PresignedPutDescriptor {
+  /** PUT target URL. The signature is in the query string. */
   url: string;
-  /** Form fields the client must echo verbatim (includes signature). */
-  fields: Record<string, string>;
+  /**
+   * Headers the client MUST send on the PUT, exact-match. SigV4 binds
+   * each value into the signature, so any divergence is rejected with a
+   * signature error before the bytes are persisted.
+   *
+   * - `Content-Type` — pinned MIME type. The complete() flip re-asserts
+   *   this against the row HEAD as defense-in-depth.
+   * - `Content-Length` — exact body byte count. HTTP semantics also
+   *   reject a body-length mismatch independently of SigV4.
+   * - `Content-MD5` — RFC 1864 base64 of the body's MD5. Required by
+   *   B2 when the bucket carries Compliance Object Lock with default
+   *   retention (ADR-0022): bucket-default retention attaches Object
+   *   Lock parameters to every PutObject, and B2 demands an integrity
+   *   header on any such PUT — bare PUTs are rejected with
+   *   `"Content-MD5 OR x-amz-checksum-* HTTP header is required for
+   *   Put Object requests with Object Lock parameters"`. Doubles as the
+   *   byte-binding guarantee that the POST policy flow could not
+   *   express: storage providers verify Content-MD5 against received
+   *   bytes and reject with `BadDigest` on mismatch, so a presigned URL
+   *   is usable only for an upload of bytes that hash to this exact
+   *   MD5.
+   */
+  headers: Record<string, string>;
   /** ISO 8601 — after this the descriptor is useless. */
   expiresAt: string;
 }
@@ -142,24 +162,33 @@ export interface StorageClient {
   // ---------------------------------------------------------------
 
   /**
-   * Issue a presigned POST descriptor pinning the exact key, content type
-   * prefix, and size range. See api.md §14.2.11 "Presigned-POST policy
-   * conditions".
+   * Issue a presigned PUT descriptor pinning the exact key, content type,
+   * size, and body MD5. See api.md §14.2.11 "Presigned-PUT signed
+   * headers".
    *
-   * `size.minBytes` / `size.maxBytes` map 1:1 to the S3
-   * `content-length-range` policy. The main-upload call site pins
-   * `minBytes === maxBytes` to the client's declared `sizeBytes` so a
-   * size mismatch is rejected by storage before a complete() HEAD ever
-   * runs. The thumbnail call site leaves the range liberal
-   * (`[1, perFileCap]`) because the thumb's true size is not known at
-   * init time.
+   * Why PUT and not POST policy: B2's S3-compatible API does not implement
+   * browser-based POST uploads — `POST /<bucket>` returns `501
+   * NotImplemented` with no CORS headers, surfacing as a misleading "no
+   * Access-Control-Allow-Origin" in the browser. PUT is the cross-provider
+   * lowest common denominator (AWS, B2, R2, MinIO, Wasabi all implement
+   * it). See ADR-0022 § "Upload protocol".
+   *
+   * Why these three signed headers: `Content-Type` and `Content-Length`
+   * pin what the POST policy used to pin (`starts-with` on type,
+   * `content-length-range` collapsed to a single value); `Content-MD5`
+   * is mandated by B2 because bucket-default Compliance retention
+   * attaches Object Lock parameters to every PutObject. Pinning MD5 in
+   * the signature also bounds the URL to a specific body — providers
+   * verify Content-MD5 against received bytes (`BadDigest` on
+   * mismatch), so the URL cannot be reused for different bytes.
    */
-  createPresignedPost?: (
+  createPresignedPut?: (
     key: string,
     contentType: string,
-    size: { minBytes: number; maxBytes: number },
+    sizeBytes: number,
+    contentMd5Base64: string,
     expirySeconds?: number,
-  ) => Promise<PresignedPostDescriptor>;
+  ) => Promise<PresignedPutDescriptor>;
 
   /** Presigned GET URL + ISO-formatted expiry. */
   createPresignedGet?: (
@@ -251,12 +280,13 @@ export interface StorageClient {
  * narrower type so a `StorageClient` lacking the methods fails at tsc.
  */
 export interface AttachmentStorageClient extends StorageClient {
-  createPresignedPost: (
+  createPresignedPut: (
     key: string,
     contentType: string,
-    size: { minBytes: number; maxBytes: number },
+    sizeBytes: number,
+    contentMd5Base64: string,
     expirySeconds?: number,
-  ) => Promise<PresignedPostDescriptor>;
+  ) => Promise<PresignedPutDescriptor>;
   createPresignedGet: (
     key: string,
     expirySeconds?: number,
@@ -395,6 +425,20 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     },
     forcePathStyle: true,
   });
+  // `requestChecksumCalculation: 'WHEN_REQUIRED'` on the SIGNING client
+  // suppresses the SDK's automatic CRC32 middleware for presigned URLs.
+  // With the default `WHEN_SUPPORTED`, the SDK precomputes
+  // `x-amz-checksum-crc32` over an empty body at signing time and binds
+  // it into the signed query string; the browser would then send the URL
+  // verbatim and the storage provider would compare that frozen CRC32
+  // against the actual body's CRC32 and reject every non-empty upload.
+  // The integrity guarantee we need on the presigned path is provided by
+  // the signed `Content-MD5` header (see `createPresignedPut`).
+  //
+  // The non-signing `s3` keeps the default — server-side PUTs (test
+  // seeding, bulk-zip pickup) need an integrity header to satisfy B2's
+  // Object Lock contract per ADR-0022, and the SDK's auto-CRC32 supplies
+  // one without each call site computing MD5 by hand.
   const s3Signing = config.publicEndpoint
     ? new S3Client({
         endpoint: config.publicEndpoint,
@@ -404,8 +448,18 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
           secretAccessKey: config.secretKey,
         },
         forcePathStyle: true,
+        requestChecksumCalculation: 'WHEN_REQUIRED',
       })
-    : s3;
+    : new S3Client({
+        endpoint: config.endpoint,
+        region: config.region ?? 'us-east-1',
+        credentials: {
+          accessKeyId: config.accessKey,
+          secretAccessKey: config.secretKey,
+        },
+        forcePathStyle: true,
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+      });
 
   const bucket = config.bucket;
 
@@ -488,51 +542,65 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       await s3.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1, Prefix: '__probe/' }));
     },
 
-    async createPresignedPost(
+    async createPresignedPut(
       key: string,
       contentType: string,
-      size: { minBytes: number; maxBytes: number },
+      sizeBytes: number,
+      contentMd5Base64: string,
       expirySeconds: number = 60,
-    ): Promise<PresignedPostDescriptor> {
+    ): Promise<PresignedPutDescriptor> {
       validateKey(key);
-      // Policy conditions — the load-bearing pins of AC-211:
-      //  * exact key (no wildcards),
-      //  * content-length-range [minBytes, maxBytes] — the main-upload
-      //    path pins min === max to the declared size so storage
-      //    rejects any deviation (size-substitution upload attack). The
-      //    thumbnail path supplies a liberal [1, cap] range because the
-      //    thumb's true size is not known at init time.
-      //  * content-type starts-with the requested MIME (the POST form
-      //    echoes `Content-Type` verbatim, so the prefix match pins the
-      //    exact type without tripping clients that also send a charset).
-      if (!Number.isInteger(size.minBytes) || size.minBytes < 0) {
+      // Three signed headers — the load-bearing pins of AC-211:
+      //  * `Content-Type` — exact MIME type. Defense-in-depth: the
+      //    complete() flip re-asserts via HEAD against the declared
+      //    `mimeType`; the SigV4 binding makes the URL unusable for a
+      //    different type to begin with.
+      //  * `Content-Length` — exact body size. POST policy used a range;
+      //    PUT pins one number per signed URL, which is strictly tighter
+      //    given the client always knows the exact size at init time.
+      //  * `Content-MD5` — RFC 1864 base64. Required by B2 (Object Lock
+      //    + bucket-default retention attaches Object Lock parameters to
+      //    every PutObject; bare PUTs are rejected). Doubles as the
+      //    body-binding guarantee — providers verify Content-MD5 against
+      //    received bytes and reject `BadDigest` on mismatch, so the
+      //    signed URL is reusable only for an upload of bytes that hash
+      //    to this exact MD5.
+      if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) {
         throw new Error(
-          `createPresignedPost: size.minBytes must be a non-negative integer, got ${size.minBytes}`,
+          `createPresignedPut: sizeBytes must be a positive integer, got ${sizeBytes}`,
         );
       }
-      if (!Number.isInteger(size.maxBytes) || size.maxBytes < size.minBytes) {
-        throw new Error(
-          `createPresignedPost: size.maxBytes must be an integer >= minBytes, got ${size.maxBytes}`,
-        );
+      // RFC 1864 MD5 base64: 16-byte digest → 24 chars ending with `==`.
+      // Reject anything else here so a malformed value cannot reach the
+      // signer; the storage provider's BadDigest check is the next layer.
+      if (typeof contentMd5Base64 !== 'string' || !/^[A-Za-z0-9+/]{22}==$/.test(contentMd5Base64)) {
+        throw new Error('createPresignedPut: contentMd5Base64 must be RFC 1864 base64 of MD5');
       }
       const expiresIn = Math.max(1, expirySeconds);
-      const result = await awsCreatePresignedPost(s3Signing, {
+      const command = new PutObjectCommand({
         Bucket: bucket,
         Key: key,
-        Conditions: [
-          { bucket },
-          ['eq', '$key', key],
-          ['content-length-range', size.minBytes, size.maxBytes],
-          ['starts-with', '$Content-Type', contentType],
-        ],
-        Fields: {
-          'Content-Type': contentType,
-        },
-        Expires: expiresIn,
+        ContentType: contentType,
+        ContentLength: sizeBytes,
+        ContentMD5: contentMd5Base64,
+      });
+      // Both option sets are required: `unhoistableHeaders` keeps each
+      // value out of the query string (so the client must send them as
+      // headers), and `signableHeaders` overrides the SDK's default
+      // (which marks `content-type` as unsignable) so all three are
+      // included in `X-Amz-SignedHeaders` and bound by the signature.
+      const url = await getSignedUrl(s3Signing, command, {
+        expiresIn,
+        unhoistableHeaders: new Set(['content-type', 'content-length', 'content-md5']),
+        signableHeaders: new Set(['content-type', 'content-length', 'content-md5']),
       });
       return {
-        url: result.url,
-        fields: result.fields,
+        url,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(sizeBytes),
+          'Content-MD5': contentMd5Base64,
+        },
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       };
     },
