@@ -1,5 +1,5 @@
-import { test, expect } from '@playwright/test';
-import { addDays, format, isSameMonth, lastDayOfMonth } from 'date-fns';
+import { test, expect, type Page } from '@playwright/test';
+import { addDays, differenceInCalendarMonths, format, parseISO } from 'date-fns';
 
 /**
  * E2E Kanban board flows
@@ -26,28 +26,52 @@ import { addDays, format, isSameMonth, lastDayOfMonth } from 'date-fns';
  */
 
 /**
- * Pick a date that is (a) in the future relative to today and (b) in the
- * same calendar month as today. The calendar view opens on the current
- * month by default, so a same-month target avoids the need to click
- * `calendar-next`/`calendar-prev` to find the day cell.
+ * Pick an end date `daysOffset` days from today (no calendar-month
+ * clamping). Different call sites use different offsets so two
+ * date-mutation tests writing the same seeded card never try to PATCH
+ * the same value — `<input type="date">` `fill()` is a no-op when the
+ * value already matches, and an unchanged input does not fire a PATCH,
+ * so the second test's `waitForResponse` would hang.
  *
- * `daysOffset` is the baseline offset from today; each call site picks a
- * different value so two parallel-running tests that both edit the same
- * seeded card don't try to write the *same* value. A date-input's fill()
- * is a no-op when the value already matches, and an unchanged input does
- * not fire a PATCH — the second test's `waitForResponse` would hang. We
- * also clamp to the last day of the current month if the offset would
- * overflow into the next month so the calendar-view assertions still find
- * the day cell without navigation.
+ * Offset must comfortably exceed the seed's largest geplant
+ * `plannedStartDays` (currently 8 — see src/server/seed/business.ts) so
+ * the resulting end date never falls before the project's start date.
+ * The server enforces `start <= end`; an end-before-start PATCH is
+ * rejected and the optimistic UI update reverts to the seed value,
+ * which surfaces as a stale `toHaveValue` assertion. This file's
+ * offsets are 10/11/12 — well clear of the seed's 8-day horizon and
+ * still tightly bunched so the dates are easy to reason about.
+ *
+ * No same-calendar-month clamp: the original implementation clipped to
+ * `lastDayOfMonth(today)` whenever the offset crossed the month
+ * boundary. That clamp doesn't know about the project's start date,
+ * and on the last few days of a month it produced dates earlier than
+ * the seeded geplant projects' start (today + 5 / today + 8) —
+ * deterministic failure for those few days each month. The calendar
+ * view renders full Mon–Sun weeks (weekStartsOn: 1, see
+ * src/ui/calendar/CalendarGrid.tsx), so a date in the next month is
+ * usually visible in the current month's view anyway; when it isn't,
+ * `navigateCalendarToMonthOf` clicks `calendar-next` until the right
+ * month is in view.
  */
 function pickPlannedEndDate(daysOffset: number): { iso: string; testId: string } {
   const today = new Date();
-  let target = addDays(today, daysOffset);
-  if (!isSameMonth(target, today)) {
-    target = lastDayOfMonth(today);
-  }
+  const target = addDays(today, daysOffset);
   const iso = format(target, 'yyyy-MM-dd');
   return { iso, testId: `calendar-day-${iso}` };
+}
+
+/**
+ * Click `calendar-next` until the visible month matches `targetIso`'s
+ * month. Idempotent when already on the right month. Bounded so a wrong
+ * `targetIso` doesn't loop forever on a CalendarView regression.
+ */
+async function navigateCalendarToMonthOf(page: Page, targetIso: string): Promise<void> {
+  const target = parseISO(targetIso);
+  const monthsForward = differenceInCalendarMonths(target, new Date());
+  for (let i = 0; i < monthsForward; i++) {
+    await page.getByTestId('calendar-next').click();
+  }
 }
 
 // Run this file's tests serially within a single worker. The suite has
@@ -210,11 +234,13 @@ test.describe('Kanban board flows', () => {
 
       // Wait for the PATCH to land before moving on, otherwise the next steps
       // may race the optimistic update against the actual server commit.
-      // This test uses offset 5; the other date-mutation tests in this file
-      // pick different offsets so parallel workers editing the same seeded
-      // card don't write the same value (which would make `fill()` a no-op
-      // and stall the `waitForResponse` below).
-      const plannedEndDate = pickPlannedEndDate(5);
+      // This test uses offset 10; the other date-mutation tests in this file
+      // pick different offsets so two tests editing the same seeded card
+      // don't write the same value (which would make `fill()` a no-op
+      // and stall the `waitForResponse` below). Offset must exceed the
+      // seed's largest geplant `plannedStartDays` (8) — see the
+      // `pickPlannedEndDate` doc comment.
+      const plannedEndDate = pickPlannedEndDate(10);
       const endDateInput = page.getByTestId('detail-date-end');
       // Dates commit on blur (not change) — intermediate empty values
       // emitted by native `<input type="date">` during keyboard edits
@@ -246,10 +272,10 @@ test.describe('Kanban board flows', () => {
       const detailPanel = page.getByTestId('detail-panel');
       await expect(detailPanel).toBeVisible();
 
-      // Offset 6 — see `pickPlannedEndDate` and the matching note in the
+      // Offset 11 — see `pickPlannedEndDate` and the matching note in the
       // "updates the planned end date" test above for why each date-
       // mutation test needs a unique offset.
-      const plannedEndDate = pickPlannedEndDate(6);
+      const plannedEndDate = pickPlannedEndDate(11);
       const endDateInput = page.getByTestId('detail-date-end');
       // Dates commit on blur — fill sets the value, blur fires the
       // PATCH the test is waiting on.
@@ -269,11 +295,13 @@ test.describe('Kanban board flows', () => {
       await calendarToggle.click();
       await expect(page.getByTestId('calendar-view')).toBeVisible();
       await expect(page.getByTestId('calendar-grid')).toBeVisible();
+      // Calendar opens on today's month; if the offset crosses the
+      // boundary, advance until the target month is in view. No-op when
+      // already on the right month (e.g. mid-month runs).
+      await navigateCalendarToMonthOf(page, plannedEndDate.iso);
       // The project bar should be visible with the updated date
       const calendarBar = page.getByTestId(`calendar-bar-${projectId}`).first();
       await expect(calendarBar).toBeVisible();
-      // Verify the calendar contains the day cell for the new planned end date.
-      // The date is in the current month by construction, so no navigation needed.
       await expect(page.getByTestId(plannedEndDate.testId)).toBeVisible();
     });
 
@@ -338,10 +366,10 @@ test.describe('Kanban board flows', () => {
       await restoredCard.click();
       await expect(page.getByTestId('detail-panel')).toBeVisible();
 
-      // Edit the planned end date. Offset 7 — see `pickPlannedEndDate`
+      // Edit the planned end date. Offset 12 — see `pickPlannedEndDate`
       // for why each date-mutation test uses a unique offset. Commit
       // on blur, not on change (see the other detail-date-end test).
-      const plannedEndDate = pickPlannedEndDate(7);
+      const plannedEndDate = pickPlannedEndDate(12);
       const endDateInput = page.getByTestId('detail-date-end');
       await endDateInput.fill(plannedEndDate.iso);
       await Promise.all([
