@@ -23,7 +23,6 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
-  HeadBucketCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
   GetBucketVersioningCommand,
@@ -464,9 +463,24 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     },
 
     async ping(): Promise<void> {
-      // HeadBucket is cheap and authenticates, so a successful response
-      // verifies endpoint, credentials, and bucket access in one shot.
-      await s3.send(new HeadBucketCommand({ Bucket: bucket }));
+      // Reachability + auth + bucket-access probe. We deliberately do NOT
+      // use HeadBucket: B2 maps it to b2_list_buckets, which requires the
+      // account-scoped `listAllBucketNames` capability. ADR-0022 prescribes
+      // a bucket-restricted app key, and bucket-restricted keys cannot
+      // hold `listAllBucketNames` — so HeadBucket returns 403 against B2
+      // even though every other call we make against the bucket succeeds.
+      // (MinIO/AWS would accept HeadBucket; the cross-provider lowest
+      // common denominator is ListObjectsV2.)
+      //
+      // ListObjectsV2 with MaxKeys=1 against the safety-probe prefix is the
+      // canonical replacement: it exercises the same `listFiles` capability
+      // the app already requires per ADR-0022, returns in a single
+      // round-trip whether or not any objects match, and verifies endpoint,
+      // credentials, AND bucket access in one shot — same contract the old
+      // HeadBucket comment claimed. The `__probe/` prefix keeps the call
+      // bounded so a populated bucket doesn't waste bandwidth listing user
+      // keys.
+      await s3.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1, Prefix: '__probe/' }));
     },
 
     async createPresignedPost(
