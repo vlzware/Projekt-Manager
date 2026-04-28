@@ -95,6 +95,14 @@ docker exec -i "$DB_CONTAINER" \
 # capability split: the app key has writeFiles but not deleteFiles, so no
 # version is destroyed). Together they make the VPS bucket an exact mirror
 # of the local dump, with no destructive writes.
+#
+# `--md5` is required: the bucket has Compliance Object Lock with a
+# bucket-default retention (ADR-0022), so every PutObject implicitly carries
+# Object Lock parameters. The S3 spec requires PutObject with Object Lock
+# parameters to include Content-MD5 or x-amz-checksum-* — B2 enforces this
+# and rejects bare PUTs with "Content-MD5 OR x-amz-checksum-* HTTP header
+# is required for Put Object requests with Object Lock parameters". Trades
+# one extra read pass per file for compliance with the lock contract.
 echo "  restoring object storage..."
 docker run --rm \
   -v "$REMOTE_TMP/bucket:/data:ro" \
@@ -106,7 +114,7 @@ docker run --rm \
   "$MC_IMAGE" \
   -c '
     mc alias set b2 "$B2_ENDPOINT" "$B2_KEY" "$B2_SECRET" --api S3v4 >/dev/null
-    mc mirror --overwrite --remove /data "b2/$B2_BUCKET"
+    mc mirror --overwrite --remove --md5 /data "b2/$B2_BUCKET"
   ' >/dev/null
 
 # Start app back. Clear the trap flag first so the trap doesn't double-start

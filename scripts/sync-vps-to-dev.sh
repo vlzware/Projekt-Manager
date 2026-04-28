@@ -166,6 +166,11 @@ docker exec -i "${COMPOSE_PROJECT}-db-1" \
 
 # Mirror the VPS bucket dump into local MinIO. Credentials pulled from
 # the running local storage container's env, same as forward path.
+# `--md5` is required: dev MinIO mirrors the prod B2 bucket shape (ADR-0022
+# / docker/init-storage.sh), which means default Compliance retention is
+# active here too — bare PUTs are rejected with the same Object Lock
+# integrity error B2 raises. Adding the flag to the local restore so the
+# dev mirror behaves identically to the prod target.
 LOCAL_MINIO_USER=$(docker exec "${COMPOSE_PROJECT}-storage-1" printenv MINIO_ROOT_USER)
 LOCAL_MINIO_PASS=$(docker exec "${COMPOSE_PROJECT}-storage-1" printenv MINIO_ROOT_PASSWORD)
 docker run --rm \
@@ -173,7 +178,7 @@ docker run --rm \
   -v "$LOCAL_TMP/bucket:/data:ro" \
   -e MC_HOST_dst="http://${LOCAL_MINIO_USER}:${LOCAL_MINIO_PASS}@storage:9000" \
   "$MC_IMAGE" \
-  mirror --overwrite --remove /data "dst/$LOCAL_BUCKET" >/dev/null
+  mirror --overwrite --remove --md5 /data "dst/$LOCAL_BUCKET" >/dev/null
 
 echo "[7/7] Done — local synced from VPS at $(date -u -Iseconds)"
 echo
