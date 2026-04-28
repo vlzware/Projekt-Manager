@@ -36,6 +36,24 @@ async function waitForHeader(page: Page): Promise<void> {
 }
 
 /**
+ * Close the open admin (or any) menu by clicking through the
+ * MenuBackdrop sitting on top of `triggerTestId`. A plain
+ * `locator.click()` fails Playwright's actionability check ("backdrop
+ * intercepts pointer events") because the backdrop covers every page
+ * element while a menu is open — see src/ui/common/MenuBackdrop.tsx
+ * (#130). `page.mouse.click(x, y)` performs the real browser hit-test
+ * at the coordinate, lands on the backdrop (z-index 55), and the
+ * backdrop's onClick closes the menu — the same path a real user
+ * triggers by clicking outside an open dropdown. Mirrors the pattern
+ * already used in e2e/menu-backdrop.spec.ts.
+ */
+async function closeMenuViaBackdrop(page: Page, triggerTestId: string): Promise<void> {
+  const box = await page.getByTestId(triggerTestId).boundingBox();
+  if (!box) throw new Error(`bounding box not available for ${triggerTestId}`);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+}
+
+/**
  * Click a view nav entry. If the header has a "Verwaltung" admin menu
  * and the target view lives inside it, the menu is opened first. Otherwise
  * the inline tab is clicked directly.
@@ -73,7 +91,7 @@ export async function expectViewReachable(
       await adminTrigger.click();
       await expect(page.getByTestId(`view-toggle-${view}`)).toHaveCount(0);
       // Close the menu so subsequent assertions don't race it.
-      await adminTrigger.click();
+      await closeMenuViaBackdrop(page, 'nav-admin-trigger');
     }
     return;
   }
@@ -87,5 +105,5 @@ export async function expectViewReachable(
   await expect(adminTrigger).toHaveCount(1);
   await adminTrigger.click();
   await expect(page.getByTestId(`view-toggle-${view}`)).toHaveCount(1);
-  await adminTrigger.click();
+  await closeMenuViaBackdrop(page, 'nav-admin-trigger');
 }
