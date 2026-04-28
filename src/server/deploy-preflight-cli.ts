@@ -6,7 +6,7 @@
  * `deploy.sh` does not need any project node_modules — it only needs
  * Docker.
  *
- * Three checkpoints, one container start:
+ * Four checkpoints, one container start:
  *   1. `validateEnvAggregated()` — schema + every cross-field guard in
  *      one pass. Aborts the deploy on first failure (issue #139,
  *      AC-231).
@@ -25,6 +25,16 @@
  *      failures only surface at app boot AFTER `docker compose up`
  *      has recreated the app container — at which point the previous
  *      good replica is gone and rolling back means another deploy.
+ *   4. Upload-verb probe — signs a presigned PUT to a sentinel key,
+ *      executes it with a 1-byte body + matching Content-MD5, asserts
+ *      2xx. Catches the class of provider gaps the listing probe in
+ *      step 3 cannot see — most concretely, the B2 cutover uncovered
+ *      that `POST /<bucket>` returns `501 NotImplemented` (the
+ *      previous flow used presigned POST; ADR-0022 § Upload protocol).
+ *      Verifying the upload verb at deploy time means a future provider
+ *      cutover that drops PUT, breaks SigV4 signed-header binding, or
+ *      changes the Content-MD5 contract surfaces here, not at first
+ *      user upload.
  *
  * Why a dedicated entry:
  *   - The existing `start.ts` entry point validates AND boots Fastify,
@@ -42,9 +52,10 @@
  * `set -euo pipefail` propagates to the operator before `docker
  * compose up` runs.
  */
+import crypto from 'node:crypto';
 import { assertAppServerEnv, validateEnvAggregated } from './config/env.js';
 import { formatFeatureManifest } from './config/features.js';
-import { createStorageClient } from './storage/client.js';
+import { createStorageClient, type AttachmentStorageClient } from './storage/client.js';
 
 async function main(): Promise<void> {
   // Snapshot process.env into a record so the aggregated path runs
@@ -97,6 +108,72 @@ async function main(): Promise<void> {
         `See docs/ops/object-storage-provisioning.md.`,
     );
   }
+
+  await probeUploadVerb(storage, env.STORAGE_BUCKET);
+}
+
+/**
+ * Sign a presigned PUT against a sentinel key and execute it with a
+ * 1-byte body. Asserts the storage provider implements the verb the
+ * browser upload flow depends on (ADR-0022 § Upload protocol).
+ *
+ * The sentinel key is fixed (`__probe/upload`) so each deploy
+ * overwrites the prior probe — Object Lock retention ages out on the
+ * default `R` window and the lifecycle reaper handles the noncurrent
+ * versions. Storage cost is one byte per deploy.
+ */
+async function probeUploadVerb(storage: AttachmentStorageClient, bucket: string): Promise<void> {
+  const PROBE_KEY = '__probe/upload';
+  const body = Buffer.from([0]);
+  const md5Base64 = crypto.createHash('md5').update(body).digest('base64');
+  let descriptor;
+  try {
+    descriptor = await storage.createPresignedPut(
+      PROBE_KEY,
+      'application/octet-stream',
+      body.byteLength,
+      md5Base64,
+      60,
+    );
+  } catch (err) {
+    const name = err instanceof Error ? err.name : 'Error';
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `probe-upload: FAILED to sign presigned PUT (bucket=${bucket})\n  ${name}: ${msg}`,
+    );
+  }
+  // The browser's fetch refuses to honor a manual Content-Length and
+  // computes one from the body; Node's fetch accepts it. Strip the
+  // header here so the same code path works in both runtimes — the
+  // signed length is bound to `body.byteLength` either way.
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(descriptor.headers)) {
+    if (k.toLowerCase() === 'content-length') continue;
+    headers[k] = v;
+  }
+  let res: Response;
+  try {
+    res = await fetch(descriptor.url, { method: 'PUT', headers, body });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`probe-upload: FAILED PUT request (bucket=${bucket})\n  ${msg}`);
+  }
+  if (!res.ok) {
+    let respBody = '';
+    try {
+      respBody = (await res.text()).slice(0, 600);
+    } catch {
+      respBody = '(no body)';
+    }
+    throw new Error(
+      `probe-upload: FAILED bucket=${bucket} status=${res.status} ${res.statusText}\n` +
+        `  ${respBody}\n` +
+        `Common causes: provider does not implement presigned PUT for this bucket, ` +
+        `Content-MD5 missing/required by Object Lock policy, signed-header mismatch, ` +
+        `bucket CORS rule rejects the call. See ADR-0022 § Upload protocol.`,
+    );
+  }
+  console.error(`probe-upload: OK bucket=${bucket} key=${PROBE_KEY}`);
 }
 
 main().then(

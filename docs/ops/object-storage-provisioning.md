@@ -147,18 +147,20 @@ After updating `.env` and `secrets.env.age`:
 
 ```bash
 # On VPS — preflight runs schema + feature manifest + storage reachability
-# probe inside a one-shot container BEFORE `docker compose up` recreates
-# anything. Aborts the deploy on the first failure.
+# probe + upload-verb probe inside a one-shot container BEFORE
+# `docker compose up` recreates anything. Aborts the deploy on the first
+# failure.
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 ```
 
-The preflight CLI runs three checks against the deploy environment inside an ephemeral one-shot container before any service container is recreated:
+The preflight CLI runs four checks against the deploy environment inside an ephemeral one-shot container before any service container is recreated:
 
 1. `validateEnvAggregated()` — schema + every cross-field guard.
 2. Feature manifest — same per-feature breakdown the app emits at boot, formatted for the operator's terminal.
-3. `client.ping()` against the live bucket — exercises the actual `STORAGE_ACCESS_KEY` + `STORAGE_SECRET_KEY` against the real endpoint.
+3. `client.ping()` against the live bucket — `ListObjectsV2` exercising the actual `STORAGE_ACCESS_KEY` + `STORAGE_SECRET_KEY` against the real endpoint.
+4. **Upload-verb probe** — signs a presigned PUT to `__probe/upload`, executes it with a 1-byte body + matching `Content-MD5`, asserts a 2xx response. Catches the class of provider gaps step 3 cannot see: in particular, B2's S3-compatible API does not implement browser-based POST uploads (it returns `501 NotImplemented`), and the B2 cutover surfaced exactly that gap as a confusing browser-side CORS error at first user upload. Verifying the upload verb here means a future provider cutover that drops PUT, breaks SigV4 signed-header binding, or changes the `Content-MD5` contract surfaces at deploy time, not at first user upload.
 
-A stale `STORAGE_ACCESS_KEY` (rotated keyId not propagated to `.env`), mismatched `STORAGE_SECRET_KEY` (applicationKey from a different key pair), wrong `STORAGE_REGION`, or app-key capability set missing `listFiles` surfaces here as `probe-storage: FAILED ...` — not at first request, and not while crash-looping the freshly-recreated app container after the previous good replica is gone.
+A stale `STORAGE_ACCESS_KEY` (rotated keyId not propagated to `.env`), mismatched `STORAGE_SECRET_KEY` (applicationKey from a different key pair), wrong `STORAGE_REGION`, or app-key capability set missing `listFiles` surfaces in step 3 as `probe-storage: FAILED ...`. A provider that doesn't implement presigned PUT, a CORS rule that strips the integrity header, a bucket policy that rejects the signed-header set, or a stale CRC32 middleware that double-binds an empty-body checksum surfaces in step 4 as `probe-upload: FAILED ...` — not at first request, and not while crash-looping the freshly-recreated app container after the previous good replica is gone.
 
 ## Verify against the live bucket
 
