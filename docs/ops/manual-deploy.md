@@ -11,7 +11,10 @@ operator (over WireGuard):                                        v
     -> decrypt secrets.env.age (age passphrase prompt)
     -> docker compose pull app + up -d
     -> smoke test /api/health (60s timeout)
+    -> drill-key reload prompt (when /run/drill-key/identity is empty)
 ```
+
+Have `~/secrets/age-backup.key` open on the operator workstation before invoking the deploy — when the backup container was recreated by the deploy, the script will prompt to paste the age private identity into the container's tmpfs (AC-175). See [backup/drills.md](backup/drills.md) for the threat model.
 
 ## Preconditions
 
@@ -37,7 +40,7 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/iteration/N-name
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh <sha>
 ```
 
-The script: fetches origin, checks out the exact SHA, decrypts `secrets.env.age` via process substitution (plaintext never on disk), sets `APP_IMAGE_TAG=sha-<sha>`, runs `docker compose pull app && docker compose up -d`, polls `/api/health` for 60s.
+The script: fetches origin, checks out the exact SHA, decrypts `secrets.env.age` via process substitution (plaintext never on disk), sets `APP_IMAGE_TAG=sha-<sha>`, runs `docker compose pull app && docker compose up -d`, polls `/api/health` for 60s, reloads Caddy, and — when the backup container's tmpfs is empty — prompts the operator to paste the age private identity into `/run/drill-key/identity` via the existing `load-drill-key` tool (no key persisted to disk). A failed or skipped paste warns but does not abort the deploy; reload manually with `docker exec -it projekt-manager-backup-1 load-drill-key`.
 
 ## Rollback
 
@@ -52,7 +55,7 @@ The GHCR image must still exist. If pruned, use forward-rollback: `git revert` o
 
 ## Verify a deploy
 
-Reads use `docker` directly rather than `docker compose`. The compose path re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. `docker ps` / `docker exec` / `docker logs` don't parse compose, so they work directly. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
+Reads use `docker` directly rather than `docker compose`. The compose path re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `STORAGE_SECRET_KEY`, `CLOUDFLARE_API_TOKEN`, …) in shell env; a bare sudo shell doesn't have them sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. `docker ps` / `docker exec` / `docker logs` don't parse compose, so they work directly. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
 ```bash
 # Running commit
@@ -73,12 +76,12 @@ curl -sS https://${DOMAIN}/api/health
 
 ### Contents of `secrets.env.age`
 
-Shell `KEY='value'` format. Three required Layer 1 secrets (app + TLS), one optional Layer 1 secret (push), and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
+Shell `KEY='value'` format. Three required Layer 1 secrets (app + storage + TLS), one optional Layer 1 secret (push), and six Layer 2 secrets (offsite backup — ADR-0020; R2 values from [backup/setup.md §1.4](backup/setup.md#14-create-the-api-token), age recipient from [§2](backup/setup.md#2-generate-the-age-key-pair)):
 
 Layer 1 (required):
 
 - `POSTGRES_PASSWORD`
-- `MINIO_ROOT_PASSWORD`
+- `STORAGE_SECRET_KEY` — the `applicationKey` half of the B2 app key (created via `b2 key create … readFiles,writeFiles,listFiles`; see [object-storage-provisioning.md § App key](object-storage-provisioning.md)). The matching `keyId` is `STORAGE_ACCESS_KEY` in plain `.env`.
 - `CLOUDFLARE_API_TOKEN`
 
 Layer 1 (optional — push notifications, ADR-0023):
@@ -93,8 +96,6 @@ Layer 2:
 - `R2_BUCKET` -- optional; defaults to `projekt-manager-backups` in `docker-compose.yml`
 - `R2_REGION` -- optional; defaults to `auto` in `docker-compose.yml`
 - `AGE_RECIPIENT` -- PUBLIC recipient only, for backup encryption at rest. The matching age identity lives on the operator workstation, never on the VPS.
-
-`STORAGE_SECRET_KEY` is NOT in this file -- `docker-compose.yml` derives it from `MINIO_ROOT_PASSWORD` at runtime.
 
 ### Rotate a secret
 
@@ -125,7 +126,7 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh
 
 1. Regenerate or re-read each secret from its source:
    - `POSTGRES_PASSWORD` -- `ALTER USER` from superuser, or re-provision
-   - `MINIO_ROOT_PASSWORD` -- MinIO admin console or `mc admin user`
+   - `STORAGE_SECRET_KEY` -- B2 console: re-issue the app key (`b2 key delete <oldKeyId>` then `b2 key create … readFiles,writeFiles,listFiles`) and capture the new `applicationKey`. See [object-storage-provisioning.md § App key](object-storage-provisioning.md).
    - `CLOUDFLARE_API_TOKEN` -- Cloudflare dashboard, scope **DNS Write + Zone Read** on the managed zone (legacy names: `Zone:DNS:Edit` + `Zone:Zone:Read`). See [dns-setup.md § Cloudflare API token scope](dns-setup.md#cloudflare-api-token-scope).
    - `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_ENDPOINT` -- issue a new R2 API token in the Cloudflare dashboard; the endpoint URL is listed alongside. Revoke the old token after the rotation deploy.
    - `R2_BUCKET`, `R2_REGION` -- read off the R2 dashboard (or fall back to the compose defaults).
@@ -183,3 +184,4 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/main
 | Smoke test timeout (60s)                                               | App container failed or `/api/health` returning 503        | `docker logs projekt-manager-app-1 --tail=50` (also `-db-1`, `-storage-1`)                                                                                                    |
 | `no such container` on exec                                            | `docker compose up -d` did not start `app`                 | `docker ps --filter name=projekt-manager-`; confirm the resolved tag exists in GHCR                                                                                           |
 | `APP_IMAGE_TAG must be set` or `CLOUDFLARE_API_TOKEN must be declared` | Compose operation without pinned tag and/or secrets in env | For reads use `docker` directly (no parse). For compose operations route through `scripts/deploy.sh` — it pins the SHA and sources secrets from `secrets.env.age` internally. |
+| First request after deploy 500s with `column "<X>" does not exist`     | Schema baseline edited; live DB still on previous schema   | Wipe + reseed + sync — see [recover-from-schema-change.md](recover-from-schema-change.md)                                                                                     |

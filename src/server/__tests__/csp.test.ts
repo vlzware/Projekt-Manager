@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from '../app.js';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 
 describe('CSP for attachment upload pipeline', () => {
   let app: FastifyInstance;
@@ -21,18 +21,13 @@ describe('CSP for attachment upload pipeline', () => {
   const prevEndpoint = process.env.STORAGE_ENDPOINT;
 
   beforeEach(() => {
-    // Force a fresh env read — validateEnv() caches the first parse, so
-    // process.env edits between tests would be invisible without a cache
-    // bust. The module-level cache lives in env.ts and is not exported,
-    // so the only way to prime is via process.env before the first call.
+    // Force a fresh env read — validateEnvRuntime() re-parses on every
+    // call (the singleton cache was dropped to keep test fixtures
+    // truthful), so process.env edits between tests are picked up
+    // immediately.
     process.env.STORAGE_PUBLIC_ENDPOINT = 'https://storage.example.com';
     process.env.STORAGE_ENDPOINT = 'http://storage:9000';
-    // Clear the env cache by re-importing via dynamic import in each
-    // test block would be heavy-handed; instead we accept that the
-    // first `validateEnv()` call pins the values and require tests in
-    // this file to share that pin. If a test needs a different value,
-    // split into its own describe with its own env setup.
-    validateEnv();
+    validateEnvRuntime();
   });
 
   afterEach(async () => {
@@ -52,7 +47,7 @@ describe('CSP for attachment upload pipeline', () => {
     return String(header);
   }
 
-  it('connect-src includes the public storage origin so presigned POST uploads are not CSP-blocked', async () => {
+  it('connect-src includes the public storage origin so presigned PUT uploads are not CSP-blocked', async () => {
     const csp = await getCsp();
     expect(csp).toMatch(/connect-src[^;]*'self'[^;]*https:\/\/storage\.example\.com/);
   });
@@ -62,9 +57,33 @@ describe('CSP for attachment upload pipeline', () => {
     expect(csp).toMatch(/img-src[^;]*'self'[^;]*https:\/\/storage\.example\.com/);
   });
 
-  it('worker-src permits blob: so browser-image-compression workers are not CSP-blocked', async () => {
+  it('img-src permits data: so @uploadcare/image-shrink EXIF probe + Eruda icons render', async () => {
+    // The library loads a base64 JPEG into a hidden <img> to feature-detect
+    // browser EXIF orientation handling on every shrinkFile() call. Without
+    // data: the probe Promise hangs and uploads stall. Eruda's UI icons are
+    // also data: URIs — same fix unblocks the mobile debug console.
     const csp = await getCsp();
-    expect(csp).toMatch(/worker-src[^;]*'self'[^;]*blob:/);
+    expect(csp).toMatch(/img-src[^;]*data:/);
+  });
+
+  it('img-src permits blob: so @uploadcare/image-shrink + thumbnail encoder can decode source bytes', async () => {
+    // After the EXIF probe, shrinkFile() loads the actual source via
+    // `imageLoader(URL.createObjectURL(blob))` — a blob: URL into a hidden
+    // <img>. Our own WebP thumbnail encoder (src/domain/imagePipeline.ts)
+    // does the same. Without blob: the <img> onerror fires with "Failed to
+    // load image" and the compression step throws, leaving the user with
+    // "Bildbearbeitung fehlgeschlagen". data: alone is not enough — that
+    // only covers the EXIF feature-detect probe.
+    const csp = await getCsp();
+    expect(csp).toMatch(/img-src[^;]*blob:/);
+  });
+
+  it('worker-src is locked to self — only same-origin scripts can register workers', async () => {
+    // The PWA service worker is registered from `/sw.js` (same-origin).
+    // No code path spawns blob: workers; CSP stays tight.
+    const csp = await getCsp();
+    expect(csp).toMatch(/worker-src 'self'(?:;|$)/);
+    expect(csp).not.toMatch(/worker-src[^;]*blob:/);
   });
 
   it('default-src stays locked to self', async () => {

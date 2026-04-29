@@ -22,7 +22,7 @@ The `.env.example` defaults are dev-ready: `NODE_ENV=development`, `SEED=true`, 
 
 ```bash
 # Start backing services (Postgres + MinIO)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init
+docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init
 
 # Run Vite (HMR) + Fastify (tsx watch)
 npm run dev
@@ -45,10 +45,10 @@ Open `http://localhost:5173`. Vite proxies `/api/*` to `http://localhost:3000`.
 
 ```bash
 # Stop containers, keep data
-docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml down
 
 # Wipe everything (fresh start, seed re-runs on next start)
-docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml down -v
 ```
 
 ## Re-seed without volume wipe

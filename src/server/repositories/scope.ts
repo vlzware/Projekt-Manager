@@ -120,6 +120,11 @@ export function attachmentScopeForCaller(user: AuthUser): SQL | null {
  * keeps the repository free of handler concerns and lets TypeScript's
  * narrowing distinguish all three outcomes at the call site.
  *
+ * Soft-deleted (archived) rows are returned as `T` with the entity's
+ * own archive flag set — the caller renders read-only preview rather
+ * than a "gone" surface. Mutation paths use a separate `*ForMutation`
+ * fetch that filters archived rows back to null (AC-95).
+ *
  * See ADR-0019 for the rationale behind 403-over-404.
  */
 export const OUT_OF_SCOPE = { outOfScope: true } as const;

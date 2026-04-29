@@ -4,10 +4,11 @@
  * onClose when the user cancels or a successful/conflict create lands.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { STRINGS } from '@/config/strings';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
+import { MenuBackdrop } from '../common/MenuBackdrop';
 import styles from './Management.module.css';
 
 type NumberPreflightStatus = 'idle' | 'checking' | 'available' | 'taken';
@@ -27,7 +28,6 @@ export function ProjectCreateForm({ onClose }: Props) {
   const [customerId, setCustomerId] = useState('');
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
 
   // Client-supplied UUID for idempotent create. Stable across re-renders
   // so a retry after a transient failure replays rather than duplicating.
@@ -37,19 +37,6 @@ export function ProjectCreateForm({ onClose }: Props) {
   // Monotonic request id so two overlapping blurs cannot commit out of
   // order — the response that completes second may carry the older value.
   const numberPreflightReqRef = useRef(0);
-
-  // Close customer dropdown on outside click.
-  const closeDropdown = useCallback((e: MouseEvent) => {
-    if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-      setCustomerDropdownOpen(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!customerDropdownOpen) return;
-    document.addEventListener('mousedown', closeDropdown);
-    return () => document.removeEventListener('mousedown', closeDropdown);
-  }, [customerDropdownOpen, closeDropdown]);
 
   const handleNumberBlur = async () => {
     const trimmed = number.trim();
@@ -153,11 +140,7 @@ export function ProjectCreateForm({ onClose }: Props) {
 
         <div className={styles.formGroup}>
           <label className={styles.formLabel}>{STRINGS.ui.customer} *</label>
-          <div
-            className={styles.selectWrapper}
-            data-testid="project-customer-select"
-            ref={dropdownRef}
-          >
+          <div className={styles.selectWrapper} data-testid="project-customer-select">
             <input
               className={styles.formInput}
               value={customerId ? (customers.find((c) => c.id === customerId)?.name ?? '') : ''}
@@ -167,20 +150,23 @@ export function ProjectCreateForm({ onClose }: Props) {
               placeholder={STRINGS.ui.search}
             />
             {customerDropdownOpen && (
-              <div className={styles.selectDropdown}>
-                {customers.map((c) => (
-                  <div
-                    key={c.id}
-                    className={styles.selectOption}
-                    onClick={() => {
-                      setCustomerId(c.id);
-                      setCustomerDropdownOpen(false);
-                    }}
-                  >
-                    {c.name}
-                  </div>
-                ))}
-              </div>
+              <>
+                <MenuBackdrop onClose={() => setCustomerDropdownOpen(false)} />
+                <div className={styles.selectDropdown}>
+                  {customers.map((c) => (
+                    <div
+                      key={c.id}
+                      className={styles.selectOption}
+                      onClick={() => {
+                        setCustomerId(c.id);
+                        setCustomerDropdownOpen(false);
+                      }}
+                    >
+                      {c.name}
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>

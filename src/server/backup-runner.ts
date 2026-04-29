@@ -18,7 +18,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { validateEnv, type Env } from './config/env.js';
+import { validateEnvRuntime, type Env } from './config/env.js';
 import { createDatabase, type Database } from './db/connection.js';
 import {
   runBackup,
@@ -53,7 +53,7 @@ async function main(): Promise<number> {
 
   // Env validation — reuses the app's schema. The backup-specific keys
   // are declared there with the right defaults (AGE_IDENTITY_PATH etc.).
-  const env = validateEnv();
+  const env = validateEnvRuntime();
 
   if (subcommand === 'run') {
     return runSubcommand(env);
@@ -193,10 +193,10 @@ async function drillSubcommand(env: Env): Promise<number> {
     );
     return 1;
   } catch (err) {
-    // H3 audit finding: `age -d` today does not echo the identity path,
-    // but a future age release might. Scrub credential-shaped strings
-    // (via sanitizeErrorMessage) AND any literal substring matching
-    // the tmpfs identity prefix before logging. Defense in depth.
+    // `age -d` today does not echo the identity path, but a future
+    // age release might. Scrub credential-shaped strings (via
+    // sanitizeErrorMessage) AND any literal substring matching the
+    // tmpfs identity prefix before logging. Defense in depth.
     const raw = errorMessage(err);
     const scrubbed = sanitizeErrorMessage(raw).replace(
       /\/run\/drill-key\/[^\s"'`]*/g,

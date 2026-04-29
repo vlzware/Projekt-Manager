@@ -1,20 +1,42 @@
 /**
- * Attachment service — init / complete / delete / list / download-url /
- * bulk-download orchestration.
+ * Attachment service — init / complete / hide / restore / list /
+ * Papierkorb listing / download-url / bulk-download orchestration.
  *
- * The state machine is pinned by api.md §14.2.11 and data-model.md §5.13:
+ * The state machine is pinned by api.md §14.2.11, data-model.md §5.13
+ * and ADR-0022 (capability split + Papierkorb):
  *
- *   init        → row created at `status = 'pending'`; presigned POST(s)
- *                 issued for original (+thumb). Audit row (`attachment:add`)
- *                 via `mutate()`.
- *   complete    → HEAD verify both objects; flip to `status = 'ready'`.
+ *   init        → row created at `status = 'pending'`; presigned PUT(s)
+ *                 issued for original (+thumb), pinning Content-Type,
+ *                 Content-Length, and Content-MD5 via SigV4. Audit row
+ *                 (`attachment:add`) via `mutate()`.
+ *   complete    → HEAD verify both objects; flip to `status = 'ready'`
+ *                 and persist the per-version-id pair (ADR-0022).
  *                 No audit row (AC-219 — state-machine finalize).
- *   delete      → row hard-deleted; storage objects best-effort removed.
- *                 Audit row (`attachment:remove`) via `mutate()`.
+ *   hide        → `DeleteObject` (no versionId) on each storage key
+ *                 writes a delete marker on the versioned bucket;
+ *                 the prior version stays intact for restore. Then
+ *                 the CAS `ready` → `hidden` and the audit row commit
+ *                 atomically inside `mutate()`. Storage runs FIRST so
+ *                 a transient storage outage surfaces as 5xx (the
+ *                 user retries) instead of leaving a `hidden` row
+ *                 paired with a still-current storage object that
+ *                 lifecycle would never reap.
+ *   restore     → flip `hidden` → `ready` via CAS, then
+ *                 `copyFromVersion` to promote the persisted version
+ *                 back to current, then write the freshly-issued
+ *                 version-ids. All inside one `mutate()` tx — the
+ *                 storage advance is reachable only after the CAS
+ *                 commits, so two concurrent restores cannot both
+ *                 advance storage. Audit row (`attachment:restore`).
  *
  * Worker scoping: the repository predicate narrows reads; the service
  * layer additionally rejects worker write/init on an unassigned project
  * (AC-214) and enforces the self-delete grace window (AC-215).
+ *
+ * Archive interaction: hide is gated on the project NOT being archived
+ * (read-only preview); restore is permitted on archived projects so
+ * binaries in an archived project's trash are not silently reaped by
+ * lifecycle.
  */
 
 import crypto from 'node:crypto';
@@ -28,13 +50,20 @@ import {
   classifyKind,
   isSafeFileName,
 } from '../../domain/attachments.js';
-import { type AttachmentStorageClient, StorageObjectNotFoundError } from '../storage/client.js';
+import {
+  type AttachmentStorageClient,
+  type PresignedPutDescriptor,
+  StorageObjectNotFoundError,
+} from '../storage/client.js';
 import { isProjectInScope } from '../repositories/scope.js';
 import {
   createPending,
-  deleteById,
+  markHidden,
+  markRestored,
+  setVersionIds,
   getById,
   listByProject,
+  listHiddenByProject,
   markReady,
   type AttachmentRow,
   type AttachmentRowWithUploader,
@@ -52,24 +81,37 @@ const FILE_NAME_MAX = 255;
 const LABEL_VALUES = new Set<string>(ATTACHMENT_LABELS.map((entry) => entry.value));
 const MIME_WHITELIST = new Set<string>(ATTACHMENT_MIME_WHITELIST);
 
-export interface PresignedPost {
-  url: string;
-  fields: Record<string, string>;
-  expiresAt: string;
-}
+/**
+ * Wire shape returned by `POST /api/projects/:id/attachments/init` for
+ * each upload (original + optional thumbnail). Identical to the storage
+ * client's `PresignedPutDescriptor` — re-exported under a verb-neutral
+ * name so the API contract reads naturally.
+ */
+export type PresignedUpload = PresignedPutDescriptor;
 
 export interface InitUploadInput {
   fileName: string;
   mimeType: string;
   sizeBytes: number;
+  /** RFC 1864 base64 of the original blob's MD5 (24 chars, ends `==`). */
+  contentMd5: string;
   label: AttachmentLabel;
   hasThumbnail: boolean;
+  /**
+   * Required when `hasThumbnail = true`. The client computes the
+   * thumbnail before init so the server can sign a tight, exact-size
+   * PUT (parity with the original-upload pin) instead of a liberal
+   * `[1, perFileCap]` range that the POST policy used to express.
+   */
+  thumbSizeBytes?: number;
+  /** Required when `hasThumbnail = true`. RFC 1864 base64 MD5. */
+  thumbContentMd5?: string;
 }
 
 export interface InitUploadResult {
   attachment: Attachment;
-  originalUpload: PresignedPost;
-  thumbnailUpload?: PresignedPost;
+  originalUpload: PresignedUpload;
+  thumbnailUpload?: PresignedUpload;
 }
 
 export interface DownloadUrlResult {
@@ -86,13 +128,14 @@ export interface AttachmentServiceDeps {
 
 interface ResolvedCaps {
   perFileCapBytes: number;
+  perThumbCapBytes: number;
   bulkDownloadMaxFiles: number;
   bulkDownloadMaxBytes: number;
   workerSelfDeleteGraceMinutes: number;
 }
 
 function resolveCaps(): ResolvedCaps {
-  // `validateEnv` has already run by the time a route handler reaches
+  // `validateEnvRuntime` has already run by the time a route handler reaches
   // the service; reading through `getEnv` keeps the config override
   // path consistent with the other `[C]` surfaces (auditRetention etc.).
   let env: ReturnType<typeof getEnv> | null = null;
@@ -101,11 +144,12 @@ function resolveCaps(): ResolvedCaps {
   } catch {
     // Tests that construct a service outside of startApp() fall through
     // to the build-time defaults. Production paths always call
-    // `validateEnv()` before the first request.
+    // `validateEnvRuntime()` before the first request.
     env = null;
   }
   return {
     perFileCapBytes: env?.ATTACHMENT_PER_FILE_CAP_BYTES ?? ATTACHMENT_CONFIG.perFileCapBytes,
+    perThumbCapBytes: env?.ATTACHMENT_THUMB_CAP_BYTES ?? ATTACHMENT_CONFIG.perThumbCapBytes,
     bulkDownloadMaxFiles: env?.ATTACHMENT_BULK_MAX_FILES ?? ATTACHMENT_CONFIG.bulkDownloadMaxFiles,
     bulkDownloadMaxBytes: env?.ATTACHMENT_BULK_MAX_BYTES ?? ATTACHMENT_CONFIG.bulkDownloadMaxBytes,
     workerSelfDeleteGraceMinutes:
@@ -121,7 +165,7 @@ function isOwnerOrOffice(user: AuthUser): boolean {
 function callerIsWorkerOnly(user: AuthUser): boolean {
   // A caller is "worker-only" for delete-grace purposes when none of
   // the roles grants unscoped write (owner, office). Bookkeeper also
-  // lacks `attachment:delete` entirely — the permission gate rejects
+  // lacks `attachment:hide` entirely — the permission gate rejects
   // them before the service runs, so the grace logic doesn't fire for
   // bookkeepers.
   return !isOwnerOrOffice(user);
@@ -140,6 +184,7 @@ function toAttachment(row: AttachmentRowWithUploader): Attachment {
     originalKey: row.originalKey,
     thumbKey: row.thumbKey,
     hasThumbnail: row.hasThumbnail,
+    hiddenAt: row.hiddenAt ? row.hiddenAt.toISOString() : null,
     createdAt: row.createdAt.toISOString(),
     createdBy:
       row.createdBy && row.uploaderDisplayName
@@ -150,6 +195,20 @@ function toAttachment(row: AttachmentRowWithUploader): Attachment {
 
 function storageKey(projectId: string, attachmentId: string, suffix: 'orig' | 'thumb'): string {
   return `attachments/${projectId}/${attachmentId}.${suffix}`;
+}
+
+/**
+ * RFC 1864 base64 of an MD5 digest is exactly 24 chars: 21 of
+ * [A-Za-z0-9+/], one of [AQgw] at position 22 (only those four
+ * carry zero-bit alignment for a 16-byte digest), then `==`. The
+ * tighter alphabet at position 22 rejects malformed values that the
+ * coarser `[A-Za-z0-9+/]{22}==` would accept. Used both at the
+ * service-layer for `contentMd5` and via the route schema's pattern.
+ */
+const MD5_BASE64_RE = /^[A-Za-z0-9+/]{21}[AQgw]==$/;
+
+function isMd5Base64(value: unknown): value is string {
+  return typeof value === 'string' && MD5_BASE64_RE.test(value);
 }
 
 function attachmentAuditLabel(row: AttachmentRow): string {
@@ -173,7 +232,7 @@ export class AttachmentService {
 
   /**
    * Init: validate inputs, ensure caller scope, write a pending row via
-   * `mutate()`, issue presigned POST descriptors.
+   * `mutate()`, issue presigned PUT descriptors (one per blob).
    */
   async initUpload(
     caller: AuthUser,
@@ -225,11 +284,44 @@ export class AttachmentService {
     ) {
       throw validationError(STRINGS.attachments.uploadFileTooLarge);
     }
+    // RFC 1864 base64 of 16-byte MD5 → 24 chars, last two `==`. Reject
+    // anything else here so the storage signer cannot be handed a
+    // malformed value. The storage provider's `BadDigest` check is the
+    // next layer.
+    if (!isMd5Base64(input.contentMd5)) {
+      throw validationError(STRINGS.errors.invalidInput);
+    }
 
     const kind = classifyKind(input.mimeType);
     // The client signals `hasThumbnail`. A photo without a thumbnail is
     // legal (no gallery render), but a binary with a thumbnail is not.
     const hasThumbnail = kind === 'photo' ? input.hasThumbnail : false;
+
+    // Thumbnail size + MD5 are required when a thumbnail is being
+    // signed. The client must run the image pipeline to know the
+    // thumbnail blob's exact bytes before calling init — that gives us
+    // the same exact-size pin on the thumbnail upload that we already
+    // have on the original. The cap is `perThumbCapBytes`, NOT the
+    // per-file cap: the thumbnail is server-encoded WebP at 320 px /
+    // q=0.72 (`attachmentPipeline.ts`) — sized in the tens of KB.
+    // Allowing a 1 MB "thumbnail" through would be a policy bypass.
+    let thumbSizeBytes: number | undefined;
+    let thumbContentMd5: string | undefined;
+    if (hasThumbnail) {
+      if (
+        typeof input.thumbSizeBytes !== 'number' ||
+        !Number.isInteger(input.thumbSizeBytes) ||
+        input.thumbSizeBytes <= 0 ||
+        input.thumbSizeBytes > caps.perThumbCapBytes
+      ) {
+        throw validationError(STRINGS.attachments.uploadFileTooLarge);
+      }
+      if (!isMd5Base64(input.thumbContentMd5)) {
+        throw validationError(STRINGS.errors.invalidInput);
+      }
+      thumbSizeBytes = input.thumbSizeBytes;
+      thumbContentMd5 = input.thumbContentMd5;
+    }
 
     const attachmentId = crypto.randomUUID();
     const originalKey = storageKey(projectId, attachmentId, 'orig');
@@ -252,6 +344,7 @@ export class AttachmentService {
             sizeBytes: input.sizeBytes,
             originalKey,
             thumbKey,
+            thumbSizeBytes: thumbSizeBytes ?? null,
             hasThumbnail,
             createdBy: caller.id,
           });
@@ -278,20 +371,27 @@ export class AttachmentService {
 
     log.info({ attachmentId: row.id, projectId }, 'attachment_init');
 
-    // Main upload: pin content-length-range to the declared size exactly
-    // so storage rejects any size-substitution attempt before the
-    // complete() HEAD runs. Thumbnail upload: the true size is not
-    // declared at init, so leave a [1, cap] range.
-    const originalUpload = await this.storage.createPresignedPost(originalKey, input.mimeType, {
-      minBytes: input.sizeBytes,
-      maxBytes: input.sizeBytes,
-    });
-    const thumbnailUpload = thumbKey
-      ? await this.storage.createPresignedPost(thumbKey, 'image/webp', {
-          minBytes: 1,
-          maxBytes: caps.perFileCapBytes,
-        })
-      : undefined;
+    // Sign one presigned PUT per blob. Each binds Content-Type +
+    // Content-Length + Content-MD5 (see `createPresignedPut`); a client
+    // that mutates any of the three fails signature verification. The
+    // body MD5 is verified against received bytes by the storage
+    // provider (`BadDigest`), so the URL is reusable only for the exact
+    // bytes the client committed to at init time.
+    const originalUpload = await this.storage.createPresignedPut(
+      originalKey,
+      input.mimeType,
+      input.sizeBytes,
+      input.contentMd5,
+    );
+    const thumbnailUpload =
+      thumbKey && thumbSizeBytes !== undefined && thumbContentMd5 !== undefined
+        ? await this.storage.createPresignedPut(
+            thumbKey,
+            'image/webp',
+            thumbSizeBytes,
+            thumbContentMd5,
+          )
+        : undefined;
 
     return {
       // Newly created row — uploader display name comes from the live
@@ -319,6 +419,15 @@ export class AttachmentService {
       throw notPermitted();
     }
 
+    // Race guard: a project archived between init and complete must not
+    // produce a `ready` row. initUpload blocks archived rows up front,
+    // but the storage round-trip leaves a window where archive can land
+    // before the flip. The pending row stays for the reaper.
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow || projectRow.deleted) {
+      throw notFound(STRINGS.entities.project);
+    }
+
     const row = await getById(this.db, attachmentId);
     if (!row || row.projectId !== projectId) {
       // Reaper already removed the row (or wrong-project mismatch). AC-212
@@ -331,14 +440,18 @@ export class AttachmentService {
     }
 
     const caps = resolveCaps();
-    // HEAD the original first.
+    // HEAD the original first. Capture VersionId for the restore path
+    // (ADR-0022) — the bucket is versioned, every PUT produces a fresh
+    // version-id, and the version that is current immediately post-
+    // upload is exactly what `copyFromVersion` must recreate later.
+    let versionId: string | null;
     try {
       const head = await this.storage.headObject(row.originalKey);
       // Declared-size pin first (AC-212, spec §14.2.11 error paths).
-      // The presigned POST's content-length-range already rejects this
-      // at storage, so reaching this branch means a policy bypass —
-      // refuse the flip so a size-substitution upload cannot become
-      // canonical.
+      // The presigned PUT's signed `Content-Length` already rejects a
+      // size deviation at the signature layer, so reaching this branch
+      // means a signature bypass — refuse the flip so a size-substituted
+      // upload cannot become canonical.
       if (head.size !== row.sizeBytes) {
         throw conflict(STRINGS.errors.invalidInput);
       }
@@ -350,6 +463,7 @@ export class AttachmentService {
       if (head.contentType !== row.mimeType) {
         throw conflict(STRINGS.errors.invalidInput);
       }
+      versionId = head.versionId ?? null;
     } catch (err) {
       if (err instanceof StorageObjectNotFoundError) {
         throw conflict(STRINGS.errors.invalidInput);
@@ -357,19 +471,31 @@ export class AttachmentService {
       throw err;
     }
 
+    let thumbVersionId: string | null = null;
     if (row.hasThumbnail && row.thumbKey) {
       try {
-        // Defense in depth: the presigned POST policy already pins
-        // size ≤ cap and content-type starts-with image/webp. Re-assert
-        // at HEAD so a policy bypass that slipped past storage is still
-        // caught at state-flip time.
+        // Defense in depth: the presigned PUT already pins
+        // Content-Length to the exact thumb size and Content-Type to
+        // image/webp via SigV4. Re-assert at HEAD so a signature bypass
+        // that slipped past storage is still caught at state-flip time.
         const thumbHead = await this.storage.headObject(row.thumbKey);
-        if (thumbHead.size > caps.perFileCapBytes) {
+        // Declared-size pin first — mirrors the original-side check
+        // above. The persisted `thumb_size_bytes` is the value the
+        // client committed to at init; a HEAD reporting a different
+        // size means a signature bypass landed bytes the row never
+        // accepted. Only assert when the row carries a value: legacy
+        // pending rows that predate the column have null and fall
+        // through to the cap-only check.
+        if (row.thumbSizeBytes !== null && thumbHead.size !== row.thumbSizeBytes) {
+          throw conflict(STRINGS.errors.invalidInput);
+        }
+        if (thumbHead.size > caps.perThumbCapBytes) {
           throw conflict(STRINGS.errors.invalidInput);
         }
         if (!thumbHead.contentType.startsWith('image/')) {
           throw conflict(STRINGS.errors.invalidInput);
         }
+        thumbVersionId = thumbHead.versionId ?? null;
       } catch (err) {
         if (err instanceof StorageObjectNotFoundError) {
           throw conflict(STRINGS.errors.invalidInput);
@@ -385,7 +511,9 @@ export class AttachmentService {
     // row during the HEAD→markReady gap; a storage object verified by
     // HEAD but not-yet-marked-ready can remain orphaned for up to one
     // reaper tick before the next sweep cleans it up.
-    const updated = await this.db.transaction(async (tx) => markReady(tx, attachmentId));
+    const updated = await this.db.transaction(async (tx) =>
+      markReady(tx, attachmentId, { versionId, thumbVersionId }),
+    );
     if (!updated) {
       // Either the row disappeared between the get + markReady calls
       // (reaper race — 404) or it's already ready (racing client — 409).
@@ -406,10 +534,26 @@ export class AttachmentService {
   }
 
   /**
-   * Delete: permission + scope + worker grace; hard-delete via mutate();
-   * best-effort storage cleanup.
+   * Hide (user-initiated DELETE; soft-hide per ADR-0022). Validates
+   * caller scope, the project's read-write status (archive gate), and
+   * the worker self-delete grace window (AC-215).
+   *
+   * Storage-first ordering, outside the DB transaction. The
+   * `DeleteObject` (no versionId) writes a delete marker on the
+   * versioned bucket; the prior version is preserved so restore can
+   * promote it back. A storage failure throws and propagates as 5xx
+   * — no DB change happens, the user retries from scratch. Storage
+   * hide is idempotent: repeating against an already-hidden key just
+   * appends another delete marker, lifecycle reaps both. Running
+   * storage AHEAD of `mutate()` keeps the bucket lifecycle's
+   * NONCURRENT-only reap consistent with the row's `hidden` status:
+   * the alternative (DB CAS first, swallow storage faults) leaks the
+   * underlying object as the "current" version forever, with no UI
+   * affordance to retry. After storage succeeds, the CAS flip
+   * (`ready` → `hidden`) and the audit row commit atomically inside
+   * `mutate()`.
    */
-  async deleteAttachment(
+  async hideAttachment(
     caller: AuthUser,
     projectId: string,
     attachmentId: string,
@@ -418,6 +562,16 @@ export class AttachmentService {
   ): Promise<void> {
     if (!(await isProjectInScope(this.db, caller, projectId))) {
       throw notPermitted();
+    }
+
+    // Archived projects are read-only previews — server-side defence
+    // matching the project-mutation gate (AC-95). The detail-page UI
+    // already hides the trash affordance, but a direct API call must
+    // not slip through. 404 mirrors the project-mutation contract: the
+    // attachment "is gone" from the perspective of editable surfaces.
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow || projectRow.deleted) {
+      throw notFound(STRINGS.entities.project);
     }
 
     const row = await getById(this.db, attachmentId);
@@ -437,17 +591,40 @@ export class AttachmentService {
       }
     }
 
+    // Storage hide BEFORE the DB CAS. A throw here surfaces as 5xx
+    // and leaves the row in `ready`; the user retries. Doing this
+    // inside `mutate()`'s `run` would couple a non-transactional side
+    // effect to the SQL tx — a later rollback (e.g. the CAS losing
+    // its predicate to a racing hide) cannot undo a successful
+    // `DeleteObject`, producing the symmetric orphan in the opposite
+    // direction.
+    await this.storage.hide(row.originalKey);
+    if (row.thumbKey) {
+      await this.storage.hide(row.thumbKey);
+    }
+
     await mutate(
       this.db,
       { actorKind: 'user', actorId: caller.id, correlationId: correlationId ?? null },
       {
         entityType: 'attachment',
-        action: 'attachment:remove',
+        action: 'attachment:hide',
         run: async (tx) => {
-          const deleted = await deleteById(tx, attachmentId);
+          const hidden = await markHidden(tx, attachmentId);
+          if (!hidden) {
+            // Lost the CAS — the row was not in `ready` at the moment of
+            // the UPDATE. Either it was already hidden (double-click,
+            // racing client), or never reached ready (stuck pending),
+            // or was reaped between the read and write. 409 in all
+            // cases — the client refetches and sees the actual state.
+            // The storage delete marker we just wrote is harmless
+            // (idempotent) and aligns with the racing hide that
+            // already won the CAS.
+            throw conflict(STRINGS.errors.invalidInput);
+          }
           return {
             entityId: attachmentId,
-            entityLabel: deleted ? attachmentAuditLabel(deleted) : null,
+            entityLabel: attachmentAuditLabel(hidden),
             value: null,
             before: {
               projectId,
@@ -456,7 +633,9 @@ export class AttachmentService {
               mimeType: row.mimeType,
               sizeBytes: row.sizeBytes,
             },
-            after: {},
+            after: {
+              hiddenAt: hidden.hiddenAt?.toISOString() ?? null,
+            },
             ancestorEntityType: 'project',
             ancestorEntityId: projectId,
           };
@@ -464,28 +643,191 @@ export class AttachmentService {
       },
     );
 
-    // Best-effort storage cleanup — a failure here does not resurrect
-    // the row (the DB cascade already committed). Orphaned keys are
-    // harmless; the reaper / bucket lifecycle ultimately cleans them.
-    await this.bestEffortDelete(row.originalKey, log);
-    if (row.thumbKey) {
-      await this.bestEffortDelete(row.thumbKey, log);
-    }
-
-    log.info({ attachmentId, projectId }, 'attachment_removed');
+    log.info({ attachmentId, projectId }, 'attachment_hidden');
   }
 
   async listForProject(caller: AuthUser, projectId: string): Promise<Attachment[]> {
     // 404 / 403 order mirrors the project-detail policy (AC-147) —
     // a missing project is 404, an existing project out-of-scope is 403.
+    // Archived projects ARE listed: the detail page renders them as a
+    // read-only preview (api.md §14.2.2), so the attachment listing has
+    // to surface alongside the rest of the body. Mutation paths
+    // (initUpload, hideAttachment) keep the archived gate.
     const projectRow = await getProjectRowById(this.db, projectId);
     if (!projectRow) throw notFound(STRINGS.entities.project);
-    if (projectRow.deleted) throw notFound(STRINGS.entities.project);
     if (!(await isProjectInScope(this.db, caller, projectId))) {
       throw notPermitted();
     }
     const rows = await listByProject(this.db, projectId, caller);
     return rows.map(toAttachment);
+  }
+
+  /**
+   * Papierkorb listing — hidden rows on the project, newest hide first.
+   * Route gate (`attachment:trash`) restricts to owner / office; this
+   * method assumes the gate has run and only enforces project scope.
+   */
+  async listHiddenForProject(caller: AuthUser, projectId: string): Promise<Attachment[]> {
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow) throw notFound(STRINGS.entities.project);
+    if (!(await isProjectInScope(this.db, caller, projectId))) {
+      throw notPermitted();
+    }
+    const rows = await listHiddenByProject(this.db, projectId, caller);
+    return rows.map(toAttachment);
+  }
+
+  /**
+   * Restore: flip `hidden` → `ready` via CAS, then `copyFromVersion`
+   * from the persisted version-id pair, then write the freshly-issued
+   * current-version ids. The whole sequence runs inside `mutate()` so
+   * the audit chain records the restore atomically with the storage
+   * advance — a CAS-loss aborts before any storage call (no orphan
+   * current versions); a storage failure rolls back the status flip
+   * and the audit row (the user retries cleanly).
+   *
+   * Atomicity choice: copies run AFTER the CAS, inside the surrounding
+   * transaction. The trade-off is that a transient storage fault rolls
+   * the audit row back too; the user repeats the call. The alternative
+   * (copy first, compensate on CAS-loss) was rejected because the
+   * compensation can itself fail.
+   *
+   * Asymmetry with hide (intentional): restore is permitted on archived
+   * projects; hide is not. Archive is a reversible state (re-activate
+   * is a design feature elsewhere); destruction-by-lifecycle is not.
+   * If restore were forbidden during archival, binaries in an archived
+   * project's trash would silently reap after L days with no recovery
+   * path. Hide on an archived project stays forbidden — read-only
+   * previews must not accept new mutations.
+   *
+   * Failure modes (each maps to a distinct status-code surface):
+   *   - Row not in 'hidden' state → 409 (transient: client refetches
+   *     and sees the actual state).
+   *   - Row missing or wrong project → 404 (project itself missing
+   *     also surfaces as 404).
+   *   - Storage CopyObject failure → 500 (genuine provider fault; the
+   *     transaction rolls back, the row stays hidden, the user can
+   *     retry).
+   *   - `versionId` is null on a 'hidden' row → 422
+   *     (Datenintegritätsproblem — restore is structurally impossible).
+   *   - `hasThumbnail=true` with `thumb_version_id` null → 422
+   *     (gallery preview would be permanently lost; surface the
+   *     integrity violation rather than silently restore a broken
+   *     row).
+   *   - CAS-loss inside the tx → 409 (transient race).
+   */
+  async restoreAttachment(
+    caller: AuthUser,
+    projectId: string,
+    attachmentId: string,
+    log: ServiceLogger,
+    correlationId: string | null,
+  ): Promise<Attachment> {
+    if (!(await isProjectInScope(this.db, caller, projectId))) {
+      throw notPermitted();
+    }
+    // Existence check, but NOT an archive gate — restore is the
+    // un-loss move, permitted on archived projects so binaries in the
+    // trash are not silently reaped by lifecycle. Hide-side keeps the
+    // archive gate (read-only previews refuse new mutations).
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow) {
+      throw notFound(STRINGS.entities.project);
+    }
+    const row = await getById(this.db, attachmentId);
+    if (!row || row.projectId !== projectId) {
+      throw notFound(STRINGS.entities.resource);
+    }
+    if (row.status !== 'hidden') {
+      throw conflict(STRINGS.errors.invalidInput);
+    }
+    if (!row.versionId) {
+      // No source version → restore is structurally impossible. Every
+      // hide records the version_id at complete-time; a 'hidden' row
+      // without one is a data-integrity issue. 422 (not 409) — 409
+      // implies "retry" and the row will not become restorable on its
+      // own.
+      throw validationError(STRINGS.attachments.restoreMissingVersionId(attachmentId));
+    }
+    if (row.hasThumbnail && row.thumbKey && !row.thumbVersionId) {
+      // The gallery thumb is part of the photo's restorable state.
+      // Silently skipping the thumb copy would permanently lose the
+      // gallery preview without any error signal — surface the integrity
+      // violation as 422 so the operator can inspect.
+      throw validationError(STRINGS.attachments.restoreMissingThumbVersionId(attachmentId));
+    }
+
+    // Snapshot the source version-ids — the inside-tx copies run from
+    // these. After the CAS commits we know nobody else can race the
+    // same row (the row-level lock on the UPDATE blocks concurrent CAS
+    // attempts until this tx ends).
+    const sourceVersionId = row.versionId;
+    const sourceThumbVersionId = row.thumbKey ? row.thumbVersionId : null;
+
+    const restored = await mutate(
+      this.db,
+      { actorKind: 'user', actorId: caller.id, correlationId: correlationId ?? null },
+      {
+        entityType: 'attachment',
+        action: 'attachment:restore',
+        run: async (tx) => {
+          // Phase 1 — CAS the status. Holding the row lock from here
+          // means no concurrent restorer can advance storage while we
+          // copy below.
+          const flipped = await markRestored(tx, attachmentId);
+          if (!flipped) {
+            // CAS lost — racing restore committed first, or the row
+            // shifted out of 'hidden' between our read and this write.
+            // No storage call has happened yet, so there is nothing to
+            // compensate. The user retries.
+            throw conflict(STRINGS.errors.invalidInput);
+          }
+
+          // Phase 2 — copy. A failure here throws out of the tx and
+          // rolls back Phase 1 (status returns to 'hidden') AND the
+          // audit row. The bucket retains only the prior hidden version.
+          const newVersionId =
+            (await this.storage.copyFromVersion(row.originalKey, sourceVersionId)) ?? null;
+          let newThumbVersionId: string | null = null;
+          if (row.thumbKey && sourceThumbVersionId) {
+            newThumbVersionId =
+              (await this.storage.copyFromVersion(row.thumbKey, sourceThumbVersionId)) ?? null;
+          }
+
+          // Phase 3 — write the freshly-issued version-ids. We hold the
+          // row lock from Phase 1, so this is a plain UPDATE with no
+          // CAS predicate; setVersionIds returns null only if the id
+          // does not exist (would be a programmer error here).
+          const updated = await setVersionIds(tx, attachmentId, {
+            versionId: newVersionId,
+            thumbVersionId: newThumbVersionId,
+          });
+          if (!updated) {
+            throw new Error('restoreAttachment: row vanished mid-transaction');
+          }
+
+          return {
+            entityId: attachmentId,
+            entityLabel: attachmentAuditLabel(updated),
+            value: updated,
+            before: {
+              hiddenAt: row.hiddenAt?.toISOString() ?? null,
+              versionId: sourceVersionId,
+              thumbVersionId: sourceThumbVersionId,
+            },
+            after: {
+              versionId: newVersionId,
+              thumbVersionId: newThumbVersionId,
+            },
+            ancestorEntityType: 'project',
+            ancestorEntityId: projectId,
+          };
+        },
+      },
+    );
+
+    log.info({ attachmentId, projectId }, 'attachment_restored');
+    return toAttachment(restored);
   }
 
   async issueDownloadUrl(
@@ -546,29 +888,6 @@ export class AttachmentService {
       bulkDownloadMaxBytes: caps.bulkDownloadMaxBytes,
     });
   }
-
-  /**
-   * Best-effort storage delete. Swallows errors so a transient storage
-   * outage does not surface as a 500 after the DB commit succeeds. The
-   * operational log preserves the orphaned key so cleanup can follow.
-   */
-  private async bestEffortDelete(key: string, log: ServiceLogger): Promise<void> {
-    try {
-      await this.storage.deleteObject(key);
-    } catch (err) {
-      log.error(
-        {
-          event: 'attachment_storage_delete_failed',
-          key,
-          // `error_hint` matches the orphan-reaper / bulk-download-reaper
-          // contract (AC-213, data-model.md §6.11) so a single log-field
-          // name works across every attachment storage-cleanup path.
-          error_hint: err instanceof Error ? err.message : String(err),
-        },
-        'attachment_storage_delete_failed',
-      );
-    }
-  }
 }
 
 /**
@@ -576,35 +895,35 @@ export class AttachmentService {
  * cascade collects keys pre-commit via `listKeysForProject` and then
  * calls this helper after the DB transaction returns.
  */
-export async function bestEffortDeleteStorageKeys(
+export async function bestEffortHideStorageKeys(
   storage: AttachmentStorageClient,
   keys: Array<{ originalKey: string; thumbKey: string | null }>,
   log: ServiceLogger,
 ): Promise<void> {
   for (const entry of keys) {
     try {
-      await storage.deleteObject(entry.originalKey);
+      await storage.hide(entry.originalKey);
     } catch (err) {
       log.error(
         {
-          event: 'attachment_storage_delete_failed',
+          event: 'attachment_storage_hide_failed',
           key: entry.originalKey,
           error_hint: err instanceof Error ? err.message : String(err),
         },
-        'attachment_storage_delete_failed',
+        'attachment_storage_hide_failed',
       );
     }
     if (entry.thumbKey) {
       try {
-        await storage.deleteObject(entry.thumbKey);
+        await storage.hide(entry.thumbKey);
       } catch (err) {
         log.error(
           {
-            event: 'attachment_storage_delete_failed',
+            event: 'attachment_storage_hide_failed',
             key: entry.thumbKey,
             error_hint: err instanceof Error ? err.message : String(err),
           },
-          'attachment_storage_delete_failed',
+          'attachment_storage_hide_failed',
         );
       }
     }

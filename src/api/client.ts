@@ -19,9 +19,9 @@ export interface ApiError {
 /**
  * Error categories from `docs/spec/api.md §14.4.1`. The client classifies
  * every failure into one of these so the state/UI layers can branch on
- * category rather than on individual error codes. This closes the gap
- * where only SESSION_EXPIRED was handled specially and every other code
- * collapsed into the same generic path. See consolidation review H-3 / E F-1.
+ * category rather than on individual error codes. Without this, only
+ * SESSION_EXPIRED was handled specially and every other code collapsed
+ * into the same generic path.
  */
 export type ErrorCategory =
   | 'authentication' // INVALID_CREDENTIALS, UNAUTHENTICATED, SESSION_EXPIRED
@@ -324,6 +324,15 @@ export const projectApi = {
    */
   purge: (id: string) => apiCall<null>(`/api/projects/${id}/purge`, { method: 'DELETE' }),
 
+  /**
+   * Inverse of delete — flips deleted=true back to false on an archived
+   * project. 200 with the now-active project body. An already-active
+   * target returns 409 CONFLICT; a non-existent target returns 404.
+   * Requires `project:delete` (symmetric — same role can archive and
+   * restore). See ADR-0017.
+   */
+  restore: (id: string) => apiCall<Project>(`/api/projects/${id}/restore`, { method: 'POST' }),
+
   transitionForward: (id: string, expectedStatus: WorkflowState) =>
     apiCall<Project>(`/api/projects/${id}/transition/forward`, {
       method: 'POST',
@@ -540,16 +549,22 @@ export const pushApi = {
   },
 };
 
-export interface PresignedPost {
+/**
+ * Presigned PUT descriptor returned by the init endpoint for each blob.
+ * The client must PUT the body to `url` with these exact `headers`;
+ * SigV4 binds Content-Type, Content-Length, and Content-MD5 into the
+ * signature, so any divergence is rejected by the storage provider.
+ */
+export interface PresignedUpload {
   url: string;
-  fields: Record<string, string>;
+  headers: Record<string, string>;
   expiresAt: string;
 }
 
 export interface AttachmentInitResponse {
   attachment: Attachment;
-  originalUpload: PresignedPost;
-  thumbnailUpload?: PresignedPost;
+  originalUpload: PresignedUpload;
+  thumbnailUpload?: PresignedUpload;
 }
 
 export interface AttachmentDownloadUrlResponse {
@@ -571,8 +586,11 @@ export const attachmentApi = {
       fileName: string;
       mimeType: string;
       sizeBytes: number;
+      contentMd5: string;
       label: AttachmentLabel;
       hasThumbnail: boolean;
+      thumbSizeBytes?: number;
+      thumbContentMd5?: string;
     },
     signal?: AbortSignal,
   ) =>
@@ -591,6 +609,14 @@ export const attachmentApi = {
   delete: (projectId: string, attachmentId: string) =>
     apiCall<null>(`/api/projects/${projectId}/attachments/${attachmentId}`, {
       method: 'DELETE',
+    }),
+
+  listTrash: (projectId: string) =>
+    apiCall<AttachmentListResponse>(`/api/projects/${projectId}/attachments/trash`),
+
+  restore: (projectId: string, attachmentId: string) =>
+    apiCall<Attachment>(`/api/projects/${projectId}/attachments/${attachmentId}/restore`, {
+      method: 'POST',
     }),
 
   downloadUrl: (projectId: string, attachmentId: string, variant: 'original' | 'thumbnail') =>

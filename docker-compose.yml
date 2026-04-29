@@ -36,24 +36,41 @@ services:
       # bare for readability. Pairs with `secrets.manifest.txt` and the
       # deploy-time pre-flight in `scripts/deploy.sh`.
       DATABASE_URL: postgresql://pm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}@db:5432/projekt_manager
-      STORAGE_ENDPOINT: http://storage:9000
-      # Public hostname the browser uses to reach MinIO. Caddy
-      # reverse-proxies `storage.${DOMAIN}` to the internal `storage:9000`
-      # (see Caddyfile) and the app signs presigned upload / download URLs
-      # against this host so they are actually resolvable from the
-      # browser. `:?`-gated here at first reference so compose refuses to
-      # parse without DOMAIN rather than producing a broken
-      # `https://storage./...` URL (same pattern as POSTGRES_PASSWORD
-      # etc. above). Later references (line MINIO_API_CORS_ALLOW_ORIGIN,
-      # the caddy service's env) can stay bare — compose aborts the whole
-      # parse on any `:?` failure.  Defense-in-depth:
-      # `assertStoragePublicEndpointInProduction()` also refuses to boot
-      # when STORAGE_ENDPOINT looks internal and this value is missing.
-      # See docs/ops/storage-subdomain.md.
-      STORAGE_PUBLIC_ENDPOINT: https://storage.${DOMAIN:?DOMAIN must be set}
-      STORAGE_BUCKET: projekt-manager
-      STORAGE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
-      STORAGE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      # Object storage endpoint. Operator-supplied per deployment because
+      # the value is provider-specific: B2's S3-compat surface in prod
+      # (`https://s3.<region>.backblazeb2.com`), the in-compose MinIO
+      # service in dev (`http://storage:9000`, set by the dev overlay).
+      # `:?`-gated so a missing value fails compose-parse rather than
+      # silently substituting empty and crash-looping the SDK.
+      STORAGE_ENDPOINT: ${STORAGE_ENDPOINT:?STORAGE_ENDPOINT must be set}
+      # Optional public endpoint the browser uses for presigned URLs.
+      # When unset, the storage client signs against `STORAGE_ENDPOINT` —
+      # correct for B2 prod (browser hits B2 directly) and for dev when
+      # MinIO is exposed on the host. Set to a reverse-proxied hostname
+      # ONLY when `STORAGE_ENDPOINT` is a container-only host the browser
+      # cannot reach. Defense-in-depth:
+      # `assertStoragePublicEndpointInProduction()` refuses to boot when
+      # `STORAGE_ENDPOINT` looks internal and this value is missing.
+      STORAGE_PUBLIC_ENDPOINT: ${STORAGE_PUBLIC_ENDPOINT:-}
+      # Bucket name. `:?`-gated because B2 buckets have operator-chosen
+      # globally-unique names (no sane default), and MinIO dev should
+      # state its bucket explicitly via `.env` rather than relying on a
+      # silent fallback that would diverge from the init script.
+      STORAGE_BUCKET: ${STORAGE_BUCKET:?STORAGE_BUCKET must be set}
+      # SigV4 signing region. MinIO accepts any value (us-east-1 in dev);
+      # B2 verifies against the bucket-bound region (`us-west-002`,
+      # `eu-central-003`, …) and rejects mismatches with
+      # SignatureDoesNotMatch. `:?`-gated so a missing value fails parse
+      # rather than silently signing with the SDK default and 403'ing.
+      STORAGE_REGION: ${STORAGE_REGION:?STORAGE_REGION must be set}
+      # Capability-restricted credential — writeFiles/readFiles/listFiles
+      # only on B2 (per b2 key create in docs/ops/object-storage-provisioning.md);
+      # the equivalent restricted MinIO user in dev (per docker/init-storage.sh).
+      # The boot-time capability self-test in src/server/storage/safety.ts
+      # asserts this credential CANNOT destroy versions and refuses to
+      # serve otherwise — so the app MUST run as the restricted user.
+      STORAGE_ACCESS_KEY: ${STORAGE_ACCESS_KEY:?STORAGE_ACCESS_KEY must be set}
+      STORAGE_SECRET_KEY: ${STORAGE_SECRET_KEY:?STORAGE_SECRET_KEY must be set}
       NODE_ENV: production
       PORT: '3000'
       SEED: ${SEED:-false}
@@ -79,6 +96,10 @@ services:
       # — without this line, the Zod schema silently falls back to its
       # default at runtime (the failure mode check-env-drift.sh guards).
       SESSION_CLEANUP_INTERVAL_MINUTES: ${SESSION_CLEANUP_INTERVAL_MINUTES:-60}
+      # Login-rate-limit ceiling (issue #139, AC-228). Empty default keeps
+      # the env-aware build-time fallback in `getRateLimit()` (5/min in
+      # prod, 30/min elsewhere); set a numeric value to override.
+      LOGIN_RATE_LIMIT_MAX: ${LOGIN_RATE_LIMIT_MAX:-}
       # Audit-log retention cleanup (ADR-0021). Window defaults to the
       # [C] constant in src/config/auditRetention.ts (90 days); leave
       # blank to use that default. Interval default 1440 min (daily).
@@ -88,6 +109,7 @@ services:
       # caps / TTLs are [C] — defaults live in
       # src/config/attachmentConfig.ts. Leave blank to use the defaults.
       ATTACHMENT_PER_FILE_CAP_BYTES: ${ATTACHMENT_PER_FILE_CAP_BYTES:-}
+      ATTACHMENT_THUMB_CAP_BYTES: ${ATTACHMENT_THUMB_CAP_BYTES:-}
       ATTACHMENT_BULK_MAX_FILES: ${ATTACHMENT_BULK_MAX_FILES:-}
       ATTACHMENT_BULK_MAX_BYTES: ${ATTACHMENT_BULK_MAX_BYTES:-}
       ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES: ${ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES:-}
@@ -100,23 +122,38 @@ services:
       # See docs/ops/manual-deploy.md § Secrets.
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-}
-    healthcheck:
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)})",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+      # Layer 2 backup (ADR-0020). The `backup` service is the actual
+      # runtime consumer; forwarded into the `app` container ONLY so the
+      # deploy pre-flight CLI (scripts/deploy.sh:209 → `docker compose
+      # run --rm --no-deps app node /app/dist/server/deploy-preflight-cli.js`)
+      # sees them when computing `formatFeatureManifest()`. Without this
+      # block the manifest reports "backup disabled — R2_ACCESS_KEY_ID
+      # is not set" even when the operator has every key in
+      # secrets.env.age — a false negative that defeats the manifest's
+      # whole purpose. The app's runtime code does not reference these
+      # (backup-runner.ts ships in a different image, ADR-0020). Empty
+      # `:-` defaults so dev workflows without secrets sourced still
+      # parse compose; the deploy-time pre-flight is the only place that
+      # actually reads them.
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_BUCKET: ${R2_BUCKET:-projekt-manager-backups}
+      AGE_RECIPIENT: ${AGE_RECIPIENT:-}
+    # No `healthcheck:` on app. /api/health is a real probe (DB query +
+    # B2 ListObjectsV2) and Docker would invoke it every 10 s for the
+    # lifetime of the container — burning ~8,640 B2 Class C transactions
+    # per day with no consumer (Caddy uses its own /.well-known/healthz,
+    # nothing depends on `service_healthy` on app, restart:unless-stopped
+    # does not act on the unhealthy flag). The deploy + sync scripts hit
+    # /api/health one-shot as a smoke gate; that's the only consumer the
+    # endpoint actually has.
     depends_on:
       db:
         condition: service_healthy
-      storage-init:
-        condition: service_completed_successfully
+      # No storage dependency in the base file: prod talks to an external
+      # provider (B2). The dev overlay re-introduces a `storage-init`
+      # dependency for the in-compose MinIO mirror.
     restart: unless-stopped
     logging: *default-logging
 
@@ -138,37 +175,11 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
-  storage:
-    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
-    mem_limit: 512m
-    command: server /data --console-address ":9001"
-    volumes:
-      - miniodata:/data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      # Allow only the app's own origin to POST uploads via presigned
-      # URLs. S3 presigned POSTs are "simple" CORS requests, so the
-      # browser still enforces the response's Access-Control-Allow-Origin
-      # before it lets JS read the result. `*` would work but is
-      # needlessly permissive — we know the sole legitimate caller.
-      MINIO_API_CORS_ALLOW_ORIGIN: https://${DOMAIN}
-    restart: unless-stopped
-    logging: *default-logging
-
-  storage-init:
-    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
-    depends_on:
-      - storage
-    entrypoint: /bin/sh
-    command: /init-storage.sh
-    volumes:
-      - ./docker/init-storage.sh:/init-storage.sh:ro
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      STORAGE_BUCKET: projekt-manager
-    restart: 'no'
+  # Note: the in-compose MinIO services (`storage`, `storage-init`) live
+  # in `docker-compose.dev.yml`. Production deploys talk to an external
+  # provider (Backblaze B2) configured via `STORAGE_*` env vars; running
+  # MinIO alongside on the VPS would be dead infrastructure. See
+  # docs/ops/object-storage-provisioning.md.
 
   backup:
     # Layer 2 encrypted backup service — see ADR-0020 and
@@ -284,14 +295,31 @@ services:
     ports:
       - '${WG_BIND_IP:-127.0.0.1}:443:443'
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Long-form bind with `create_host_path: false` — see the
+      # rationale on the same pattern in docker-compose.dev.yml's
+      # `db.volumes`. Caddy is gated off in dev (profile: production),
+      # so this guard mostly protects production deploys where a
+      # missing Caddyfile must fail loudly rather than silently
+      # materialise as a root-owned empty directory.
+      - type: bind
+        source: ./Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      # DOMAIN is `:?`-gated at first reference (app service above); this
-      # later substitution inherits that guard. Keeping a `:-localhost`
-      # default here would be dead code.
-      DOMAIN: ${DOMAIN}
+      # DOMAIN is `:?`-gated here at its first (and only) reference in
+      # the base file — the iter-9 storage refactor removed the former
+      # `https://storage.${DOMAIN}` derivation in the app service, so
+      # caddy is now the sole consumer. `:?` makes compose refuse to
+      # parse without DOMAIN rather than substituting empty and handing
+      # Caddy a broken site address. The HTTP-only overlay
+      # (docker-compose.http.yml) overrides this entry with a literal
+      # empty string after the base file has parsed; `.env.example` ships
+      # `DOMAIN=localhost` so that path keeps working.
+      DOMAIN: ${DOMAIN:?DOMAIN must be set}
       # `?` (no colon) — must be DECLARED but may be empty. Local dev
       # and the HTTP-only overlay leave it empty because Caddy is
       # profile-gated off there (docker-compose.dev.yml). Production
@@ -307,6 +335,5 @@ services:
 
 volumes:
   pgdata:
-  miniodata:
   caddy_data:
   caddy_config:

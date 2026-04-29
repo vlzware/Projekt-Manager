@@ -12,21 +12,36 @@
  *     (behavior.md §9.5).
  *
  * Upload orchestration (`uploadFile` + `retryUpload`) runs the full
- * happy-path: pipeline → init → POST original → POST thumbnail →
+ * happy-path: pipeline → MD5 → init → PUT original → PUT thumbnail →
  * complete → refetch. Any failure marks the pending row `failed` with
  * a German message — the UI reads that state to render the banner.
  * Retries are always deliberate user actions (spec §8.15.8: "No
  * silent retry").
  */
 
+import SparkMD5 from 'spark-md5';
 import { create } from 'zustand';
-import { attachmentApi, type PresignedPost } from '@/api/client';
+import { attachmentApi, type PresignedUpload } from '@/api/client';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
 import { runImagePipeline, exceedsRawCap, type ProcessedUpload } from '@/domain/imagePipeline';
 import { handleSessionExpired } from './sessionExpired';
 import { useToastStore } from './toastStore';
+
+/**
+ * Outcome of a Papierkorb fetch.
+ *
+ * Discriminated union so the component can render four distinct surfaces
+ * without inferring intent from a shared error string. `forbidden` is
+ * surfaced separately from `error` because the user copy differs ("Sie
+ * haben keinen Zugriff" vs "Erneut versuchen") and the retry affordance
+ * makes no sense for a permission denial.
+ */
+export type TrashFetchOutcome =
+  | { kind: 'ok' }
+  | { kind: 'forbidden' }
+  | { kind: 'error'; message: string };
 
 export interface PendingUpload {
   clientId: string;
@@ -42,10 +57,41 @@ export interface PendingUpload {
 
 interface AttachmentState {
   byProject: Record<string, Attachment[]>;
+  /**
+   * Hidden (Papierkorb) rows per project, fetched lazily on tab open.
+   * Separate map from `byProject` so the live gallery / binary list never
+   * accidentally read trash entries. Owner / office only — workers
+   * trigger 403 on the GET /trash endpoint and never fill this map.
+   */
+  hiddenByProject: Record<string, Attachment[]>;
   pendingUploads: Record<string, PendingUpload>;
   error: string | null;
 
   fetchForProject: (projectId: string) => Promise<void>;
+  /**
+   * Fetch the project's Papierkorb.
+   *
+   * Returns a discriminated outcome so the UI can render distinct
+   * loading / error / forbidden / empty surfaces. The previous
+   * void-returning shape forced the component to read the shared
+   * `state.error` field which any other action could overwrite, and
+   * left the "fetch in progress vs. fetch errored" cases visually
+   * indistinguishable.
+   *
+   * 403 leaves `hiddenByProject` untouched; the tab is permission-gated
+   * upstream, so this branch is defense-in-depth for direct API calls
+   * from an unprivileged caller.
+   */
+  fetchTrashForProject: (projectId: string) => Promise<TrashFetchOutcome>;
+  /**
+   * Restore a hidden attachment. Optimistic — the row leaves
+   * `hiddenByProject` and joins `byProject` immediately; rollback on
+   * failure restores the maps to their prior state and surfaces a
+   * German error toast. The session-expired branch rolls the maps back
+   * before the central handler bounces to the login page so the user
+   * does not return to a half-applied UI.
+   */
+  restoreAttachment: (projectId: string, attachmentId: string) => Promise<void>;
   uploadFile: (
     projectId: string,
     file: File,
@@ -77,7 +123,7 @@ interface AttachmentState {
   cancelUpload: (clientId: string) => void;
   /** Cancel every in-flight upload for `projectId`. */
   cancelUploadsForProject: (projectId: string) => void;
-  deleteAttachment: (projectId: string, attachmentId: string) => Promise<void>;
+  hideAttachment: (projectId: string, attachmentId: string) => Promise<void>;
   requestDownloadUrl: (
     projectId: string,
     attachmentId: string,
@@ -132,25 +178,58 @@ function newClientId(): string {
 }
 
 /**
- * POST a blob to object storage using the presigned-POST descriptor.
- * The standard S3 / MinIO POST form echoes each `fields` entry and
- * then the file itself. A non-2xx response is surfaced as a failure
- * so the caller marks the pending row `failed`.
+ * Compute the MD5 of a Blob and return it as RFC 1864 base64 (24-char
+ * `==`-padded). Streams the blob through `SparkMD5.ArrayBuffer`'s
+ * incremental API in 2 MiB chunks so the full bytes never materialize
+ * twice in memory — cheap on phones, fast enough that no Web Worker is
+ * warranted at our per-file cap.
  */
-async function postPresignedForm(
-  descriptor: PresignedPost,
+async function computeMd5Base64(blob: Blob): Promise<string> {
+  const CHUNK = 2 * 1024 * 1024;
+  const hasher = new SparkMD5.ArrayBuffer();
+  for (let offset = 0; offset < blob.size; offset += CHUNK) {
+    const slice = blob.slice(offset, Math.min(offset + CHUNK, blob.size));
+    const buf = await slice.arrayBuffer();
+    hasher.append(buf);
+  }
+  // SparkMD5 yields the 16-byte digest as a hex string; convert to
+  // base64 by walking pairs of hex chars into bytes. Browsers don't
+  // ship a hex→base64 helper, but `btoa` over a binary string does.
+  const hex = hasher.end();
+  let bin = '';
+  for (let i = 0; i < hex.length; i += 2) {
+    bin += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+  }
+  return btoa(bin);
+}
+
+/**
+ * PUT a blob to object storage using the presigned-PUT descriptor. The
+ * descriptor's `headers` (Content-Type + Content-Length + Content-MD5)
+ * are signed by SigV4; the browser sends them verbatim, the storage
+ * provider verifies the signature, then verifies Content-MD5 against
+ * the received bytes (`BadDigest` on mismatch). A non-2xx response is
+ * surfaced as a failure so the caller marks the pending row `failed`.
+ *
+ * `Content-Length` is in the descriptor for transparency but stripped
+ * from the actual fetch headers — the browser refuses to honor an
+ * explicit value (forbidden header per the fetch spec) and computes it
+ * from the body itself. The browser-computed length matches what the
+ * server signed because the body is the exact `Blob` whose size went
+ * into the init call.
+ */
+async function putPresigned(
+  descriptor: PresignedUpload,
   blob: Blob,
-  fileName: string,
   signal?: AbortSignal,
 ): Promise<{ ok: boolean; status: number; aborted: boolean }> {
-  const form = new FormData();
-  for (const [k, v] of Object.entries(descriptor.fields)) {
-    form.append(k, v);
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(descriptor.headers)) {
+    if (k.toLowerCase() === 'content-length') continue;
+    headers[k] = v;
   }
-  // S3 form-upload contract: `file` must be the LAST field.
-  form.append('file', blob, fileName);
   try {
-    const res = await fetch(descriptor.url, { method: 'POST', body: form, signal });
+    const res = await fetch(descriptor.url, { method: 'PUT', headers, body: blob, signal });
     return { ok: res.ok, status: res.status, aborted: false };
   } catch (err) {
     // `AbortError` surfaces here when the signal fires mid-flight.
@@ -178,9 +257,33 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
     });
   }
 
-  function markFailed(clientId: string, message: string): void {
-    updatePending(clientId, { status: 'failed', errorMessage: message });
+  /**
+   * Mark a pending upload as failed and surface the toast.
+   *
+   * `cause` is developer-only diagnostic context — surfaced via
+   * `console.warn` so a developer triaging a failed upload can see WHICH
+   * stage and why, while the user-facing copy stays generic. Optional so
+   * the existing call sites that haven't been wired up yet still get a
+   * baseline log via the pending row's status.
+   */
+  function markFailed(
+    clientId: string,
+    message: string,
+    cause?: { stage: string; details?: unknown },
+  ): void {
     const pending = get().pendingUploads[clientId];
+    if (pending) {
+      console.warn('[upload] failed', {
+        clientId,
+        fileName: pending.fileName,
+        mimeType: pending.mimeType,
+        sizeBytes: pending.sizeBytes,
+        stage: cause?.stage ?? pending.status,
+        userMessage: message,
+        details: cause?.details,
+      });
+    }
+    updatePending(clientId, { status: 'failed', errorMessage: message });
     if (pending) {
       useToastStore
         .getState()
@@ -215,7 +318,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       // No File backing — happens when retry is attempted after a reload
       // drops the side-map. We cannot re-upload without bytes; keep the
       // pending row but surface a clear failure for the user.
-      markFailed(clientId, STRINGS.errors.mutationFailed);
+      markFailed(clientId, STRINGS.errors.mutationFailed, { stage: 'retry-after-reload' });
       return;
     }
 
@@ -227,7 +330,10 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
     // still guards the hard cap — photos under the liberal raw cap may
     // still compress to above the per-file limit.
     if (exceedsRawCap(file)) {
-      markFailed(clientId, STRINGS.attachments.uploadFileTooLarge);
+      markFailed(clientId, STRINGS.attachments.uploadFileTooLarge, {
+        stage: 'pre-pipeline-raw-cap',
+        details: { fileSize: file.size, rawCap: ATTACHMENT_PIPELINE.rawInputCapBytes },
+      });
       return;
     }
 
@@ -254,24 +360,53 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       }
       if (wasAborted()) return;
 
-      // Step 2 — per-file size cap. Enforced server-side by the
-      // presigned policy's `content-length-range`; mismatch here is a
-      // client bug, not a security gap (ui/project-detail.md §8.15.4).
+      // Step 2 — per-file size cap. Enforced server-side at init by
+      // the same cap (the route/service rejects with 422) and at the
+      // signed `Content-Length` header on the PUT itself; mismatch
+      // here is a client bug, not a security gap
+      // (ui/project-detail.md §8.15.4).
       if (processed.sizeBytes > ATTACHMENT_PIPELINE.perFileSizeCapBytes) {
-        markFailed(clientId, STRINGS.attachments.uploadFileTooLarge);
+        markFailed(clientId, STRINGS.attachments.uploadFileTooLarge, {
+          stage: 'post-pipeline-size-cap',
+          details: {
+            sizeBytes: processed.sizeBytes,
+            cap: ATTACHMENT_PIPELINE.perFileSizeCapBytes,
+          },
+        });
         return;
       }
 
-      // Step 3 — init (creates a `pending` row + presigned POST
-      // descriptors).
+      // Step 3 — compute MD5 over each blob. The init route signs the
+      // PUT URLs with `Content-MD5` bound to these exact values; the
+      // storage provider then verifies the body's MD5 against the
+      // signed header on receipt (`BadDigest` on mismatch). MD5 is
+      // also the integrity header B2 demands on every PutObject under
+      // bucket-default Compliance retention (ADR-0022).
+      const willUploadThumb = hasThumbnail && processed.thumbnail !== null;
+      const originalMd5 = await computeMd5Base64(processed.original);
+      const thumbMd5 = willUploadThumb
+        ? await computeMd5Base64(processed.thumbnail as Blob)
+        : undefined;
+      if (wasAborted()) return;
+
+      // Step 4 — init (creates a `pending` row + presigned PUT
+      // descriptors). Sizes + MD5s travel with the request so the
+      // server can sign each PUT with the exact body it commits to.
       const initResult = await attachmentApi.initUpload(
         projectId,
         {
           fileName: file.name,
           mimeType: processed.mimeType,
           sizeBytes: processed.sizeBytes,
+          contentMd5: originalMd5,
           label,
-          hasThumbnail: hasThumbnail && processed.thumbnail !== null,
+          hasThumbnail: willUploadThumb,
+          ...(willUploadThumb && processed.thumbnail
+            ? {
+                thumbSizeBytes: processed.thumbnail.size,
+                thumbContentMd5: thumbMd5,
+              }
+            : {}),
         },
         signal,
       );
@@ -281,7 +416,10 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
           handleSessionExpired();
           return;
         }
-        markFailed(clientId, initResult.error.message || STRINGS.errors.mutationFailed);
+        markFailed(clientId, initResult.error.message || STRINGS.errors.mutationFailed, {
+          stage: 'init',
+          details: initResult.error,
+        });
         return;
       }
       const initData = initResult.data;
@@ -293,35 +431,31 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         sizeBytes: processed.sizeBytes,
       });
 
-      // Step 4 — POST the original bytes to storage.
-      const originalResp = await postPresignedForm(
-        initData.originalUpload,
-        processed.original,
-        file.name,
-        signal,
-      );
+      // Step 5 — PUT the original bytes to storage.
+      const originalResp = await putPresigned(initData.originalUpload, processed.original, signal);
       if (originalResp.aborted || wasAborted()) return;
       if (!originalResp.ok) {
-        markFailed(clientId, STRINGS.errors.mutationFailed);
+        markFailed(clientId, STRINGS.errors.mutationFailed, {
+          stage: 'original-upload-put',
+          details: { status: originalResp.status, url: initData.originalUpload.url },
+        });
         return;
       }
 
-      // Step 5 — POST the thumbnail (when present).
+      // Step 6 — PUT the thumbnail (when present).
       if (processed.thumbnail && initData.thumbnailUpload) {
-        const thumbResp = await postPresignedForm(
-          initData.thumbnailUpload,
-          processed.thumbnail,
-          file.name,
-          signal,
-        );
+        const thumbResp = await putPresigned(initData.thumbnailUpload, processed.thumbnail, signal);
         if (thumbResp.aborted || wasAborted()) return;
         if (!thumbResp.ok) {
-          markFailed(clientId, STRINGS.errors.mutationFailed);
+          markFailed(clientId, STRINGS.errors.mutationFailed, {
+            stage: 'thumbnail-upload-put',
+            details: { status: thumbResp.status, url: initData.thumbnailUpload.url },
+          });
           return;
         }
       }
 
-      // Step 6 — complete (server verifies bytes via HEAD).
+      // Step 7 — complete (server verifies bytes via HEAD).
       updatePending(clientId, { status: 'completing' });
       const completeResult = await attachmentApi.completeUpload(
         projectId,
@@ -336,11 +470,14 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         }
         const message =
           (completeResult && completeResult.error?.message) || STRINGS.errors.mutationFailed;
-        markFailed(clientId, message);
+        markFailed(clientId, message, {
+          stage: 'complete',
+          details: completeResult?.error,
+        });
         return;
       }
 
-      // Step 7 — success. Fire a success toast with the file name (the
+      // Step 8 — success. Fire a success toast with the file name (the
       // pending row is about to be dropped, so grab it before removal),
       // remove the pending entry, sweep any stale failed rows for this
       // project, and refresh the list.
@@ -377,12 +514,19 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       if (aborted) return;
       // Tagged error from the pipeline — surface the specific cause so
       // "compression crashed" is diagnosable from "compressed output too
-      // big", rather than collapsing both into the size-cap banner.
+      // big", rather than collapsing both into the size-cap banner. The
+      // pipeline already logged a detailed structured warning before
+      // throwing, so re-logging here would only echo it.
       if (err instanceof Error && err.message === 'IMAGE_PROCESSING_FAILED') {
-        markFailed(clientId, STRINGS.attachments.uploadImageProcessingFailed);
+        markFailed(clientId, STRINGS.attachments.uploadImageProcessingFailed, {
+          stage: 'image-pipeline',
+        });
         return;
       }
-      markFailed(clientId, STRINGS.errors.mutationFailed);
+      markFailed(clientId, STRINGS.errors.mutationFailed, {
+        stage: 'unexpected',
+        details: err instanceof Error ? `${err.name}: ${err.message}` : err,
+      });
     } finally {
       // Release the controller if it's still the one we installed. If a
       // retry has already replaced it, leave that entry alone.
@@ -394,6 +538,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
 
   return {
     byProject: {},
+    hiddenByProject: {},
     pendingUploads: {},
     error: null,
 
@@ -415,6 +560,104 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       }
       set((s) => ({
         byProject: { ...s.byProject, [projectId]: result.data.data },
+        error: null,
+      }));
+    },
+
+    fetchTrashForProject: async (projectId: string) => {
+      let result;
+      try {
+        result = await attachmentApi.listTrash(projectId);
+      } catch {
+        set({ error: STRINGS.errors.mutationFailed });
+        return { kind: 'error', message: STRINGS.errors.mutationFailed };
+      }
+      if (!result.ok) {
+        if (result.sessionExpired) {
+          handleSessionExpired();
+          return { kind: 'error', message: STRINGS.auth.sessionExpiredLogin };
+        }
+        // 403 (caller lacks attachment:trash) leaves the map untouched —
+        // the UI gates the tab on permission anyway, so this branch only
+        // fires on a direct API call by an unprivileged caller.
+        if (result.category === 'authorization') {
+          set({ error: result.error.message || STRINGS.auth.notPermitted });
+          return { kind: 'forbidden' };
+        }
+        const message = result.error.message || STRINGS.errors.mutationFailed;
+        set({ error: message });
+        return { kind: 'error', message };
+      }
+      set((s) => ({
+        hiddenByProject: { ...s.hiddenByProject, [projectId]: result.data.data },
+        error: null,
+      }));
+      return { kind: 'ok' };
+    },
+
+    restoreAttachment: async (projectId, attachmentId) => {
+      // Optimistic move: row leaves Papierkorb and joins the live list.
+      // Rollback both maps on failure.
+      const beforeHidden = get().hiddenByProject[projectId];
+      const beforeLive = get().byProject[projectId];
+      const target = (beforeHidden ?? []).find((a) => a.id === attachmentId);
+      if (!target) return;
+      const optimistic: Attachment = { ...target, status: 'ready', hiddenAt: null };
+      set((s) => ({
+        hiddenByProject: {
+          ...s.hiddenByProject,
+          [projectId]: (s.hiddenByProject[projectId] ?? []).filter((a) => a.id !== attachmentId),
+        },
+        byProject: {
+          ...s.byProject,
+          [projectId]: [optimistic, ...(s.byProject[projectId] ?? [])],
+        },
+      }));
+
+      // Roll back both maps and surface the toast on a terminal failure.
+      // Centralised here so the network-error, server-error, and
+      // session-expired branches share the same recovery — the previous
+      // session-expired branch bounced to login WITHOUT rolling back the
+      // optimistic move, leaving an inconsistent UI behind.
+      const rollback = (message: string | null): void => {
+        set((s) => ({
+          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
+          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
+          error: message,
+        }));
+        if (message) useToastStore.getState().show('error', message);
+      };
+
+      let result;
+      try {
+        result = await attachmentApi.restore(projectId, attachmentId);
+      } catch {
+        rollback(STRINGS.attachments.restoreFailed);
+        return;
+      }
+      if (!result.ok) {
+        if (result.sessionExpired) {
+          // Roll the optimistic move back BEFORE the central handler
+          // navigates away. Suppress the toast — the login redirect is
+          // the user-facing signal here, a duplicate error toast would
+          // be noise.
+          rollback(null);
+          handleSessionExpired();
+          return;
+        }
+        rollback(result.error.message || STRINGS.attachments.restoreFailed);
+        return;
+      }
+      // Server response carries the authoritative row (with new
+      // version-ids). Replace the optimistic placeholder.
+      const restored = result.data;
+      set((s) => ({
+        byProject: {
+          ...s.byProject,
+          [projectId]: (s.byProject[projectId] ?? []).map((a) =>
+            a.id === attachmentId ? restored : a,
+          ),
+        },
         error: null,
       }));
     },
@@ -491,37 +734,82 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       });
     },
 
-    deleteAttachment: async (projectId, attachmentId) => {
-      // Optimistic removal — roll back on failure.
-      const before = get().byProject[projectId];
+    hideAttachment: async (projectId, attachmentId) => {
+      // Optimistic move: row leaves the live list and joins Papierkorb.
+      // Mirrors `restoreAttachment` below — both cache slices stay
+      // consistent so a tab switch right after the action shows the
+      // up-to-date view without a refetch flash. ProjectDetailPage
+      // eagerly fetches the trash for owner / office (to populate the
+      // tab badge), so `hiddenByProject[projectId]` is usually a
+      // populated array — Papierkorb's mount-time fetch only fires
+      // when items is undefined, so a one-sided update would leave
+      // Papierkorb showing the stale prefetch result indefinitely.
+      // Roll back BOTH maps on every terminal failure path —
+      // network-error, server-error, session-expired — so a failed
+      // hide doesn't leave the row missing from one side and present
+      // on the other.
+      const beforeLive = get().byProject[projectId];
+      const beforeHidden = get().hiddenByProject[projectId];
+      const target = (beforeLive ?? []).find((a) => a.id === attachmentId);
+      if (!target) return;
+      // Synthetic hidden row — DELETE returns 204 (no body) so we have
+      // no authoritative `hiddenAt` to replace this with on success.
+      // The next listTrash call (page reload, navigation, restore-
+      // triggered refetch) substitutes the server's value. The
+      // relative-time label in Papierkorb collapses both to "vor
+      // wenigen Sekunden gelöscht", so the user-visible difference is
+      // nil.
+      const optimistic: Attachment = {
+        ...target,
+        status: 'hidden',
+        hiddenAt: new Date().toISOString(),
+      };
       set((s) => ({
         byProject: {
           ...s.byProject,
           [projectId]: (s.byProject[projectId] ?? []).filter((a) => a.id !== attachmentId),
         },
+        // Prepend so the just-hidden row sits at the top of Papierkorb
+        // — matches the server's `ORDER BY hidden_at DESC` ordering
+        // (src/server/repositories/attachment.ts:listHiddenByProject).
+        hiddenByProject: {
+          ...s.hiddenByProject,
+          [projectId]: [optimistic, ...(s.hiddenByProject[projectId] ?? [])],
+        },
       }));
+
+      const rollback = (message: string | null): void => {
+        set((s) => ({
+          byProject: { ...s.byProject, [projectId]: beforeLive ?? [] },
+          hiddenByProject: { ...s.hiddenByProject, [projectId]: beforeHidden ?? [] },
+          error: message,
+        }));
+      };
 
       let result;
       try {
         result = await attachmentApi.delete(projectId, attachmentId);
       } catch {
-        set((s) => ({
-          byProject: { ...s.byProject, [projectId]: before ?? [] },
-          error: STRINGS.errors.mutationFailed,
-        }));
+        rollback(STRINGS.errors.mutationFailed);
         return;
       }
       if (!result.ok) {
         if (result.sessionExpired) {
+          // Roll the optimistic removal back BEFORE the central handler
+          // navigates away. Suppress the error string — the login
+          // redirect is the user-facing signal here, an additional
+          // banner would be noise on the way out.
+          rollback(null);
           handleSessionExpired();
           return;
         }
-        set((s) => ({
-          byProject: { ...s.byProject, [projectId]: before ?? [] },
-          error: result.error.message || STRINGS.errors.mutationFailed,
-        }));
+        rollback(result.error.message || STRINGS.errors.mutationFailed);
         return;
       }
+      // Clear any prior error banner — same shape as fetchForProject
+      // and restoreAttachment, so a stale message from an earlier
+      // mutation does not linger after a successful hide.
+      set({ error: null });
     },
 
     requestDownloadUrl: async (projectId, attachmentId, variant) => {

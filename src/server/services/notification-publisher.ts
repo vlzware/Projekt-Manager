@@ -30,6 +30,7 @@ import {
   resolveRecipients,
   ruleMatches,
 } from './notificationRecipientResolver.js';
+import { composePushPayload } from './pushPayloadComposer.js';
 
 /**
  * Structured logger used for operational events. Mirrors the pino-style
@@ -179,9 +180,16 @@ async function handleEvent(ctx: {
   // unaffected, but `pushAttemptedUserIds` shrinks to the un-muted set.
   const pushCandidates = await filterUnmutedUserIds(boundDb, recipientIds);
 
+  // Compose the user-facing payload once per event (AC-211). The
+  // service worker reads `title` / `body` / `url`; without these
+  // server-rendered strings the SW falls back to a generic notification
+  // with an empty body — the iter-8 wiring gap that prompted this fix.
+  const rendered = composePushPayload(eventClass, auditRow, ctx.systemPayload ?? null);
+
   // Push dispatch. We capture attempt ids BEFORE delegating so
   // observation handlers see the full set even if the transport throws.
   await dispatchToSubscriptions(boundDb, boundDispatcher, pushCandidates, {
+    ...rendered,
     eventClass,
     auditEntryId: auditRow?.id ?? null,
   });

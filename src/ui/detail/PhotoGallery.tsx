@@ -20,9 +20,11 @@ import styles from './ProjectDetail.module.css';
 
 interface PhotoGalleryProps {
   projectId: string;
+  /** Archived project — suppresses the per-row delete control. */
+  archived?: boolean;
 }
 
-export function PhotoGallery({ projectId }: PhotoGalleryProps) {
+export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps) {
   // Select the raw per-project slice then filter in useMemo so the
   // selector output is referentially stable across renders — a new
   // filtered array each render confuses Zustand's snapshot cache and
@@ -34,7 +36,7 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
   );
   const fetchForProject = useAttachmentStore((s) => s.fetchForProject);
   const requestDownloadUrl = useAttachmentStore((s) => s.requestDownloadUrl);
-  const deleteAttachment = useAttachmentStore((s) => s.deleteAttachment);
+  const hideAttachment = useAttachmentStore((s) => s.hideAttachment);
   const authUser = useAuthStore((s) => s.authUser);
 
   const handleDelete = async (photo: Attachment) => {
@@ -42,7 +44,7 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
       title: STRINGS.attachments.deleteConfirmTitle,
     });
     if (!ok) return;
-    await deleteAttachment(projectId, photo.id);
+    await hideAttachment(projectId, photo.id);
   };
 
   // Thumbnail URL cache keyed by attachment id. `null` entry means a 404
@@ -174,6 +176,7 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
             }
             const canDelete =
               authUser !== null &&
+              !archived &&
               canDeleteAttachment(photo, authUser, ATTACHMENT_CONFIG.workerSelfDeleteGraceMinutes);
             return (
               <li key={photo.id} className={styles.photoItem} data-testid="attachment-thumbnail">
@@ -214,19 +217,24 @@ export function PhotoGallery({ projectId }: PhotoGalleryProps) {
           ref={lightboxRef}
           className={styles.lightbox}
           data-testid="photo-lightbox"
-          // Backdrop click dismisses; the inner <img> stops propagation
-          // so a click on the photo itself does NOT close the modal.
-          onClick={closeLightbox}
           role="dialog"
           aria-modal="true"
           aria-label={STRINGS.attachments.photoGallery}
           // Negative-tab-index makes the container programmatically
           // focusable so the open-effect can pull focus inside; Tab
-          // cycles through the (currently zero) interactive children
-          // and wraps within the container.
+          // cycles through the close button and wraps within the container.
           tabIndex={-1}
         >
-          <img src={lightbox.url} alt="" onClick={(e) => e.stopPropagation()} />
+          <button
+            type="button"
+            className={styles.previewClose}
+            onClick={closeLightbox}
+            aria-label={STRINGS.ui.close}
+            data-testid="photo-lightbox-close"
+          >
+            ×
+          </button>
+          <img src={lightbox.url} alt="" />
         </div>
       )}
     </section>

@@ -36,6 +36,17 @@ const E2E_DATABASE_URL =
   `postgresql://pm:${process.env.POSTGRES_PASSWORD || 'changeme'}@localhost:5432/projekt_manager_e2e`;
 process.env.DATABASE_URL = E2E_DATABASE_URL;
 
+// Same isolation argument for the object store: the Playwright process
+// also opens a direct S3 client in auth.setup.ts to wipe the bucket
+// before each run, and the webServer-spawned dev:e2e backend serves
+// uploads against whatever STORAGE_BUCKET it sees. Override here (and
+// again in webServer.env below) so test attachments land in the
+// isolated `projekt-manager-e2e` bucket — leaving the dev bucket the
+// operator works against on `npm run dev` untouched. Provisioned by
+// docker/init-storage.sh; see docker-compose.minio.yml.
+const E2E_STORAGE_BUCKET = process.env.STORAGE_BUCKET_E2E || 'projekt-manager-e2e';
+process.env.STORAGE_BUCKET = E2E_STORAGE_BUCKET;
+
 // Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1` blocks
 // Chromium's namespace sandbox. Without this, Playwright injects
 // `--no-sandbox` as a fallback and Chromium renders an "unsupported flag"
@@ -75,7 +86,7 @@ const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/owner.json');
  * that completes before this one starts.
  */
 const MUTATING_TESTS =
-  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange|archive-flows|activity-feed|notification-rules|activity-recipient-scope|push-permission|attachment-upload/;
+  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange|archive-flows|activity-feed|notification-rules|activity-recipient-scope|push-permission|attachment-upload|papierkorb/;
 const DEMO_TESTS = /demo-.*\.spec\.ts/;
 
 export default defineConfig({
@@ -211,6 +222,7 @@ export default defineConfig({
       VITE_DEV_PORT: '5174',
       VITE_API_PROXY_TARGET: 'http://localhost:3100',
       DATABASE_URL: E2E_DATABASE_URL,
+      STORAGE_BUCKET: E2E_STORAGE_BUCKET,
     },
   },
 });

@@ -1,11 +1,13 @@
-# Development overlay — exposes DB and MinIO ports directly, no Caddy.
+# Development overlay — exposes service ports directly, builds the app
+# image from source, and gates Caddy off (no DNS-01 token in dev).
 #
-# Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init
+# The MinIO mirror that stands in for B2 in dev lives in its own file
+# (`docker-compose.minio.yml`) so the CI smoke test can attach the same
+# MinIO surface to the prod GHCR image without picking up the dev
+# `build: .` override. Dev workflows load both overlays:
 #
-# `storage-init` is a one-shot container that creates the MinIO bucket on
-# first start; without it the storage tests fail with NoSuchBucket. It exits
-# after the bucket is created.
+#   docker compose -f docker-compose.yml -f docker-compose.minio.yml \
+#                  -f docker-compose.dev.yml up -d
 
 services:
   app:
@@ -25,24 +27,29 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+      # Long-form bind with `create_host_path: false`. The default
+      # daemon behaviour is to silently materialise a missing bind-mount
+      # source as a root-owned directory (dockerd runs as root, the
+      # session as the dev user) — which is exactly how the worktree2
+      # Claude session left an unremovable `init-test-db.sql/` directory
+      # behind: the worktree files were rm'd while the compose stack was
+      # still alive, dockerd re-created the missing source path on its
+      # next mount touch, and the user couldn't clean it up without
+      # sudo. `create_host_path: false` converts that silent footgun
+      # into a loud "source does not exist" error at compose up time.
+      - type: bind
+        source: ./docker/init-test-db.sql
+        target: /docker-entrypoint-initdb.d/create-test-db.sql
+        read_only: true
+        bind:
+          create_host_path: false
 
   storage:
+    # MinIO console (the S3 API port lives in docker-compose.minio.yml,
+    # since both dev and CI smoke want it published). The console is a
+    # developer convenience, not a CI need.
     ports:
-      - "9000:9000"   # S3 API
-      - "9001:9001"   # MinIO console
-    environment:
-      # Override the prod-shaped `https://${DOMAIN}` from docker-compose.yml.
-      # Browsers running against the Vite dev server come from
-      # http://localhost:5173 (and variants on the host's network/WireGuard
-      # interfaces), which never matches the prod origin — so MinIO omits
-      # CORS headers on the preflight, the browser blocks the presigned
-      # POST, and uploads appear as "Änderung fehlgeschlagen" in the UI
-      # while the object has already landed in the bucket (orphan). `*` is
-      # safe here because presigned POSTs don't carry credentials (auth is
-      # in the form fields), and dev storage holds no real data. Prod stays
-      # strict via docker-compose.yml.
-      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+      - "9001:9001"
 
   caddy:
     # Caddy requires CLOUDFLARE_API_TOKEN for DNS-01 TLS — not available

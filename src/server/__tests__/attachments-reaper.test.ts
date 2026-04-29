@@ -45,8 +45,7 @@ import type { Database } from '../db/connection.js';
 import { seed } from '../seed.js';
 import { createStorageClient } from '../storage/client.js';
 import type { StorageClient } from '../storage/client.js';
-import { getEnv } from '../config/env.js';
-import { validateEnv } from '../config/env.js';
+import { getEnv, validateEnvRuntime } from '../config/env.js';
 
 /**
  * Contract surface — resolved lazily via dynamic import so the test
@@ -164,7 +163,7 @@ describe('Attachment orphan reaper (AC-213)', () => {
   let seededProjectId: string;
 
   beforeAll(async () => {
-    validateEnv();
+    validateEnvRuntime();
     const conn = createDatabase();
     db = conn.db;
     pool = conn.pool;

@@ -1,8 +1,10 @@
 # ADR-0018: Data persistence and recovery — layered strategy
 
 - **Status:** Accepted
-- **Date:** 2026-04-15
+- **Date:** 2026-04-15 (Layer 3 status update 2026-04-29)
 - **Confidence:** High
+
+> **2026-04-29 update — Layer 3 is operational.** Binary attachments ship on Backblaze B2 per [ADR-0022](0022-binary-storage-b2-compliance-object-lock.md) (versioning + Compliance Object Lock + capability split). The "aspirational … gated on that work" framing in **Context** and **Consequences §Negative** below is preserved as-of-decision for context but no longer reflects reality. End-to-end encryption of B2 binaries remains open future work — see [DATA.md § Layer 3](../../DATA.md#layer-3--binary-attachments-provider-enforced-durability).
 
 ## Context
 

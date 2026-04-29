@@ -13,6 +13,7 @@ import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
 import type { Customer } from '@/domain/types';
 import { normalizeName } from '@/domain/nameNormalize';
+import { MenuBackdrop } from '../common/MenuBackdrop';
 import styles from './Management.module.css';
 
 const AUTOCOMPLETE_DEBOUNCE_MS = 300;
@@ -42,7 +43,6 @@ export function CustomerCreateForm({ onClose, onSelectExisting }: Props) {
 
   const [matches, setMatches] = useState<Customer[]>([]);
   const [matchDropdownOpen, setMatchDropdownOpen] = useState(false);
-  const matchRef = useRef<HTMLDivElement>(null);
   // Monotonic request id — a slow fetch must not commit its results if
   // the user has since typed and kicked off a newer fetch.
   const searchRequestIdRef = useRef(0);
@@ -62,19 +62,6 @@ export function CustomerCreateForm({ onClose, onSelectExisting }: Props) {
     }, AUTOCOMPLETE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [name, searchCustomers]);
-
-  // Close match dropdown on outside click.
-  useEffect(() => {
-    const effectiveOpen = matchDropdownOpen && name.trim().length > 0;
-    if (!effectiveOpen) return;
-    const handler = (e: MouseEvent) => {
-      if (matchRef.current && !matchRef.current.contains(e.target as Node)) {
-        setMatchDropdownOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [matchDropdownOpen, name]);
 
   // Suppress stale matches and dropdown when the name field is empty —
   // derivation instead of resetting state synchronously in an effect.
@@ -151,7 +138,7 @@ export function CustomerCreateForm({ onClose, onSelectExisting }: Props) {
           {STRINGS.entities.customer} {STRINGS.ui.create}
         </h2>
 
-        <div className={styles.formGroup} ref={matchRef}>
+        <div className={styles.formGroup}>
           <label className={styles.formLabel}>{STRINGS.ui.name} *</label>
           <div className={styles.selectWrapper}>
             <input
@@ -165,8 +152,12 @@ export function CustomerCreateForm({ onClose, onSelectExisting }: Props) {
                 if (effectiveMatches.length > 0) setMatchDropdownOpen(true);
               }}
               onBlur={() => {
-                // Delay so an onClick on a dropdown row fires before the
-                // blur handler closes the dropdown.
+                // Tab-away path: closes the dropdown when keyboard focus
+                // leaves the input. Mouse outside-click is handled by
+                // MenuBackdrop instead. The 150 ms delay allows a click
+                // on an option (which prevent-defaults its mousedown to
+                // suppress this blur) to commit even if the order of
+                // events flips on some browsers.
                 window.setTimeout(() => setMatchDropdownOpen(false), 150);
               }}
               disabled={submitting}
@@ -175,25 +166,28 @@ export function CustomerCreateForm({ onClose, onSelectExisting }: Props) {
               autoComplete="off"
             />
             {effectiveDropdownOpen && (
-              <div className={styles.selectDropdown} data-testid="customer-match-dropdown">
-                {effectiveMatches.map((c) => (
-                  <div
-                    key={c.id}
-                    className={styles.selectOption}
-                    onMouseDown={(e) => {
-                      // Prevent the input's blur from firing before click.
-                      e.preventDefault();
-                    }}
-                    onClick={() => onSelectExisting(c)}
-                    data-testid={`customer-match-${c.id}`}
-                  >
-                    {c.name}
-                    {c.phone ? (
-                      <span className={styles.selectOptionSecondary}> — {c.phone}</span>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
+              <>
+                <MenuBackdrop onClose={() => setMatchDropdownOpen(false)} />
+                <div className={styles.selectDropdown} data-testid="customer-match-dropdown">
+                  {effectiveMatches.map((c) => (
+                    <div
+                      key={c.id}
+                      className={styles.selectOption}
+                      onMouseDown={(e) => {
+                        // Prevent the input's blur from firing before click.
+                        e.preventDefault();
+                      }}
+                      onClick={() => onSelectExisting(c)}
+                      data-testid={`customer-match-${c.id}`}
+                    >
+                      {c.name}
+                      {c.phone ? (
+                        <span className={styles.selectOptionSecondary}> — {c.phone}</span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>

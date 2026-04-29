@@ -7,6 +7,7 @@ import { createDatabase } from '../src/server/db/connection.js';
 import { seed } from '../src/server/seed.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../src/test/seedAssumptions.js';
 import { STORAGE_STATES } from './storage-states';
+import { resetE2eBucket } from './storage-reset';
 
 /**
  * Auth setup — Playwright's shared-auth pattern, four roles.
@@ -76,7 +77,7 @@ async function loginAndSaveState(
   fs.writeFileSync(statePath, JSON.stringify(state));
 }
 
-setup('reseed database', async () => {
+setup('reseed database and storage', async () => {
   // Force-reseed so every Playwright run starts from a known state. The
   // TRUNCATE CASCADE invalidates any pre-existing sessions, which is
   // why this runs BEFORE the login setups below.
@@ -94,6 +95,15 @@ setup('reseed database', async () => {
   } finally {
     await pool.end();
   }
+
+  // Bucket reset is the storage-side counterpart of seed({ force: true }).
+  // The seed truncates `attachments` (CASCADE from `projects`), so without
+  // this the bucket from a prior run holds objects whose DB rows no
+  // longer exist — DB-detached orphans the orphan reaper cannot reach
+  // (it sweeps `pending` past TTL only). Targets the isolated e2e bucket
+  // by playwright.config.ts override; refuses to run against the dev
+  // bucket as a safety check.
+  await resetE2eBucket();
 
   fs.mkdirSync(AUTH_DIR, { recursive: true });
 });

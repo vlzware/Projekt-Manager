@@ -57,6 +57,35 @@ For docs prose, backslash escape reads cleanest. For commit messages (which GitH
 
 **Workaround:** Habit — filter values by default. Use `env | grep -E '^(TOKEN\|KEY\|PASSWORD\|SECRET)=' | sed -E 's/=.*/=<redacted>/'` or similar. If a value has already been exposed, rotate it immediately; do not rely on "I can scroll up and delete the line".
 
+## Push notifications silently show "nicht konfiguriert"
+
+**Trap:** The "Push-Benachrichtigungen aktivieren" affordance triggers the browser's permission prompt, the user grants it, and the UI then flashes "Push-Benachrichtigungen sind auf diesem Server nicht konfiguriert" without ever subscribing. No push messages arrive. Easy to mistake for a CORS or service-worker regression because the symptom sits on the client side.
+
+**First check:** the boot-time feature manifest. Search the most recent app logs for `event=config-feature-manifest`; the line names every feature with its state and (when disabled) the missing variable:
+
+```bash
+docker compose logs app --no-log-prefix | grep config-feature-manifest | tail -1
+# → … "push":{"state":"disabled","reason":"VAPID_PRIVATE_KEY is not set"} …
+```
+
+If the manifest reports `push: enabled` but the UI still shows "nicht konfiguriert", the issue is downstream of the env (network, service-worker, cache); the rest of this section does not apply.
+
+**Root cause:** `VAPID_PRIVATE_KEY` is unset in the VPS deploy environment. The server's `/api/push/vapid-public-key` endpoint correctly returns `{"vapidPublicKey": null}`, which the client accurately renders as "not configured" (pushClient.ts `resolveVapidPublicKey` → `{ reason: 'not-configured' }`). The permission prompt fires first because spec §9.8 / AC-201 require the prompt to live inside the user gesture — the server round-trip happens afterwards.
+
+**Workaround (actually the fix):**
+
+```bash
+# Probe the live endpoint first — a null value confirms the server is the problem.
+curl -sS https://<your-domain>/api/push/vapid-public-key
+# → {"vapidPublicKey":null}   means VAPID_PRIVATE_KEY is unset
+
+# On the operator workstation, generate a keypair (keep privateKey stable across deploys
+# — rotating invalidates every browser subscription).
+npx web-push generate-vapid-keys --json
+```
+
+Add `VAPID_PRIVATE_KEY=<privateKey>` to `secrets.env.age` (see [manual-deploy.md § Rotate a secret](manual-deploy.md#rotate-a-secret)). Add `VAPID_SUBJECT=mailto:admin@<your-domain>` to the plain `.env` next to `DOMAIN` — it is non-secret. Redeploy. The same probe should then return a real base64url-encoded key, and the subscribe flow lights up.
+
 ## `source <(age -d …)` hangs after the passphrase prompt
 
 **Trap:** `source <(age -d secrets.env.age)` prints the prompt, accepts the passphrase, then hangs indefinitely. The shell never returns. `scripts/deploy.sh` uses this exact form successfully, so the pattern itself is not broken — it just fails in some interactive contexts.
@@ -72,3 +101,13 @@ set +a
 ```
 
 `set -a` in the calling shell still auto-exports every `KEY=value` assignment, matching the process-substitution form's net effect. Plaintext stays in memory only. Prefer this form for ad-hoc and interactive use; `scripts/deploy.sh` keeps the process-substitution form because it runs in a controlled non-interactive-enough context where the race doesn't trigger.
+
+## `column "<X>" of relation "<T>" does not exist` after a deploy
+
+**Trap:** First request that touches a recently-added column 500s with this Postgres error, even though the deploy itself reported healthy.
+
+**Root cause:** Drizzle records baselines by hash in `drizzle.__drizzle_migrations`. An edit to `0000_baseline.sql` produces a new hash but `migrate()` skips it because the old hash is already in the ledger. The live DB stays on the previous schema while `schema.ts` describes the new one. Same trap exists locally on `projekt-manager_pgdata`.
+
+**Detection:** Both `scripts/deploy.sh` (pre-flight) and `npm run dev` / production boot (via `src/server/db/baseline-guard.ts`) compare the on-disk baseline's sha256 to the ledger entry and abort with `Baseline schema mismatch …` before serving traffic. Hitting this section means a guard was bypassed (e.g. a stale image), the message was missed, or the trap recurred between the guard and the next request.
+
+**Workaround:** Wipe and reseed both VPS and local DBs, then sync. Full procedure: [recover-from-schema-change.md](recover-from-schema-change.md).

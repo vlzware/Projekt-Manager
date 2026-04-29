@@ -48,8 +48,8 @@ Worker-assignment editor visible on the page (not routed to a dedicated view). B
 Displays every `status = 'ready'` attachment with `kind = 'photo'` for the project. Thumbnails use the client-generated thumbnail variant via a presigned-GET URL ([api.md §14.2.11](../api.md#14211-attachments)); clicking a thumbnail opens a lightbox that requests the original variant on demand.
 
 - **Upload surface.** Shown for callers with `attachment:write`. An upload affordance supporting drop and explicit browse; on camera-capable devices the affordance additionally invokes camera capture. German CTA copy lives in the attachment upload CTA labels `[C]` catalogue entry ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)).
-- **Client image pipeline.** Before calling init, the browser re-encodes the original (preserving EXIF including GPS) and produces a thumbnail variant, applying the sizing and quality parameters in the `[C]` catalogue entry for attachment client-encoding ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Both objects are then POSTed directly to object storage against the two presigned descriptors returned by init ([api.md §14.2.11](../api.md#14211-attachments)); the app server never sees the bytes. Preserving EXIF (including GPS) matches [kickoff.md](../../project/kickoff.md)'s worker-view expectation that GPS coordinates stay available to the worker; EXIF preservation as a whole is a design choice of this spec. The concrete transcoding steps and the libraries used live in `ARCHITECTURE.md § Attachments Module — Client image pipeline`.
-- **Size cap.** If the re-encoded original exceeds the configured attachment per-file size cap **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)), the client surfaces a German validation message (`"Datei zu groß"`) and does not call init. The cap is also enforced server-side by the presigned policy's `content-length-range`; a mismatch between the two is a client-side bug, not a security gap.
+- **Client image pipeline.** Before calling init, the browser re-encodes the original (preserving EXIF including GPS) and produces a thumbnail variant, applying the sizing and quality parameters in the `[C]` catalogue entry for attachment client-encoding ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). The browser then computes the MD5 of each blob and passes the size + MD5 of both to init; the server signs one presigned PUT per blob with `Content-Type` + `Content-Length` + `Content-MD5` bound by SigV4. The browser PUTs each blob directly to object storage ([api.md §14.2.11](../api.md#14211-attachments)); the app server never sees the bytes. Preserving EXIF (including GPS) matches [kickoff.md](../../project/kickoff.md)'s worker-view expectation that GPS coordinates stay available to the worker; EXIF preservation as a whole is a design choice of this spec. The concrete transcoding steps and the libraries used live in `ARCHITECTURE.md § Attachments Module — Client image pipeline`.
+- **Size cap.** If the re-encoded original exceeds the configured attachment per-file size cap **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)), the client surfaces a German validation message (`"Datei zu groß"`) and does not call init. The cap is also enforced server-side at init validation, then pinned via the presigned PUT's signed `Content-Length`; a mismatch between the two is a client-side bug, not a security gap.
 - **Per-photo controls.** Each thumbnail carries a label dropdown (closed enum — `Foto` by default on photo uploads, selectable from the full enum) and a delete affordance. Delete follows the permission matrix in §8.15.6.
 - **No offline binary processing.** The service worker does not queue, compress, or resume uploads in the background. A page reload cancels an in-flight upload cleanly; the server-side reaper ([data-model.md §6.11](../data-model.md#611-attachment-orphan-reaper)) removes the orphan `pending` row.
 
@@ -58,17 +58,19 @@ Displays every `status = 'ready'` attachment with `kind = 'photo'` for the proje
 Displays every `status = 'ready'` attachment with `kind = 'binary'` (PDF, DOCX) for the project. Renders as a tabular list: filename, label, uploader, upload timestamp, download action.
 
 - **Upload surface.** Shown for callers with `attachment:write`. A file picker accepts the binary MIME types from the whitelist ([data-model.md §5.13](../data-model.md#513-attachment)); a file outside the whitelist is rejected client-side with a German validation message (`"Dateityp nicht erlaubt"`).
-- **No thumbnail pipeline.** `hasThumbnail = false` at init for binary uploads; the server issues a single presigned-POST descriptor for the original.
+- **No thumbnail pipeline.** `hasThumbnail = false` at init for binary uploads; the server issues a single presigned-PUT descriptor for the original.
 - **Per-file controls.** Label dropdown (closed enum, default `Sonstiges`) and a delete affordance. A `Herunterladen` action requests a download URL ([api.md §14.2.11](../api.md#14211-attachments)) and navigates the browser to it.
 - **Bulk download.** A `Auswahl als ZIP` action appears when the user selects at least one file. Selection exceeding the configured bulk-download caps **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) — maximum file count OR summed byte size — is blocked client-side with a German validation message naming both caps. The server re-validates per [api.md §14.2.11](../api.md#14211-attachments); the mismatch path surfaces the same German message via the mutation error banner ([index.md §8.1.2](index.md#812-authenticated-state)).
 
-### 8.15.6 Deletion
+### 8.15.6 Soft-Hide
+
+The delete affordance is a soft-hide: the row flips to `status = 'hidden'` and the file moves to the project's Papierkorb (§8.15.10). The Papierkorb is bounded — a hidden row is reaped after the configured hide-to-delete window `L` **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) and is then permanently destroyed.
 
 - Owner, office: any attachment on the project.
 - Worker: own attachments only, within the configured self-delete grace window **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Outside that window the delete control is hidden; the server rejects with `403 NOT_PERMITTED` as the authoritative gate ([api.md §14.2.11](../api.md#14211-attachments)).
 - Bookkeeper: no delete.
 
-Every delete carries a Yes / No confirmation dialog with a German warning that recovery is not possible. Hard-delete is the only deletion mode — no soft-delete, no trash. Attachment versioning and retention are not part of this surface; any future capability of that class belongs to the storage-provider layer ([data-model.md §5.13](../data-model.md#513-attachment), [ADR-0018](../../adr/0018-data-persistence-and-recovery-layered-strategy.md)).
+Every soft-hide carries a Yes / No confirmation dialog with a German warning that names the Papierkorb destination, the bounded Aufbewahrungsfrist during which restore (§8.15.10) is possible, and the irreversible final destruction once that window elapses. Hide is forbidden on archived projects; restore remains permitted on archived projects so binaries are recoverable before lifecycle reap (§8.15.10).
 
 ### 8.15.7 Restored Rows Without Backing Bytes
 
@@ -88,16 +90,29 @@ Per-upload states rendered in the gallery and list next to the affected row:
 
 Capability-to-region mapping on the project detail page:
 
-| Region                 | Permission required to see / use                                                                                 |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| View gallery + list    | `attachment:read`                                                                                                |
-| Upload photo / binary  | `attachment:write` (worker additionally requires project assignment)                                             |
-| Delete an attachment   | `attachment:delete` (worker additionally requires authorship AND self-delete grace window **[C]** — see §8.15.6) |
-| Bulk download (ZIP)    | `attachment:read`                                                                                                |
-| Assigned-worker editor | read inherent to the page; edit requires `project:update`                                                        |
+| Region                   | Permission required to see / use                                                                                                   |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| View gallery + list      | `attachment:read`                                                                                                                  |
+| Upload photo / binary    | `attachment:write` (worker additionally requires project assignment)                                                               |
+| Hide an attachment       | `attachment:hide` (soft-hide per ADR-0022; worker additionally requires authorship AND self-delete grace window **[C]** — §8.15.6) |
+| Papierkorb tab + restore | `attachment:trash` (list hidden attachments and restore them)                                                                      |
+| Bulk download (ZIP)      | `attachment:read`                                                                                                                  |
+| Assigned-worker editor   | read inherent to the page; edit requires `project:update`                                                                          |
 
-The role → capability mapping (which role holds `attachment:read`, `attachment:write`, `attachment:delete`) is defined by the permission matrix in [api.md §14.3](../api.md#143-authorization-rules) — that is the SSOT. Server-side authorization is authoritative ([api.md §14.2.11](../api.md#14211-attachments)); client-side hiding is a UX convenience per [AC-121](../verification.md#1516-management-views).
+The role → capability mapping (which role holds `attachment:read`, `attachment:write`, `attachment:hide`, `attachment:trash`) is defined by the permission matrix in [api.md §14.3](../api.md#143-authorization-rules) — that is the SSOT. Server-side authorization is authoritative ([api.md §14.2.11](../api.md#14211-attachments)); client-side hiding is a UX convenience per [AC-121](../verification.md#1516-management-views).
+
+### 8.15.10 Papierkorb Tab
+
+Per-project trash surface listing rows soft-hidden via §8.15.6. Bounded by the configured hide-to-delete window `L` **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) — a hidden row past that window is reaped by the storage lifecycle and is no longer recoverable.
+
+- **Visibility.** Tab is shown only to callers with `attachment:trash` (owner / office under the default matrix). The tab badge carries the trash row count. Server-side authorization remains authoritative: a forbidden caller hitting the API directly receives `403 NOT_PERMITTED` ([AC-235](../verification.md#1526-attachments)).
+- **Render states.** `loading` while the initial fetch is in flight, `forbidden` (`403`) for defense-in-depth on direct API calls that bypass tab visibility, `error` with a German message and an `Erneut versuchen` action ([behavior.md §9.5](behavior.md#95-asynchronous-mutation-behavior)), `ready` rendering the list (possibly empty).
+- **Empty surface.** A `ready` list with zero rows renders an explicit German label `"Keine gelöschten Dateien"` — distinct from the `loading` placeholder so the user never confuses fetch-in-flight with an empty Papierkorb.
+- **Row content.** Filename, label, hidden-since timestamp rendered as a German `Intl.RelativeTimeFormat` string (e.g. `"vor 1 Stunde"`), and a restore action.
+- **Restore interaction.** One-click. No confirmation dialog — restore is reversible (a subsequent soft-hide returns the row to the Papierkorb). Server contract pinned by [AC-233](../verification.md#1526-attachments).
+- **Archived projects.** Restore is permitted on archived projects — binaries must be recoverable before lifecycle reap consumes the hidden version. Hide remains forbidden on archived projects (read-only previews refuse new mutations); see §8.15.6.
+- **Server contract.** List shape, ordering (`hiddenAt DESC`, `id` tiebreaker), and scoping pinned by [AC-235](../verification.md#1526-attachments).
 
 ---
 
-_Cross-references: [index.md](../index.md) for scope and assumptions, [data-model.md](../data-model.md) for the Attachment entity, [api.md](../api.md) for the presigned-POST flow, [workflow-views.md §8.4](workflow-views.md#84-project-detail-panel) for the quick-glance overlay, [verification.md](../verification.md) for acceptance criteria._
+_Cross-references: [index.md](../index.md) for scope and assumptions, [data-model.md](../data-model.md) for the Attachment entity, [api.md](../api.md) for the presigned-PUT upload flow, [workflow-views.md §8.4](workflow-views.md#84-project-detail-panel) for the quick-glance overlay, [verification.md](../verification.md) for acceptance criteria._

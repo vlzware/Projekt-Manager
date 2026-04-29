@@ -60,6 +60,8 @@ interface ProjectManagementState {
    *   - false on 409 (not archived) / 403 — surfaces server message
    */
   purgeProject: (id: string) => Promise<boolean>;
+  /** Restore an archived project — flips deleted=true back to false. */
+  restoreProject: (id: string) => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -235,6 +237,29 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
 
     set((s) => ({
       projects: s.projects.filter((p) => p.id !== id),
+    }));
+    useProjectStore.getState().fetchProjects();
+    return true;
+  },
+
+  restoreProject: async (id) => {
+    set({ error: null });
+    const result = await projectApi.restore(id);
+
+    if (!result.ok) {
+      if (result.sessionExpired) {
+        handleSessionExpired();
+        return false;
+      }
+      set({ error: result.error.message });
+      return false;
+    }
+
+    // Server returns the now-active project body — write it through both
+    // stores so the read-only preview flips back to editable without a
+    // refetch round-trip.
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? result.data : p)),
     }));
     useProjectStore.getState().fetchProjects();
     return true;

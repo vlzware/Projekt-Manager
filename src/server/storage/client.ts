@@ -1,9 +1,19 @@
 /**
  * S3-compatible object storage client.
  *
- * Wraps @aws-sdk/client-s3 with a minimal interface for upload, download,
- * delete, and signed URL generation. Configured with forcePathStyle for
- * MinIO compatibility.
+ * Wraps @aws-sdk/client-s3 with a minimal interface for upload, hide,
+ * restore, presign, and signed URL generation. Configured with
+ * forcePathStyle for MinIO compatibility.
+ *
+ * Per ADR-0022, the app key cannot destroy versions. The mutating
+ * surface is `hide()` (DeleteObject without VersionId, creates a marker)
+ * and `copyFromVersion()` (CopyObject from a specific noncurrent version
+ * — the restore primitive). There is no `delete()` / `deleteObject()`
+ * by design: a method named "delete" that cannot actually destroy is
+ * misleading, and the architecture test at
+ * `src/server/__tests__/storage-architecture.test.ts` enforces that no
+ * `DeleteObjectCommand` / `DeleteObjectsCommand` carries a `VersionId`
+ * anywhere in the codebase.
  *
  * See architecture.md §11.4 for the module boundary definition.
  */
@@ -13,20 +23,30 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
-  HeadBucketCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  GetBucketVersioningCommand,
+  GetObjectLockConfigurationCommand,
+  GetBucketLifecycleConfigurationCommand,
+  CopyObjectCommand,
+  type LifecycleRule,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { createPresignedPost as awsCreatePresignedPost } from '@aws-sdk/s3-presigned-post';
 import type { Readable } from 'node:stream';
 import { STORAGE_CONFIG } from '../config/index.js';
+import {
+  CAPABILITY_PROBE_KEY,
+  CAPABILITY_PROBE_VERSION_ID,
+  type BucketSafetyConfig,
+  type CapabilityProbeResult,
+  type LifecycleRuleSnapshot,
+} from './safety.js';
 
 export interface StorageConfig {
   endpoint: string;
   /**
    * Optional public endpoint used only when signing URLs returned to the
-   * browser (presigned POST for init uploads, presigned GET for downloads
+   * browser (presigned PUT for init uploads, presigned GET for downloads
    * and bulk-zip pickup). When present, the signing client substitutes
    * this URL so the browser receives a host it can actually resolve —
    * typically a reverse-proxied subdomain (`https://storage.<domain>`)
@@ -59,13 +79,42 @@ export interface DownloadResult {
 export interface HeadObjectResult {
   size: number;
   contentType: string;
+  /**
+   * S3 VersionId of the current version of the key, when the bucket has
+   * versioning enabled (ADR-0022). Captured at complete-time so the
+   * Papierkorb restore flow can `copyFromVersion(key, versionId)`.
+   * Undefined when the bucket is unversioned (legacy / non-prod) or the
+   * provider response omits the field.
+   */
+  versionId: string | undefined;
 }
 
-export interface PresignedPostDescriptor {
-  /** POST target URL. */
+export interface PresignedPutDescriptor {
+  /** PUT target URL. The signature is in the query string. */
   url: string;
-  /** Form fields the client must echo verbatim (includes signature). */
-  fields: Record<string, string>;
+  /**
+   * Headers the client MUST send on the PUT, exact-match. SigV4 binds
+   * each value into the signature, so any divergence is rejected with a
+   * signature error before the bytes are persisted.
+   *
+   * - `Content-Type` — pinned MIME type. The complete() flip re-asserts
+   *   this against the row HEAD as defense-in-depth.
+   * - `Content-Length` — exact body byte count. HTTP semantics also
+   *   reject a body-length mismatch independently of SigV4.
+   * - `Content-MD5` — RFC 1864 base64 of the body's MD5. Required by
+   *   B2 when the bucket carries Compliance Object Lock with default
+   *   retention (ADR-0022): bucket-default retention attaches Object
+   *   Lock parameters to every PutObject, and B2 demands an integrity
+   *   header on any such PUT — bare PUTs are rejected with
+   *   `"Content-MD5 OR x-amz-checksum-* HTTP header is required for
+   *   Put Object requests with Object Lock parameters"`. Doubles as the
+   *   byte-binding guarantee that the POST policy flow could not
+   *   express: storage providers verify Content-MD5 against received
+   *   bytes and reject with `BadDigest` on mismatch, so a presigned URL
+   *   is usable only for an upload of bytes that hash to this exact
+   *   MD5.
+   */
+  headers: Record<string, string>;
   /** ISO 8601 — after this the descriptor is useless. */
   expiresAt: string;
 }
@@ -91,7 +140,6 @@ export class StorageObjectNotFoundError extends Error {
 export interface StorageClient {
   upload(key: string, data: Buffer | Uint8Array, contentType: string): Promise<UploadResult>;
   download(key: string): Promise<DownloadResult>;
-  delete(key: string): Promise<void>;
   getSignedUrl(key: string, expirySeconds: number): Promise<string>;
   /**
    * Liveness probe — verifies the configured bucket is reachable and
@@ -114,24 +162,33 @@ export interface StorageClient {
   // ---------------------------------------------------------------
 
   /**
-   * Issue a presigned POST descriptor pinning the exact key, content type
-   * prefix, and size range. See api.md §14.2.11 "Presigned-POST policy
-   * conditions".
+   * Issue a presigned PUT descriptor pinning the exact key, content type,
+   * size, and body MD5. See api.md §14.2.11 "Presigned-PUT signed
+   * headers".
    *
-   * `size.minBytes` / `size.maxBytes` map 1:1 to the S3
-   * `content-length-range` policy. The main-upload call site pins
-   * `minBytes === maxBytes` to the client's declared `sizeBytes` so a
-   * size mismatch is rejected by storage before a complete() HEAD ever
-   * runs. The thumbnail call site leaves the range liberal
-   * (`[1, perFileCap]`) because the thumb's true size is not known at
-   * init time.
+   * Why PUT and not POST policy: B2's S3-compatible API does not implement
+   * browser-based POST uploads — `POST /<bucket>` returns `501
+   * NotImplemented` with no CORS headers, surfacing as a misleading "no
+   * Access-Control-Allow-Origin" in the browser. PUT is the cross-provider
+   * lowest common denominator (AWS, B2, R2, MinIO, Wasabi all implement
+   * it). See ADR-0022 § "Upload protocol".
+   *
+   * Why these three signed headers: `Content-Type` and `Content-Length`
+   * pin what the POST policy used to pin (`starts-with` on type,
+   * `content-length-range` collapsed to a single value); `Content-MD5`
+   * is mandated by B2 because bucket-default Compliance retention
+   * attaches Object Lock parameters to every PutObject. Pinning MD5 in
+   * the signature also bounds the URL to a specific body — providers
+   * verify Content-MD5 against received bytes (`BadDigest` on
+   * mismatch), so the URL cannot be reused for different bytes.
    */
-  createPresignedPost?: (
+  createPresignedPut?: (
     key: string,
     contentType: string,
-    size: { minBytes: number; maxBytes: number },
+    sizeBytes: number,
+    contentMd5Base64: string,
     expirySeconds?: number,
-  ) => Promise<PresignedPostDescriptor>;
+  ) => Promise<PresignedPutDescriptor>;
 
   /** Presigned GET URL + ISO-formatted expiry. */
   createPresignedGet?: (
@@ -146,9 +203,36 @@ export interface StorageClient {
    */
   headObject?: (key: string) => Promise<HeadObjectResult>;
 
-  /** Explicit delete. Same semantic as `delete`; distinct name so
-   * attachment-flow call sites read naturally. */
-  deleteObject?: (key: string) => Promise<void>;
+  /**
+   * Hide the object — DeleteObject on a versioned bucket without a
+   * VersionId, which writes a delete marker instead of destroying the
+   * underlying version (ADR-0022). The app key has only `writeFiles`
+   * (no `deleteFiles`), so a destructive call would be refused at the
+   * capability layer regardless; the method name reflects what actually
+   * happens on the wire.
+   */
+  hide?: (key: string) => Promise<void>;
+
+  /**
+   * Restore primitive — CopyObject with a versionId in `CopySource`,
+   * promoting an older noncurrent version back to current. Returns the
+   * new version id of the resulting current version (the bucket is
+   * versioned, so each PUT — including this server-side copy — produces
+   * a fresh version). Used by the Papierkorb restore flow (ADR-0022).
+   *
+   * App-key capability dependency (B2): on a bucket with default
+   * Compliance Object Lock retention, the running credential MUST hold
+   * `writeFileRetentions` (= `s3:PutObjectRetention`). Without it,
+   * B2's S3-compat layer silently HANGS the CopyObject request for ~5
+   * minutes per attempt before returning 503 ServiceUnavailable — the
+   * inherited retention timestamp the copy must write tips into a
+   * capability denial that B2 surfaces as a stall, not an immediate
+   * 403. The deploy-preflight `probe-copyobj` step in
+   * `deploy-preflight-cli.ts` is the catch-point; the App key table
+   * in `docs/ops/object-storage-provisioning.md` is the source of
+   * truth for the canonical seven-cap set.
+   */
+  copyFromVersion?: (key: string, sourceVersionId: string) => Promise<string | undefined>;
 
   /**
    * Stream the raw bytes of an object. The returned Readable carries the
@@ -179,6 +263,26 @@ export interface StorageClient {
    * without needing a second round-trip per object.
    */
   listObjects?: (prefix: string, olderThan?: Date) => Promise<string[]>;
+
+  /**
+   * Boot-time bucket-safety probe (ADR-0022 / docs/ops/object-storage-provisioning.md).
+   * Returns a structured snapshot of versioning + Object Lock + lifecycle
+   * for `assertStorageBucketSafe()` in `./safety.ts` to evaluate.
+   */
+  getBucketSafetyConfig?: () => Promise<BucketSafetyConfig>;
+
+  /**
+   * Boot-time capability self-test (see `safety.ts` header for the
+   * full rationale). Issues a destructive call against a sentinel
+   * non-existent version and classifies the response — AccessDenied
+   * means the capability split is intact, anything else is structured
+   * back to the validator for fail-closed handling.
+   *
+   * Implementations MUST return a structured `CapabilityProbeResult`
+   * even on AccessDenied — the probe is a measurement, not an
+   * exception flow.
+   */
+  probeDeleteVersionCapability?: () => Promise<CapabilityProbeResult>;
 }
 
 /**
@@ -188,22 +292,26 @@ export interface StorageClient {
  * narrower type so a `StorageClient` lacking the methods fails at tsc.
  */
 export interface AttachmentStorageClient extends StorageClient {
-  createPresignedPost: (
+  createPresignedPut: (
     key: string,
     contentType: string,
-    size: { minBytes: number; maxBytes: number },
+    sizeBytes: number,
+    contentMd5Base64: string,
     expirySeconds?: number,
-  ) => Promise<PresignedPostDescriptor>;
+  ) => Promise<PresignedPutDescriptor>;
   createPresignedGet: (
     key: string,
     expirySeconds?: number,
     attachmentFileName?: string,
   ) => Promise<PresignedGetDescriptor>;
   headObject: (key: string) => Promise<HeadObjectResult>;
-  deleteObject: (key: string) => Promise<void>;
+  hide: (key: string) => Promise<void>;
+  copyFromVersion: (key: string, sourceVersionId: string) => Promise<string | undefined>;
   getObject: (key: string) => Promise<Readable>;
   putObject: (key: string, body: Buffer | Uint8Array, contentType: string) => Promise<void>;
   listObjects: (prefix: string, olderThan?: Date) => Promise<string[]>;
+  getBucketSafetyConfig: () => Promise<BucketSafetyConfig>;
+  probeDeleteVersionCapability: () => Promise<CapabilityProbeResult>;
 }
 
 /**
@@ -259,6 +367,54 @@ export function buildContentDisposition(fileName: string): string {
   return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${utf8Encoded}`;
 }
 
+/**
+ * Collapse the SDK's LifecycleRule into the structured snapshot the
+ * safety validator consumes. Filter shape can be `{Prefix}`, `{Tag}`, or
+ * `{And: {Prefix?, Tags?}}` — flatten into `(prefix, hasTagFilter)`.
+ * Action fields are surfaced individually so the validator can emit a
+ * specific failure per defect (Expiration.Days vs Transitions vs …),
+ * matching the itemized runbook deny list.
+ */
+function toLifecycleRuleSnapshot(rule: LifecycleRule): LifecycleRuleSnapshot {
+  let prefix = '';
+  let hasTagFilter = false;
+  if (rule.Filter) {
+    if (rule.Filter.Prefix !== undefined) prefix = rule.Filter.Prefix;
+    if (rule.Filter.Tag) hasTagFilter = true;
+    if (rule.Filter.And) {
+      if (rule.Filter.And.Prefix !== undefined) prefix = rule.Filter.And.Prefix;
+      if ((rule.Filter.And.Tags?.length ?? 0) > 0) hasTagFilter = true;
+    }
+  } else {
+    // Legacy non-Filter Prefix shape — pre-2018 S3 API. The SDK marks the
+    // top-level `Prefix` field deprecated; we keep the read for defensive
+    // parity with older buckets and S3-compatible providers that still
+    // surface this shape. Routed through a structural cast so the
+    // deprecation marker doesn't propagate to the editor on every read.
+    const legacyPrefix = (rule as { Prefix?: string }).Prefix;
+    if (legacyPrefix !== undefined) prefix = legacyPrefix;
+  }
+
+  const expiration = rule.Expiration;
+  const expireDeleteMarker = expiration?.ExpiredObjectDeleteMarker === true;
+
+  // `Expiration.Days = 0` is the encoding S3 uses when only
+  // `ExpiredObjectDeleteMarker` is set — treat as absent.
+  return {
+    id: rule.ID,
+    status: rule.Status ?? 'Disabled',
+    prefix,
+    hasTagFilter,
+    noncurrentDays: rule.NoncurrentVersionExpiration?.NoncurrentDays,
+    expireDeleteMarker,
+    hasExpirationDays: (expiration?.Days ?? 0) > 0,
+    hasExpirationDate: expiration?.Date !== undefined,
+    hasTransitions: (rule.Transitions?.length ?? 0) > 0,
+    hasNoncurrentTransitions: (rule.NoncurrentVersionTransitions?.length ?? 0) > 0,
+    hasAbortMpu: rule.AbortIncompleteMultipartUpload !== undefined,
+  };
+}
+
 export function createStorageClient(config: StorageConfig): AttachmentStorageClient {
   // Two clients on purpose:
   //   - `s3` (internal endpoint) — used for every operation whose HTTP
@@ -281,6 +437,23 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     },
     forcePathStyle: true,
   });
+  // `requestChecksumCalculation: 'WHEN_REQUIRED'` on the SIGNING client
+  // suppresses the SDK's automatic CRC32 middleware for presigned URLs.
+  // With the default `WHEN_SUPPORTED` (since `@aws-sdk/client-s3` v3.729),
+  // the SDK precomputes `x-amz-checksum-crc32` over an empty body at signing
+  // time and bakes it into the signed query string. B2 happens to tolerate
+  // the discrepancy when `Content-MD5` is also present, but signing a CRC32
+  // we never intend to verify is a fragile dependency on provider tolerance;
+  // skipping it keeps the URL clean and the integrity guarantee on the path
+  // we actually rely on — the signed `Content-MD5` header (see
+  // `createPresignedPut`). Same setting on both presigned-PUT and
+  // presigned-GET signing — GET has no body to checksum so it is benign.
+  //
+  // The non-signing `s3` keeps the default — server-side PUTs (test
+  // seeding, bulk-zip pickup) need an integrity header to satisfy the S3
+  // Object Lock contract under default retention (per ADR-0022), and the
+  // SDK's auto-CRC32 supplies one without each call site computing MD5
+  // by hand.
   const s3Signing = config.publicEndpoint
     ? new S3Client({
         endpoint: config.publicEndpoint,
@@ -290,8 +463,18 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
           secretAccessKey: config.secretKey,
         },
         forcePathStyle: true,
+        requestChecksumCalculation: 'WHEN_REQUIRED',
       })
-    : s3;
+    : new S3Client({
+        endpoint: config.endpoint,
+        region: config.region ?? 'us-east-1',
+        credentials: {
+          accessKeyId: config.accessKey,
+          secretAccessKey: config.secretKey,
+        },
+        forcePathStyle: true,
+        requestChecksumCalculation: 'WHEN_REQUIRED',
+      });
 
   const bucket = config.bucket;
 
@@ -338,17 +521,6 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       };
     },
 
-    async delete(key: string): Promise<void> {
-      validateKey(key);
-      // S3 DeleteObject is idempotent — does not throw for missing keys.
-      await s3.send(
-        new DeleteObjectCommand({
-          Bucket: bucket,
-          Key: key,
-        }),
-      );
-    },
-
     async getSignedUrl(key: string, expirySeconds: number): Promise<string> {
       validateKey(key);
       if (expirySeconds < MIN_SIGNED_URL_EXPIRY_SECONDS) {
@@ -365,56 +537,91 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     },
 
     async ping(): Promise<void> {
-      // HeadBucket is cheap and authenticates, so a successful response
-      // verifies endpoint, credentials, and bucket access in one shot.
-      await s3.send(new HeadBucketCommand({ Bucket: bucket }));
+      // Reachability + auth + bucket-access probe. We deliberately do NOT
+      // use HeadBucket: B2 maps it to b2_list_buckets, which requires the
+      // account-scoped `listAllBucketNames` capability. ADR-0022 prescribes
+      // a bucket-restricted app key, and bucket-restricted keys cannot
+      // hold `listAllBucketNames` — so HeadBucket returns 403 against B2
+      // even though every other call we make against the bucket succeeds.
+      // (MinIO/AWS would accept HeadBucket; the cross-provider lowest
+      // common denominator is ListObjectsV2.)
+      //
+      // ListObjectsV2 with MaxKeys=1 against the safety-probe prefix is the
+      // canonical replacement: it exercises the same `listFiles` capability
+      // the app already requires per ADR-0022, returns in a single
+      // round-trip whether or not any objects match, and verifies endpoint,
+      // credentials, AND bucket access in one shot — same contract the old
+      // HeadBucket comment claimed. The `__probe/` prefix keeps the call
+      // bounded so a populated bucket doesn't waste bandwidth listing user
+      // keys.
+      await s3.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1, Prefix: '__probe/' }));
     },
 
-    async createPresignedPost(
+    async createPresignedPut(
       key: string,
       contentType: string,
-      size: { minBytes: number; maxBytes: number },
+      sizeBytes: number,
+      contentMd5Base64: string,
       expirySeconds: number = 60,
-    ): Promise<PresignedPostDescriptor> {
+    ): Promise<PresignedPutDescriptor> {
       validateKey(key);
-      // Policy conditions — the load-bearing pins of AC-211:
-      //  * exact key (no wildcards),
-      //  * content-length-range [minBytes, maxBytes] — the main-upload
-      //    path pins min === max to the declared size so storage
-      //    rejects any deviation (size-substitution upload attack). The
-      //    thumbnail path supplies a liberal [1, cap] range because the
-      //    thumb's true size is not known at init time.
-      //  * content-type starts-with the requested MIME (the POST form
-      //    echoes `Content-Type` verbatim, so the prefix match pins the
-      //    exact type without tripping clients that also send a charset).
-      if (!Number.isInteger(size.minBytes) || size.minBytes < 0) {
+      // Three signed headers — the load-bearing pins of AC-211:
+      //  * `Content-Type` — exact MIME type. Defense-in-depth: the
+      //    complete() flip re-asserts via HEAD against the declared
+      //    `mimeType`; the SigV4 binding makes the URL unusable for a
+      //    different type to begin with.
+      //  * `Content-Length` — exact body size. POST policy used a range;
+      //    PUT pins one number per signed URL, which is strictly tighter
+      //    given the client always knows the exact size at init time.
+      //  * `Content-MD5` — RFC 1864 base64. Required by B2 (Object Lock
+      //    + bucket-default retention attaches Object Lock parameters to
+      //    every PutObject; bare PUTs are rejected). Doubles as the
+      //    body-binding guarantee — providers verify Content-MD5 against
+      //    received bytes and reject `BadDigest` on mismatch, so the
+      //    signed URL is reusable only for an upload of bytes that hash
+      //    to this exact MD5.
+      if (!Number.isInteger(sizeBytes) || sizeBytes <= 0) {
         throw new Error(
-          `createPresignedPost: size.minBytes must be a non-negative integer, got ${size.minBytes}`,
+          `createPresignedPut: sizeBytes must be a positive integer, got ${sizeBytes}`,
         );
       }
-      if (!Number.isInteger(size.maxBytes) || size.maxBytes < size.minBytes) {
-        throw new Error(
-          `createPresignedPost: size.maxBytes must be an integer >= minBytes, got ${size.maxBytes}`,
-        );
+      // RFC 1864 MD5 base64: 16-byte digest → 24 chars ending with `==`.
+      // The 21st char is `[A-Za-z0-9+/]` and the 22nd char is one of
+      // `[AQgw]` — only those four values can hold the trailing zero
+      // bits a 16-byte input forces. Tighter than the 22-char-anything
+      // shape: catches non-canonical inputs before the storage provider
+      // has to BadDigest them.
+      if (
+        typeof contentMd5Base64 !== 'string' ||
+        !/^[A-Za-z0-9+/]{21}[AQgw]==$/.test(contentMd5Base64)
+      ) {
+        throw new Error('createPresignedPut: contentMd5Base64 must be RFC 1864 base64 of MD5');
       }
       const expiresIn = Math.max(1, expirySeconds);
-      const result = await awsCreatePresignedPost(s3Signing, {
+      const command = new PutObjectCommand({
         Bucket: bucket,
         Key: key,
-        Conditions: [
-          { bucket },
-          ['eq', '$key', key],
-          ['content-length-range', size.minBytes, size.maxBytes],
-          ['starts-with', '$Content-Type', contentType],
-        ],
-        Fields: {
-          'Content-Type': contentType,
-        },
-        Expires: expiresIn,
+        ContentType: contentType,
+        ContentLength: sizeBytes,
+        ContentMD5: contentMd5Base64,
+      });
+      // `signableHeaders` overrides the SDK's default unsignable list
+      // (which marks `content-type` as unsignable) so `Content-Type`,
+      // `Content-Length`, and `Content-MD5` all land in
+      // `X-Amz-SignedHeaders` and are bound by the signature.
+      // (`unhoistableHeaders` is for `x-amz-*` headers — it has no
+      // effect on these three, so it is omitted.)
+      const url = await getSignedUrl(s3Signing, command, {
+        expiresIn,
+        signableHeaders: new Set(['content-type', 'content-length', 'content-md5']),
       });
       return {
-        url: result.url,
-        fields: result.fields,
+        url,
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(sizeBytes),
+          'Content-MD5': contentMd5Base64,
+        },
         expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
       };
     },
@@ -452,6 +659,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         return {
           size: Number(res.ContentLength ?? 0),
           contentType: res.ContentType ?? 'application/octet-stream',
+          versionId: res.VersionId,
         };
       } catch (err) {
         const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
@@ -462,9 +670,33 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       }
     },
 
-    async deleteObject(key: string): Promise<void> {
+    async hide(key: string): Promise<void> {
       validateKey(key);
+      // DeleteObject WITHOUT VersionId on a versioned bucket creates a
+      // delete marker — the version becomes "noncurrent" and reads return
+      // 404, but the bytes survive until the lifecycle reap (ADR-0022).
+      // Idempotent like S3 DeleteObject — succeeds on missing keys.
       await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    },
+
+    async copyFromVersion(key: string, sourceVersionId: string): Promise<string | undefined> {
+      validateKey(key);
+      if (!sourceVersionId) {
+        throw new Error('copyFromVersion: sourceVersionId is required');
+      }
+      // CopySource format per AWS S3 docs: "<bucket>/<key>?versionId=<vid>".
+      // The bucket and version-id are app-controlled; the key is already
+      // validated by validateKey() against STORAGE_CONFIG.validKeyPattern.
+      // Slashes inside the key remain raw — encoding them would change the
+      // semantic CopySource path. The SDK URL-encodes the rest.
+      const response = await s3.send(
+        new CopyObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          CopySource: `${bucket}/${key}?versionId=${encodeURIComponent(sourceVersionId)}`,
+        }),
+      );
+      return response.VersionId;
     },
 
     async getObject(key: string): Promise<Readable> {
@@ -504,6 +736,93 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
           ContentType: contentType,
         }),
       );
+    },
+
+    async getBucketSafetyConfig(): Promise<BucketSafetyConfig> {
+      // Three independent reads — versioning, object-lock, lifecycle.
+      // Each can succeed/fail independently; the validator handles the
+      // "feature not enabled" cases as semantic absence (versioningEnabled=
+      // false, objectLock.enabled=false, lifecycleRules=[]).
+      const ver = await s3.send(new GetBucketVersioningCommand({ Bucket: bucket }));
+      const versioningEnabled = ver.Status === 'Enabled';
+
+      let objectLock: BucketSafetyConfig['objectLock'] = { enabled: false };
+      try {
+        const ol = await s3.send(new GetObjectLockConfigurationCommand({ Bucket: bucket }));
+        if (ol.ObjectLockConfiguration?.ObjectLockEnabled === 'Enabled') {
+          objectLock = {
+            enabled: true,
+            defaultMode: ol.ObjectLockConfiguration.Rule?.DefaultRetention?.Mode,
+            defaultDays: ol.ObjectLockConfiguration.Rule?.DefaultRetention?.Days,
+          };
+        }
+      } catch (err) {
+        const e = err as { name?: string };
+        // ObjectLockConfigurationNotFoundError when the bucket was
+        // created without --with-lock. Fall through to enabled:false so
+        // the validator surfaces a structured failure instead of an
+        // opaque SDK error.
+        if (e.name !== 'ObjectLockConfigurationNotFoundError') throw err;
+      }
+
+      let lifecycleRules: BucketSafetyConfig['lifecycleRules'] = [];
+      try {
+        const lc = await s3.send(new GetBucketLifecycleConfigurationCommand({ Bucket: bucket }));
+        lifecycleRules = (lc.Rules ?? []).map(toLifecycleRuleSnapshot);
+      } catch (err) {
+        const e = err as { name?: string };
+        // NoSuchLifecycleConfiguration when no rules — semantic absence.
+        if (e.name !== 'NoSuchLifecycleConfiguration') throw err;
+      }
+
+      return { versioningEnabled, objectLock, lifecycleRules };
+    },
+
+    async probeDeleteVersionCapability(): Promise<CapabilityProbeResult> {
+      // Capability self-test — see safety.ts header for the rationale.
+      // The call is constructed to be intentionally destructive in
+      // shape (DeleteObjectCommand + VersionId) but pointed at a
+      // non-existent key with a non-existent VersionId, so a properly-
+      // restricted credential responds with AccessDenied at the
+      // capability layer before any object resolution happens.
+      //
+      // This is the ONE legitimate site in the codebase that constructs
+      // a `DeleteObjectCommand` carrying a `VersionId` — the architecture
+      // test (`src/server/__tests__/storage-architecture.test.ts`)
+      // exempts it via an explicit `SITE_ALLOWLIST` entry keyed on
+      // `{ file: 'src/server/storage/client.ts', functionName:
+      // 'probeDeleteVersionCapability' }`. The exception is architectural,
+      // not an evasion: this is the call the probe MUST make to validate
+      // the capability split. If the function is renamed or moved, the
+      // allowlist entry must change at the same commit — the test
+      // enforces no other file may declare a function with this name.
+      try {
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: bucket,
+            Key: CAPABILITY_PROBE_KEY,
+            VersionId: CAPABILITY_PROBE_VERSION_ID,
+          }),
+        );
+        // 2xx success — the credential CAN destroy versions. This is
+        // the catastrophic case the probe was added to catch.
+        return { kind: 'unexpected-success' };
+      } catch (err) {
+        const e = err as { name?: string; message?: string; Code?: string };
+        // The SDK exposes the modelled `AccessDenied` exception class
+        // by `name === 'AccessDenied'`. B2's S3-compat surface returns
+        // the same name with `not entitled` in the message; MinIO
+        // restricted users return the same name from IAM denial. AWS
+        // S3 also returns this name. One uniform check across providers.
+        if (e.name === 'AccessDenied' || e.Code === 'AccessDenied') {
+          return { kind: 'access-denied' };
+        }
+        return {
+          kind: 'unexpected-error',
+          errorName: e.name ?? 'UnknownError',
+          message: e.message ?? String(err),
+        };
+      }
     },
 
     async listObjects(prefix: string, olderThan?: Date): Promise<string[]> {

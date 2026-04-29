@@ -1,8 +1,8 @@
 # Backup container crontab (dcron format, root user).
 #
 # Installed in the image at /etc/crontabs/root (Dockerfile.backup).
-# dcron in the entrypoint runs as `crond -f -l 2` so wakeups appear
-# in `docker compose logs backup`.
+# dcron runs as `crond -f` (default log level 5/NOTICE) so scheduled
+# wakeups appear in `docker compose logs backup`.
 #
 # Times are Europe/Berlin — the container sets TZ=Europe/Berlin (see
 # docker-compose.yml services.backup.environment and the tzdata package
@@ -23,12 +23,15 @@
 # lifecycle) — R2 handles the deletes. See ADR-0020 §Decision and
 # docs/ops/backup/overview.md.
 #
-# No MAILTO directive: dcron does not implement the vixie-cron mail
-# envelope, so there is nothing to silence. Each script's output goes
-# straight to the container's stdout/stderr via docker's json-file
-# driver.
+# Output redirection (`> /proc/1/fd/1 2>/proc/1/fd/2`): dcron's default
+# behaviour is to mail a job's stdout/stderr via sendmail. This image
+# carries no MTA, so without redirection the script output is silently
+# dropped — leaving the operator with only the dcron NOTICE wakeup line
+# and no per-run "ok" / "skipped" / "failed" cue from the runner.
+# /proc/1/fd/{1,2} are crond's own (PID 1) stdout/stderr, which Docker's
+# json-file driver captures.
 
-0 9,12,15,18,21 * * 1-5 /usr/local/bin/run-backup.sh
-0 12            * * 6,0 /usr/local/bin/run-backup.sh
-2 9,12,15,18,21 * * 1-5 /usr/local/bin/run-drill.sh
-2 12            * * 6,0 /usr/local/bin/run-drill.sh
+0 9,12,15,18,21 * * 1-5 /usr/local/bin/run-backup.sh > /proc/1/fd/1 2>/proc/1/fd/2
+0 12            * * 6,0 /usr/local/bin/run-backup.sh > /proc/1/fd/1 2>/proc/1/fd/2
+2 9,12,15,18,21 * * 1-5 /usr/local/bin/run-drill.sh  > /proc/1/fd/1 2>/proc/1/fd/2
+2 12            * * 6,0 /usr/local/bin/run-drill.sh  > /proc/1/fd/1 2>/proc/1/fd/2

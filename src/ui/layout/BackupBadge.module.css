@@ -22,7 +22,12 @@
   border-radius: 6px;
   background: transparent;
   flex-shrink: 0;
-  cursor: help;
+  /* Element is a <button> — inherit the user's font so the label
+     tooltip renders in the surrounding family, and colour so the
+     `currentColor`-driven SVG picks up the state tint. */
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
   transition:
     background 0.15s,
     color 0.15s;

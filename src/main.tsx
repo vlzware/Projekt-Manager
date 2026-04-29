@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import { applyBranding } from './styles/applyBranding';
 import { startThemeRuntime } from './styles/themeRuntime';
+import { initDebugConsole } from './initDebugConsole';
 import './index.css';
 
 // Order matters: applyBranding populates --brand-accent-* so the theme
@@ -11,6 +12,7 @@ import './index.css';
 // before React mount, so in practice the ordering is a same-frame nuance.
 applyBranding();
 startThemeRuntime();
+initDebugConsole();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

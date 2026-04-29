@@ -59,13 +59,19 @@ export default defineConfig({
         },
       },
       {
-        // Integration tests: shared PostgreSQL database, Fastify server.
-        // Files run sequentially to prevent seed/mutation race conditions.
+        // Integration tests: per-process PostgreSQL database, Fastify
+        // server. The setupFile creates `projekt_manager_test_<pid>` and
+        // overrides DATABASE_URL before any test imports — so two
+        // parallel runs (different worktrees, different agents) cannot
+        // race each other's seed TRUNCATE. Files within one fork still
+        // run sequentially to keep audit-publisher state coherent.
         extends: true,
         test: {
           name: 'integration',
           environment: 'node',
           fileParallelism: false,
+          setupFiles: ['src/test/integration-setup.ts'],
+          globalSetup: ['src/test/integration-globalsetup.ts'],
           include: ['src/server/__tests__/**/*.test.ts'],
         },
       },

@@ -74,6 +74,7 @@ function makeBinary(overrides: Partial<Attachment>): Attachment {
     originalKey: 'proj/p-42/bin-1/o.pdf',
     thumbKey: null,
     hasThumbnail: false,
+    hiddenAt: null,
     createdAt: '2026-04-20T10:00:00Z',
     createdBy: { id: 'u-w1', displayName: 'Anna Arbeiter' },
     ...overrides,

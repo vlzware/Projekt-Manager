@@ -50,7 +50,7 @@ function pickPushDispatcher(material: VapidKeyMaterial | null): PushDispatcher {
 /**
  * Return the scheme+host+port of `endpoint`, or `null` if it isn't a
  * parseable URL. Used by the CSP assembly to whitelist the object-storage
- * origin for presigned POST / GET traffic without hard-coding the
+ * origin for presigned PUT / GET traffic without hard-coding the
  * hostname.
  */
 function extractOrigin(endpoint: string | undefined): string | null {
@@ -137,16 +137,41 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
-        // `browser-image-compression` spawns its downscale pipeline in a
-        // Web Worker from a blob: URL. Without explicit `worker-src`,
-        // CSP falls back to `script-src`, which forbids blob: — the
-        // worker is silently blocked and the library falls back to
-        // main-thread compression (slower + blocks UI during large
-        // photo uploads). The same-origin `'self'` preserves the rule
-        // that only our own bundle can author a worker script.
-        workerSrc: ["'self'", 'blob:'],
+        // The PWA service worker is registered from a same-origin URL
+        // (`/sw.js`); no inline blob: workers are spawned. Kept tight
+        // at `'self'` — if a future feature needs `blob:` workers,
+        // re-add it deliberately rather than carrying it forward.
+        workerSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", ...storageSources],
+        // `data:` is required by `@uploadcare/image-shrink`'s EXIF
+        // orientation probe — it loads a tiny base64 JPEG into a hidden
+        // `<img>` to detect whether the browser auto-rotates JPEGs from
+        // EXIF Orientation. Without `data:`, the probe's load event
+        // never fires, the library's internal Promise hangs, and photo
+        // uploads stall (or get misclassified as non-JPEG, defeating
+        // the EXIF-byte-splice guarantee that motivated the swap from
+        // browser-image-compression). Eruda's toolbar / panel icons
+        // are also data: PNG/SVG sprites, so this also unblocks the
+        // mobile debug console.
+        //
+        // `blob:` is required by the same library's main path: after
+        // the EXIF probe, `shrinkFile()` calls
+        // `imageLoader(URL.createObjectURL(blob))` to decode the source
+        // bytes into an `<img>` before drawing into the offscreen
+        // canvas. Our own thumbnail encoder
+        // (`src/domain/imagePipeline.ts`) does the same. Without
+        // `blob:`, the browser blocks the resource, the `<img>` fires
+        // `onerror` with "Failed to load image", and uploads fail at
+        // the compression step — surfaced as "Bildbearbeitung
+        // fehlgeschlagen" in the UI.
+        //
+        // Both schemes are helmet's own default for `img-src` and
+        // widely accepted as low-risk: SVG loaded via `<img>` cannot
+        // execute scripts, `data:` cannot initiate network requests,
+        // and `blob:` URLs reference only bytes the same origin's JS
+        // already created with `URL.createObjectURL`, so neither
+        // scheme opens a cross-origin exfil channel.
+        imgSrc: ["'self'", 'data:', 'blob:', ...storageSources],
         connectSrc: ["'self'", ...storageSources],
         fontSrc: ["'self'"],
         // PDF preview loads a same-origin `blob:` URL in an <iframe>.

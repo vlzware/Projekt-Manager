@@ -118,7 +118,7 @@ if [ -n "$env_example_keys" ]; then
   missing_env=$(comm -23 <(echo "$env_example_keys") <(echo "$env_actual_keys") || true)
   if [ -n "$missing_env" ]; then
     echo "ERROR: $REPO_DIR/.env is missing keys declared in .env.production.example:" >&2
-    echo "$missing_env" | sed 's/^/  - /' >&2
+    echo "  - ${missing_env//$'\n'/$'\n'  - }" >&2
     echo "" >&2
     echo "Sync the keys (preserving existing values) before deploying. See" >&2
     echo "docs/ops/manual-deploy.md for the edit-in-place workflow." >&2
@@ -148,6 +148,58 @@ if [ -n "$missing_secrets" ]; then
   exit 1
 fi
 
+# --- Pre-flight: baseline schema-state recurrence guard --------------
+# Drizzle records baseline migrations by sha256 hash in
+# `drizzle.__drizzle_migrations.hash`. An edit to 0000_baseline.sql
+# produces a new hash, but `migrate()` skips re-applying it because the
+# old hash is already in the ledger — the live DB stays on the previous
+# schema while schema.ts and the SQL describe the new one. The first
+# request that touches a new column 500s with
+# `column "<X>" does not exist`.
+#
+# This guard compares the on-disk sha256 of the baseline file (the
+# same digest drizzle-orm uses to populate the ledger — sha256 over
+# the raw file content) to the recorded ledger entry, and aborts the
+# deploy BEFORE `compose up` recreates app containers and starts
+# routing traffic to a stale schema.
+#
+# Fresh-DB cases fall through cleanly: db service absent (first
+# deploy / wiped container), migrations table absent (wiped volume,
+# app hasn't booted yet), or ledger empty. The next `compose up`
+# runs migrate() which populates the ledger.
+#
+# Recovery procedure: docs/ops/recover-from-schema-change.md.
+echo "Pre-flight: checking baseline schema state..."
+expected_baseline_hash=$(sha256sum "$REPO_DIR/src/server/db/migrations/0000_baseline.sql" \
+  | awk '{print $1}')
+
+if docker compose ps --status running --services 2>/dev/null | grep -qx db; then
+  # `2>/dev/null || true` collapses every non-success state (table
+  # absent, ledger empty, transient psql error) to an empty string —
+  # all interpreted as "no comparison possible, fall through". The
+  # outer `compose ps` guard already proved the service is up, so the
+  # table-absent path is the only legitimate empty outcome we expect
+  # here.
+  recorded_baseline_hash=$(docker compose exec -T db \
+    psql -U pm -d projekt_manager -tAc \
+    "SELECT hash FROM drizzle.__drizzle_migrations ORDER BY id ASC LIMIT 1;" \
+    2>/dev/null | tr -d '[:space:]' || true)
+
+  if [ -n "$recorded_baseline_hash" ] && \
+     [ "$recorded_baseline_hash" != "$expected_baseline_hash" ]; then
+    echo "ERROR: baseline schema mismatch — DB ledger does not match 0000_baseline.sql." >&2
+    echo "  expected (file): $expected_baseline_hash" >&2
+    echo "  recorded (db):   $recorded_baseline_hash" >&2
+    echo "" >&2
+    echo "Drizzle records baselines by hash; an edit to 0000_baseline.sql is" >&2
+    echo "silently no-op'd against an existing ledger. Continuing this deploy" >&2
+    echo "would 500 on the first request that touches a new column." >&2
+    echo "" >&2
+    echo "See docs/ops/recover-from-schema-change.md." >&2
+    exit 1
+  fi
+fi
+
 # Pin the exact SHA-tagged image so this deploy is reproducible and a
 # rollback is just re-running with an older SHA. `docker compose pull`
 # only pulls services that declare an `image:` — `db`, `storage`, and
@@ -162,32 +214,70 @@ export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
 # image is never fetched ahead of `up -d` (which would then block on a
 # registry round-trip while starting).
 docker compose --profile backup pull app backup
+
+# --- Pre-flight: schema-level env validation + feature manifest ------
+# Two checkpoints in one ephemeral container:
+#
+# 1. `validateEnvAggregated()` runs schema + every cross-field guard
+#    (AC-231). The two presence checks above (env_example_keys,
+#    secrets.manifest.txt) only assert that keys are *declared*; they
+#    do not catch shape errors (PORT=0, NODE_ENV=staging, SEED=maybe),
+#    nor the dev-default-credential check the schema folds in. A
+#    misconfiguration that gets past the presence check would
+#    otherwise crash-loop the freshly-recreated container — losing the
+#    previous-revision's known-good replicas before the new replicas
+#    are healthy. This step catches it without touching the running
+#    stack.
+#
+# 2. `formatFeatureManifest()` prints the same per-feature manifest
+#    the app emits at boot (`event = 'config-feature-manifest'`),
+#    formatted for the operator's terminal so the operator sees what
+#    will be enabled / disabled BEFORE `docker compose up` recreates
+#    containers (AC-230). The boot-time JSON emission still lands in
+#    the app's stdout for log aggregation; this is the deploy-time
+#    operator mirror.
+#
+# Why `docker compose run --rm --no-deps app` (not `docker run`):
+#   - The compose `app.environment:` block hardcodes DATABASE_URL,
+#     STORAGE_*, NODE_ENV, PORT (built from operator vars via `${VAR}`
+#     interpolation). A standalone `docker run` would see only the
+#     operator-supplied env (POSTGRES_PASSWORD, ...) and the schema
+#     would reject DATABASE_URL as missing — a false positive that
+#     does not match what the actual `up` will give the container.
+#     `compose run` resolves the same `environment:` block the live
+#     container receives, so the validation environment matches the
+#     deploy environment exactly.
+#   - `--no-deps` skips starting `db` / `storage` (they may already be
+#     up, and we don't need them to validate env). `--rm` removes the
+#     one-shot container immediately. `-T` disables TTY allocation so
+#     the call works in non-interactive deploy contexts (cron, CI).
+#   - The CMD `node /app/dist/server/deploy-preflight-cli.js` runs the
+#     dedicated entry built by `package.json` > `build:server` esbuild
+#     target list. It prints the aggregated error and exits non-zero
+#     on any validation offence; deploy.sh's `set -euo pipefail`
+#     propagates the failure and aborts BEFORE `docker compose up`
+#     runs. On success, it prints the feature manifest before exiting 0.
+echo "Pre-flight: validating env and reporting feature manifest..."
+docker compose run --rm --no-deps -T app node /app/dist/server/deploy-preflight-cli.js
+
 # The backup service is behind a profile so local dev (no R2 creds)
 # doesn't spin up a cron loop that will log AccessDenied on every
 # scheduled tick. See docs/ops/backup/setup.md §4 and ADR-0020.
 docker compose --profile backup up -d
 
-# Smoke test: probe the app container's /api/health endpoint directly,
-# bypassing Caddy and the TLS chain. Verifies app + db + storage are
-# healthy without depending on the network-layer topology. Since #48 the
-# endpoint runs real liveness probes against the DB (SELECT 1) and object
-# storage (HeadBucket), returning {status:"ok"} with HTTP 200 on a fully
-# healthy stack and {status:"degraded"} with HTTP 503 when any dependency
-# fails. `r.ok` correctly interprets 503 as failure.
-timeout=60
-elapsed=0
-until docker compose exec -T app node -e "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; do
-  sleep 2
-  elapsed=$((elapsed + 2))
-  if [ "$elapsed" -ge "$timeout" ]; then
-    echo "Health check failed after ${timeout}s" >&2
-    # Include the backup container in the failure dump — its profile
-    # must match `up -d` above, otherwise compose filters it out of
-    # the active service set and the logs command silently skips it.
-    docker compose --profile backup logs --tail=50
-    exit 1
-  fi
-done
+# Smoke test: probe /api/health from inside the app container, bypassing
+# Caddy and the TLS chain. Verifies app + db + storage are reachable
+# without depending on the network-layer topology. Single source of truth
+# in scripts/smoke-app-health.sh — same probe CI and sync-restore use.
+# Per-attempt failure reasons surface inline so a degraded-storage 503
+# doesn't look identical to "container still starting".
+if ! ./scripts/smoke-app-health.sh projekt-manager-app-1 60; then
+  # Include the backup container in the failure dump — its profile
+  # must match `up -d` above, otherwise compose filters it out of
+  # the active service set and the logs command silently skips it.
+  docker compose --profile backup logs --tail=50
+  exit 1
+fi
 
 # Caddy graceful reload — re-reads the bind-mounted Caddyfile in place
 # so site-block additions (e.g. the `storage.${DOMAIN}` block introduced
@@ -213,5 +303,35 @@ done
 # unchanged" when nothing differs.
 echo "Reloading Caddy config..."
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --force
+
+# --- Drill-key reload (operator-loaded; AC-175 tmpfs-only) -----------
+# Container recreation wipes the tmpfs at /run/drill-key. Until the
+# operator re-pastes the age private identity, every Tier 2 drill tick
+# silently skips (services/backup-drill.ts: outcome='skipped' on absent
+# key — by design, but the badge stays at "noch nie ausgeführt" until
+# a successful drill writes meta_backup_status.lastDrillAt). Folding
+# the reload into the deploy session — same TTY the operator used to
+# decrypt secrets.env.age above — closes the gap without weakening
+# AC-175: load-drill-key still reads the paste over a restricted-mode
+# stdin and writes only to tmpfs.
+#
+# Skip when the tmpfs is still warm (compose-only changes that didn't
+# recreate the backup container). docker exec exits non-zero if the
+# file is absent OR empty — `test -s` covers both. Stderr is redirected
+# because a "no such file" error is the expected absent path.
+if docker exec projekt-manager-backup-1 test -s /run/drill-key/identity 2>/dev/null; then
+  echo "Drill key already in tmpfs — skipping reload."
+else
+  echo
+  echo "==> Loading drill key (operator paste; AC-175 tmpfs-only)"
+  # `-it` allocates a pseudo-TTY so load-drill-key's `read -s` actually
+  # suppresses echo. Failure here does not abort the deploy — app and
+  # backups are already serving — but a loud warning prevents the
+  # "silent skip until the badge goes amber days later" trap.
+  if ! docker exec -it projekt-manager-backup-1 load-drill-key; then
+    echo "WARN: drill key not loaded — Tier 2 drills will skip until you run:" >&2
+    echo "      docker exec -it projekt-manager-backup-1 load-drill-key" >&2
+  fi
+fi
 
 echo "Deploy verified — healthy at $(git rev-parse --short HEAD)"

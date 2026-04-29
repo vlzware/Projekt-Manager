@@ -25,7 +25,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { buildApp } from '../app.js';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 import { getRateLimit } from '../config/index.js';
 import { createDatabase } from '../db/connection.js';
 import { seed } from '../seed.js';
@@ -48,8 +48,8 @@ describe('Login rate limiting (end-to-end)', () => {
     process.env.LOGIN_RATE_LIMIT_MAX = '5';
 
     // buildApp() reads the validated env (see config/index.ts and app.ts) —
-    // any test that bypasses startApp() must call validateEnv() itself.
-    validateEnv();
+    // any test that bypasses startApp() must call validateEnvRuntime() itself.
+    validateEnvRuntime();
 
     const conn = createDatabase();
     pool = conn.pool;
@@ -188,24 +188,55 @@ describe('Login rate limiting (end-to-end)', () => {
 // 6th request; these cases pin the selection logic between production
 // (5/min) and dev/test (30/min) so a regression that swaps the branches
 // is caught without spinning up the app.
+//
+// Issue #139 (AC-228 / AC-231) moved `LOGIN_RATE_LIMIT_MAX` and
+// `NODE_ENV` reads from raw `process.env` into the validated schema.
+// The dev-default credentials guard (POSTGRES_PASSWORD / MINIO_ROOT_*)
+// now fires inside `validateEnvRuntime()` whenever `NODE_ENV=production` is in
+// scope — including these unit tests, which run with the .env-loaded
+// `MINIO_ROOT_USER=minioadmin` already in `process.env`. Clear the
+// dev-cred vars in the production-flavoured cases so the guard does
+// not trip on the test harness's compose-style setup. The
+// 'invalid override' case asserts the new schema-rejection contract
+// rather than the old silent-fallback behaviour: an unparseable
+// override is now an operator-facing fault, not a runtime fallback.
 describe('getRateLimit() login default selection', () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalOverride = process.env.LOGIN_RATE_LIMIT_MAX;
+  const originalPgPwd = process.env.POSTGRES_PASSWORD;
+  const originalMinioUser = process.env.MINIO_ROOT_USER;
+  const originalMinioPwd = process.env.MINIO_ROOT_PASSWORD;
+
+  /** Clear the dev-default compose vars so production-flavoured cases
+   * do not trip the aggregated dev-credentials guard. */
+  function stripDevCreds(): void {
+    delete process.env.POSTGRES_PASSWORD;
+    delete process.env.MINIO_ROOT_USER;
+    delete process.env.MINIO_ROOT_PASSWORD;
+  }
 
   afterEach(() => {
     if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = originalNodeEnv;
     if (originalOverride === undefined) delete process.env.LOGIN_RATE_LIMIT_MAX;
     else process.env.LOGIN_RATE_LIMIT_MAX = originalOverride;
+    if (originalPgPwd === undefined) delete process.env.POSTGRES_PASSWORD;
+    else process.env.POSTGRES_PASSWORD = originalPgPwd;
+    if (originalMinioUser === undefined) delete process.env.MINIO_ROOT_USER;
+    else process.env.MINIO_ROOT_USER = originalMinioUser;
+    if (originalMinioPwd === undefined) delete process.env.MINIO_ROOT_PASSWORD;
+    else process.env.MINIO_ROOT_PASSWORD = originalMinioPwd;
   });
 
   it('production with no override → 5/min', () => {
+    stripDevCreds();
     process.env.NODE_ENV = 'production';
     delete process.env.LOGIN_RATE_LIMIT_MAX;
     expect(getRateLimit().login.max).toBe(5);
   });
 
   it('missing NODE_ENV is treated as production → 5/min (fail-closed)', () => {
+    stripDevCreds();
     delete process.env.NODE_ENV;
     delete process.env.LOGIN_RATE_LIMIT_MAX;
     expect(getRateLimit().login.max).toBe(5);
@@ -224,14 +255,19 @@ describe('getRateLimit() login default selection', () => {
   });
 
   it('override wins over NODE_ENV default', () => {
+    stripDevCreds();
     process.env.NODE_ENV = 'production';
     process.env.LOGIN_RATE_LIMIT_MAX = '100';
     expect(getRateLimit().login.max).toBe(100);
   });
 
-  it('invalid override (non-numeric) falls back to the NODE_ENV default', () => {
+  it('invalid override (non-numeric) is rejected by the schema', () => {
+    // Pre-#139 this case asserted silent fallback to the NODE_ENV
+    // default. The new contract surfaces invalid overrides as a
+    // configuration fault: `getEnv()` re-parses `process.env` and the
+    // schema rejects non-numeric LOGIN_RATE_LIMIT_MAX values.
     process.env.NODE_ENV = 'development';
     process.env.LOGIN_RATE_LIMIT_MAX = 'notanumber';
-    expect(getRateLimit().login.max).toBe(30);
+    expect(() => getRateLimit()).toThrow(/LOGIN_RATE_LIMIT_MAX/);
   });
 });

@@ -18,7 +18,7 @@ Symptoms that appear during or right after [setup.md §4](setup.md#4-first-deplo
 
 ## First-line diagnostics (5 minutes)
 
-SSH to the VPS as the admin user, then run these via `sudo -u deploy`. Use `docker` directly, not `docker compose`. `docker compose <cmd>` re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) in shell env; the admin's sudo shell doesn't have `secrets.env.age` sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. `docker ps` / `docker exec` / `docker logs` don't touch compose, so they work directly. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
+SSH to the VPS as the admin user, then run these via `sudo -u deploy`. Use `docker` directly, not `docker compose`. `docker compose <cmd>` re-parses `docker-compose.yml` on every invocation, which requires every interpolation var (`POSTGRES_PASSWORD`, `STORAGE_SECRET_KEY`, `CLOUDFLARE_API_TOKEN`, …) in shell env; the admin's sudo shell doesn't have `secrets.env.age` sourced, so parse aborts with `CLOUDFLARE_API_TOKEN must be declared`. `docker ps` / `docker exec` / `docker logs` don't touch compose, so they work directly. Same class of problem fixed in `server-setup.md` Phase 8.1 (commit 5484903).
 
 ```bash
 sudo -u deploy docker ps -a --filter name=projekt-manager-backup

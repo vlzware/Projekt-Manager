@@ -32,14 +32,14 @@
  * orphan reaper's policy and for the same reason (§6.11).
  */
 
-import type { StorageClient } from '../storage/client.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
 import type { ServiceLogger } from './Logger.js';
 import { BULK_DOWNLOAD_PREFIX } from './BulkDownloadOrchestrator.js';
 
 const MS_PER_MINUTE = 60 * 1000;
 
 export interface RunBulkDownloadReaperDeps {
-  storage: StorageClient;
+  storage: AttachmentStorageClient;
   logger: ServiceLogger;
   ttlMinutes: number;
   /** Injectable wall clock for deterministic testing. */
@@ -55,14 +55,6 @@ export async function runBulkDownloadReaper(deps: RunBulkDownloadReaperDeps): Pr
     );
   }
 
-  if (!deps.storage.listObjects || !deps.storage.deleteObject) {
-    // `AttachmentStorageClient` makes these mandatory at the type level;
-    // this guard is for the occasional Tier-1 mock that satisfies
-    // `StorageClient` (the reaper-scheduler accepts the wider type for
-    // wiring symmetry with the orphan reaper).
-    throw new Error('runBulkDownloadReaper: storage client missing listObjects/deleteObject');
-  }
-
   const runAt = deps.now ?? new Date();
   const cutoff = new Date(runAt.getTime() - deps.ttlMinutes * MS_PER_MINUTE);
 
@@ -71,7 +63,7 @@ export async function runBulkDownloadReaper(deps: RunBulkDownloadReaperDeps): Pr
   let removed = 0;
   for (const key of staleKeys) {
     try {
-      await deps.storage.deleteObject(key);
+      await deps.storage.hide(key);
       removed += 1;
     } catch (err) {
       deps.logger.error(

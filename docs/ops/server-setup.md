@@ -270,10 +270,10 @@ Read-only Deploy Key scoped to this repo (outbound only).
    sudo -u deploy cp /opt/projekt-manager/.env.production.example /opt/projekt-manager/.env
    ```
 
-   Fill in `DOMAIN`, `MINIO_ROOT_USER`. Defaults for `WG_BIND_IP` and `SEED` are pre-set.
+   Fill in `DOMAIN`, plus the object-storage values per [object-storage-provisioning.md § Wire the deploy](object-storage-provisioning.md): `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_BUCKET`, `STORAGE_ACCESS_KEY`. Defaults for `WG_BIND_IP` and `SEED` are pre-set.
 
-   Secrets (`POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `CLOUDFLARE_API_TOKEN`) go in `secrets.env.age` only -- see Phase 9.
-   `DATABASE_URL` and `STORAGE_*` are hardcoded in `docker-compose.yml` -- do not set them in `.env`.
+   Secrets (`POSTGRES_PASSWORD`, `STORAGE_SECRET_KEY`, `CLOUDFLARE_API_TOKEN`) go in `secrets.env.age` only -- see Phase 9.
+   `DATABASE_URL` is built by `docker-compose.yml` from `POSTGRES_PASSWORD` -- do not set it in `.env`.
 
 3. Complete Phase 9, then deploy:
    ```bash

@@ -7,9 +7,9 @@
  *   - Init writes exactly one `attachment:add` audit row with
  *     `entityType='attachment'`, `entityId=attachmentId`, and a payload
  *     `after` naming projectId, attachmentId, label, mimeType, sizeBytes.
- *   - Delete writes exactly one `attachment:remove` audit row with
- *     `entityType='attachment'`, `entityId=attachmentId`, and a payload
- *     `before` naming the same fields.
+ *   - Delete (= soft-hide, ADR-0022) writes exactly one `attachment:hide`
+ *     audit row with `entityType='attachment'`, `entityId=attachmentId`,
+ *     and a payload `before` naming the same fields.
  *   - Complete is a state-machine finalize — it produces NO audit
  *     row. The `attachment:add` entry is the authoritative record.
  *
@@ -35,6 +35,7 @@ import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js
 import { createDatabase } from '../db/connection.js';
 import { createStorageClient } from '../storage/client.js';
 import { getEnv } from '../config/env.js';
+import { binaryInitBody, photoInitBody } from '../../test/fixtures/attachmentInit.js';
 
 const year = new Date().getFullYear();
 
@@ -95,13 +96,11 @@ describe('Attachment audit contract (AC-219)', () => {
   it('init writes exactly one attachment:add row with entityType=attachment and expected payload fields', async () => {
     const before = await countAuditRows();
 
-    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-      fileName: 'vertrag-audit.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 4321,
-      label: 'rechnung',
-      hasThumbnail: false,
-    });
+    const initRes = await authPost(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/init`,
+      binaryInitBody({ fileName: 'vertrag-audit.pdf', sizeBytes: 4321 }),
+    );
     expect(initRes.statusCode).toBe(201);
     const attachmentId = initRes.json().attachment.id as string;
 
@@ -140,13 +139,11 @@ describe('Attachment audit contract (AC-219)', () => {
     // succeeds. Counting audit rows must include whatever init
     // produced; we record the "after init" mark and compare after
     // complete.
-    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-      fileName: 'complete-zero-audit.jpg',
-      mimeType: 'image/jpeg',
-      sizeBytes: 120_000,
-      label: 'foto',
-      hasThumbnail: true,
-    });
+    const initRes = await authPost(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/init`,
+      photoInitBody({ fileName: 'complete-zero-audit.jpg' }),
+    );
     expect(initRes.statusCode).toBe(201);
     const body = initRes.json();
     const attachmentId = body.attachment.id as string;
@@ -160,7 +157,7 @@ describe('Attachment audit contract (AC-219)', () => {
       secretKey: env.STORAGE_SECRET_KEY!,
     });
     await s.upload(body.attachment.originalKey, Buffer.alloc(120_000, 0xff), 'image/jpeg');
-    await s.upload(body.attachment.thumbKey, Buffer.from('webp-thumb'), 'image/webp');
+    await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
 
     const afterInit = await countAuditRows();
 
@@ -176,12 +173,12 @@ describe('Attachment audit contract (AC-219)', () => {
   });
 
   // -------------------------------------------------------------------
-  // delete → exactly one `attachment:remove` audit row
+  // delete → exactly one `attachment:hide` audit row
   // -------------------------------------------------------------------
-  it('delete writes exactly one attachment:remove row with before payload fields', async () => {
+  it('delete writes exactly one attachment:hide row with before payload fields', async () => {
     // Seed directly — we don't need the real upload path here; the
-    // delete API takes a ready row and removes it. Raw SQL is
-    // allowlisted under __tests__/.
+    // delete API takes a ready row and flips it to status='hidden'
+    // (ADR-0022). Raw SQL is allowlisted under __tests__/.
     const { db, pool } = createDatabase();
     const attachmentId = crypto.randomUUID();
     try {
@@ -208,11 +205,11 @@ describe('Attachment audit contract (AC-219)', () => {
     const after = await countAuditRows();
     expect(after - before).toBe(1);
 
-    const row = await fetchLatestAuditRow(attachmentId, 'attachment:remove');
+    const row = await fetchLatestAuditRow(attachmentId, 'attachment:hide');
     expect(row).not.toBeNull();
     expect(row!.entity_type).toBe('attachment');
     expect(row!.entity_id).toBe(attachmentId);
-    expect(row!.action).toBe('attachment:remove');
+    expect(row!.action).toBe('attachment:hide');
     expect(row!.actor_kind).toBe('user');
     // Ancestor link (architecture.md §11.12).
     expect(row!.ancestor_entity_type).toBe('project');
@@ -242,13 +239,11 @@ describe('Attachment audit contract (AC-219)', () => {
   // -------------------------------------------------------------------
   it('attachment and non-attachment writes produce distinct entity_type audit rows', async () => {
     // Attachment write → `entity_type='attachment'`.
-    const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-      fileName: 'cross-entity.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 1000,
-      label: 'sonstiges',
-      hasThumbnail: false,
-    });
+    const initRes = await authPost(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/init`,
+      binaryInitBody({ fileName: 'cross-entity.pdf', sizeBytes: 1000, label: 'sonstiges' }),
+    );
     expect(initRes.statusCode).toBe(201);
     const attachmentId = initRes.json().attachment.id as string;
 

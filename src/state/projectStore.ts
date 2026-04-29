@@ -17,9 +17,11 @@ import { handleSessionExpired } from './sessionExpired';
 import { useProjectManagementStore } from './projectManagementStore';
 
 /**
- * Outcome of `fetchProject(id)`. Distinguishes the three meaningful
- * branches the project-detail page cares about: authorization failure
- * (AC-149 mirror), not-found, and everything-else.
+ * Outcome of `fetchProject(id)`. Distinguishes the meaningful branches
+ * the project-detail page cares about: authorization failure (AC-149
+ * mirror), not-found, and everything-else. Archived (soft-deleted)
+ * projects flow through `kind: 'ok'` with `project.deleted = true` —
+ * the page renders them as a read-only preview.
  */
 export type FetchProjectOutcome =
   | { kind: 'ok'; project: Project }

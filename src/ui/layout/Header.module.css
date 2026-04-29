@@ -298,12 +298,48 @@
   right: auto;
 }
 
+/* Middle tier (≈769–900px): the primary view buttons + Verwaltung
+   pill + right cluster still render inline (the bottom tab bar
+   doesn't kick in until 768px), so the horizontal budget is tight.
+   Swapping the "Projekt-Manager" wordmark for the logo mark alone
+   isn't enough — the right cluster carries the full display name
+   (≈125px for "Thomas Berger") and the row still overflows from
+   ~820px down. Collapse the user button to initials here too; the
+   Verwaltung label and primary-nav pill stay because the tab bar
+   hasn't kicked in yet. The mobile rules below handle widths ≤768
+   where the primary destinations move out of the header entirely.
+   Reported in #128. */
+@media (max-width: 900px) {
+  .appNameText {
+    display: none;
+  }
+
+  .appNameLogo {
+    display: block;
+  }
+
+  .userFullName {
+    display: none;
+  }
+
+  .userInitials {
+    display: inline-block;
+    min-width: 1.5em;
+    text-align: center;
+  }
+
+  .userButton {
+    padding: 6px 10px;
+    min-width: 40px;
+  }
+}
+
 /* Below ~768px the primary destinations move to the bottom tab bar
    (`MobileTabBar`), so the header collapses to admin/status
-   affordances only — Verwaltung dropdown, email-extract, backup
-   badge, user menu. The wordmark swaps to a logo, the admin trigger
-   drops its text, and the user button collapses to initials so the
-   whole row fits down to 360px without wrapping. */
+   affordances only — Verwaltung dropdown + right cluster. The
+   wordmark / user-name collapses are inherited from the ≤900 block
+   above; this tier adds hiding the primary-nav buttons and dropping
+   the Verwaltung label so the cog stands alone. */
 @media (max-width: 768px) {
   .header {
     padding: 10px 12px;
@@ -330,15 +366,6 @@
     display: none;
   }
 
-  /* Swap wordmark → logo. */
-  .appNameText {
-    display: none;
-  }
-
-  .appNameLogo {
-    display: block;
-  }
-
   /* Drop the "Verwaltung" label; keep the cog. */
   .adminTriggerLabel {
     display: none;
@@ -350,23 +377,5 @@
   .adminTrigger {
     padding: 6px 10px;
     gap: 0;
-  }
-
-  /* User button collapses to initials; keep a comfortable hit area
-     so single-letter initials (e.g. "I" for Inhaber) don't become a
-     micro-target. */
-  .userFullName {
-    display: none;
-  }
-
-  .userInitials {
-    display: inline-block;
-    min-width: 1.5em;
-    text-align: center;
-  }
-
-  .userButton {
-    padding: 6px 10px;
-    min-width: 40px;
   }
 }

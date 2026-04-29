@@ -165,3 +165,87 @@ test.describe('Attachment happy-path upload (worker on assigned project)', () =>
     await expect(thumb).toHaveCount(0);
   });
 });
+
+test.describe('Attachment upload preserves EXIF / GPS through the pipeline', () => {
+  test('photo lightbox blob retains the source APP1 segment and Make tag', async ({
+    page,
+    request,
+  }) => {
+    // Regression guard for #126. The previous library
+    // (`browser-image-compression@2.0.2`) had an EXIF copier that
+    // rejected JPEGs whose Orientation tag was encoded as LONG; our
+    // fallback dropped the entire APP1 segment, breaking the worker-
+    // view promise that GPS survives the upload pipeline. The
+    // replacement (`@uploadcare/image-shrink`) byte-splices APP1
+    // back into the re-encoded blob — this test pins that guarantee
+    // end-to-end against a real upload + presigned GET.
+    //
+    // The fixture's APP1 segment contains an EXIF magic ("Exif\\0\\0"),
+    // a Make tag with the ASCII bytes "vitest-fixture", and a GPSIFD
+    // pointer (tag 0x8825). Asserting both magic + Make in the served
+    // bytes proves the segment survived re-encode byte-for-byte; if a
+    // future regression strips EXIF, both checks fail together.
+    await openProjectDetailViaPanel(page);
+
+    const uploadCta = page.getByTestId('project-detail-upload-cta');
+    await uploadCta.getByTestId('attachment-photo-input').setInputFiles(JPG_FIXTURE);
+
+    const gallery = page.getByTestId('project-detail-photos');
+    const thumb = gallery.getByTestId('attachment-thumbnail').first();
+    await expect(thumb).toBeVisible({ timeout: 15_000 });
+
+    // Open the lightbox — that's the only surface that loads the
+    // original (full-EXIF) blob; the gallery tile is a stripped WebP
+    // thumbnail by design.
+    await thumb.locator('button').first().click();
+    const lightbox = page.getByTestId('photo-lightbox');
+    await expect(lightbox).toBeVisible();
+    const originalUrl = await lightbox.locator('img').getAttribute('src');
+    expect(originalUrl).toBeTruthy();
+
+    // Fetch the bytes the worker would see. Presigned-GET URLs are
+    // time-limited but unauth'd — Playwright's `request` context can
+    // fetch them directly without a session cookie.
+    const response = await request.get(originalUrl!);
+    expect(response.ok()).toBe(true);
+    const body = await response.body();
+    // EXIF magic — the 6-byte "Exif\\0\\0" header at the start of any
+    // APP1/EXIF segment. Present in the fixture; must survive re-encode.
+    expect(body.includes(Buffer.from([0x45, 0x78, 0x69, 0x66, 0x00, 0x00]))).toBe(true);
+    // The fixture's Make tag — a recognisable ASCII string inside the
+    // APP1 segment. Surviving the re-encode proves the segment was
+    // copied verbatim, not just that some EXIF magic exists somewhere.
+    expect(body.includes(Buffer.from('vitest-fixture', 'ascii'))).toBe(true);
+
+    // Dimension regression guard. `@uploadcare/image-shrink`'s `size`
+    // setting is a target *pixel area*, not a longest-edge dimension —
+    // a previous build passed `imageMaxDimension` (2560) directly,
+    // which the library interpreted as ~50×40 pixels and shipped
+    // unusable thumbnails as the "original". The fixture is 3840×2160
+    // (16:9), so the re-encoded longest edge should land near
+    // imageMaxDimension. Assert it's at least half — anything below
+    // means the area/edge confusion regressed. Decoding via the page's
+    // own Image constructor avoids pulling a Node JPEG decoder into
+    // the e2e bundle.
+    const dims = await page.evaluate(async (url: string) => {
+      const blob = await fetch(url).then((r) => r.blob());
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        return await new Promise<{ width: number; height: number }>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => reject(new Error('decode failed'));
+          img.src = objectUrl;
+        });
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }, originalUrl!);
+    const longest = Math.max(dims.width, dims.height);
+    // Floor rather than equality — the library's sqrt-based rounding
+    // can shave a pixel or two off the configured edge. 1280 is the
+    // half-baseEdge floor; anything below means the size parameter is
+    // being misinterpreted as an area again (~58×43 for a 4:3 photo).
+    expect(longest).toBeGreaterThanOrEqual(1280);
+  });
+});

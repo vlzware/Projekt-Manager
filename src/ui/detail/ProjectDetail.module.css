@@ -3,12 +3,17 @@
 
 .page {
   position: relative;
-  padding: 24px;
+  /* Span the full main area so the vertical scrollbar lands on the
+     viewport edge, not the right edge of a centred 1200 px box (which
+     parks the scroll track in mid-screen on wide monitors). The content
+     column stays visually centred and capped at 1200 px via asymmetric
+     inline padding — the standard CSS idiom for "constrain content,
+     full-bleed chrome". */
+  padding-block: 24px;
+  padding-inline: max(24px, calc((100% - 1200px) / 2));
   display: flex;
   flex-direction: column;
   gap: 20px;
-  max-width: 1200px;
-  margin: 0 auto;
   height: 100%;
   overflow-y: auto;
   width: 100%;
@@ -142,6 +147,20 @@
   background: var(--color-text-subtle);
 }
 
+/* Banner under the header on archived projects — communicates the
+   read-only state explicitly so the muted controls aren't read as
+   "permission denied" by users who normally can edit. Tied to the
+   header's bottom border so it sits as part of the same chrome. */
+.archivedNotice {
+  margin-top: 4px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--color-surface-sunken);
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  border: 1px dashed var(--color-border);
+}
+
 .downloadAllButton {
   padding: 8px 14px;
   border: 1px solid var(--color-border);
@@ -187,6 +206,23 @@
 
 .purgeButton:hover {
   background: var(--color-danger-bg);
+}
+
+/* Restore — recovery action; visually distinct from archive (neutral)
+   and purge (danger). Reuses the surface-raised → sunken hover swap
+   from the other header buttons so it sits in the same family. */
+.restoreButton {
+  padding: 8px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-text-strong);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.restoreButton:hover {
+  background: var(--color-surface-sunken);
 }
 
 /* Floating camera capture — fixed to the viewport's top-right corner so
@@ -563,7 +599,6 @@
   align-items: center;
   justify-content: center;
   z-index: 200;
-  cursor: zoom-out;
 }
 
 .lightbox img {
@@ -573,9 +608,7 @@
 }
 
 /* PDF preview — same overlay chrome as the lightbox, with an iframe
-   carrier for the browser's native PDF viewer. The iframe click is NOT
-   stopPropagation'd since PDFs need clicks to flow through for scroll
-   affordances, so a close button is overlaid on the corner. */
+   carrier for the browser's native PDF viewer. */
 .pdfPreview {
   position: fixed;
   inset: 0;
@@ -586,7 +619,10 @@
   z-index: 200;
 }
 
-.pdfPreviewClose {
+/* Shared close affordance for overlay surfaces (photo lightbox + PDF
+   preview). Centralised so both surfaces look and behave identically;
+   Esc is the keyboard equivalent. */
+.previewClose {
   position: absolute;
   top: 20px;
   right: 24px;
@@ -868,4 +904,35 @@
   cursor: pointer;
   font-size: 1rem;
   margin-left: auto;
+}
+
+/* Attachment tab strip — owner/office only, separates the live
+   "Anhänge" view from the Papierkorb. ADR-0022. */
+.attachmentTabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border-subtle);
+  margin-bottom: 8px;
+}
+
+.attachmentTab,
+.attachmentTabActive {
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.attachmentTab:hover {
+  color: var(--color-text);
+}
+
+.attachmentTabActive {
+  color: var(--color-text);
+  border-bottom-color: var(--color-accent);
 }

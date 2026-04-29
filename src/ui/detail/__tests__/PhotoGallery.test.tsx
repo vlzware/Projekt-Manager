@@ -65,6 +65,7 @@ function makePhoto(overrides: Partial<Attachment>): Attachment {
     originalKey: 'proj/p-42/att/ph-1/o.jpg',
     thumbKey: 'proj/p-42/att/ph-1/thumb.webp',
     hasThumbnail: true,
+    hiddenAt: null,
     createdAt: '2026-04-20T10:00:00Z',
     createdBy: { id: 'u-w1', displayName: 'Anna Arbeiter' },
     ...overrides,
@@ -201,7 +202,24 @@ describe('PhotoGallery — lightbox a11y', () => {
     });
   });
 
-  it('closes the lightbox when the backdrop is clicked', async () => {
+  it('closes the lightbox when the X close button is clicked', async () => {
+    render(<PhotoGallery projectId="p-42" />);
+
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    downloadUrlMock.mockResolvedValueOnce(
+      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
+    );
+    await userEvent.click(thumb);
+
+    await screen.findByTestId('photo-lightbox');
+    await userEvent.click(screen.getByTestId('photo-lightbox-close'));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps the lightbox open when the backdrop or the photo itself is clicked', async () => {
     render(<PhotoGallery projectId="p-42" />);
 
     const thumb = await screen.findByTestId('photo-thumb-ph-ready');
@@ -212,29 +230,11 @@ describe('PhotoGallery — lightbox a11y', () => {
 
     const lightbox = await screen.findByTestId('photo-lightbox');
     await userEvent.click(lightbox);
+    expect(screen.getByTestId('photo-lightbox')).toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
-    });
-  });
-
-  it('keeps the lightbox open when the photo itself is clicked (propagation stopped)', async () => {
-    render(<PhotoGallery projectId="p-42" />);
-
-    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
-    downloadUrlMock.mockResolvedValueOnce(
-      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
-    );
-    await userEvent.click(thumb);
-
-    const lightbox = await screen.findByTestId('photo-lightbox');
     const innerImg = lightbox.querySelector('img');
     expect(innerImg).not.toBeNull();
-
     await userEvent.click(innerImg!);
-
-    // Lightbox stays open — the backdrop's onClick did not receive the
-    // event because the inner <img> stops propagation.
     expect(screen.getByTestId('photo-lightbox')).toBeInTheDocument();
   });
 

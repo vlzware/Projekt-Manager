@@ -77,6 +77,11 @@ export const STRINGS = {
       `Projekt ${identifier} wird endgültig gelöscht. Alle zugeordneten Daten gehen dabei verloren. Fortfahren?`,
     purgeRequiresArchive:
       'Das Projekt muss zunächst archiviert werden, bevor es endgültig gelöscht werden kann.',
+    restore: 'Wiederherstellen',
+    restoreConfirm: (identifier: string) =>
+      `Projekt ${identifier} aus dem Archiv wiederherstellen?`,
+    restoreRequiresArchive:
+      'Das Projekt ist nicht archiviert und kann daher nicht wiederhergestellt werden.',
     transitionConfirm: (from: string, to: string) => `Status ändern: ${from} → ${to}?`,
     cannotAdvanceTerminal:
       'Projekt kann nicht weiter vorgerückt werden. Der aktuelle Status ist ein Endstatus.',
@@ -449,6 +454,8 @@ export const STRINGS = {
     /** Not-found surface — 404 on `GET /projects/:id`. */
     notFoundHeading: 'Projekt nicht gefunden',
     notFoundBody: 'Das angeforderte Projekt existiert nicht.',
+    /** Banner shown atop the read-only preview of an archived project. */
+    archivedReadOnlyNotice: 'Dieses Projekt ist archiviert. Bearbeitung nicht möglich.',
 
     // Region headings
     coreFields: 'Kernfelder',
@@ -457,6 +464,20 @@ export const STRINGS = {
     binaryList: 'Dateien',
     upload: 'Hochladen',
     activity: 'Aktivität',
+
+    // Tabs (ADR-0022 — Papierkorb)
+    tabAttachments: 'Anhänge',
+    tabPapierkorb: 'Papierkorb',
+    tabPapierkorbWithCount: (n: number) => `Papierkorb (${n})`,
+
+    // Papierkorb listing
+    papierkorbHeading: 'Papierkorb',
+    papierkorbEmpty: 'Keine gelöschten Dateien.',
+    restore: 'Wiederherstellen',
+    restoreFailed: 'Wiederherstellen fehlgeschlagen.',
+    /** Relative-time label on a hidden item — uses Intl.RelativeTimeFormat
+     *  for stable German output ("vor 3 Tagen", "vor 5 Stunden"). */
+    hiddenAtLabel: (relative: string) => `${relative} gelöscht`,
 
     // Worker editor
     addWorker: 'Mitarbeiter hinzufügen',
@@ -502,9 +523,27 @@ export const STRINGS = {
     // Missing-file placeholder (AC-224)
     fileMissing: 'Datei fehlt',
 
-    // Deletion
+    // Deletion (soft-hide → Papierkorb, ADR-0022)
     deleteConfirmTitle: 'Datei löschen?',
-    deleteConfirmMessage: 'Diese Aktion kann nicht rückgängig gemacht werden.',
+    deleteConfirmMessage:
+      'Die Datei wird in den Papierkorb verschoben. Sie kann innerhalb der Aufbewahrungsfrist wiederhergestellt werden; danach wird sie endgültig gelöscht und ist nicht mehr wiederherstellbar.',
+
+    /**
+     * Restore-side data-integrity surfaces. A row in 'hidden' state
+     * with a missing `version_id` (or, for photos with a thumb, a
+     * missing `thumb_version_id`) cannot be restored — there is no
+     * source version to copy from. Each branch names the affected
+     * row id so an operator triaging the activity feed sees the cause
+     * without spelunking the DB.
+     *
+     * Distinct from a CAS-loss (transient race, retry resolves it) and
+     * from a missing/wrong-project row (404). These are 422 — the
+     * request is structurally unprocessable.
+     */
+    restoreMissingVersionId: (id: string) =>
+      `Wiederherstellen nicht möglich: Anhang ${id} hat keine version_id (Datenintegritätsproblem).`,
+    restoreMissingThumbVersionId: (id: string) =>
+      `Wiederherstellen nicht möglich: Anhang ${id} hat keine thumb_version_id (Datenintegritätsproblem).`,
 
     // Download actions
     download: 'Herunterladen',
@@ -532,6 +571,8 @@ export const STRINGS = {
     colLabel: 'Beschriftung',
     colUploader: 'Hochgeladen von',
     colUploaded: 'Hochgeladen am',
+    /** Papierkorb-only column: timestamp the row was hidden (not uploaded). */
+    colHidden: 'Gelöscht am',
   },
 
   backup: {
@@ -542,5 +583,12 @@ export const STRINGS = {
     backupNeverRun: 'Backup: noch nie ausgeführt',
     drillNeverRun: 'Drill: noch nie ausgeführt',
     unknown: 'Status unbekannt',
+    /**
+     * Augments any badge label with the timestamp of the last backup
+     * run so the tooltip / toast carries actionable detail rather than
+     * a bare status word. The timestamp comes pre-formatted by
+     * `formatBackupTimestampDE`.
+     */
+    withTimestamp: (label: string, timestamp: string) => `${label} (${timestamp})`,
   },
 } as const;

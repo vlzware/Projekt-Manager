@@ -20,8 +20,10 @@ import {
   assertAppServerEnv,
   assertProductionSafe,
   assertStoragePublicEndpointInProduction,
-  validateEnv,
+  validateEnvRuntime,
 } from './config/env.js';
+import { emitFeatureManifest } from './config/features.js';
+import { assertBaselineLedgerMatchesFile } from './db/baseline-guard.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
@@ -35,35 +37,14 @@ import { AUDIT_RETENTION } from '../config/auditRetention.js';
 import { ATTACHMENT_CONFIG } from '../config/attachmentConfig.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
 import { createStorageClient } from './storage/client.js';
+import { assertStorageBucketSafe } from './storage/safety.js';
+import { staticCacheControl } from './staticCache.js';
 
 const HOST = '0.0.0.0';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(__dirname, 'db/migrations');
 const distFolder = path.resolve(__dirname, '../../dist');
-
-/** Known dev-default credentials that must not reach production. */
-const DEV_DEFAULTS: ReadonlyArray<{ envVar: string; values: string[] }> = [
-  { envVar: 'POSTGRES_PASSWORD', values: ['postgres', 'devpassword'] },
-  { envVar: 'MINIO_ROOT_USER', values: ['minioadmin'] },
-  { envVar: 'MINIO_ROOT_PASSWORD', values: ['minioadmin'] },
-];
-
-/**
- * Refuse to start in production when any credential still uses a
- * well-known development default.
- */
-function rejectDevCredentials(): void {
-  for (const { envVar, values } of DEV_DEFAULTS) {
-    const current = process.env[envVar];
-    if (current !== undefined && values.includes(current)) {
-      throw new Error(
-        `Refusing to start: ${envVar} is set to the dev default "${current}". ` +
-          'Set a secure value for production.',
-      );
-    }
-  }
-}
 
 /**
  * Verify that every `status` value in the projects table is present in
@@ -88,7 +69,12 @@ async function validateWorkflowStates(db: ReturnType<typeof createDatabase>['db'
 
 async function start(): Promise<void> {
   // --- Validate environment (fail fast before any I/O) ---
-  const env = validateEnv();
+  // validateEnvRuntime() returns the typed Env and folds in dev-default
+  // credential rejection; the cross-field guards below remain external
+  // so start.ts keeps control of their order and the backup-runner
+  // (which shares validateEnvRuntime) does not get the app-server-only
+  // narrowing.
+  const env = validateEnvRuntime();
   const isProduction = env.NODE_ENV === 'production';
 
   // --- Production safety checks ---
@@ -103,9 +89,15 @@ async function start(): Promise<void> {
   // presigned URLs against a container-only hostname — the browser
   // cannot resolve those, so every upload fails silently.
   assertStoragePublicEndpointInProduction(env);
-  if (isProduction) {
-    rejectDevCredentials();
-  }
+
+  // Emit the boot-time feature manifest (AC-230) immediately after env
+  // validation — operators see a single structured line listing every
+  // optional feature's enabled/disabled state with reason. Order is
+  // significant: the test pins emission AFTER validateEnvRuntime() so
+  // the manifest never reports on an unverified env.
+  emitFeatureManifest(env, {
+    info: (ctx) => console.log(JSON.stringify(ctx)),
+  });
 
   if (env.ALLOW_INSECURE_HTTP === 'true') {
     console.warn(
@@ -116,7 +108,20 @@ async function start(): Promise<void> {
 
   const { db, pool } = createDatabase();
 
-  // Run database migrations (idempotent — Drizzle tracks applied migrations)
+  // Recurrence guard for the drizzle baseline-hash trap (see
+  // db/baseline-guard.ts and docs/ops/recover-from-schema-change.md).
+  // Drizzle's `migrate()` records each migration by sha256 hash and
+  // skips re-applying anything whose hash is already in the ledger —
+  // so an edit to 0000_baseline.sql against an existing volume silently
+  // no-ops, leaving the live schema diverged from schema.ts. Surface
+  // the mismatch BEFORE migrate() pretends success and the app starts
+  // taking traffic against a stale schema. Mirrors the pre-flight check
+  // in scripts/deploy.sh.
+  await assertBaselineLedgerMatchesFile(db, migrationsFolder);
+
+  // Run database migrations (idempotent — drizzle tracks applied
+  // migrations by hash; the guard above ensures the hash matches what
+  // is on disk before we trust the idempotency).
   await migrate(db, { migrationsFolder });
 
   // Wire the post-commit audit publisher's failure-surface logger
@@ -205,7 +210,16 @@ async function start(): Promise<void> {
     bucket: env.STORAGE_BUCKET,
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
+    region: env.STORAGE_REGION,
   });
+
+  // Boot-time bucket-safety probe (ADR-0022 / docs/ops/object-storage-provisioning.md).
+  // Refuses to start on data-corruption-class drift (versioning off,
+  // Object Lock not Compliance, lifecycle missing or with disallowed
+  // actions, R > L). Runs before reapers so a misconfigured bucket
+  // cannot accumulate side-effects.
+  await assertStorageBucketSafe(attachmentStorageForReaper);
+
   const attachmentReaper = startAttachmentOrphanReaperScheduler({
     db,
     storage: attachmentStorageForReaper,
@@ -247,6 +261,7 @@ async function start(): Promise<void> {
     bucket: env.STORAGE_BUCKET,
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
+    region: env.STORAGE_REGION,
   });
 
   // Health-check endpoint (outside auth-guarded routes). Real probe — runs
@@ -266,6 +281,10 @@ async function start(): Promise<void> {
     await app.register(fastifyStatic, {
       root: distFolder,
       wildcard: false,
+      cacheControl: false,
+      setHeaders: (res, filePath) => {
+        res.setHeader('Cache-Control', staticCacheControl(filePath));
+      },
     });
 
     // SPA fallback: serve index.html for non-API routes

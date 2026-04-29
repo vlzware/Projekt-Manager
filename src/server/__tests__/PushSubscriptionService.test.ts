@@ -13,7 +13,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { createDatabase } from '../db/connection.js';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 import { seed } from '../seed.js';
 import { PushSubscriptionService } from '../services/PushSubscriptionService.js';
 import type { Database } from '../db/connection.js';
@@ -27,7 +27,7 @@ let pool: pg.Pool;
 let service: PushSubscriptionService;
 
 beforeAll(async () => {
-  validateEnv();
+  validateEnvRuntime();
   const conn = createDatabase();
   db = conn.db;
   pool = conn.pool;

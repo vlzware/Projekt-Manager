@@ -27,6 +27,7 @@ import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
 import { PhotoGallery } from './PhotoGallery';
 import { BinaryList } from './BinaryList';
+import { Papierkorb } from './Papierkorb';
 import { AssignedWorkerEditor } from './AssignedWorkerEditor';
 import { UploadCta } from './UploadCta';
 import { dateInputValue } from './dateInputValue';
@@ -79,6 +80,7 @@ export function ProjectDetailPage() {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   const canReadAudit = usePermission('audit:read');
   const canWrite = usePermission('attachment:write');
+  const canTrash = usePermission('attachment:trash');
   const canUpdate = usePermission('project:update');
   const canUpdateDates = usePermission('project:dates');
   const canDelete = usePermission('project:delete');
@@ -91,10 +93,27 @@ export function ProjectDetailPage() {
   const updateProject = useProjectManagementStore((s) => s.updateProject);
   const deleteProject = useProjectManagementStore((s) => s.deleteProject);
   const purgeProject = useProjectManagementStore((s) => s.purgeProject);
+  const restoreProject = useProjectManagementStore((s) => s.restoreProject);
   const requestConfirm = useConfirmStore((s) => s.request);
 
   const requestBulkDownloadUrl = useAttachmentStore((s) => s.requestBulkDownloadUrl);
   const attachmentsByProject = useAttachmentStore((s) => s.byProject[projectId]);
+  const trashCount = useAttachmentStore((s) => s.hiddenByProject[projectId]?.length ?? 0);
+  const fetchTrashForProject = useAttachmentStore((s) => s.fetchTrashForProject);
+
+  // Active attachment tab. Workers / bookkeepers never see the tab
+  // strip; for owner / office the default lands on the live "Anhänge"
+  // view. Switching to Papierkorb is a one-click toggle, no URL state
+  // — same level of persistence as the gallery / list scroll position.
+  const [attachmentTab, setAttachmentTab] = useState<'attachments' | 'papierkorb'>('attachments');
+
+  // Eagerly fetch the Papierkorb count for owner / office so the tab
+  // badge is accurate on first render. Workers don't have the
+  // permission and would just 403; skip the GET for them.
+  useEffect(() => {
+    if (!canTrash) return;
+    void fetchTrashForProject(projectId);
+  }, [canTrash, fetchTrashForProject, projectId]);
 
   const navigate = useNavigate();
 
@@ -149,6 +168,14 @@ export function ProjectDetailPage() {
     return <div className={styles.loading}>{STRINGS.ui.loading}</div>;
   }
 
+  // Archived projects are returned by GET as a regular 200 with
+  // `deleted: true`. The page renders them in preview mode: every
+  // editable surface is forced read-only and mutation affordances
+  // collapse to the purge action. AC-95 immutability is enforced
+  // server-side regardless, but suppressing the controls keeps the
+  // user from staring at a button that always 404s.
+  const isArchived = project.deleted;
+
   const config = STATE_CONFIG_MAP[project.status];
   const customer = project.customer;
   const address = customer?.address ?? null;
@@ -174,6 +201,17 @@ export function ProjectDetailPage() {
     if (!confirmed) return;
     const ok = await purgeProject(project.id);
     if (ok) navigate('/projects');
+  };
+
+  const handleRestore = async () => {
+    const confirmed = await requestConfirm(
+      STRINGS.projects.restoreConfirm(`${project.number} — ${project.title}`),
+    );
+    if (!confirmed) return;
+    // Stay on the page on success — the store flips deleted → false on
+    // the cached project, the read-only banner disappears, and editable
+    // surfaces re-enable in place. No navigation needed.
+    await restoreProject(project.id);
   };
 
   const handleDownloadAll = async () => {
@@ -210,7 +248,7 @@ export function ProjectDetailPage() {
             <div className={styles.projectNumber}>{project.number}</div>
             <InlineTitle
               value={project.title}
-              readOnly={!canUpdate}
+              readOnly={!canUpdate || isArchived}
               onCommit={(next) => void updateProject(project.id, { title: next })}
             />
             <span
@@ -220,7 +258,7 @@ export function ProjectDetailPage() {
             >
               {config?.label ?? project.status}
             </span>
-            {project.deleted && (
+            {isArchived && (
               <span className={styles.archivedBadge} data-testid="project-archived-badge">
                 {STRINGS.projects.archivedBadge}
               </span>
@@ -238,7 +276,7 @@ export function ProjectDetailPage() {
             >
               {STRINGS.attachments.downloadAll}
             </button>
-            {canDelete && !project.deleted && (
+            {canDelete && !isArchived && (
               <button
                 type="button"
                 className={styles.archiveButton}
@@ -248,7 +286,17 @@ export function ProjectDetailPage() {
                 {STRINGS.projects.archive}
               </button>
             )}
-            {canPurge && project.deleted && (
+            {canDelete && isArchived && (
+              <button
+                type="button"
+                className={styles.restoreButton}
+                onClick={() => void handleRestore()}
+                data-testid="project-detail-restore"
+              >
+                {STRINGS.projects.restore}
+              </button>
+            )}
+            {canPurge && isArchived && (
               <button
                 type="button"
                 className={styles.purgeButton}
@@ -260,13 +308,22 @@ export function ProjectDetailPage() {
             )}
           </div>
         </div>
+        {isArchived && (
+          <div
+            className={styles.archivedNotice}
+            role="status"
+            data-testid="project-detail-archived-notice"
+          >
+            {STRINGS.attachments.archivedReadOnlyNotice}
+          </div>
+        )}
       </header>
 
       {/* Floating camera-capture button — fixed top-right of the page.
           Only mounts when the user can upload; the UploadCta's own
           Foto-aufnehmen control has moved here so a worker standing on
           a roof doesn't hunt for it in the form layout. */}
-      {canWrite && (
+      {canWrite && !isArchived && (
         <label className={styles.cameraFab} data-testid="detail-camera-capture">
           <input
             type="file"
@@ -363,7 +420,7 @@ export function ProjectDetailPage() {
           )}
           <div className={styles.coreField}>
             <span className={styles.coreLabel}>{STRINGS.ui.dateStart}</span>
-            {canUpdateDates ? (
+            {canUpdateDates && !isArchived ? (
               <DateField
                 initial={project.plannedStart}
                 otherDate={project.plannedEnd}
@@ -385,7 +442,7 @@ export function ProjectDetailPage() {
           </div>
           <div className={styles.coreField}>
             <span className={styles.coreLabel}>{STRINGS.ui.dateEnd}</span>
-            {canUpdateDates ? (
+            {canUpdateDates && !isArchived ? (
               <DateField
                 initial={project.plannedEnd}
                 otherDate={project.plannedStart}
@@ -405,7 +462,7 @@ export function ProjectDetailPage() {
             <span className={styles.coreLabel}>{STRINGS.ui.estimatedValue}</span>
             <InlineNumberField
               initial={project.estimatedValue}
-              readOnly={!canUpdate}
+              readOnly={!canUpdate || isArchived}
               testId="project-value-edit"
               onCommit={(value) => void updateProject(project.id, { estimatedValue: value })}
             />
@@ -414,7 +471,7 @@ export function ProjectDetailPage() {
             <span className={styles.coreLabel}>{STRINGS.ui.notes}</span>
             <InlineTextareaField
               initial={project.notes}
-              readOnly={!canUpdate}
+              readOnly={!canUpdate || isArchived}
               testId="project-notes-input"
               onCommit={(notes) => void updateProject(project.id, { notes })}
             />
@@ -422,13 +479,59 @@ export function ProjectDetailPage() {
         </div>
       </section>
 
-      <AssignedWorkerEditor projectId={project.id} />
+      <AssignedWorkerEditor projectId={project.id} archived={isArchived} />
 
-      {canWrite && <UploadCta projectId={project.id} />}
+      {canWrite && !isArchived && <UploadCta projectId={project.id} />}
 
-      <PhotoGallery projectId={project.id} />
-
-      <BinaryList projectId={project.id} />
+      {canTrash ? (
+        <>
+          <div
+            role="tablist"
+            aria-label={STRINGS.attachments.tabAttachments}
+            className={styles.attachmentTabs}
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={attachmentTab === 'attachments'}
+              onClick={() => setAttachmentTab('attachments')}
+              data-testid="attachment-tab-anhaenge"
+              className={
+                attachmentTab === 'attachments' ? styles.attachmentTabActive : styles.attachmentTab
+              }
+            >
+              {STRINGS.attachments.tabAttachments}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={attachmentTab === 'papierkorb'}
+              onClick={() => setAttachmentTab('papierkorb')}
+              data-testid="attachment-tab-papierkorb"
+              className={
+                attachmentTab === 'papierkorb' ? styles.attachmentTabActive : styles.attachmentTab
+              }
+            >
+              {trashCount > 0
+                ? STRINGS.attachments.tabPapierkorbWithCount(trashCount)
+                : STRINGS.attachments.tabPapierkorb}
+            </button>
+          </div>
+          {attachmentTab === 'attachments' ? (
+            <>
+              <PhotoGallery projectId={project.id} archived={isArchived} />
+              <BinaryList projectId={project.id} archived={isArchived} />
+            </>
+          ) : (
+            <Papierkorb projectId={project.id} />
+          )}
+        </>
+      ) : (
+        <>
+          <PhotoGallery projectId={project.id} archived={isArchived} />
+          <BinaryList projectId={project.id} archived={isArchived} />
+        </>
+      )}
 
       <section
         aria-label={STRINGS.attachments.activity}

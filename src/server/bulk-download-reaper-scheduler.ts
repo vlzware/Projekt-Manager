@@ -18,7 +18,7 @@
  * would need a lease at this caller site.
  */
 
-import type { StorageClient } from './storage/client.js';
+import type { AttachmentStorageClient } from './storage/client.js';
 import { createPeriodicSweeper, type PeriodicSweeperHandle } from './periodicSweeper.js';
 import { runBulkDownloadReaper } from './services/bulk-download-reaper.js';
 import type { ServiceLogger } from './services/Logger.js';
@@ -28,7 +28,7 @@ export const EVENT_SUSTAINED_FAILURE = 'bulk-download-reaper-sustained-failure';
 export const EVENT_RECOVERED = 'bulk-download-reaper-recovered';
 
 export interface StartBulkDownloadReaperSchedulerOptions {
-  storage: StorageClient;
+  storage: AttachmentStorageClient;
   intervalMinutes: number;
   ttlMinutes: number;
   logger: ServiceLogger;

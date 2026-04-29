@@ -14,13 +14,18 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_DB: projekt_manager_test
+          # POSTGRES_DB defaults to POSTGRES_USER, so omitting it yields
+          # a `pm` database. Vitest integration tests don't use it
+          # directly — `src/test/integration-setup.ts` creates per-fork
+          # `projekt_manager_test_<pid>` databases on demand from the
+          # `pm` superuser. The base DB only needs to be reachable for
+          # connection-string parsing and pool warm-up.
           POSTGRES_USER: pm
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U pm -d projekt_manager_test"
+          --health-cmd "pg_isready -U pm -d pm"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 5
@@ -103,12 +108,46 @@ jobs:
       # containers do not support overriding `command`, and minio/minio needs
       # `server /data` as its argv. Versions are pinned to match
       # docker-compose.yml (ADR-0009 — version pinning across environments).
+      #
+      # Bucket provisioning is delegated to docker/init-storage.sh so the dev
+      # compose recipe and CI stay in lockstep — versioning, Compliance
+      # Object Lock, lifecycle, AND a capability-restricted MinIO app user
+      # (#45 / ADR-0022). The boot-time bucket-safety probe in
+      # src/server/storage/safety.ts plus the integration arm of
+      # src/server/__tests__/storage-safety.test.ts both run end-to-end
+      # against this MinIO; without the full provisioning the probe
+      # correctly fail-closes and CI stops before any test executes.
+      #
+      # The script hardcodes `http://storage:9000` as its mc alias target
+      # (the compose service hostname). To reuse the script unchanged, MinIO
+      # is named `storage` and attached to a user-defined bridge network
+      # alongside the mc one-shot — Docker auto-creates DNS entries for
+      # container names on user-defined networks. Port 9000 is still
+      # published to the runner so vitest (running on the host) reaches
+      # MinIO at http://localhost:9000.
       - name: Start MinIO
+        env:
+          # Root creds run the MinIO process and are used by the init script
+          # for admin operations only — the app NEVER runs as root. Hardcoded
+          # ephemeral test values; no secret material.
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: changeme
+          # Capability-restricted app user (#45 / ADR-0022). The init script
+          # provisions this user with a bucket-scoped policy that allows
+          # write/read/list/hide but denies s3:DeleteObjectVersion. The
+          # boot-time capability self-test (and the integration arm of
+          # storage-safety.test.ts) asserts this credential cannot destroy
+          # versions, so vitest must run with these creds, not the root ones.
+          MINIO_APP_ACCESS_KEY: pmappci
+          MINIO_APP_SECRET_KEY: pmappcisecret
+          STORAGE_BUCKET: projekt-manager
         run: |
-          docker run -d --name minio \
+          docker network create pm-storage-net
+          docker run -d --name storage \
+            --network pm-storage-net \
             -p 9000:9000 \
-            -e MINIO_ROOT_USER=minioadmin \
-            -e MINIO_ROOT_PASSWORD=changeme \
+            -e MINIO_ROOT_USER \
+            -e MINIO_ROOT_PASSWORD \
             minio/minio:RELEASE.2025-09-07T16-13-09Z \
             server /data
           # Wait for MinIO to become ready (max 30s).
@@ -119,24 +158,37 @@ jobs:
             fi
             sleep 1
           done
-          # Create the test bucket. Uses mc with the same pinned version as
-          # docker-compose.yml's storage-init sidecar.
-          docker run --rm --network host \
+          # Provision the bucket and the capability-restricted app user via
+          # the same script the dev compose stack runs. Mounted read-only;
+          # the script itself is idempotent. Network-attached so the
+          # script's `mc alias set minio http://storage:9000 ...` resolves.
+          docker run --rm --network pm-storage-net \
+            -v "$PWD/docker/init-storage.sh:/init-storage.sh:ro" \
+            -e MINIO_ROOT_USER \
+            -e MINIO_ROOT_PASSWORD \
+            -e MINIO_APP_ACCESS_KEY \
+            -e MINIO_APP_SECRET_KEY \
+            -e STORAGE_BUCKET \
             --entrypoint /bin/sh \
             minio/mc:RELEASE.2025-08-13T08-35-41Z \
-            -c "mc alias set local http://localhost:9000 minioadmin changeme && mc mb --ignore-existing local/projekt-manager"
+            /init-storage.sh
 
       - name: Unit and component tests
         run: npm run test:coverage
         env:
-          DATABASE_URL: postgresql://pm:postgres@localhost:5432/projekt_manager_test
+          DATABASE_URL: postgresql://pm:postgres@localhost:5432/pm
           # Storage env vars are required by src/server/__tests__/storage.test.ts
           # which fails loud if any is missing (no silent skips — see file
-          # header in storage.test.ts).
+          # header in storage.test.ts). The integration arm of
+          # storage-safety.test.ts additionally requires these to be the
+          # capability-restricted app user (not root) — the boot probe
+          # asserts the running credential cannot destroy versions.
           STORAGE_ENDPOINT: http://localhost:9000
           STORAGE_BUCKET: projekt-manager
-          STORAGE_ACCESS_KEY: minioadmin
-          STORAGE_SECRET_KEY: changeme
+          STORAGE_ACCESS_KEY: pmappci
+          STORAGE_SECRET_KEY: pmappcisecret
+          # MinIO accepts any region; us-east-1 is the SDK default.
+          STORAGE_REGION: us-east-1
 
       - name: Build
         run: npm run build
@@ -210,18 +262,31 @@ jobs:
           # default, leave it out so the check can still catch a
           # future removal of that default.
           POSTGRES_PASSWORD: placeholder
+          # Object-storage env, all `:?`-gated in the base file because
+          # values are operator-supplied per provider (B2 in prod, the
+          # in-compose MinIO mirror in dev). Real deploys source them
+          # from `.env` (operator config) and `secrets.env.age` (the
+          # secret half).
+          STORAGE_ENDPOINT: http://placeholder:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: placeholder
+          STORAGE_ACCESS_KEY: placeholder
+          STORAGE_SECRET_KEY: placeholder
+          # MinIO root + restricted-app credentials — only consumed by
+          # the minio overlay. `:?`-gated there for the same operator-
+          # must-supply reason.
           MINIO_ROOT_USER: placeholder
           MINIO_ROOT_PASSWORD: placeholder
+          MINIO_APP_ACCESS_KEY: placeholder
+          MINIO_APP_SECRET_KEY: placeholder
           CLOUDFLARE_API_TOKEN: placeholder
-          # APP_IMAGE_TAG is `:?`-gated (H2 audit finding — mutable
-          # branch tag defaults removed). A placeholder lets `docker
-          # compose config` parse; real deploys pass a SHA tag via
-          # scripts/deploy.sh.
+          # APP_IMAGE_TAG is `:?`-gated — mutable branch tag defaults
+          # were removed. A placeholder lets `docker compose config`
+          # parse; real deploys pass a SHA tag via scripts/deploy.sh.
           APP_IMAGE_TAG: placeholder
-          # DOMAIN is `:?`-gated at the first reference (app service —
-          # STORAGE_PUBLIC_ENDPOINT derives `https://storage.${DOMAIN}`).
-          # Real deploys supply it via `.env` / `secrets.env.age`; CI
-          # needs any non-empty value so compose can parse.
+          # DOMAIN is `:?`-gated at the first reference in the caddy
+          # service. Real deploys supply it via `.env`; CI needs any
+          # non-empty value so compose can parse.
           DOMAIN: placeholder
         run: |
           set -euo pipefail
@@ -241,7 +306,8 @@ jobs:
             fi
           }
           check "prod compose" -f docker-compose.yml
-          check "prod + dev overlay" -f docker-compose.yml -f docker-compose.dev.yml
+          check "prod + minio overlay" -f docker-compose.yml -f docker-compose.minio.yml
+          check "prod + minio + dev overlays" -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml
           # Exercise the backup profile once so variable substitution
           # inside the backup service's environment block is covered.
           check "prod compose, backup profile" -f docker-compose.yml --profile backup
@@ -405,6 +471,22 @@ jobs:
           POSTGRES_PASSWORD: smoke
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: smoke123
+          # Capability-restricted MinIO app user (#45 / ADR-0022) —
+          # `:?`-gated in the minio overlay because the app must NEVER
+          # run as root. storage-init provisions this user.
+          MINIO_APP_ACCESS_KEY: pmappsmoke
+          MINIO_APP_SECRET_KEY: pmappsmokesecret
+          # Object-storage env consumed by the app. The minio overlay
+          # overrides STORAGE_ENDPOINT / STORAGE_PUBLIC_ENDPOINT /
+          # STORAGE_REGION for the in-compose target; the base file's
+          # `:?` gates need values at parse time so we set them too.
+          # STORAGE_ACCESS_KEY / STORAGE_SECRET_KEY mirror MINIO_APP_*
+          # (the user the app actually runs as).
+          STORAGE_ENDPOINT: http://storage:9000
+          STORAGE_REGION: us-east-1
+          STORAGE_BUCKET: projekt-manager
+          STORAGE_ACCESS_KEY: pmappsmoke
+          STORAGE_SECRET_KEY: pmappsmokesecret
           CLOUDFLARE_API_TOKEN: smoke
           # R2 target points at the in-stack MinIO. The backup
           # container's entrypoint probe (scripts/backup/probe-r2.mjs)
@@ -427,6 +509,12 @@ jobs:
           # App-side env vars normally sourced from .env on the VPS.
           DOMAIN: smoke.invalid
           WG_BIND_IP: 127.0.0.1
+          # COMPOSE_FILE makes every plain `docker compose` call below
+          # implicitly load BOTH the prod base file AND the MinIO mirror
+          # overlay. The base file alone has no `storage` / `storage-init`
+          # services (prod talks to B2); the smoke test stands MinIO in
+          # for B2. `:` is the file separator in COMPOSE_FILE on POSIX.
+          COMPOSE_FILE: docker-compose.yml:docker-compose.minio.yml
         run: |
           set -euo pipefail
           cleanup() {
@@ -444,21 +532,19 @@ jobs:
           # would otherwise dominate the log with ACME retries. Backup
           # is deferred until the R2 bucket exists on MinIO, otherwise
           # the entrypoint probe's HeadBucket would 404 and the
-          # container would restart-loop.
+          # container would restart-loop. COMPOSE_FILE in env: above
+          # picks up the minio overlay automatically.
           docker compose up -d db storage storage-init app
           echo "::endgroup::"
 
-          echo "::group::Wait for app health (up to 90s)"
-          for i in $(seq 1 45); do
-            status=$(docker inspect projekt-manager-app-1 --format '{{.State.Health.Status}}' 2>/dev/null || echo "starting")
-            echo "  attempt $i: app=$status"
-            if [ "$status" = "healthy" ]; then
-              break
-            fi
-            sleep 2
-          done
-          if [ "$status" != "healthy" ]; then
-            echo "::error::App did not become healthy"
+          echo "::group::Wait for app readiness (up to 90s)"
+          # Single source of truth in scripts/smoke-app-health.sh — same
+          # probe deploy and sync-restore use. Per-attempt failure reasons
+          # (HTTP status+body, fetch error) print inline so a smoke that
+          # fails because storage went down doesn't look identical to one
+          # that fails because Fastify never bound :3000.
+          if ! ./scripts/smoke-app-health.sh projekt-manager-app-1 90; then
+            echo "::error::App did not become ready"
             exit 1
           fi
           echo "::endgroup::"

@@ -1,6 +1,26 @@
 /**
  * Environment variable validation.
  * Fails fast at startup if required variables are missing or malformed.
+ *
+ * Two entry points (issue #139, split per #143 follow-up A-1):
+ *   - `validateEnvRuntime()` — boot path; reads `process.env`, re-parses
+ *     on every call. Used by start.ts, backup-runner.ts, db/connection.ts,
+ *     api-helpers.ts. Runs the schema + the dev-default credential guard.
+ *     The other safety guards (`assertProductionSafe`,
+ *     `assertAppServerEnv`, `assertStoragePublicEndpointInProduction`)
+ *     stay external so each entry point keeps control of their order
+ *     and the backup-runner does not get the app-server-only narrowing.
+ *     The cache that previously memoised the first parse was removed
+ *     because `getRateLimit()` and other call-time consumers must reflect
+ *     env mutations performed during a process's lifetime (notably
+ *     vitest tests that mutate `process.env.NODE_ENV` between cases).
+ *     Re-parsing is cheap; the perf cost is irrelevant against the
+ *     staleness footgun the cache introduced.
+ *   - `validateEnvAggregated(input)` — pure function over the supplied
+ *     record. Runs the schema AND every cross-field guard in one pass,
+ *     aggregating every offence into ONE thrown error so an operator
+ *     sees every fault in a single failed deploy, not one-per-reboot.
+ *     Used by the deploy pre-flight CLI and by tests.
  */
 import { z } from 'zod';
 
@@ -20,19 +40,31 @@ export const envSchema = z.object({
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
   // STORAGE_* is the app server's MinIO surface (attachments). The backup
   // service (ADR-0020) doesn't touch it — it uses R2_* instead. Optional
-  // here so the shared validateEnv() call in backup-runner.ts doesn't
+  // here so the shared validateEnvRuntime() call in backup-runner.ts doesn't
   // reject for vars the backup path never reads; `assertAppServerEnv()`
   // below (called only from start.ts) enforces presence for the app path.
   STORAGE_ENDPOINT: z.string().optional(),
   // Optional public hostname the browser uses to reach MinIO. The app
-  // signs presigned POST / GET URLs against this endpoint (not
+  // signs presigned PUT / GET URLs against this endpoint (not
   // STORAGE_ENDPOINT, which points at the Docker-internal hostname).
   // Required in production when STORAGE_ENDPOINT is a container-only
   // host — enforced by `assertStoragePublicEndpointInProduction()`.
-  STORAGE_PUBLIC_ENDPOINT: z.string().optional(),
+  // Compose forwards `${STORAGE_PUBLIC_ENDPOINT:-}` so an unset operator
+  // value arrives as the empty string, not undefined. Coerce "" →
+  // undefined so the truthy / `??` checks downstream (CSP origin
+  // extraction in app.ts, the publicEndpoint passthrough in
+  // createStorageClient) treat empty as "fall back to STORAGE_ENDPOINT".
+  STORAGE_PUBLIC_ENDPOINT: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   STORAGE_BUCKET: z.string().min(1).default('projekt-manager'),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
+  // S3 region used for SigV4 signing. MinIO accepts any value (`us-east-1`
+  // is fine in dev); B2's S3-compat surface verifies the bucket-bound
+  // region (`us-west-002`, `eu-central-003`, …) and rejects mismatches
+  // with `SignatureDoesNotMatch`. Optional in the shared schema so the
+  // backup-runner doesn't need it; `assertAppServerEnv()` enforces
+  // presence on the app-server path.
+  STORAGE_REGION: z.string().optional(),
   DOMAIN: z.string().default('localhost'),
   SEED: z.enum(['true', 'false', 'force']).default('false'),
   // First-run admin bootstrap — see ADR-0010 and issue #57. All three are
@@ -74,6 +106,16 @@ export const envSchema = z.object({
   // a latency-sensitive sweep. Overridable per deployment — tests leave
   // the scheduler untouched and call the service directly.
   AUDIT_RETENTION_INTERVAL_MINUTES: z.coerce.number().int().positive().default(1440),
+  // Login-rate-limit ceiling — moved into the schema in #139 to close the
+  // last raw-`process.env` read inside the configuration boundary
+  // (AC-228). The build-time default in `getRateLimit()` is environment-
+  // aware (5/min in production, 30/min elsewhere); this override applies
+  // when the operator sets a numeric value. Same `${VAR:-}` empty-string
+  // preprocess as AUDIT_RETENTION_WINDOW_DAYS.
+  LOGIN_RATE_LIMIT_MAX: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
   // ---------------------------------------------------------------
   // Layer 2 backup (ADR-0020). Consumed by the `backup-runner` CLI,
   // not by the main app server — but declared here so the schema
@@ -94,8 +136,8 @@ export const envSchema = z.object({
    * in Dockerfile.backup so operators don't need to set it. */
   AGE_IDENTITY_PATH: z.string().default('/run/drill-key/identity'),
   // ---------------------------------------------------------------
-  // Web Push / VAPID (ADR-0023). The public key is derived from the
-  // private half at startup (P-256 ECDSA — `src/server/config/vapid.ts`),
+  // Web Push / VAPID (architecture.md §11.11). The public key is derived
+  // from the private half at startup (P-256 ECDSA — `src/server/config/vapid.ts`),
   // so the operator only maintains the private key. In production,
   // missing `VAPID_PRIVATE_KEY` falls back to `noopPushDispatcher` with
   // a startup warn. In dev/test the helper auto-generates a key into
@@ -113,6 +155,10 @@ export const envSchema = z.object({
   // defaults live in `src/config/attachmentConfig.ts`.
   // ---------------------------------------------------------------
   ATTACHMENT_PER_FILE_CAP_BYTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
+  ATTACHMENT_THUMB_CAP_BYTES: z.preprocess(
     (v) => (v === '' ? undefined : v),
     z.coerce.number().int().positive().optional(),
   ),
@@ -140,49 +186,256 @@ export const envSchema = z.object({
 
 export type Env = z.infer<typeof envSchema>;
 
-let _env: Env | null = null;
-
 /**
- * Parse and validate environment variables.
- * Call once at startup. Throws with descriptive errors on invalid config.
- */
-export function validateEnv(): Env {
-  if (_env) return _env;
-  _env = envSchema.parse(process.env);
-  return _env;
-}
-
-/**
- * Access validated env. Throws if validateEnv() hasn't been called.
- */
-export function getEnv(): Env {
-  if (!_env) throw new Error('Environment not validated. Call validateEnv() first.');
-  return _env;
-}
-
-/**
- * Assert startup safety invariants that depend on NODE_ENV. Called from
- * start.ts right after validateEnv(). Extracted so a unit test can exercise
- * the exact guard that ships, without spawning the server.
+ * Known dev-default credentials forwarded to the app container by
+ * docker-compose. Each entry pairs an env-var name with the values that
+ * ship in the dev compose file — if any of these reach a production
+ * container, the operator forgot to override them.
  *
- * Currently enforces: in production, ALLOW_INSECURE_HTTP must not be 'true'.
- * ADR-0013 promises the server refuses to start on this combination; this
- * function is that promise. See also AC-45 and consolidation review C-2/C-4.
+ * Forwarded explicitly so the names appear in `process.env` (compose's
+ * `environment:` block forwards POSTGRES_PASSWORD / MINIO_ROOT_USER /
+ * MINIO_ROOT_PASSWORD into the app service alongside DATABASE_URL etc.).
  */
-export function assertProductionSafe(env: Env): void {
-  if (env.NODE_ENV === 'production' && env.ALLOW_INSECURE_HTTP === 'true') {
-    throw new Error(
-      'Refusing to start: ALLOW_INSECURE_HTTP=true in production. ' +
-        'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.',
-    );
+const DEV_DEFAULT_CREDENTIALS: ReadonlyArray<{ envVar: string; values: readonly string[] }> = [
+  { envVar: 'POSTGRES_PASSWORD', values: ['postgres', 'devpassword'] },
+  { envVar: 'MINIO_ROOT_USER', values: ['minioadmin'] },
+  { envVar: 'MINIO_ROOT_PASSWORD', values: ['minioadmin'] },
+];
+
+/**
+ * Aggregates dev-default credential offences into the supplied issue list.
+ * Only fires in production; out-of-prod environments need their dev
+ * defaults to keep working.
+ *
+ * Pure-function shape — no throws, no I/O — so the aggregating validator
+ * can call it alongside the schema's safeParse output and the cross-field
+ * guards in a single pass.
+ */
+export function assertNoDevCredentials(
+  source: Record<string, string | undefined>,
+  issues: string[],
+): void {
+  if (source.NODE_ENV !== 'production') return;
+  for (const { envVar, values } of DEV_DEFAULT_CREDENTIALS) {
+    const current = source[envVar];
+    if (current !== undefined && values.includes(current)) {
+      issues.push(
+        `${envVar} is set to the dev default "${current}". Set a secure value for production.`,
+      );
+    }
   }
 }
+
+/**
+ * Boot path. Parses `process.env`, returns the typed `Env`. Runs the
+ * schema + `assertNoDevCredentials` so a forgotten dev-default credential
+ * trips at boot regardless of which binary started — start.ts and
+ * backup-runner.ts share this one check. The other cross-field guards
+ * (`assertProductionSafe`, `assertAppServerEnv`,
+ * `assertStoragePublicEndpointInProduction`) stay external so the caller
+ * keeps control of their order and so the app-server-only narrowing
+ * (`assertAppServerEnv`) doesn't reject the backup-runner path.
+ */
+export function validateEnvRuntime(): Env {
+  return parseAndAggregate(process.env, { runAllGuards: false });
+}
+
+/**
+ * Pre-flight / test path. Pure function over the supplied record. Runs
+ * the schema AND every cross-field guard in one pass; all offences are
+ * aggregated into a single thrown Error so a misconfigured deploy
+ * iterates once, not N times (issue #139, AC-231).
+ */
+export function validateEnvAggregated(input: Record<string, string | undefined>): Env {
+  return parseAndAggregate(input, { runAllGuards: true });
+}
+
+/**
+ * Access the validated env. Re-parses `process.env` on every call (see
+ * file header for rationale). Throws if validation fails — same surface
+ * as `validateEnvRuntime()`.
+ */
+export function getEnv(): Env {
+  return validateEnvRuntime();
+}
+
+/**
+ * Run the schema and (optionally) every cross-field guard, accumulating
+ * issues into a single thrown error. The `runAllGuards` switch controls
+ * whether the cross-field guards (assertProductionSafe and friends) run
+ * in this pass: `validateEnvAggregated` passes `true` to surface every
+ * offence at once; `validateEnvRuntime` passes `false` because start.ts
+ * calls those guards itself with the typed `Env` afterwards (this
+ * avoids double-running them and preserves the historical wiring).
+ *
+ * `assertNoDevCredentials` runs in BOTH paths because rejecting dev
+ * defaults is the only guard that depends on the raw input map (the
+ * compose-forwarded vars are not part of the typed `Env`).
+ *
+ * Cross-field guards in the aggregated path operate on `source`
+ * directly (not the parsed Env) so a schema failure on one field does
+ * not silence the guard for an unrelated field. AC-231 wants every
+ * offence reported in one pass — so a `PORT=0` Zod failure must NOT
+ * mask `ALLOW_INSECURE_HTTP=true in production`.
+ */
+function parseAndAggregate(
+  source: Record<string, string | undefined>,
+  opts: { runAllGuards: boolean },
+): Env {
+  const issues: string[] = [];
+  const result = envSchema.safeParse(source);
+  if (!result.success) {
+    for (const i of result.error.issues) {
+      const pathStr = i.path.length > 0 ? i.path.join('.') : '<root>';
+      issues.push(`${pathStr}: ${i.message}`);
+    }
+  }
+
+  if (opts.runAllGuards) {
+    for (const check of CROSS_FIELD_GUARDS) {
+      const r = check(source);
+      if (!r.ok) issues.push(r.message);
+    }
+  }
+
+  // Dev-credential check uses the raw source map, so it can fire
+  // regardless of whether the schema parse succeeded.
+  assertNoDevCredentials(source, issues);
+
+  if (issues.length > 0) {
+    throw new Error(`Environment validation failed:\n${issues.map((m) => `  - ${m}`).join('\n')}`);
+  }
+  // Issues empty ⇒ schema succeeded — every Zod failure was pushed into
+  // `issues` above, so reaching this point with `result.success === false`
+  // is impossible.
+  if (!result.success) throw new Error('unreachable: schema fail did not push issues');
+  return result.data;
+}
+
+// ---------------------------------------------------------------------
+// Cross-field guards.
+//
+// Each guard is one shared predicate (`check*`) returning a structured
+// result. Two consumers route through it:
+//   - The exported typed-Env throw helpers (`assert*`) — called by
+//     start.ts at boot, used by tests, throws on failure.
+//   - The aggregated validator's `parseAndAggregate` — collects the
+//     same predicate's failure into the aggregated error message.
+//
+// Single source per predicate eliminates the silent drift mode flagged
+// in #143 follow-up A-3: a regression that softens `ALLOW_INSECURE_HTTP
+// === 'true'` to also accept `'1'` (or similar) used to need updating in
+// two places; the path that wasn't updated kept the old behaviour. Now
+// there is exactly one body to soften.
+// ---------------------------------------------------------------------
+
+type GuardResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * Structural source shape readable by the cross-field guards. Both the
+ * raw `Record<string, string | undefined>` (preflight path) and the
+ * typed `Env` (boot path) are assignable here — the guards read these
+ * fields by name, never the index signature.
+ */
+type GuardSource = {
+  NODE_ENV?: string | undefined;
+  ALLOW_INSECURE_HTTP?: string | undefined;
+  STORAGE_ENDPOINT?: string | undefined;
+  STORAGE_PUBLIC_ENDPOINT?: string | undefined;
+  STORAGE_ACCESS_KEY?: string | undefined;
+  STORAGE_SECRET_KEY?: string | undefined;
+  STORAGE_REGION?: string | undefined;
+};
+
+const ALLOW_INSECURE_HTTP_IN_PROD_MSG =
+  'Refusing to start: ALLOW_INSECURE_HTTP=true in production. ' +
+  'This disables cookie security. Remove ALLOW_INSECURE_HTTP or set NODE_ENV=development.';
+
+function appServerMissingMsg(missing: ReadonlyArray<string>): string {
+  return (
+    `App server requires these env vars: ${missing.join(', ')}. ` +
+    'They are optional in the shared schema so the backup-runner CLI ' +
+    'can share validateEnvRuntime(), but the app server cannot start without them.'
+  );
+}
+
+function storagePublicEndpointMsg(endpoint: string): string {
+  return (
+    `Refusing to start: STORAGE_ENDPOINT (${endpoint}) is a container-only ` +
+    'hostname but STORAGE_PUBLIC_ENDPOINT is not set. Presigned URLs the browser ' +
+    'receives would be unreachable. Set STORAGE_PUBLIC_ENDPOINT to the public ' +
+    'URL the browser can reach for presigned uploads/downloads. ' +
+    'For B2 prod, leave STORAGE_PUBLIC_ENDPOINT unset and use the public ' +
+    'B2 endpoint as STORAGE_ENDPOINT directly. See ' +
+    'docs/ops/object-storage-provisioning.md.'
+  );
+}
+
+/**
+ * Production-safety predicate: refuses ALLOW_INSECURE_HTTP=true under
+ * NODE_ENV=production. ADR-0013 / AC-45 promise the server refuses to
+ * start on this combination — this is that promise.
+ */
+function checkProductionSafe(source: GuardSource): GuardResult {
+  if (source.NODE_ENV === 'production' && source.ALLOW_INSECURE_HTTP === 'true') {
+    return { ok: false, message: ALLOW_INSECURE_HTTP_IN_PROD_MSG };
+  }
+  return { ok: true };
+}
+
+/**
+ * App-server presence predicate: every STORAGE_* must be set. The
+ * shared schema keeps these optional so the backup-runner CLI (which
+ * doesn't use MinIO) can share `validateEnvRuntime()`; this guard
+ * restores the fail-fast semantic for the app server. Reports every
+ * missing var in one message so an operator sees the full set, not
+ * one-per-restart.
+ */
+function checkAppServerEnv(source: GuardSource): GuardResult {
+  const missing: string[] = [];
+  if (!source.STORAGE_ENDPOINT) missing.push('STORAGE_ENDPOINT');
+  if (!source.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
+  if (!source.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
+  if (!source.STORAGE_REGION) missing.push('STORAGE_REGION');
+  return missing.length === 0 ? { ok: true } : { ok: false, message: appServerMissingMsg(missing) };
+}
+
+/**
+ * Container-hostname predicate: refuses to start in production when the
+ * storage client would sign presigned URLs against a container-only
+ * hostname. Without `STORAGE_PUBLIC_ENDPOINT`, the app signs URLs using
+ * `STORAGE_ENDPOINT` (e.g. `http://storage:9000`) and hands them to the
+ * browser — which cannot resolve the Docker-internal host, so every
+ * upload POST fails silently and the `pending → ready` transition
+ * never happens. That defect sat on the VPS undetected until an
+ * operator noticed attachments never saving.
+ *
+ * Dev (STORAGE_ENDPOINT = localhost or an IP) does not trip this guard
+ * because dev exposes MinIO on the host; the browser reaches the same
+ * endpoint the app reaches.
+ */
+function checkStoragePublicEndpointInProduction(source: GuardSource): GuardResult {
+  if (source.NODE_ENV !== 'production') return { ok: true };
+  const endpoint = source.STORAGE_ENDPOINT;
+  if (!endpoint) return { ok: true }; // covered by checkAppServerEnv
+  if (source.STORAGE_PUBLIC_ENDPOINT) return { ok: true };
+  if (!hostnameLooksInternal(endpoint)) return { ok: true };
+  return { ok: false, message: storagePublicEndpointMsg(endpoint) };
+}
+
+/** Iteration order for `parseAndAggregate`. Stable so the aggregated
+ * error message lists offences in a deterministic order. */
+const CROSS_FIELD_GUARDS: ReadonlyArray<(source: GuardSource) => GuardResult> = [
+  checkProductionSafe,
+  checkAppServerEnv,
+  checkStoragePublicEndpointInProduction,
+];
 
 /**
  * Hostname-looks-internal heuristic: no dot and not an IP literal. The
  * Docker-internal hostnames used by compose (`storage`, `db`, `app`) all
  * hit this, whereas a public URL (`storage.example.com`) does not. Used
- * only by `assertStoragePublicEndpointInProduction()` — a literal IP
+ * only by `checkStoragePublicEndpointInProduction()` — a literal IP
  * (`http://10.0.0.5:9000`) is legitimate in self-hosted setups and is
  * NOT treated as internal.
  */
@@ -199,32 +452,19 @@ function hostnameLooksInternal(endpoint: string): boolean {
   return !host.includes('.');
 }
 
+// ---------------------------------------------------------------------
+// Typed-Env throw helpers — the public API for start.ts. Each delegates
+// to the corresponding shared predicate above, throwing on failure.
+// ---------------------------------------------------------------------
+
 /**
- * Refuses to start in production when the storage client would sign
- * presigned URLs against a container-only hostname. Without
- * `STORAGE_PUBLIC_ENDPOINT`, the app signs URLs using `STORAGE_ENDPOINT`
- * (e.g. `http://storage:9000`) and hands them to the browser — which
- * cannot resolve the Docker-internal host, so every upload POST fails
- * silently and the `pending → ready` transition never happens. That
- * defect sat on the VPS undetected until an operator noticed attachments
- * never saving.
- *
- * Dev (STORAGE_ENDPOINT = localhost or an IP) does not trip this guard
- * because dev exposes MinIO on the host; the browser reaches the same
- * endpoint the app reaches.
+ * Assert startup safety invariants that depend on NODE_ENV. Called from
+ * start.ts right after validateEnvRuntime(). Refuses to start in
+ * production with ALLOW_INSECURE_HTTP=true (ADR-0013 / AC-45).
  */
-export function assertStoragePublicEndpointInProduction(env: Env): void {
-  if (env.NODE_ENV !== 'production') return;
-  if (!env.STORAGE_ENDPOINT) return; // assertAppServerEnv already reports this
-  if (env.STORAGE_PUBLIC_ENDPOINT) return;
-  if (!hostnameLooksInternal(env.STORAGE_ENDPOINT)) return;
-  throw new Error(
-    `Refusing to start: STORAGE_ENDPOINT (${env.STORAGE_ENDPOINT}) is a container-only ` +
-      'hostname but STORAGE_PUBLIC_ENDPOINT is not set. Presigned URLs the browser ' +
-      'receives would be unreachable. Set STORAGE_PUBLIC_ENDPOINT to the public ' +
-      'URL that reverse-proxies to MinIO (e.g. https://storage.<your-domain>). ' +
-      'See docs/ops/storage-subdomain.md.',
-  );
+export function assertProductionSafe(env: Env): void {
+  const r = checkProductionSafe(env);
+  if (!r.ok) throw new Error(r.message);
 }
 
 /**
@@ -235,25 +475,24 @@ export type AppServerEnv = Env & {
   STORAGE_ENDPOINT: string;
   STORAGE_ACCESS_KEY: string;
   STORAGE_SECRET_KEY: string;
+  STORAGE_REGION: string;
 };
 
 /**
  * App-server-only presence check for the MinIO-backed attachment storage
- * config. The shared schema keeps these optional so the backup-runner CLI
- * (which doesn't use MinIO) can pass validateEnv(); this guard restores
- * the fail-fast semantic for the app server and narrows the type so the
- * downstream calls in start.ts don't need `!` non-null assertions.
+ * config. Narrows the Env type so downstream calls in start.ts don't need
+ * `!` non-null assertions on the STORAGE_* fields.
  */
 export function assertAppServerEnv(env: Env): asserts env is AppServerEnv {
-  const missing: string[] = [];
-  if (!env.STORAGE_ENDPOINT) missing.push('STORAGE_ENDPOINT');
-  if (!env.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
-  if (!env.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
-  if (missing.length > 0) {
-    throw new Error(
-      `App server requires these env vars: ${missing.join(', ')}. ` +
-        'They are optional in the shared schema so the backup-runner CLI ' +
-        'can share validateEnv(), but the app server cannot start without them.',
-    );
-  }
+  const r = checkAppServerEnv(env);
+  if (!r.ok) throw new Error(r.message);
+}
+
+/**
+ * Refuses to start in production when the storage client would sign
+ * presigned URLs against a container-only hostname.
+ */
+export function assertStoragePublicEndpointInProduction(env: Env): void {
+  const r = checkStoragePublicEndpointInProduction(env);
+  if (!r.ok) throw new Error(r.message);
 }

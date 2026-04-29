@@ -57,9 +57,14 @@ describe('AC-95: Mutations on soft-deleted projects', () => {
     const delRes = await authDelete(token, `/api/projects/${deletedProjectId}`);
     expect(delRes.statusCode).toBe(200);
 
-    // Confirm it's gone from list results
+    // Confirm it's archived. Per api.md §14.2.2, GET returns the archived
+    // row as a regular 200 with `deleted: true` so the UI can render a
+    // read-only preview. AC-95 still holds — subsequent mutation attempts
+    // continue to return 404 via the mutation-path repository (verified
+    // by AT-42..AT-44 below).
     const after = await authGet(token, `/api/projects/${deletedProjectId}`);
-    expect(after.statusCode).toBe(404);
+    expect(after.statusCode).toBe(200);
+    expect(after.json().deleted).toBe(true);
   });
 
   afterAll(async () => {

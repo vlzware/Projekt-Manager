@@ -7,7 +7,7 @@
 
 import { drizzle } from 'drizzle-orm/node-postgres';
 import pg from 'pg';
-import { validateEnv } from '../config/env.js';
+import { validateEnvRuntime } from '../config/env.js';
 import * as schema from './schema.js';
 
 const { Pool } = pg;
@@ -52,32 +52,16 @@ export function createDatabase(opts: ConnectionOptions = {}): {
   db: Database;
   pool: pg.Pool;
 } {
-  // Route env reads through the validated singleton so there is a single
+  // Route env reads through the validated loader so there is a single
   // source of truth for NODE_ENV and friends (consolidation review C-3 /
-  // ADR-0013). Previously this file did a direct
-  // `process.env.NODE_ENV === 'production'` check, which drifted from the
-  // rest of the server after commit 48cfdea consolidated app.ts on getEnv().
-  //
-  // validateEnv() is idempotent — it caches the first parsed result and
-  // returns it on subsequent calls — so calling it defensively here is
-  // safe whether or not start.ts already ran it. Integration tests that
-  // call createDatabase() directly (db-constraints, bootstrap, rate-limit)
-  // rely on this defensive call because they do not go through start.ts.
-  const env = validateEnv();
-  let connectionString = opts.connectionString ?? env.DATABASE_URL;
-
-  if (!connectionString) {
-    if (env.NODE_ENV === 'production') {
-      throw new Error(
-        'DATABASE_URL must be set in production. ' +
-          'Refusing to start with a fallback connection string.',
-      );
-    }
-    // Dev/test convenience fallback. Unreachable today because the env
-    // schema makes DATABASE_URL required, but kept as a defense-in-depth
-    // net in case the schema is ever relaxed.
-    connectionString = `postgresql://pm:${process.env.POSTGRES_PASSWORD ?? 'postgres'}@localhost:5432/projekt_manager_test`;
-  }
+  // ADR-0013). validateEnvRuntime() re-parses process.env on every call
+  // (the earlier singleton cache was dropped to keep test fixtures
+  // truthful); calling it defensively here is cheap and matches whatever
+  // start.ts saw. Integration tests that call createDatabase() directly
+  // (db-constraints, bootstrap, rate-limit) rely on this defensive call
+  // because they do not go through start.ts.
+  const env = validateEnvRuntime();
+  const connectionString = opts.connectionString ?? env.DATABASE_URL;
 
   const pool = new Pool({ connectionString });
   const db = drizzle(pool, { schema });

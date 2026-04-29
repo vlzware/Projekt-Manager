@@ -45,9 +45,9 @@ export const AUTH_CONFIG = {
  * Production with real TLS → true. Explicit HTTP evaluation mode
  * (ALLOW_INSECURE_HTTP=true, see ADR-0013) → false. Development → false.
  *
- * Reads from the validated env (env.ts) — requires validateEnv() to have
- * been called first (start.ts does this before buildApp()). Tests use
- * startApp() in api-helpers.ts which also calls validateEnv().
+ * Reads from the validated env (env.ts) — requires validateEnvRuntime()
+ * to have been called first (start.ts does this before buildApp()). Tests
+ * use startApp() in api-helpers.ts which also calls validateEnvRuntime().
  */
 export function getCookieSecure(): boolean {
   const env = getEnv();
@@ -69,15 +69,18 @@ export function getCookieSecure(): boolean {
  *     with many fresh browser contexts; 5/min throttles the suite.
  * `LOGIN_RATE_LIMIT_MAX` overrides both, for operators that want a
  * different floor or ceiling without rebuilding.
+ *
+ * Reads the override and NODE_ENV via `getEnv()` — the schema validates
+ * `LOGIN_RATE_LIMIT_MAX` as a positive integer or unset, so an invalid
+ * value crashes the app at boot rather than silently falling back to the
+ * default (a misconfigured ceiling is an operator-facing fault, not a
+ * runtime fallback). NODE_ENV defaults to 'production' in the schema so
+ * a missing var still gets the tighter anti-spraying ceiling.
  */
 export function getRateLimit() {
-  const override = Number(process.env.LOGIN_RATE_LIMIT_MAX);
-  // Default-to-production when NODE_ENV is missing — mirrors the zod
-  // default in env.ts (fail-closed: an unconfigured environment gets the
-  // tighter anti-spraying ceiling, not the looser dev ceiling).
-  const nodeEnv = process.env.NODE_ENV ?? 'production';
-  const defaultMax = nodeEnv === 'production' ? 5 : 30;
-  const loginRateMax = Number.isFinite(override) && override > 0 ? override : defaultMax;
+  const env = getEnv();
+  const defaultMax = env.NODE_ENV === 'production' ? 5 : 30;
+  const loginRateMax = env.LOGIN_RATE_LIMIT_MAX ?? defaultMax;
   return {
     /** Login endpoint. */
     login: { max: loginRateMax, timeWindow: '1 minute' as const },

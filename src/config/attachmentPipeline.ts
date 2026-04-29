@@ -9,8 +9,8 @@
  * Consumers:
  *   - `src/domain/imagePipeline.ts` reads the image/thumbnail encoding
  *     parameters and the per-file byte cap to enforce the size gate
- *     before calling `init` (matches the server-side presigned policy
- *     `content-length-range`, see
+ *     before calling `init` (matches the server-side cap that the
+ *     presigned PUT pins via signed `Content-Length`, see
  *     [api.md §14.2.11](../../docs/spec/api.md#14211-attachments)).
  *   - `src/ui/detail/BinaryList.tsx` reads the bulk-download caps to
  *     block client-side selections exceeding either cap (AC-223).
@@ -43,6 +43,22 @@ export interface AttachmentPipelineConfig {
   thumbnailQuality: number;
   /** Per-file size cap (bytes) — matches the presigned policy ceiling. [C] */
   perFileSizeCapBytes: number;
+  /**
+   * Pre-pipeline raw-input cap (bytes). Filters obvious mispicks
+   * (multi-GB uploads, RAW DNGs, video files) before any decode work
+   * runs. Sized for the worst credible phone JPEG: a 200 MP Galaxy Sxx
+   * Ultra at maximum detail can emit ~25 MB; 50 MP Pixel/Samsung
+   * captures are typically 10–15 MB. 30 MB leaves ~20% headroom for
+   * outliers while still catching anything that could never compress
+   * under the server cap.
+   *
+   * NOT coupled to `perFileSizeCapBytes` — the raw cap is "is this a
+   * plausible photo source", the per-file cap is "what does the server
+   * presigned-policy accept". Different concepts; tying them together
+   * would silently break ordinary phone uploads if the output cap is
+   * ever tightened. [C]
+   */
+  rawInputCapBytes: number;
   /** Bulk-download cap (file count). [C] */
   bulkDownloadMaxFiles: number;
   /** Bulk-download cap (summed byte size). [C] */
@@ -56,6 +72,7 @@ export const ATTACHMENT_PIPELINE: AttachmentPipelineConfig = {
   thumbnailMaxDimension: 320,
   thumbnailQuality: 0.72,
   perFileSizeCapBytes: 1 * 1024 * 1024,
+  rawInputCapBytes: 30 * 1024 * 1024,
   bulkDownloadMaxFiles: BULK_DOWNLOAD_MAX_FILES_DEFAULT,
   bulkDownloadMaxBytes: BULK_DOWNLOAD_MAX_BYTES_DEFAULT,
 };

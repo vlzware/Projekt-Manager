@@ -151,8 +151,11 @@ RUN mkdir -p /run/drill-key && chmod 0700 /run/drill-key
 # amplifier, only a Postgres/cron scheduling requirement.
 
 # Single-process entrypoint: run crond in the foreground. `-f` keeps it
-# attached to PID 1 (no forking init that would then detach), `-l 2`
-# emits info-level logs so the default Docker json-file driver captures
-# each run's wakeup. The entrypoint script is the thin wrapper that
-# verifies env presence once at container start before exec'ing crond.
+# attached to PID 1 (no forking init that would then detach). The
+# default log level (5/NOTICE) emits scheduled-wakeup lines that the
+# Docker json-file driver captures; the entrypoint script is the thin
+# wrapper that verifies env presence once at container start before
+# exec'ing crond. (Per-cron-line stdout/stderr redirection to
+# /proc/1/fd/{1,2} — see scripts/backup/crontab — gets each script's
+# output into the same docker log stream.)
 ENTRYPOINT ["/usr/local/bin/backup-entrypoint"]

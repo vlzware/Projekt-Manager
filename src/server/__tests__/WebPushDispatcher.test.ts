@@ -48,7 +48,15 @@ const target = {
   auth: 'auth-key',
 };
 
-const payload = { eventClass: 'project.transition_forward', auditEntryId: null };
+// AC-211 — payload now carries the user-facing strings the SW reads
+// alongside the diagnostic eventClass / auditEntryId fields.
+const payload = {
+  title: 'Projekt-Statuswechsel vorwärts',
+  body: '2026-002 Innenraumgestaltung Weber → Beauftragt',
+  url: '/projects/project-1',
+  eventClass: 'project.transition_forward',
+  auditEntryId: null,
+};
 
 describe('WebPushDispatcher', () => {
   beforeEach(() => {

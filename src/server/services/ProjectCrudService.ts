@@ -23,11 +23,13 @@ import {
   removeProjectWorker,
   softDeleteProject as softDeleteProjectRepo,
   hardDeleteProject as hardDeleteProjectRepo,
+  restoreProject as restoreProjectRepo,
   fetchWorkersForProject,
   getUserDisplayName,
   toProject,
   ProjectNotFoundError,
   ProjectNotArchivedError,
+  ProjectNotArchivedForRestoreError,
 } from '../repositories/project.js';
 import { listKeysForProject } from '../repositories/attachment.js';
 import type { ListProjectsOpts, ProjectRow } from '../repositories/project-read.js';
@@ -45,7 +47,7 @@ import { isOutOfScope } from '../repositories/scope.js';
 import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
-import { bestEffortDeleteStorageKeys } from './AttachmentService.js';
+import { bestEffortHideStorageKeys } from './AttachmentService.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
@@ -94,6 +96,9 @@ export class ProjectCrudService {
     // as 403 NOT_PERMITTED, not 404. The spec accepts the existence leak
     // because project IDs are UUIDs and callers are internal users.
     if (isOutOfScope(result)) throw notPermitted();
+    // Archived rows flow through here unchanged with `deleted: true` on
+    // the body — the UI renders them as a read-only preview. AC-95
+    // immutability is enforced by mutation paths via getProjectForMutation.
     return result;
   }
 
@@ -599,6 +604,63 @@ export class ProjectCrudService {
     }
   }
 
+  async restoreProject(
+    id: string,
+    userId: string,
+    log: ServiceLogger,
+    correlationId?: string | null,
+  ): Promise<ReturnType<typeof toProject>> {
+    try {
+      const project = await this.db.transaction(async (tx) => {
+        let restoredRow: Awaited<ReturnType<typeof restoreProjectRepo>> | null = null;
+        const ctx = {
+          actorKind: 'user' as const,
+          actorId: userId,
+          correlationId: correlationId ?? null,
+        };
+        const { value } = await mutateInTx(tx, ctx, {
+          entityType: 'project',
+          // Inverse of `archive` — the row flips back from deleted=true.
+          // ADR-0017 §1 used to forbid the UI affordance; the read-only
+          // preview surfaced a real driver (fat-finger archive recovery)
+          // so the destructive-paths section now includes restore.
+          action: 'restore',
+          run: async (innerTx) => {
+            restoredRow = await restoreProjectRepo(innerTx, id, userId);
+            return {
+              entityId: id,
+              entityLabel: projectAuditLabel(restoredRow),
+              value: restoredRow,
+              // Symmetric to archive's `before: {number, title}, after: {}`:
+              // archive was the row leaving the active set, restore is the
+              // row entering it. Action key carries the semantic.
+              before: {},
+              after: { number: restoredRow.number, title: restoredRow.title },
+              ancestorEntityType: 'project',
+              ancestorEntityId: id,
+            };
+          },
+        });
+        const restored = restoredRow ?? value;
+        const workers = await fetchWorkersForProject(tx, id);
+        const customerRows = await tx
+          .select()
+          .from(customers)
+          .where(eq(customers.id, restored.customerId))
+          .limit(1);
+        return toProject(restored, customerRows[0] ?? null, workers);
+      });
+      log.info({ projectId: id }, 'project_restored');
+      return project;
+    } catch (err) {
+      if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
+      if (err instanceof ProjectNotArchivedForRestoreError) {
+        throw conflict(STRINGS.projects.restoreRequiresArchive);
+      }
+      throw err;
+    }
+  }
+
   async purgeProject(
     id: string,
     userId: string,
@@ -646,7 +708,7 @@ export class ProjectCrudService {
       // abort the DB cascade — the rows are already gone; orphaned
       // keys are logged for operator cleanup.
       if (this.storage && collectedKeys.length > 0) {
-        await bestEffortDeleteStorageKeys(this.storage, collectedKeys, log);
+        await bestEffortHideStorageKeys(this.storage, collectedKeys, log);
       }
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);

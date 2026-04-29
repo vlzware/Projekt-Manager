@@ -133,6 +133,7 @@ export interface PushSubscribeOutcome {
     | 'not-configured'
     | 'permission-denied'
     | 'permission-dismissed'
+    | 'subscribe-failed'
     | 'server-error';
   /** German-language error message when `ok === false`. */
   message?: string;
@@ -181,13 +182,23 @@ export async function subscribeToPush(): Promise<PushSubscribeOutcome> {
     applicationServerKey: urlBase64ToArrayBuffer(vapid),
   });
 
+  // The Push API spec says `subscribe()` either resolves with a
+  // `PushSubscription` or rejects — null is not a valid resolution. A
+  // null here is a browser bug, but observed in the wild (mobile
+  // Firefox on certain builds). Guard explicitly so a misbehaving
+  // browser surfaces an actionable error instead of crashing on
+  // `.getKey()` with a TypeError the user cannot interpret.
+  if (!subscription) {
+    return { ok: false, reason: 'subscribe-failed' };
+  }
+
   const p256dhBuffer = subscription.getKey('p256dh');
   const authBuffer = subscription.getKey('auth');
   if (!p256dhBuffer || !authBuffer) {
     // Browser returned a subscription without key material — we cannot
     // forward anything meaningful to the server. Roll back.
     await subscription.unsubscribe().catch(() => undefined);
-    return { ok: false, reason: 'server-error' };
+    return { ok: false, reason: 'subscribe-failed' };
   }
 
   const result = await pushApi.subscribe({

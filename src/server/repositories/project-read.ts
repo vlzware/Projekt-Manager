@@ -44,6 +44,19 @@ export class ProjectNotArchivedError extends Error {
   }
 }
 
+/**
+ * Thrown when a restore targets a project that is already active.
+ * Symmetric to ProjectNotArchivedError but for the inverse precondition;
+ * kept as its own type so the service can map it to a restore-specific
+ * 409 message instead of the purge-flavoured one.
+ */
+export class ProjectNotArchivedForRestoreError extends Error {
+  constructor() {
+    super(STRINGS.projects.restoreRequiresArchive);
+    this.name = 'ProjectNotArchivedForRestoreError';
+  }
+}
+
 /** Shape of the nested customer in the API response. */
 function toCustomer(row: CustomerRow) {
   return {
@@ -273,22 +286,27 @@ export async function listProjects(
  *   - `null`              — row does not exist (→ 404 NOT_FOUND)
  *   - `OUT_OF_SCOPE`      — row exists but caller is not assigned
  *                           (→ 403 NOT_PERMITTED; AC-147)
- *   - `ReturnType<toProject>` — in-scope row
+ *   - `ReturnType<toProject>` — in-scope row, active OR archived. The
+ *                           archive flag rides on the project body
+ *                           (`deleted: true`) so the UI can render a
+ *                           read-only preview of an archived project
+ *                           instead of collapsing it behind an error
+ *                           surface.
  *
- * The two-step fetch (no-scope row lookup, then scope check) is deliberate:
- * a single scoped query cannot distinguish "not found" from "out of scope".
- * The separation honors the spec's explicit 403-over-404 contract.
+ * The row fetch drops the `deleted = false` filter so archived rows are
+ * returned alongside active ones; the scope check runs first so we
+ * don't leak the existence of a row the caller had no right to see.
+ *
+ * AC-95 (mutations rejected on archived rows) is enforced separately
+ * via `getProjectForMutation`, which keeps the `deleted = false`
+ * filter in place — this read path is intentionally permissive.
  */
 export async function getProject(
   db: Database,
   caller: AuthUser,
   id: string,
 ): Promise<ScopedReadResult<ReturnType<typeof toProject>>> {
-  const rows = await db
-    .select()
-    .from(projects)
-    .where(and(eq(projects.id, id), eq(projects.deleted, false)))
-    .limit(1);
+  const rows = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
 
   if (rows.length === 0) return null;
 
@@ -511,6 +529,38 @@ export async function softDeleteProject(
     .returning({ id: projects.id });
 
   if (rows.length === 0) throw new ProjectNotFoundError();
+}
+
+/**
+ * Restore a soft-deleted project (flip deleted = true → false).
+ *
+ * Three outcomes mirror `hardDeleteProject`:
+ *   - Row missing              → ProjectNotFoundError
+ *   - Row already active       → ProjectNotArchivedForRestoreError (409)
+ *   - Row archived             → flipped to active; resolves
+ *
+ * Two-step fetch-then-update for the same reason as the purge path:
+ * a single conditional UPDATE would collapse the not-found and
+ * already-active cases into one zero-rows signal, and the service
+ * must distinguish them at the HTTP layer.
+ */
+export async function restoreProject(
+  db: MutatingDatabase,
+  id: string,
+  userId: string,
+): Promise<ProjectRow> {
+  const existing = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
+
+  if (existing.length === 0) throw new ProjectNotFoundError();
+  if (!existing[0]!.deleted) throw new ProjectNotArchivedForRestoreError();
+
+  const rows = await db
+    .update(projects)
+    .set({ deleted: false, updatedAt: new Date(), updatedBy: userId })
+    .where(eq(projects.id, id))
+    .returning();
+
+  return rows[0]!;
 }
 
 /**

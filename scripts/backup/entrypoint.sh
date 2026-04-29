@@ -57,5 +57,10 @@ echo "backup container: R2 reachable, starting crond"
 
 # dcron:
 #   -f  foreground (become PID 1 — no daemonise, no re-exec).
-#   -l 2  info-level logs so scheduled wakeups appear in `docker compose logs`.
-exec crond -f -l 2
+#
+# No -l override: dcron's `-l N` filters to events at level <= N (lower
+# = more critical, syslog convention). Default is 5 (NOTICE), which
+# captures scheduled-wakeup lines. A previous `-l 2` actually SUPPRESSED
+# wakeups (kept only CRIT/ALERT/EMERG); the comment claiming "info-level"
+# was inverted.
+exec crond -f

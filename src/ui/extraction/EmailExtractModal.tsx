@@ -19,6 +19,7 @@ import { useProjectStore } from '@/state/projectStore';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
 import type { Customer } from '@/domain/types';
+import { MenuBackdrop } from '../common/MenuBackdrop';
 import styles from '../management/Management.module.css';
 
 interface Props {
@@ -44,7 +45,6 @@ export function EmailExtractModal({ onClose }: Props) {
   const [matchResults, setMatchResults] = useState<Customer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [matchDropdownOpen, setMatchDropdownOpen] = useState(false);
-  const matchRef = useRef<HTMLDivElement>(null);
 
   // Project fields
   const [projectTitle, setProjectTitle] = useState('');
@@ -93,19 +93,6 @@ export function EmailExtractModal({ onClose }: Props) {
 
   // When search is empty, suppress stale results without a synchronous setState.
   const effectiveMatchResults = matchSearch.trim() ? matchResults : [];
-
-  // Close match dropdown on outside click
-  const closeDropdown = useCallback((e: MouseEvent) => {
-    if (matchRef.current && !matchRef.current.contains(e.target as Node)) {
-      setMatchDropdownOpen(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!matchDropdownOpen) return;
-    document.addEventListener('mousedown', closeDropdown);
-    return () => document.removeEventListener('mousedown', closeDropdown);
-  }, [matchDropdownOpen, closeDropdown]);
 
   const handleExtract = async () => {
     if (extracting || !emailText.trim()) return;
@@ -259,7 +246,27 @@ export function EmailExtractModal({ onClose }: Props) {
                     {STRINGS.ui.extracting}
                   </>
                 ) : (
-                  STRINGS.ui.extractButton
+                  <>
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                      style={{ verticalAlign: 'middle', marginRight: 6 }}
+                    >
+                      <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3z" />
+                      <path d="M5 3v4" />
+                      <path d="M19 17v4" />
+                      <path d="M3 5h4" />
+                      <path d="M17 19h4" />
+                    </svg>
+                    {STRINGS.ui.extractButton}
+                  </>
                 )}
               </button>
             </div>
@@ -270,44 +277,49 @@ export function EmailExtractModal({ onClose }: Props) {
             <h3>{STRINGS.ui.customerData}</h3>
 
             {/* Existing customer search */}
-            <div className={styles.formGroup} ref={matchRef}>
+            <div className={styles.formGroup}>
               <label className={styles.formLabel}>{STRINGS.ui.existingCustomer}</label>
-              <input
-                className={styles.formInput}
-                value={
-                  selectedCustomerId
-                    ? (effectiveMatchResults.find((c) => c.id === selectedCustomerId)?.name ??
-                      matchSearch)
-                    : matchSearch
-                }
-                onChange={(e) => {
-                  setMatchSearch(e.target.value);
-                  setSelectedCustomerId(null);
-                  setMatchDropdownOpen(true);
-                }}
-                onClick={() => effectiveMatchResults.length > 0 && setMatchDropdownOpen(true)}
-                placeholder={STRINGS.ui.search}
-                disabled={saving}
-                data-testid="extract-customer-search"
-              />
-              {matchDropdownOpen && effectiveMatchResults.length > 0 && (
-                <div className={styles.selectDropdown}>
-                  {effectiveMatchResults.map((c) => (
-                    <div
-                      key={c.id}
-                      className={styles.selectOption}
-                      onClick={() => {
-                        setSelectedCustomerId(c.id);
-                        setMatchSearch(c.name);
-                        setMatchDropdownOpen(false);
-                      }}
-                    >
-                      {c.name}
-                      {c.phone ? ` — ${c.phone}` : ''}
+              <div className={styles.selectWrapper}>
+                <input
+                  className={styles.formInput}
+                  value={
+                    selectedCustomerId
+                      ? (effectiveMatchResults.find((c) => c.id === selectedCustomerId)?.name ??
+                        matchSearch)
+                      : matchSearch
+                  }
+                  onChange={(e) => {
+                    setMatchSearch(e.target.value);
+                    setSelectedCustomerId(null);
+                    setMatchDropdownOpen(true);
+                  }}
+                  onClick={() => effectiveMatchResults.length > 0 && setMatchDropdownOpen(true)}
+                  placeholder={STRINGS.ui.search}
+                  disabled={saving}
+                  data-testid="extract-customer-search"
+                />
+                {matchDropdownOpen && effectiveMatchResults.length > 0 && (
+                  <>
+                    <MenuBackdrop onClose={() => setMatchDropdownOpen(false)} />
+                    <div className={styles.selectDropdown}>
+                      {effectiveMatchResults.map((c) => (
+                        <div
+                          key={c.id}
+                          className={styles.selectOption}
+                          onClick={() => {
+                            setSelectedCustomerId(c.id);
+                            setMatchSearch(c.name);
+                            setMatchDropdownOpen(false);
+                          }}
+                        >
+                          {c.name}
+                          {c.phone ? ` — ${c.phone}` : ''}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                  </>
+                )}
+              </div>
             </div>
 
             {!selectedCustomerId && (

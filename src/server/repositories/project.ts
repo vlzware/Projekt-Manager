@@ -25,9 +25,11 @@ export {
   softDeleteProject,
   hardDeleteProject,
   hardDeleteProjectUnchecked,
+  restoreProject,
   fetchWorkersForProject,
   ProjectNotFoundError,
   ProjectNotArchivedError,
+  ProjectNotArchivedForRestoreError,
 } from './project-read.js';
 export {
   transitionForward,

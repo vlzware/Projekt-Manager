@@ -1,7 +1,17 @@
 .app {
   display: flex;
   flex-direction: column;
+  /* `dvh` (dynamic viewport height) tracks the visible area as
+     mobile browser chrome expands and collapses. With plain `vh`
+     the shell sizes to the largest viewport (chrome hidden), so on
+     Firefox Android — where the URL bar sits at the bottom — the
+     bar overlaps the MobileTabBar whenever it's shown. iOS Safari's
+     bottom toolbar has the same effect. `dvh` makes the shell
+     resize with the chrome; the tab bar slides up to stay above
+     whichever toolbar is currently visible. The `vh` declaration
+     is the fallback for browsers that pre-date `dvh` (pre-2022). */
   height: 100vh;
+  height: 100dvh;
   background: var(--color-surface-base);
 }
 
@@ -53,6 +63,7 @@
   align-items: center;
   justify-content: center;
   height: 100vh;
+  height: 100dvh;
   font-size: 1rem;
   color: var(--color-text-muted);
 }

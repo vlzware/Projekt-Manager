@@ -19,6 +19,7 @@ import type {
 } from '@/api/client';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
 import type { ProcessedUpload } from '@/domain/imagePipeline';
+import { useAuthStore } from '@/state/authStore';
 
 type ListResult = ApiResult<{ data: Attachment[] }>;
 type InitResult = ApiResult<AttachmentInitResponse>;
@@ -111,6 +112,7 @@ function makeAttachment(overrides: Partial<Attachment>): Attachment {
     originalKey: 'attachments/proj-1/att-1/original.jpg',
     thumbKey: 'attachments/proj-1/att-1/thumb.webp',
     hasThumbnail: true,
+    hiddenAt: null,
     createdAt: '2026-04-20T10:00:00Z',
     createdBy: { id: 'u-1', displayName: 'Test User' },
     ...overrides,
@@ -193,8 +195,10 @@ describe('attachmentStore — pending uploads keyed by client id', () => {
       .getState()
       .uploadFile('proj-1', file, { label: 'foto', hasThumbnail: true });
 
-    // Microtask flush so the store's synchronous initializing-write lands.
-    await Promise.resolve();
+    // Wait until the orchestrator has run pipeline + MD5 + reached
+    // init. The pending row is written synchronously before runUpload
+    // begins, but `resolveInit` is only assigned once the mock fires.
+    await vi.waitFor(() => expect(initMock).toHaveBeenCalled());
 
     const pending = Object.values(useAttachmentStore.getState().pendingUploads);
     expect(pending).toHaveLength(1);
@@ -274,6 +278,135 @@ describe('attachmentStore — error state', () => {
     const state = useAttachmentStore.getState();
     expect(state.error).toBeNull();
     expect(state.byProject['proj-1']).toHaveLength(1);
+  });
+});
+
+describe('attachmentStore — hideAttachment optimistic-with-rollback', () => {
+  // Seed the live list with two rows so each test can assert that the
+  // target row leaves on optimistic success and re-enters on rollback,
+  // without reading order from a single-element list (which would mask
+  // a future bug that swaps the splice for a `slice(1)`).
+  function seedLive(): void {
+    useAttachmentStore.setState({
+      byProject: {
+        'proj-1': [
+          makeAttachment({ id: 'att-keep', fileName: 'keep.jpg' }),
+          makeAttachment({ id: 'att-doomed', fileName: 'doomed.jpg' }),
+        ],
+      },
+      error: null,
+    });
+  }
+
+  it('removes the target row from byProject on success and clears any prior error', async () => {
+    // Seed `error` to a sentinel so a regression that drops the
+    // `set({ error: null })` on success would leave the sentinel
+    // visible — without this seed the assertion would pass even on
+    // such a regression because beforeEach already null-initialises.
+    seedLive();
+    useAttachmentStore.setState({ error: 'stale prior banner' });
+    deleteMock.mockResolvedValueOnce(ok(null));
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const state = useAttachmentStore.getState();
+    expect(state.byProject['proj-1']?.map((a) => a.id)).toEqual(['att-keep']);
+    expect(state.error).toBeNull();
+  });
+
+  it('rolls back the optimistic removal and surfaces the server message on a server error', async () => {
+    seedLive();
+    deleteMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'Ein interner Fehler ist aufgetreten.' },
+      category: 'server_error',
+      sessionExpired: false,
+    });
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const state = useAttachmentStore.getState();
+    expect(state.byProject['proj-1']?.map((a) => a.id)).toEqual(['att-keep', 'att-doomed']);
+    expect(state.error).toBe('Ein interner Fehler ist aufgetreten.');
+  });
+
+  it('rolls back the optimistic removal and surfaces the canonical message on a network throw', async () => {
+    seedLive();
+    deleteMock.mockRejectedValueOnce(new Error('fetch failed'));
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const state = useAttachmentStore.getState();
+    expect(state.byProject['proj-1']?.map((a) => a.id)).toEqual(['att-keep', 'att-doomed']);
+    expect(state.error).toBe('Änderung fehlgeschlagen. Bitte erneut versuchen.');
+  });
+
+  it('rolls back AND fires handleSessionExpired without setting an error on session expiry', async () => {
+    // Regression test for the bug fixed in this commit: the
+    // session-expired branch used to call handleSessionExpired() WITHOUT
+    // rolling back the optimistic removal, leaving an inconsistent UI
+    // (row missing locally while the server still has it) the user
+    // would discover after re-login. Both effects are now asserted.
+    seedLive();
+    const bounce = vi.fn();
+    useAuthStore.setState({ handleSessionExpired: bounce });
+    deleteMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen.' },
+      category: 'authentication',
+      sessionExpired: true,
+    });
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const state = useAttachmentStore.getState();
+    expect(state.byProject['proj-1']?.map((a) => a.id)).toEqual(['att-keep', 'att-doomed']);
+    expect(state.error).toBeNull();
+    expect(bounce).toHaveBeenCalledTimes(1);
+  });
+
+  it('prepends the optimistic hidden row to hiddenByProject so Papierkorb renders without a refetch', async () => {
+    // Regression for the bug where hide only mutated `byProject`. The
+    // page-level eager prefetch populates `hiddenByProject[projectId]`
+    // with `[]` on owner / office sessions, and Papierkorb's mount-
+    // time fetch is skipped when items !== undefined — so a one-sided
+    // hide left Papierkorb showing "Keine gelöschten Dateien" until a
+    // page reload.
+    seedLive();
+    useAttachmentStore.setState({
+      hiddenByProject: {
+        'proj-1': [makeAttachment({ id: 'att-other', fileName: 'other.jpg', status: 'hidden' })],
+      },
+    });
+    deleteMock.mockResolvedValueOnce(ok(null));
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const trash = useAttachmentStore.getState().hiddenByProject['proj-1'];
+    // Just-hidden row sits at the head of the list — matches the
+    // server's `ORDER BY hidden_at DESC` ordering for trash listings.
+    expect(trash?.map((a) => a.id)).toEqual(['att-doomed', 'att-other']);
+    expect(trash?.[0]?.status).toBe('hidden');
+    expect(trash?.[0]?.hiddenAt).toBeTruthy();
+  });
+
+  it('rolls back the optimistic Papierkorb add on a server-error hide', async () => {
+    seedLive();
+    const priorTrash = [
+      makeAttachment({ id: 'att-other', fileName: 'other.jpg', status: 'hidden' }),
+    ];
+    useAttachmentStore.setState({ hiddenByProject: { 'proj-1': priorTrash } });
+    deleteMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'fail' },
+      category: 'server_error',
+      sessionExpired: false,
+    });
+
+    await useAttachmentStore.getState().hideAttachment('proj-1', 'att-doomed');
+
+    const trash = useAttachmentStore.getState().hiddenByProject['proj-1'];
+    expect(trash?.map((a) => a.id)).toEqual(['att-other']);
   });
 });
 
@@ -393,11 +526,9 @@ describe('attachmentStore — cancellation', () => {
       .getState()
       .uploadFile('proj-1', file, { label: 'foto', hasThumbnail: false });
 
-    // Let the synchronous insert + pipeline microtasks settle so the
-    // AbortController is installed and `initUpload` is awaiting.
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Wait until the orchestrator has run pipeline + MD5 and reached
+    // the init call so `capturedSignal` is set.
+    await vi.waitFor(() => expect(initMock).toHaveBeenCalled());
 
     const clientId = Object.keys(useAttachmentStore.getState().pendingUploads)[0];
     expect(clientId).toBeDefined();
@@ -457,11 +588,13 @@ describe('attachmentStore — cancellation', () => {
         .uploadFile('proj-B', files[2], { label: 'foto', hasThumbnail: false }),
     ];
 
-    // Let the three orchestrators advance to the init step.
-    for (let i = 0; i < 6; i += 1) await Promise.resolve();
-
-    expect(signalsByProject['proj-A']).toHaveLength(2);
-    expect(signalsByProject['proj-B']).toHaveLength(1);
+    // Let the three orchestrators advance to the init step. MD5
+    // computation runs before init now, so `vi.waitFor` is more robust
+    // than counting microtask flushes.
+    await vi.waitFor(() => {
+      expect(signalsByProject['proj-A']).toHaveLength(2);
+      expect(signalsByProject['proj-B']).toHaveLength(1);
+    });
 
     useAttachmentStore.getState().cancelUploadsForProject('proj-A');
 
@@ -489,6 +622,39 @@ describe('attachmentStore — cancellation', () => {
 });
 
 describe('attachmentStore — image processing failures and stale-row sweep', () => {
+  it('emits a structured console diagnostic when an upload fails (developer triage)', async () => {
+    // The user-facing toast / banner is intentionally generic, but a
+    // developer triaging an upload failure must see WHICH stage tripped
+    // and the underlying server error. Without this hook every failure
+    // surfaces as opaque "Bildbearbeitung fehlgeschlagen" or "Änderung
+    // fehlgeschlagen", and the developer has nothing to grep for in the
+    // browser console.
+    initMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'init exploded' },
+      category: 'server_error',
+      sessionExpired: false,
+    });
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const file = new File([new Uint8Array([1, 2, 3])], 'photo.jpg', { type: 'image/jpeg' });
+    await useAttachmentStore.getState().uploadFile('proj-1', file, {
+      label: 'foto',
+      hasThumbnail: false,
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      '[upload] failed',
+      expect.objectContaining({
+        fileName: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        stage: 'init',
+        userMessage: 'init exploded',
+        details: expect.objectContaining({ code: 'SERVER_ERROR' }),
+      }),
+    );
+  });
+
   it('marks the upload failed with uploadImageProcessingFailed when the pipeline throws the tagged error', async () => {
     // The pipeline surfaces a distinct IMAGE_PROCESSING_FAILED tag for
     // compression crashes (canvas OOM, worker crash, decoder bug) so
@@ -545,7 +711,11 @@ describe('attachmentStore — image processing failures and stale-row sweep', ()
         attachment: makeAttachment({ id: 'att-new', projectId: 'proj-1' }),
         originalUpload: {
           url: 'https://storage/orig',
-          fields: {},
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Content-Length': '3',
+            'Content-MD5': '1B2M2Y8AsgTpgAmY7PhCfg==',
+          },
           expiresAt: '2026-04-23T10:05:00Z',
         },
       }),
@@ -592,7 +762,11 @@ describe('attachmentStore — image processing failures and stale-row sweep', ()
         attachment: makeAttachment({ id: 'att-new', projectId: 'proj-1' }),
         originalUpload: {
           url: 'https://storage/orig',
-          fields: {},
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Content-Length': '3',
+            'Content-MD5': '1B2M2Y8AsgTpgAmY7PhCfg==',
+          },
           expiresAt: '2026-04-23T10:05:00Z',
         },
       }),

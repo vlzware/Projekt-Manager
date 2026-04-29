@@ -1,0 +1,104 @@
+# MinIO mirror overlay — adds an in-compose MinIO that stands in for
+# Backblaze B2 in non-prod environments.
+#
+# Production uses `docker-compose.yml` alone and talks to a real B2
+# bucket (ADR-0022); this overlay is the dev / CI mirror so changes to
+# the storage shape (versioning, Object Lock, lifecycle, capability
+# split) are exercised against the same S3-compatible surface in both.
+#
+# Loaded by:
+#   - dev: `-f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml`
+#   - CI runtime smoke (.github/workflows/ci.yml): `-f docker-compose.yml -f docker-compose.minio.yml`
+#
+# Without this overlay the base file's app service has no `storage-init`
+# dependency and `STORAGE_ENDPOINT` must be operator-supplied (e.g. the
+# B2 endpoint).
+
+services:
+  app:
+    environment:
+      # Override the operator-supplied STORAGE_* values from the base
+      # file with the in-compose MinIO targets. Compose merges per-key,
+      # so these win over the base file's `${STORAGE_ENDPOINT:?…}`
+      # interpolation (which still has to resolve at base-parse time —
+      # `.env.example` and the CI smoke step provide a placeholder).
+      STORAGE_ENDPOINT: http://storage:9000
+      # The browser hits localhost:9000 (port published below); the app
+      # signs presigned URLs against this so they are reachable from
+      # outside the compose network.
+      STORAGE_PUBLIC_ENDPOINT: http://localhost:9000
+      # MinIO accepts any region; us-east-1 is the SDK default.
+      STORAGE_REGION: us-east-1
+    depends_on:
+      # Re-add the storage-init dependency that the base file omits in
+      # the prod-against-B2 topology. The init container provisions the
+      # MinIO bucket (Object Lock, lifecycle, capability-restricted app
+      # user) before the app boots its safety probe.
+      storage-init:
+        condition: service_completed_successfully
+
+  storage:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    mem_limit: 512m
+    command: server /data --console-address ":9001"
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"   # S3 API — published so the host (browser, vitest, npm run dev) reaches MinIO.
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      # Wide-open CORS for the dev/CI mirror — the browser may come
+      # from http://localhost:5173 (Vite), the WireGuard-bound host,
+      # or any other dev origin. `*` is safe here because presigned
+      # POSTs don't carry credentials (auth is in the form fields)
+      # and dev storage holds no real data. Prod uses B2; CORS lives
+      # in the bucket settings (one explicit `https://<domain>` rule —
+      # see docs/ops/object-storage-provisioning.md).
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    restart: unless-stopped
+
+  storage-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      - storage
+    entrypoint: /bin/sh
+    command: /init-storage.sh
+    volumes:
+      # Long-form bind with `create_host_path: false` — same pattern
+      # as docker-compose.dev.yml's `db.volumes` (avoid silent root-
+      # owned auto-creation of a missing source).
+      - type: bind
+        source: ./docker/init-storage.sh
+        target: /init-storage.sh
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}
+      # Capability-restricted app user the init script provisions
+      # (#45 / ADR-0022). The script reads MINIO_APP_* and the app
+      # then runs as that user via the base file's STORAGE_ACCESS_KEY /
+      # STORAGE_SECRET_KEY (mirrored from these values in `.env`).
+      MINIO_APP_ACCESS_KEY: ${MINIO_APP_ACCESS_KEY:?MINIO_APP_ACCESS_KEY must be set}
+      MINIO_APP_SECRET_KEY: ${MINIO_APP_SECRET_KEY:?MINIO_APP_SECRET_KEY must be set}
+      # Must match the app's STORAGE_BUCKET — both services point at
+      # the same name so the init script provisions what the app reads.
+      STORAGE_BUCKET: ${STORAGE_BUCKET:?STORAGE_BUCKET must be set}
+      # Optional isolated bucket for the Playwright suite. When set, the
+      # init script provisions it alongside the dev bucket and grants the
+      # app user access to both via the same IAM policy. The playwright
+      # webServer overrides STORAGE_BUCKET to this value so test runs
+      # never touch the dev bucket. Defaulted here so the dev compose
+      # stack always provisions both buckets, even when .env omits it.
+      STORAGE_BUCKET_E2E: ${STORAGE_BUCKET_E2E:-projekt-manager-e2e}
+      # R / L sizing dials (docs/ops/object-storage-provisioning.md).
+      # Forwarded with defaults so unset vars don't collapse to empty
+      # strings (mc rejects "0d").
+      STORAGE_OBJECT_LOCK_DAYS: ${STORAGE_OBJECT_LOCK_DAYS:-1}
+      STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS: ${STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS:-2}
+    restart: 'no'
+
+volumes:
+  miniodata:

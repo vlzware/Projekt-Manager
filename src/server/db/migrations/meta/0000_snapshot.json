@@ -1,5 +1,5 @@
 {
-  "id": "aeccc480-16ed-4da7-b18f-cc688901b455",
+  "id": "f73f1d12-5d72-4418-9acb-b19fe7dd9d16",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -69,12 +69,36 @@
           "primaryKey": false,
           "notNull": false
         },
+        "thumb_size_bytes": {
+          "name": "thumb_size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "has_thumbnail": {
           "name": "has_thumbnail",
           "type": "boolean",
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "version_id": {
+          "name": "version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "thumb_version_id": {
+          "name": "thumb_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "hidden_at": {
+          "name": "hidden_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
@@ -171,7 +195,7 @@
       "checkConstraints": {
         "attachments_valid_status": {
           "name": "attachments_valid_status",
-          "value": "\"attachments\".\"status\" IN ('pending', 'ready')"
+          "value": "\"attachments\".\"status\" IN ('pending', 'ready', 'hidden')"
         },
         "attachments_valid_kind": {
           "name": "attachments_valid_kind",

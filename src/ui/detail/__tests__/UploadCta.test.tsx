@@ -71,6 +71,7 @@ function makeAttachment(): Attachment {
     originalKey: 'proj/p-42/att-new/o.jpg',
     thumbKey: 'proj/p-42/att-new/thumb.webp',
     hasThumbnail: true,
+    hiddenAt: null,
     createdAt: '2026-04-20T10:00:00Z',
     createdBy: { id: 'u-1', displayName: 'Test User' },
   };
@@ -169,19 +170,27 @@ describe('UploadCta — Erneut versuchen restarts init (AC-225)', () => {
         data: {
           attachment: makeAttachment(),
           originalUpload: {
-            url: 'https://storage/post',
-            fields: { key: 'proj/p-42/att-new/o.jpg' },
+            url: 'https://storage/put',
+            headers: {
+              'Content-Type': 'image/jpeg',
+              'Content-Length': '3',
+              'Content-MD5': '1B2M2Y8AsgTpgAmY7PhCfg==',
+            },
             expiresAt: '2026-04-20T10:05:00Z',
           },
           thumbnailUpload: {
-            url: 'https://storage/post-thumb',
-            fields: { key: 'proj/p-42/att-new/thumb.webp' },
+            url: 'https://storage/put-thumb',
+            headers: {
+              'Content-Type': 'image/webp',
+              'Content-Length': '3',
+              'Content-MD5': '1B2M2Y8AsgTpgAmY7PhCfg==',
+            },
             expiresAt: '2026-04-20T10:05:00Z',
           },
         },
       });
-    // Presigned POSTs — return a 204 so `postPresignedForm` reads `ok`.
-    const fetchStub = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    // Presigned PUTs — return a 200 so `putPresigned` reads `ok`.
+    const fetchStub = vi.fn().mockResolvedValue(new Response(null, { status: 200 }));
     const originalFetch = globalThis.fetch;
     globalThis.fetch = fetchStub as unknown as typeof globalThis.fetch;
     // Complete call — succeeds, which triggers `removePending` and drops

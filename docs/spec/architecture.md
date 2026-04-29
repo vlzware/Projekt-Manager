@@ -85,8 +85,18 @@ Capabilities at minimum:
 
 - Upload (key, data, content type) → stored reference
 - Download (key) → data stream
-- Delete (key) → success/failure
+- Hide (key) → writes a delete marker on the versioned bucket; the prior version is preserved until lifecycle reap
+- Copy-from-version (key, sourceVersionId) → restore primitive; promotes a noncurrent version back to current and returns the freshly-issued current-version id
 - Get signed/temporary access URL (key, expiry) → URL
+
+**Capability-split invariant ([ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)).** The storage module's running credential cannot destroy versions. Destruction is a provider-side lifecycle action only — the app key holds write/read/list capabilities but lacks `deleteFiles` (B2) / `s3:DeleteObjectVersion` (MinIO/AWS). A CI architecture check ([verification.md AC-238](verification.md#1526-attachments)) refuses any `DeleteObjectCommand` / `DeleteObjectsCommand` carrying a `VersionId` in the codebase, except at the unique boot-probe site (`probeDeleteVersionCapability` in the storage client) which is allowlisted by an AST-based detector keyed on `{ file, functionName }`.
+
+**Boot-time safety probes.** The module runs two refuse-to-serve checks at app start, before any reaper schedules:
+
+- **Bucket-safety probe** — asserts versioning is enabled, Object Lock is in Compliance mode with positive default-retention `R` days, and the lifecycle is exactly one rule applying `daysFromHidingToDeleting = L` with no other lifecycle rules. The validator is a pure function over a structured snapshot, so the fail/warn matrix is unit-tested without mocking the SDK.
+- **Capability self-test** — issues a `DeleteObjectCommand` with a sentinel non-existent VersionId against a sentinel key and asserts the response is `AccessDenied`. Any other outcome (success, `NoSuchVersion`, network timeout, unexpected error) fails the boot fail-closed: the credential cannot be trusted, so the app refuses to serve.
+
+**Re-upload semantic — UUID-keyed.** Object keys are server-issued and unique per attachment row: `{projectId}/{attachmentId}.{orig|thumb}`. A re-upload to an existing attachment id is not a supported flow — every upload is a fresh init that produces a new attachment id. This pins the choice ADR-0022 left as two options: with UUID-keyed paths the lifecycle never observes silent overwrites (no PUT-over-existing-key sequence), so the audit chain is always paired to the row and an attachment's full version history maps 1:1 to its row's lifetime. Content-addressed keys were rejected because they couple key schema to bytes and complicate restore semantics (a copy of a hidden version produces a new current version with the same hash, which collides with the content-addressed scheme).
 
 ### 11.5 Extensibility Checklist
 
@@ -241,15 +251,17 @@ The following values are centralized as single-source constants and may vary per
 - Audit activity-feed rendering — mapping from audit entry (`action`, `payload`) ([data-model.md §5.10](data-model.md#510-audit-log-entity)) to the German display string in the activity feed ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed)) and global Aktivität view ([ui/management.md §8.13](ui/management.md#813-audit-view)). Covers each [`NotificationEventClass`](data-model.md#511-notification-rule) — every catalog event has an `(action, payload)` projection.
 - List page size — default row count for paginated list endpoints (projects, customers, users, audit) and their management views
 - Rate limit buckets — per-session mutation bucket ceiling for push-subscription mutations (`POST`, `DELETE`); exceeding returns `429 RATE_LIMITED` ([api.md §14.2.10](api.md#14210-push-subscription))
-- Attachment per-file size cap — maximum `sizeBytes` of a single attachment original (default 1 MB); enforced by the presigned policy's `content-length-range` and re-verified at complete ([data-model.md §5.13](data-model.md#513-attachment), [api.md §14.2.11](api.md#14211-attachments))
+- Attachment per-file size cap — maximum `sizeBytes` of a single attachment original (default 1 MB); enforced at init validation, pinned via the presigned PUT's signed `Content-Length`, and re-verified at complete ([data-model.md §5.13](data-model.md#513-attachment), [api.md §14.2.11](api.md#14211-attachments))
 - Attachment bulk-download caps — maximum attachment count and summed byte size per zip stream (default 20 files AND 20 MB); breach rejected with `BULK_LIMIT_EXCEEDED` ([api.md §14.2.11](api.md#14211-attachments), [verification.md AC-216](verification.md#1526-attachments))
 - Attachment orphan-reaper TTL — age of a `status = 'pending'` attachment row past which the scheduled reaper removes the row and its backing objects (default 15 minutes; [data-model.md §6.11](data-model.md#611-attachment-orphan-reaper))
 - Bulk-download zip TTL — age of a `bulk-downloads/<uuid>.zip` object past which the scheduled sweep removes it from object storage (default 15 minutes; [data-model.md §6.12](data-model.md#612-bulk-download-zip-reaper))
-- Attachment presigned-URL expiry — lifetime of upload (presigned-POST) and download (presigned-GET) URLs issued by the attachment surface (default 5 minutes; [api.md §14.2.11](api.md#14211-attachments))
+- Attachment presigned-URL expiry — lifetime of upload (presigned-PUT) and download (presigned-GET) URLs issued by the attachment surface (default 5 minutes; [api.md §14.2.11](api.md#14211-attachments))
 - Attachment worker self-delete grace — elapsed window since upload during which a worker may delete their own attachment (default 15 minutes; outside the window worker delete is rejected with `403 NOT_PERMITTED`; [verification.md AC-215](verification.md#1526-attachments))
 - Attachment label catalog — the closed enum `AttachmentLabel` ([data-model.md §5.13](data-model.md#513-attachment)) paired with its German display strings: `angebot` → `Angebot`, `auftragsbestaetigung` → `Auftragsbestätigung`, `rechnung` → `Rechnung`, `aufmass` → `Aufmaß`, `foto` → `Foto`, `sonstiges` → `Sonstiges`. Adding a label is a code change plus a migration (parity with the notification-event catalog).
 - Attachment upload CTA labels — German copy for the upload affordance on the project detail page ([ui/project-detail.md §8.15.4](ui/project-detail.md#8154-photo-gallery), [§8.15.5](ui/project-detail.md#8155-binary-list)): the camera-capture CTA (`Foto aufnehmen`), the drop-zone text, the explicit-browse labels, and the retry / dismiss actions. Kept alongside the other `German UI and error strings` — listed here because the CTAs are referenced by capability statements elsewhere in the spec.
 - Attachment client-encoding parameters — image-longest-edge, image-quality, thumbnail-longest-edge, thumbnail-quality; applied by the browser pipeline before upload ([ui/project-detail.md §8.15.4](ui/project-detail.md#8154-photo-gallery))
+- Compliance retention `R` (days) — bucket default retention auto-applied per upload ([ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)). Sized for the operator-mistake recovery window. Env var: `STORAGE_OBJECT_LOCK_DAYS`. The dev compose stack mirrors the prod B2 setting via the same var.
+- Lifecycle hide-to-delete `L` (days) — `daysFromHidingToDeleting` on the bucket lifecycle rule. The Papierkorb trash window: a hidden version is reaped exactly `L` days after the hide marker lands. Env var: `STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS`. **Invariant: `R ≤ L`** — `R > L` is incoherent on its face: lifecycle would attempt to reap noncurrent versions still protected by Object Lock, leaving zombie versions on every reap cycle until `R` elapsed. The boot-time safety probe refuses to start under `R > L` ([ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)).
 
 ### 12.3 Configuration Requirements
 
@@ -272,6 +284,20 @@ The visual theme (color scheme) is expressed through a two-layer token system. C
 - **Theme overrides** — a non-default theme (e.g. dark) is a set of semantic-layer overrides scoped by an attribute on the document root. Component stylesheets render different palettes without code changes.
 - **Data-driven colors** — state colors from the workflow state configuration remain data-driven and are the single exception to the "no palette values outside the tokens source" rule.
 - **Brand accent [C]** — supplied by the branding configuration (§12.2); components consume it via a single semantic token.
+
+### 12.6 Feature Manifest and Operator Confidence
+
+Optional features self-disable when their configuration is incomplete. Without explicit feedback, an operator can complete a deploy and only discover at use time that a feature is silently no-op.
+
+The configuration boundary publishes:
+
+- **A single declared catalog** mapping each feature to the configuration values it requires; the boot manifest's feature list is derived from this catalog.
+- **A single read path** — application code reads configuration only through the validated boundary's loader; direct reads from the process environment outside the loader are a narrow, documented exception, not a parallel pattern.
+- **A boot-time manifest** — one structured log line per process start enumerating every catalog feature with its state (`enabled` or `disabled`) and a non-empty reason when `disabled`.
+- **A pre-flight refusal** — the deploy script validates the loaded configuration against the schema before bringing containers up; a validation failure aborts the deploy and names the offending keys.
+- **A schema↔documentation parity check** — the schema's keyspace and the operator-facing example documentation are kept in sync by a CI gate that fails on divergence.
+
+Configuration choices that disable features are the operator's deliberate decisions. Configuration mistakes that silently disable features are bugs. The boundary surfaces both at deploy time and at boot.
 
 ---
 
