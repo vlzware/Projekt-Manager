@@ -110,7 +110,7 @@ This project makes heavy use of modern LLMs, mostly Claude Code. A "fully automa
 - `docs/spec/` - specification;
 - `docs/ops/` - runbooks with operator instructions;
 - `docs/adr/` - bigger decisions with some background and rationale;
-- `src/` - code.
+- `src/` - code. See the [module map](./ARCHITECTURE.md#module-map) for details.
 
 ## How to run
 
