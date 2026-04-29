@@ -24,6 +24,7 @@ operator workstation                              VPS (over SSH)
 - Pushing local dev state to a VPS that has no data worth keeping.
 - Reproducing a dev-only bug on the deployed stack.
 - Populating a fresh VPS after initial setup (bootstrap admin → sync → done).
+- Step 3 of [recover-from-schema-change.md](recover-from-schema-change.md) — after wiping VPS and local DBs.
 
 ## When NOT to use
 

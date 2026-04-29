@@ -101,3 +101,11 @@ set +a
 ```
 
 `set -a` in the calling shell still auto-exports every `KEY=value` assignment, matching the process-substitution form's net effect. Plaintext stays in memory only. Prefer this form for ad-hoc and interactive use; `scripts/deploy.sh` keeps the process-substitution form because it runs in a controlled non-interactive-enough context where the race doesn't trigger.
+
+## `column "<X>" of relation "<T>" does not exist` after a deploy
+
+**Trap:** First request that touches a recently-added column 500s with this Postgres error, even though the deploy itself reported healthy.
+
+**Root cause:** Drizzle records baselines by hash in `drizzle.__drizzle_migrations`. An edit to `0000_baseline.sql` produces a new hash but `migrate()` skips it because the old hash is already in the ledger. The live DB stays on the previous schema while `schema.ts` describes the new one. Same trap exists locally on `projekt-manager_pgdata`.
+
+**Workaround:** Wipe and reseed both VPS and local DBs, then sync. Full procedure: [recover-from-schema-change.md](recover-from-schema-change.md).
