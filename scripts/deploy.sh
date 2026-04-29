@@ -118,7 +118,7 @@ if [ -n "$env_example_keys" ]; then
   missing_env=$(comm -23 <(echo "$env_example_keys") <(echo "$env_actual_keys") || true)
   if [ -n "$missing_env" ]; then
     echo "ERROR: $REPO_DIR/.env is missing keys declared in .env.production.example:" >&2
-    echo "$missing_env" | sed 's/^/  - /' >&2
+    echo "  - ${missing_env//$'\n'/$'\n'  - }" >&2
     echo "" >&2
     echo "Sync the keys (preserving existing values) before deploying. See" >&2
     echo "docs/ops/manual-deploy.md for the edit-in-place workflow." >&2
@@ -146,6 +146,58 @@ if [ -n "$missing_secrets" ]; then
   echo "Rotate secrets.env.age to include the missing keys before deploying" >&2
   echo "(docs/ops/manual-deploy.md § Rotate a secret)." >&2
   exit 1
+fi
+
+# --- Pre-flight: baseline schema-state recurrence guard --------------
+# Drizzle records baseline migrations by sha256 hash in
+# `drizzle.__drizzle_migrations.hash`. An edit to 0000_baseline.sql
+# produces a new hash, but `migrate()` skips re-applying it because the
+# old hash is already in the ledger — the live DB stays on the previous
+# schema while schema.ts and the SQL describe the new one. The first
+# request that touches a new column 500s with
+# `column "<X>" does not exist`.
+#
+# This guard compares the on-disk sha256 of the baseline file (the
+# same digest drizzle-orm uses to populate the ledger — sha256 over
+# the raw file content) to the recorded ledger entry, and aborts the
+# deploy BEFORE `compose up` recreates app containers and starts
+# routing traffic to a stale schema.
+#
+# Fresh-DB cases fall through cleanly: db service absent (first
+# deploy / wiped container), migrations table absent (wiped volume,
+# app hasn't booted yet), or ledger empty. The next `compose up`
+# runs migrate() which populates the ledger.
+#
+# Recovery procedure: docs/ops/recover-from-schema-change.md.
+echo "Pre-flight: checking baseline schema state..."
+expected_baseline_hash=$(sha256sum "$REPO_DIR/src/server/db/migrations/0000_baseline.sql" \
+  | awk '{print $1}')
+
+if docker compose ps --status running --services 2>/dev/null | grep -qx db; then
+  # `2>/dev/null || true` collapses every non-success state (table
+  # absent, ledger empty, transient psql error) to an empty string —
+  # all interpreted as "no comparison possible, fall through". The
+  # outer `compose ps` guard already proved the service is up, so the
+  # table-absent path is the only legitimate empty outcome we expect
+  # here.
+  recorded_baseline_hash=$(docker compose exec -T db \
+    psql -U pm -d projekt_manager -tAc \
+    "SELECT hash FROM drizzle.__drizzle_migrations ORDER BY id ASC LIMIT 1;" \
+    2>/dev/null | tr -d '[:space:]' || true)
+
+  if [ -n "$recorded_baseline_hash" ] && \
+     [ "$recorded_baseline_hash" != "$expected_baseline_hash" ]; then
+    echo "ERROR: baseline schema mismatch — DB ledger does not match 0000_baseline.sql." >&2
+    echo "  expected (file): $expected_baseline_hash" >&2
+    echo "  recorded (db):   $recorded_baseline_hash" >&2
+    echo "" >&2
+    echo "Drizzle records baselines by hash; an edit to 0000_baseline.sql is" >&2
+    echo "silently no-op'd against an existing ledger. Continuing this deploy" >&2
+    echo "would 500 on the first request that touches a new column." >&2
+    echo "" >&2
+    echo "See docs/ops/recover-from-schema-change.md." >&2
+    exit 1
+  fi
 fi
 
 # Pin the exact SHA-tagged image so this deploy is reproducible and a
