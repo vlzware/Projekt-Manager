@@ -6,7 +6,7 @@ Project policy is to wipe and reseed; no incremental migrations.
 
 ## Symptom
 
-First request that touches a new column 500s. App log:
+Both deploy and boot now refuse to proceed when this state is detected — `scripts/deploy.sh` aborts pre-flight (`Baseline schema mismatch …`) and `npm run dev` / production boot throws the same error from `src/server/db/baseline-guard.ts`. The runbook below applies whether you hit the abort or the older 500-after-boot symptom:
 
 ```
 column "<X>" of relation "<T>" does not exist
