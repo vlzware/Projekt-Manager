@@ -310,10 +310,16 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      # DOMAIN is `:?`-gated at first reference (app service above); this
-      # later substitution inherits that guard. Keeping a `:-localhost`
-      # default here would be dead code.
-      DOMAIN: ${DOMAIN}
+      # DOMAIN is `:?`-gated here at its first (and only) reference in
+      # the base file — the iter-9 storage refactor removed the former
+      # `https://storage.${DOMAIN}` derivation in the app service, so
+      # caddy is now the sole consumer. `:?` makes compose refuse to
+      # parse without DOMAIN rather than substituting empty and handing
+      # Caddy a broken site address. The HTTP-only overlay
+      # (docker-compose.http.yml) overrides this entry with a literal
+      # empty string after the base file has parsed; `.env.example` ships
+      # `DOMAIN=localhost` so that path keeps working.
+      DOMAIN: ${DOMAIN:?DOMAIN must be set}
       # `?` (no colon) — must be DECLARED but may be empty. Local dev
       # and the HTTP-only overlay leave it empty because Caddy is
       # profile-gated off there (docker-compose.dev.yml). Production
