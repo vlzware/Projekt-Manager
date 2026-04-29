@@ -135,6 +135,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     VAPID_PRIVATE_KEY: undefined,
     VAPID_SUBJECT: undefined,
     ATTACHMENT_PER_FILE_CAP_BYTES: undefined,
+    ATTACHMENT_THUMB_CAP_BYTES: undefined,
     ATTACHMENT_BULK_MAX_FILES: undefined,
     ATTACHMENT_BULK_MAX_BYTES: undefined,
     ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES: undefined,

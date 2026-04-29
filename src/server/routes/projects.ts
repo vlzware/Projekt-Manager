@@ -34,6 +34,7 @@ export function projectRoutes(db: Database) {
             bucket: env.STORAGE_BUCKET,
             accessKey: env.STORAGE_ACCESS_KEY,
             secretKey: env.STORAGE_SECRET_KEY,
+            region: env.STORAGE_REGION,
           })
         : undefined;
     const crudService = new ProjectCrudService(db, { storage });

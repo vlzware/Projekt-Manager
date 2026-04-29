@@ -157,7 +157,7 @@ describe('Attachment audit contract (AC-219)', () => {
       secretKey: env.STORAGE_SECRET_KEY!,
     });
     await s.upload(body.attachment.originalKey, Buffer.alloc(120_000, 0xff), 'image/jpeg');
-    await s.upload(body.attachment.thumbKey, Buffer.from('webp-thumb'), 'image/webp');
+    await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
 
     const afterInit = await countAuditRows();
 

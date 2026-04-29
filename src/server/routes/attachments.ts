@@ -25,6 +25,7 @@ export function attachmentRoutes(db: Database) {
       bucket: env.STORAGE_BUCKET,
       accessKey: env.STORAGE_ACCESS_KEY!,
       secretKey: env.STORAGE_SECRET_KEY!,
+      region: env.STORAGE_REGION,
     });
     const service = new AttachmentService({ db, storage });
 
@@ -67,25 +68,32 @@ export function attachmentRoutes(db: Database) {
           body: {
             type: 'object',
             required: ['fileName', 'mimeType', 'sizeBytes', 'contentMd5', 'label'],
-            // Deliberately permissive on extra properties so a stray
-            // `originalKey` / `projectId` in the payload round-trips as
-            // a silent discard (route + service never read them). The
-            // dedicated test ("rejects client-supplied originalKey")
-            // pins the observable: the row's originalKey is server-issued.
-            additionalProperties: true,
+            // Strict shape — unknown fields are a 422 at the schema gate.
+            // Closes the foot-gun where a stray `versionId` / `originalKey`
+            // / `projectId` could silently land in the request and
+            // pollute future readers; the route + service never read
+            // them today, but `additionalProperties: false` is the
+            // canonical input boundary.
+            additionalProperties: false,
             properties: {
               fileName: { type: 'string', minLength: 1 },
               mimeType: { type: 'string', minLength: 1 },
               sizeBytes: { type: 'integer', minimum: 1 },
               // RFC 1864 base64 of MD5 (16-byte digest → 24 chars,
-              // ending `==`). Service re-validates with the same regex;
-              // schema-level pattern keeps a malformed payload from
-              // reaching service layer state-machine setup.
-              contentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{22}==$' },
+              // ending `==`). Position 22 carries only 2 significant
+              // bits, so only `[AQgw]` are valid there — the broader
+              // `[A-Za-z0-9+/]` would accept malformed values.
+              // Service re-validates with the same regex; schema-level
+              // pattern keeps a malformed payload from reaching the
+              // service layer's state-machine setup.
+              contentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{21}[AQgw]==$' },
               label: { type: 'string' },
               hasThumbnail: { type: 'boolean' },
+              // Upper bound is enforced server-side by `perThumbCapBytes`
+              // because the env override may shift the cap at runtime; a
+              // schema-level `maximum` would freeze it at deploy time.
               thumbSizeBytes: { type: 'integer', minimum: 1 },
-              thumbContentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{22}==$' },
+              thumbContentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{21}[AQgw]==$' },
             },
           },
         },

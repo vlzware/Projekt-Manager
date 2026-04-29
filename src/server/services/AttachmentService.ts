@@ -128,6 +128,7 @@ export interface AttachmentServiceDeps {
 
 interface ResolvedCaps {
   perFileCapBytes: number;
+  perThumbCapBytes: number;
   bulkDownloadMaxFiles: number;
   bulkDownloadMaxBytes: number;
   workerSelfDeleteGraceMinutes: number;
@@ -148,6 +149,7 @@ function resolveCaps(): ResolvedCaps {
   }
   return {
     perFileCapBytes: env?.ATTACHMENT_PER_FILE_CAP_BYTES ?? ATTACHMENT_CONFIG.perFileCapBytes,
+    perThumbCapBytes: env?.ATTACHMENT_THUMB_CAP_BYTES ?? ATTACHMENT_CONFIG.perThumbCapBytes,
     bulkDownloadMaxFiles: env?.ATTACHMENT_BULK_MAX_FILES ?? ATTACHMENT_CONFIG.bulkDownloadMaxFiles,
     bulkDownloadMaxBytes: env?.ATTACHMENT_BULK_MAX_BYTES ?? ATTACHMENT_CONFIG.bulkDownloadMaxBytes,
     workerSelfDeleteGraceMinutes:
@@ -196,11 +198,14 @@ function storageKey(projectId: string, attachmentId: string, suffix: 'orig' | 't
 }
 
 /**
- * RFC 1864 base64 of an MD5 digest is exactly 24 chars: 22 of
- * [A-Za-z0-9+/] followed by `==` (16-byte digest, base64-padded).
- * Used to validate `contentMd5` before it reaches the storage signer.
+ * RFC 1864 base64 of an MD5 digest is exactly 24 chars: 21 of
+ * [A-Za-z0-9+/], one of [AQgw] at position 22 (only those four
+ * carry zero-bit alignment for a 16-byte digest), then `==`. The
+ * tighter alphabet at position 22 rejects malformed values that the
+ * coarser `[A-Za-z0-9+/]{22}==` would accept. Used both at the
+ * service-layer for `contentMd5` and via the route schema's pattern.
  */
-const MD5_BASE64_RE = /^[A-Za-z0-9+/]{22}==$/;
+const MD5_BASE64_RE = /^[A-Za-z0-9+/]{21}[AQgw]==$/;
 
 function isMd5Base64(value: unknown): value is string {
   return typeof value === 'string' && MD5_BASE64_RE.test(value);
@@ -296,7 +301,10 @@ export class AttachmentService {
     // signed. The client must run the image pipeline to know the
     // thumbnail blob's exact bytes before calling init — that gives us
     // the same exact-size pin on the thumbnail upload that we already
-    // have on the original.
+    // have on the original. The cap is `perThumbCapBytes`, NOT the
+    // per-file cap: the thumbnail is server-encoded WebP at 320 px /
+    // q=0.72 (`attachmentPipeline.ts`) — sized in the tens of KB.
+    // Allowing a 1 MB "thumbnail" through would be a policy bypass.
     let thumbSizeBytes: number | undefined;
     let thumbContentMd5: string | undefined;
     if (hasThumbnail) {
@@ -304,7 +312,7 @@ export class AttachmentService {
         typeof input.thumbSizeBytes !== 'number' ||
         !Number.isInteger(input.thumbSizeBytes) ||
         input.thumbSizeBytes <= 0 ||
-        input.thumbSizeBytes > caps.perFileCapBytes
+        input.thumbSizeBytes > caps.perThumbCapBytes
       ) {
         throw validationError(STRINGS.attachments.uploadFileTooLarge);
       }
@@ -336,6 +344,7 @@ export class AttachmentService {
             sizeBytes: input.sizeBytes,
             originalKey,
             thumbKey,
+            thumbSizeBytes: thumbSizeBytes ?? null,
             hasThumbnail,
             createdBy: caller.id,
           });
@@ -470,7 +479,17 @@ export class AttachmentService {
         // image/webp via SigV4. Re-assert at HEAD so a signature bypass
         // that slipped past storage is still caught at state-flip time.
         const thumbHead = await this.storage.headObject(row.thumbKey);
-        if (thumbHead.size > caps.perFileCapBytes) {
+        // Declared-size pin first — mirrors the original-side check
+        // above. The persisted `thumb_size_bytes` is the value the
+        // client committed to at init; a HEAD reporting a different
+        // size means a signature bypass landed bytes the row never
+        // accepted. Only assert when the row carries a value: legacy
+        // pending rows that predate the column have null and fall
+        // through to the cap-only check.
+        if (row.thumbSizeBytes !== null && thumbHead.size !== row.thumbSizeBytes) {
+          throw conflict(STRINGS.errors.invalidInput);
+        }
+        if (thumbHead.size > caps.perThumbCapBytes) {
           throw conflict(STRINGS.errors.invalidInput);
         }
         if (!thumbHead.contentType.startsWith('image/')) {

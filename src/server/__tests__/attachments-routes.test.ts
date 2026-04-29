@@ -32,6 +32,8 @@ import { createStorageClient } from '../storage/client.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
 import { AttachmentService } from '../services/AttachmentService.js';
 import type { AuthUser } from '../middleware/auth.js';
+import { binaryInitBody } from '../../test/fixtures/attachmentInit.js';
+import { STRINGS } from '../../config/strings.js';
 import { getEnv } from '../config/env.js';
 import type { Attachment } from '../../domain/types.js';
 
@@ -229,30 +231,51 @@ describe('Attachment routes — integration (issue #108)', () => {
 
     it('rejects a MIME outside the whitelist with 422 VALIDATION_ERROR (no row)', async () => {
       const before = await countAttachmentRows();
-      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-        fileName: 'evil.exe',
-        mimeType: 'application/x-msdownload',
-        sizeBytes: 100,
-        label: 'sonstiges',
-        hasThumbnail: false,
-      });
+      // Use the shared fixture so `contentMd5` is present and AJV's
+      // missing-required-field gate doesn't short-circuit the test before
+      // it reaches the MIME validator. The assertion on the rendered
+      // German string pins the *MIME* validator as the rejection source —
+      // a future regression that lets a non-whitelisted MIME pass would
+      // either flip the status code or change the message.
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        binaryInitBody({
+          fileName: 'evil.exe',
+          mimeType: 'application/x-msdownload',
+          sizeBytes: 100,
+          label: 'sonstiges',
+        }),
+      );
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('VALIDATION_ERROR');
+      expect(res.json().message).toBe(STRINGS.attachments.uploadMimeNotAllowed);
       const after = await countAttachmentRows();
       expect(after).toBe(before);
     });
 
     it('rejects a label outside the enum with 422 VALIDATION_ERROR (no row)', async () => {
       const before = await countAttachmentRows();
-      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-        fileName: 'x.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 100,
-        label: 'not-in-enum',
-        hasThumbnail: false,
-      });
+      // Use the shared fixture so `contentMd5` is present and AJV's
+      // missing-required-field gate doesn't short-circuit the test before
+      // it reaches the label validator. The label-rejection message is
+      // the generic `invalidInput` (the service has no label-specific
+      // copy), so we pin the generic message — sufficient to detect a
+      // future regression where the validator stops firing and AJV
+      // catches an upstream-shape break instead.
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        binaryInitBody({
+          fileName: 'x.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 100,
+          label: 'not-in-enum',
+        }),
+      );
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('VALIDATION_ERROR');
+      expect(res.json().message).toBe(STRINGS.errors.invalidInput);
       expect(await countAttachmentRows()).toBe(before);
     });
 
@@ -261,15 +284,26 @@ describe('Attachment routes — integration (issue #108)', () => {
       // safely above regardless of a deployment-specific tune. The test
       // pins the spec behavior, not a specific deployment constant —
       // when the cap is raised, increase this too.
-      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
-        fileName: 'huge.pdf',
-        mimeType: 'application/pdf',
-        sizeBytes: 10 * 1024 * 1024,
-        label: 'sonstiges',
-        hasThumbnail: false,
-      });
+      //
+      // Use the shared fixture so `contentMd5` is present and AJV's
+      // missing-required-field gate doesn't short-circuit the test before
+      // it reaches the size validator. The assertion on the rendered
+      // German string pins the *size-cap* validator as the rejection
+      // source — a future regression that drops the cap check would
+      // either flip the status code or change the message.
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        binaryInitBody({
+          fileName: 'huge.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 10 * 1024 * 1024,
+          label: 'sonstiges',
+        }),
+      );
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('VALIDATION_ERROR');
+      expect(res.json().message).toBe(STRINGS.attachments.uploadFileTooLarge);
     });
 
     it('rejects empty fileName with 422 VALIDATION_ERROR', async () => {
@@ -336,7 +370,7 @@ describe('Attachment routes — integration (issue #108)', () => {
       // 120 bytes of `0xff` — arbitrary but matches sizeBytes above.
       const payload = Buffer.alloc(120_000, 0xff);
       await s.upload(body.attachment.originalKey, payload, 'image/jpeg');
-      await s.upload(body.attachment.thumbKey, Buffer.from('webp-thumb'), 'image/webp');
+      await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
       return body.attachment.id;
     }
 
@@ -558,7 +592,7 @@ describe('Attachment routes — integration (issue #108)', () => {
       // Bytes land in storage (HEAD would otherwise miss and surface 409).
       const s = storage();
       await s.upload(body.attachment.originalKey, Buffer.alloc(120_000, 0xff), 'image/jpeg');
-      await s.upload(body.attachment.thumbKey, Buffer.from('webp-thumb'), 'image/webp');
+      await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
 
       // Archive lands between init and complete.
       const archiveRes = await authDelete(ownerToken, `/api/projects/${raceProjectId}`);
@@ -791,7 +825,7 @@ describe('Attachment routes — integration (issue #108)', () => {
       const s = storage();
       const payload = Buffer.alloc(120_000, 0xff);
       await s.upload(body.attachment.originalKey, payload, 'image/jpeg');
-      await s.upload(body.attachment.thumbKey, Buffer.from('webp-thumb'), 'image/webp');
+      await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
       const completeRes = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/${body.attachment.id}/complete`,

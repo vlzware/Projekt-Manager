@@ -423,6 +423,18 @@ export const attachments = pgTable(
     sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
     originalKey: text('original_key').notNull(),
     thumbKey: text('thumb_key'),
+    /**
+     * Declared sizeBytes of the thumbnail blob, persisted at init-time.
+     * The presigned PUT pins this exact value into the SigV4 signature,
+     * but the persisted copy lets `completeUpload` re-assert size at
+     * HEAD-verify time — defence in depth against a signature bypass.
+     * Mirrors the original side's `sizeBytes` re-assertion.
+     *
+     * Null for binaries (no thumb) and for legacy pending rows that
+     * predate this column. Both make the value structurally absent
+     * rather than meaningless.
+     */
+    thumbSizeBytes: bigint('thumb_size_bytes', { mode: 'number' }),
     hasThumbnail: boolean('has_thumbnail').notNull().default(false),
     /**
      * S3 VersionId of the current original-key version, captured at

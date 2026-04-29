@@ -15,6 +15,7 @@ CREATE TABLE "attachments" (
 	"size_bytes" bigint NOT NULL,
 	"original_key" text NOT NULL,
 	"thumb_key" text,
+	"thumb_size_bytes" bigint,
 	"has_thumbnail" boolean DEFAULT false NOT NULL,
 	"version_id" text,
 	"thumb_version_id" text,

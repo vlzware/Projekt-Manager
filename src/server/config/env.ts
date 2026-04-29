@@ -158,6 +158,10 @@ export const envSchema = z.object({
     (v) => (v === '' ? undefined : v),
     z.coerce.number().int().positive().optional(),
   ),
+  ATTACHMENT_THUMB_CAP_BYTES: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().positive().optional(),
+  ),
   ATTACHMENT_BULK_MAX_FILES: z.preprocess(
     (v) => (v === '' ? undefined : v),
     z.coerce.number().int().positive().optional(),

@@ -69,6 +69,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "thumb_size_bytes": {
+          "name": "thumb_size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "has_thumbnail": {
           "name": "has_thumbnail",
           "type": "boolean",

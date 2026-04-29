@@ -427,18 +427,21 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
   });
   // `requestChecksumCalculation: 'WHEN_REQUIRED'` on the SIGNING client
   // suppresses the SDK's automatic CRC32 middleware for presigned URLs.
-  // With the default `WHEN_SUPPORTED`, the SDK precomputes
-  // `x-amz-checksum-crc32` over an empty body at signing time and binds
-  // it into the signed query string; the browser would then send the URL
-  // verbatim and the storage provider would compare that frozen CRC32
-  // against the actual body's CRC32 and reject every non-empty upload.
-  // The integrity guarantee we need on the presigned path is provided by
-  // the signed `Content-MD5` header (see `createPresignedPut`).
+  // With the default `WHEN_SUPPORTED` (since `@aws-sdk/client-s3` v3.729),
+  // the SDK precomputes `x-amz-checksum-crc32` over an empty body at signing
+  // time and bakes it into the signed query string. B2 happens to tolerate
+  // the discrepancy when `Content-MD5` is also present, but signing a CRC32
+  // we never intend to verify is a fragile dependency on provider tolerance;
+  // skipping it keeps the URL clean and the integrity guarantee on the path
+  // we actually rely on — the signed `Content-MD5` header (see
+  // `createPresignedPut`). Same setting on both presigned-PUT and
+  // presigned-GET signing — GET has no body to checksum so it is benign.
   //
   // The non-signing `s3` keeps the default — server-side PUTs (test
-  // seeding, bulk-zip pickup) need an integrity header to satisfy B2's
-  // Object Lock contract per ADR-0022, and the SDK's auto-CRC32 supplies
-  // one without each call site computing MD5 by hand.
+  // seeding, bulk-zip pickup) need an integrity header to satisfy the S3
+  // Object Lock contract under default retention (per ADR-0022), and the
+  // SDK's auto-CRC32 supplies one without each call site computing MD5
+  // by hand.
   const s3Signing = config.publicEndpoint
     ? new S3Client({
         endpoint: config.publicEndpoint,
@@ -571,9 +574,15 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         );
       }
       // RFC 1864 MD5 base64: 16-byte digest → 24 chars ending with `==`.
-      // Reject anything else here so a malformed value cannot reach the
-      // signer; the storage provider's BadDigest check is the next layer.
-      if (typeof contentMd5Base64 !== 'string' || !/^[A-Za-z0-9+/]{22}==$/.test(contentMd5Base64)) {
+      // The 21st char is `[A-Za-z0-9+/]` and the 22nd char is one of
+      // `[AQgw]` — only those four values can hold the trailing zero
+      // bits a 16-byte input forces. Tighter than the 22-char-anything
+      // shape: catches non-canonical inputs before the storage provider
+      // has to BadDigest them.
+      if (
+        typeof contentMd5Base64 !== 'string' ||
+        !/^[A-Za-z0-9+/]{21}[AQgw]==$/.test(contentMd5Base64)
+      ) {
         throw new Error('createPresignedPut: contentMd5Base64 must be RFC 1864 base64 of MD5');
       }
       const expiresIn = Math.max(1, expirySeconds);
@@ -584,14 +593,14 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         ContentLength: sizeBytes,
         ContentMD5: contentMd5Base64,
       });
-      // Both option sets are required: `unhoistableHeaders` keeps each
-      // value out of the query string (so the client must send them as
-      // headers), and `signableHeaders` overrides the SDK's default
-      // (which marks `content-type` as unsignable) so all three are
-      // included in `X-Amz-SignedHeaders` and bound by the signature.
+      // `signableHeaders` overrides the SDK's default unsignable list
+      // (which marks `content-type` as unsignable) so `Content-Type`,
+      // `Content-Length`, and `Content-MD5` all land in
+      // `X-Amz-SignedHeaders` and are bound by the signature.
+      // (`unhoistableHeaders` is for `x-amz-*` headers — it has no
+      // effect on these three, so it is omitted.)
       const url = await getSignedUrl(s3Signing, command, {
         expiresIn,
-        unhoistableHeaders: new Set(['content-type', 'content-length', 'content-md5']),
         signableHeaders: new Set(['content-type', 'content-length', 'content-md5']),
       });
       return {

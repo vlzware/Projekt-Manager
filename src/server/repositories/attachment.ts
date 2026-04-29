@@ -54,6 +54,13 @@ export interface CreatePendingAttachmentInput {
   sizeBytes: number;
   originalKey: string;
   thumbKey: string | null;
+  /**
+   * Declared thumb sizeBytes from the init payload. Persisted at creation
+   * so `completeUpload` can re-assert HEAD size against the row, mirroring
+   * the original-side `sizeBytes` re-assertion. Null when `hasThumbnail`
+   * is false.
+   */
+  thumbSizeBytes: number | null;
   hasThumbnail: boolean;
   createdBy: string | null;
 }
@@ -118,6 +125,7 @@ export async function createPending(
       sizeBytes: input.sizeBytes,
       originalKey: input.originalKey,
       thumbKey: input.thumbKey,
+      thumbSizeBytes: input.thumbSizeBytes,
       hasThumbnail: input.hasThumbnail,
       createdBy: input.createdBy,
     })
