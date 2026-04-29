@@ -18,6 +18,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import {
   assertBaselineLedgerMatchesFile,
   buildMismatchMessage,
@@ -73,6 +74,38 @@ describe('buildMismatchMessage', () => {
     expect(msg).not.toMatch(/wipe/i);
     expect(msg).not.toMatch(/reseed/i);
     expect(msg).not.toMatch(/down -v/);
+  });
+});
+
+describe('readRecordedBaselineHash error-code unwrapping', () => {
+  // The pg driver sets `.code` (SQLSTATE) on its errors, but drizzle-orm
+  // wraps every pg error in `DrizzleQueryError` and only preserves the
+  // original on `.cause` — `.code` does NOT propagate to the wrapper. The
+  // integration tests below run against an already-migrated DB so they
+  // never hit the catch path; these tests pin the wrapper-unwrapping logic
+  // that catches the legitimate fresh-DB cases (`42P01`, `3F000`).
+  function makeWrappedDb(code: string, message: string): Database {
+    const pgErr: Error & { code?: string } = new Error(message);
+    pgErr.code = code;
+    const wrapped = new DrizzleQueryError('SELECT hash FROM …', [], pgErr);
+    return {
+      execute: () => Promise.reject(wrapped),
+    } as unknown as Database;
+  }
+
+  it('returns null for 42P01 (relation_does_not_exist) wrapped in DrizzleQueryError', async () => {
+    const db = makeWrappedDb('42P01', 'relation "drizzle.__drizzle_migrations" does not exist');
+    await expect(readRecordedBaselineHash(db)).resolves.toBeNull();
+  });
+
+  it('returns null for 3F000 (invalid_schema_name) wrapped in DrizzleQueryError', async () => {
+    const db = makeWrappedDb('3F000', 'schema "drizzle" does not exist');
+    await expect(readRecordedBaselineHash(db)).resolves.toBeNull();
+  });
+
+  it('rethrows pg errors with non-fresh-DB codes', async () => {
+    const db = makeWrappedDb('08006', 'connection failure');
+    await expect(readRecordedBaselineHash(db)).rejects.toThrow(/Failed query/);
   });
 });
 

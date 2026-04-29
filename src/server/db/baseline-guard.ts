@@ -40,6 +40,23 @@ export function computeBaselineFileHash(migrationsFolder: string): string {
 }
 
 /**
+ * Walks the `cause` chain looking for a pg-style `SQLSTATE` code. drizzle-orm
+ * wraps the underlying pg error in `DrizzleQueryError`, which preserves the
+ * driver error on `.cause` but does not propagate `.code` to the wrapper —
+ * so a naive `(err as { code }).code` always reads `undefined` and the
+ * fresh-DB cases below would rethrow instead of returning null.
+ */
+function pgErrorCode(err: unknown): string | undefined {
+  let cur: unknown = err;
+  while (cur && typeof cur === 'object') {
+    const code = (cur as { code?: unknown }).code;
+    if (typeof code === 'string') return code;
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
  * Reads the first row of `drizzle.__drizzle_migrations` (the baseline
  * entry) and returns its hash. Returns `null` for the legitimate
  * fresh-DB shapes — the table absent (`42P01`), the schema absent
@@ -53,7 +70,7 @@ export async function readRecordedBaselineHash(db: Database): Promise<string | n
     );
     return result.rows[0]?.hash ?? null;
   } catch (err) {
-    const code = (err as { code?: string }).code;
+    const code = pgErrorCode(err);
     if (code === '42P01' || code === '3F000') return null;
     throw err;
   }
