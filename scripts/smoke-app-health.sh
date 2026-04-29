@@ -44,23 +44,24 @@ TIMEOUT="${2:-60}"
 # binary needed.
 #
 # Diagnostic on failure:
-#   - non-2xx response  -> "HTTP <status> <body>" so an operator can tell
-#                          DB-fail from storage-fail without grepping app
-#                          logs (probeHealth returns checks.db / .storage
-#                          in the JSON body).
-#   - fetch error       -> "fetch error: <code-or-message>" where the code
-#                          comes from `err.cause` (undici flattens system
-#                          errors there). Without this, Node's top-level
-#                          message is the literal string "fetch failed"
-#                          for every cause — ECONNREFUSED (container still
-#                          booting) looks identical to ECONNRESET (event
-#                          loop wedged mid-handshake) or ETIMEDOUT (kernel
-#                          accepted, Fastify never replied). Surfacing the
-#                          cause's code lets the operator distinguish them
-#                          at a glance.
-#   - docker exec error -> the daemon's message ("No such container",
-#                          "Container ... is not running") falls through
-#                          unchanged.
+#   - non-2xx response   -> "HTTP <status> <body>" so an operator can tell
+#                           DB-fail from storage-fail without grepping app
+#                           logs (probeHealth returns checks.db / .storage
+#                           in the JSON body).
+#   - ECONNREFUSED       -> "starting (ECONNREFUSED)" — port not bound yet,
+#                           benign during the boot window. Spelled out (not
+#                           silenced) because it is also the signal we want
+#                           to see disappear once the app is up.
+#   - other fetch error  -> "transport: <code>" where the code comes from
+#                           `err.cause` (undici flattens system errors there).
+#                           Without this, Node's top-level message is the
+#                           literal "fetch failed" for every cause —
+#                           ECONNRESET (event loop wedged mid-handshake)
+#                           looks identical to ETIMEDOUT (kernel accepted,
+#                           Fastify never replied).
+#   - docker exec error  -> the daemon's message ("No such container",
+#                           "Container ... is not running") falls through
+#                           unchanged.
 PROBE_JS=$(cat <<'JS'
 fetch('http://localhost:3000/api/health')
   .then(async r => {
@@ -70,8 +71,9 @@ fetch('http://localhost:3000/api/health')
     process.exit(1);
   })
   .catch(err => {
-    const detail = err.cause?.code ?? err.cause?.message ?? err.message;
-    process.stderr.write(`fetch error: ${detail}\n`);
+    const code = err.cause?.code ?? err.cause?.message ?? err.message;
+    const label = code === 'ECONNREFUSED' ? `starting (${code})` : `transport: ${code}`;
+    process.stderr.write(`${label}\n`);
     process.exit(1);
   });
 JS
