@@ -34,12 +34,12 @@ Runtime versions are not pinned here — [CONTRIBUTING.md § Runtime Requirement
 
 ### 1.2 Configure retention (bucket lock)
 
-R2 does not offer native object versioning or S3 Object Lock Compliance Mode. A bucket lock rule over timestamped filenames gives us the practical immutability window ([ADR-0020 §Alternatives](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#alternatives-considered)). Scope the rule to the `daily/` prefix — the `status/latest.json` mirror is overwritten every cycle and must stay outside the lock, or the badge freezes at its day-1 value.
+R2 does not offer native object versioning or S3 Object Lock Compliance Mode. A bucket lock rule over timestamped filenames gives us the practical immutability window ([ADR-0020 §Alternatives](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#alternatives-considered)) — within the window, no destructive op on locked-prefix keys succeeds via the data-plane S3 token. Scope the rule to the `daily/` prefix — the `status/latest.json` mirror is overwritten every cycle and must stay outside the lock, or the badge freezes at its day-1 value. The rule UI exposes Rule Name, Prefix, Retention period; there is no Compliance/Governance mode toggle.
 
 Let **D** be the immutable-window value from [ADR-0020 §Retention](../../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention).
 
 1. Open the bucket → **Settings** → **Object lock rules** → **Add rule**.
-2. Mode: **Compliance**. Retention: D days. **Prefix: `daily/`** (not empty).
+2. **Rule name:** any descriptive label (e.g. `Lock daily backups`). **Rule scope prefix:** `daily/` (not empty). **Retention period:** D days. **Enabled:** on.
 3. **Save**.
 
 ### 1.3 Configure deletion (lifecycle rule)

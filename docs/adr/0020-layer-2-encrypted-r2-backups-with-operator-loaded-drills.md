@@ -37,11 +37,11 @@ Add a dedicated **`backup` compose service** that runs on a configurable interva
 
 ### Object versioning plus true Object Lock (Compliance Mode)
 
-S3/R2 object versioning with a Compliance-mode lock — no principal, including root, can delete within the retention window. Strongest ransomware/misconfiguration protection. Ruled out: R2 does not currently support native versioning or Object Lock Compliance Mode. Bucket locks + unique timestamped filenames cover our actual threats (accidents, token leaks) without emulating a missing feature.
+S3/R2 object versioning with a Compliance-mode lock — no principal, including root, can delete within the retention window. Strongest ransomware/misconfiguration protection. Ruled out: R2 does not currently support native versioning or Object Lock Compliance Mode. Bucket locks + unique timestamped filenames cover our actual threats (accidents, data-plane S3 token leaks) without emulating a missing feature. Management-plane compromise (CF dashboard or R2-edit API token) can shorten the rule and bypass the lock retroactively, but is outside this ADR's threat model — those credentials never reach the VPS.
 
 ### Dual R2 tokens — PUT-only for VPS, full for operator
 
-Scope the VPS credential so a compromise cannot delete history. Ruled out: R2 token permissions are coarse, no native PUT-only tier at required granularity. Bucket locks give equivalent practical protection (deletes blocked in the window regardless of token scope) with less operational complexity.
+Scope the VPS credential so a compromise cannot delete history. Ruled out: R2 token permissions are coarse, no native PUT-only tier at required granularity. Bucket locks give equivalent practical protection — within the window, no destructive op on locked-prefix keys succeeds via the data-plane S3 token (DeleteObject, PutObject overwrite, DeleteObjects, CopyObject self-overwrite all blocked) — with less operational complexity.
 
 ### Host systemd timer as the cron trigger
 
@@ -70,7 +70,7 @@ Classic grandfather-father-son: promote a daily to weekly on Sundays and monthly
 - Off-site encrypted full-state backups exist for the first time, covering what Layer 1 cannot (users, sessions, schema, audit FKs).
 - Every backup is immediately verified via Tier 1 — silent corruption fails the run before it reaches R2.
 - Tier 2 proves the encrypted round-trip continuously whenever the operator is engaged, without a standing decrypt key on the server.
-- Bucket locks make the destination resistant to accidental or token-leak-driven deletion within the retention window.
+- Bucket locks make the destination resistant to accidental and data-plane-S3-token-leak-driven deletion or overwrite within the retention window.
 - Restore runs from the operator workstation with only the envelope file and the private identity — no VPS required.
 - The compose-owned `backup` service keeps the deployment topology consistent with [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md).
 - The badge's misleading-state-free behaviour (explicit "status unknown" when the DB is unreachable) aligns Layer 2 with the critical-AC tier rules in [ADR-0014](0014-ac-tier-system-critical-vs-design.md).
@@ -84,6 +84,8 @@ Classic grandfather-father-son: promote a daily to weekly on Sundays and monthly
 - Operator must maintain the private identity off-system; losing it forfeits Tier 2 drills and every DR restore from encrypted archives.
 - Linear retention keeps a rolling window of encrypted objects (see §Retention for the current window length), by design — acceptable on the free tier at the current cadence, but the operator must monitor bucket size if the schedule tightens or the window extends.
 - Drill-staleness amber depends on the operator keeping the key loaded after reboots; documented in the runbook but not system-enforceable.
+- **`status/latest.json` is forge-able by the same data-plane S3 token.** The mirror sits outside the lock by design (see Amendment 2026-04-23) so the freshness badge can update; a `secrets.env.age` leak lets an attacker overwrite it with fake-OK content. Operators relying on the mirror as an out-of-band signal must cross-check `meta_backup_status` in the DB rather than trusting the mirror alone.
+- **Unbounded PUT cost-attack vector.** R2 token permissions allow PUT to any prefix without an object-count cap; a leaked credential supports a cost-attack until lifecycle reaps at day 90. Mitigated only by R2 free-tier limits and operator billing alerts, not by the lock.
 
 ## References
 
@@ -102,3 +104,7 @@ Lifecycle rule changed from "delete 30 days after upload" to "delete 90 days aft
 ### 2026-04-23 — Bucket-lock prefix narrowed to `daily/`
 
 Originally specified with prefix scope "all objects" (setup.md §1.2). The status-mirror key (`status/latest.json`, see §Decision) is a fixed well-known name overwritten every backup cycle — a bucket-wide lock accepted the first write and rejected every subsequent one with "The object is locked by the bucket policy." Result: `last_backup_ok=true` on every cycle (daily artifacts land fine) but `last_error` perpetually populated with the mirror failure and `status/latest.json` frozen at its day-1 value, breaking the login-screen freshness badge. Fix: narrow the bucket lock's prefix scope to `daily/` so historical dumps and their manifests stay tamper-resistant while the status mirror remains writable. No change to the lifecycle rule (stays bucket-wide — the mirror is idempotent under delete; the next cycle rewrites it). Decision text above updated in-place; §Retention values unchanged.
+
+### 2026-04-29 — Threat-model scope tightened to data-plane after empirical testing
+
+Tested against the live bucket: within the immutability window, R2 bucket lock blocks DeleteObject, PutObject overwrite, DeleteObjects, and CopyObject self-overwrite via the data-plane S3 token. The design's protection holds for `secrets.env.age` exfiltration. Two gaps surfaced and were added to §Consequences: `status/latest.json` is forge-able with the same token, and unbounded PUT permits a cost-attack until lifecycle reaps at day 90. Also confirmed: rule changes apply retroactively in both directions — shortening the rule's `maxAgeSeconds` unlocks already-stored objects whose age exceeds the new threshold. Only management-plane credentials (CF dashboard, R2-edit API token) can change the rule, and those never reach the VPS, so retroactive shortening is outside the data-plane threat model. §Alternatives and §Consequences wording tightened accordingly.
