@@ -6,7 +6,7 @@
  * `deploy.sh` does not need any project node_modules — it only needs
  * Docker.
  *
- * Four checkpoints, one container start:
+ * Five checkpoints, one container start:
  *   1. `validateEnvAggregated()` — schema + every cross-field guard in
  *      one pass. Aborts the deploy on first failure (issue #139,
  *      AC-231).
@@ -35,6 +35,19 @@
  *      cutover that drops PUT, breaks SigV4 signed-header binding, or
  *      changes the Content-MD5 contract surfaces here, not at first
  *      user upload.
+ *   5. CopyObject-verb probe — server-side-copies the upload sentinel to
+ *      a second sentinel key with a tight per-call timeout, asserts
+ *      success. This is the canary for the **restore** flow
+ *      (`copyFromVersion` in `src/server/storage/client.ts`). The
+ *      specific failure mode is B2-specific: an app key without
+ *      `writeFileRetentions` on a bucket with default Compliance
+ *      retention silently HANGS `CopyObject` for ~5 minutes per attempt
+ *      before B2 returns 503; the SDK then retries 3×, totaling ~17
+ *      minutes before the user-facing restore call surfaces a 500. See
+ *      docs/ops/object-storage-provisioning.md (App key table) for the
+ *      cap rationale. Verifying at deploy time means the same
+ *      misconfiguration surfaces here, not at first user-clicked
+ *      Wiederherstellen.
  *
  * Why a dedicated entry:
  *   - The existing `start.ts` entry point validates AND boots Fastify,
@@ -53,6 +66,7 @@
  * compose up` runs.
  */
 import crypto from 'node:crypto';
+import { S3Client, CopyObjectCommand } from '@aws-sdk/client-s3';
 import { assertAppServerEnv, validateEnvAggregated } from './config/env.js';
 import { formatFeatureManifest } from './config/features.js';
 import { createStorageClient, type AttachmentStorageClient } from './storage/client.js';
@@ -110,6 +124,7 @@ async function main(): Promise<void> {
   }
 
   await probeUploadVerb(storage, env.STORAGE_BUCKET);
+  await probeCopyObjectVerb(env);
 }
 
 /**
@@ -174,6 +189,93 @@ async function probeUploadVerb(storage: AttachmentStorageClient, bucket: string)
     );
   }
   console.error(`probe-upload: OK bucket=${bucket} key=${PROBE_KEY}`);
+}
+
+/**
+ * Server-side-copy `__probe/upload` (just written by `probeUploadVerb`)
+ * to a second sentinel key with a tight per-call timeout and assert
+ * success. This is the canary for the **restore** flow
+ * (`copyFromVersion` in `src/server/storage/client.ts`).
+ *
+ * The B2-specific failure mode this catches: an app key without
+ * `writeFileRetentions` against a bucket with default Compliance
+ * retention silently HANGS `CopyObject` for ~5 minutes per attempt
+ * before B2 returns 503 ServiceUnavailable. The SDK retries 3×
+ * (~17 minutes total) before the user-facing call surfaces an error.
+ * The cap requirement is documented at
+ * `docs/ops/object-storage-provisioning.md` (App key table). MinIO
+ * does not surface this quirk, so the same probe passes against the
+ * dev mirror without any IAM-policy change.
+ *
+ * Wiring choice — direct SDK rather than `storage.copyFromVersion`:
+ * we want explicit per-call timeouts (`requestTimeout`,
+ * `connectionTimeout`) and `maxAttempts: 1` so the probe fails fast
+ * (within ~30 seconds) instead of waiting on the SDK's full retry
+ * budget. The shared `AttachmentStorageClient` keeps the production
+ * retry shape; the probe binds its own short-leash client.
+ *
+ * The destination key is fixed (`__probe/copyobj`) so each deploy
+ * overwrites the prior probe — same model as `probeUploadVerb`. The
+ * bucket lifecycle reaps both the upload and copyobj sentinels along
+ * with everything else.
+ */
+async function probeCopyObjectVerb(env: {
+  STORAGE_ENDPOINT: string;
+  STORAGE_REGION: string;
+  STORAGE_BUCKET: string;
+  STORAGE_ACCESS_KEY: string;
+  STORAGE_SECRET_KEY: string;
+}): Promise<void> {
+  const SOURCE_KEY = '__probe/upload';
+  const DEST_KEY = '__probe/copyobj';
+  const bucket = env.STORAGE_BUCKET;
+  // Short-leash client — the whole point of this probe is to catch a
+  // hang quickly. The production storage client uses default retries
+  // (3 attempts) which would mask the hang as a 17-minute stall.
+  const s3 = new S3Client({
+    endpoint: env.STORAGE_ENDPOINT,
+    region: env.STORAGE_REGION,
+    credentials: {
+      accessKeyId: env.STORAGE_ACCESS_KEY,
+      secretAccessKey: env.STORAGE_SECRET_KEY,
+    },
+    forcePathStyle: true,
+    maxAttempts: 1,
+    requestHandler: { requestTimeout: 25_000, connectionTimeout: 5_000 },
+  });
+  const t0 = Date.now();
+  try {
+    await s3.send(
+      new CopyObjectCommand({
+        Bucket: bucket,
+        Key: DEST_KEY,
+        // CopySource format per AWS S3 docs: "<bucket>/<key>". No
+        // versionId — the source's current version is what we just wrote
+        // in probeUploadVerb. Slashes inside the key remain raw; the SDK
+        // URL-encodes the rest.
+        CopySource: `${bucket}/${SOURCE_KEY}`,
+      }),
+    );
+  } catch (err) {
+    const name = err instanceof Error ? err.name : 'Error';
+    const msg = err instanceof Error ? err.message : String(err);
+    const elapsed = Date.now() - t0;
+    throw new Error(
+      `probe-copyobj: FAILED bucket=${bucket} elapsed=${elapsed}ms\n` +
+        `  ${name}: ${msg}\n` +
+        `Most common cause on B2: app key is missing the writeFileRetentions ` +
+        `capability. CopyObject under a Compliance-default-retention bucket ` +
+        `requires it; without, B2 silently hangs the request and eventually ` +
+        `returns 503 ServiceUnavailable. Re-create the app key per ` +
+        `docs/ops/object-storage-provisioning.md (App key — via b2 CLI) ` +
+        `with the full seven-cap set including writeFileRetentions, then ` +
+        `update STORAGE_ACCESS_KEY in .env and STORAGE_SECRET_KEY in ` +
+        `secrets.env.age, and redeploy.`,
+    );
+  }
+  console.error(
+    `probe-copyobj: OK bucket=${bucket} src=${SOURCE_KEY} dst=${DEST_KEY} elapsed=${Date.now() - t0}ms`,
+  );
 }
 
 main().then(

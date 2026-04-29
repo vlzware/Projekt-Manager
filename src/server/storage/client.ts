@@ -219,6 +219,18 @@ export interface StorageClient {
    * new version id of the resulting current version (the bucket is
    * versioned, so each PUT — including this server-side copy — produces
    * a fresh version). Used by the Papierkorb restore flow (ADR-0022).
+   *
+   * App-key capability dependency (B2): on a bucket with default
+   * Compliance Object Lock retention, the running credential MUST hold
+   * `writeFileRetentions` (= `s3:PutObjectRetention`). Without it,
+   * B2's S3-compat layer silently HANGS the CopyObject request for ~5
+   * minutes per attempt before returning 503 ServiceUnavailable — the
+   * inherited retention timestamp the copy must write tips into a
+   * capability denial that B2 surfaces as a stall, not an immediate
+   * 403. The deploy-preflight `probe-copyobj` step in
+   * `deploy-preflight-cli.ts` is the catch-point; the App key table
+   * in `docs/ops/object-storage-provisioning.md` is the source of
+   * truth for the canonical seven-cap set.
    */
   copyFromVersion?: (key: string, sourceVersionId: string) => Promise<string | undefined>;
 
