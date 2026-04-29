@@ -48,9 +48,16 @@ TIMEOUT="${2:-60}"
 #                          DB-fail from storage-fail without grepping app
 #                          logs (probeHealth returns checks.db / .storage
 #                          in the JSON body).
-#   - fetch error       -> "fetch error: <message>" so "container starting"
-#                          (ECONNREFUSED) is distinguishable from a wedged
-#                          Fastify event loop.
+#   - fetch error       -> "fetch error: <code-or-message>" where the code
+#                          comes from `err.cause` (undici flattens system
+#                          errors there). Without this, Node's top-level
+#                          message is the literal string "fetch failed"
+#                          for every cause — ECONNREFUSED (container still
+#                          booting) looks identical to ECONNRESET (event
+#                          loop wedged mid-handshake) or ETIMEDOUT (kernel
+#                          accepted, Fastify never replied). Surfacing the
+#                          cause's code lets the operator distinguish them
+#                          at a glance.
 #   - docker exec error -> the daemon's message ("No such container",
 #                          "Container ... is not running") falls through
 #                          unchanged.
@@ -63,7 +70,8 @@ fetch('http://localhost:3000/api/health')
     process.exit(1);
   })
   .catch(err => {
-    process.stderr.write(`fetch error: ${err.message}\n`);
+    const detail = err.cause?.code ?? err.cause?.message ?? err.message;
+    process.stderr.write(`fetch error: ${detail}\n`);
     process.exit(1);
   });
 JS
