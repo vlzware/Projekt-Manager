@@ -13,6 +13,8 @@ Tier 2 needs the private identity on the VPS. `load-drill-key.sh` writes it to a
 
 **Location:** `scripts/backup/load-drill-key.sh` in the repo. `Dockerfile.backup` copies it into the image at `/usr/local/bin/load-drill-key` (no `.sh`) — that is the only path the operator ever invokes, via `docker exec` into the running backup container. The tmpfs target inside the container is `/run/drill-key/identity` (file mode 0400, owned by root; the tmpfs mount itself is mode 0700 uid 0 — the container runs as root).
 
+**Deploy auto-prompt:** `scripts/deploy.sh` checks `/run/drill-key/identity` after `docker compose --profile backup up -d` and invokes `load-drill-key` interactively when the tmpfs is empty (the common case after a deploy that recreated the backup container). Have `~/secrets/age-backup.key` ready on the operator workstation when running a deploy — that's the single intended trigger for the steps below in normal operation. The standalone invocation documented here remains the recovery path for ad-hoc reloads (operator-initiated rotation, post-VPS-reboot without a redeploy, container restart triggered outside the deploy flow).
+
 You are about to write private key material into RAM on the VPS; this is cleared on reboot or on container recreation, and can be overwritten by rerunning the script.
 
 1. Have `~/secrets/age-backup.key` open on the operator workstation. Copy its full contents (including the comment lines and the `AGE-SECRET-KEY-1...` body) to the clipboard.

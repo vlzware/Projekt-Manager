@@ -11,7 +11,10 @@ operator (over WireGuard):                                        v
     -> decrypt secrets.env.age (age passphrase prompt)
     -> docker compose pull app + up -d
     -> smoke test /api/health (60s timeout)
+    -> drill-key reload prompt (when /run/drill-key/identity is empty)
 ```
+
+Have `~/secrets/age-backup.key` open on the operator workstation before invoking the deploy — when the backup container was recreated by the deploy, the script will prompt to paste the age private identity into the container's tmpfs (AC-175). See [backup/drills.md](backup/drills.md) for the threat model.
 
 ## Preconditions
 
@@ -37,7 +40,7 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh origin/iteration/N-name
 sudo -u deploy /opt/projekt-manager/scripts/deploy.sh <sha>
 ```
 
-The script: fetches origin, checks out the exact SHA, decrypts `secrets.env.age` via process substitution (plaintext never on disk), sets `APP_IMAGE_TAG=sha-<sha>`, runs `docker compose pull app && docker compose up -d`, polls `/api/health` for 60s.
+The script: fetches origin, checks out the exact SHA, decrypts `secrets.env.age` via process substitution (plaintext never on disk), sets `APP_IMAGE_TAG=sha-<sha>`, runs `docker compose pull app && docker compose up -d`, polls `/api/health` for 60s, reloads Caddy, and — when the backup container's tmpfs is empty — prompts the operator to paste the age private identity into `/run/drill-key/identity` via the existing `load-drill-key` tool (no key persisted to disk). A failed or skipped paste warns but does not abort the deploy; reload manually with `docker exec -it projekt-manager-backup-1 load-drill-key`.
 
 ## Rollback
 

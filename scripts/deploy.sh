@@ -252,4 +252,34 @@ fi
 echo "Reloading Caddy config..."
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --force
 
+# --- Drill-key reload (operator-loaded; AC-175 tmpfs-only) -----------
+# Container recreation wipes the tmpfs at /run/drill-key. Until the
+# operator re-pastes the age private identity, every Tier 2 drill tick
+# silently skips (services/backup-drill.ts: outcome='skipped' on absent
+# key — by design, but the badge stays at "noch nie ausgeführt" until
+# a successful drill writes meta_backup_status.lastDrillAt). Folding
+# the reload into the deploy session — same TTY the operator used to
+# decrypt secrets.env.age above — closes the gap without weakening
+# AC-175: load-drill-key still reads the paste over a restricted-mode
+# stdin and writes only to tmpfs.
+#
+# Skip when the tmpfs is still warm (compose-only changes that didn't
+# recreate the backup container). docker exec exits non-zero if the
+# file is absent OR empty — `test -s` covers both. Stderr is redirected
+# because a "no such file" error is the expected absent path.
+if docker exec projekt-manager-backup-1 test -s /run/drill-key/identity 2>/dev/null; then
+  echo "Drill key already in tmpfs — skipping reload."
+else
+  echo
+  echo "==> Loading drill key (operator paste; AC-175 tmpfs-only)"
+  # `-it` allocates a pseudo-TTY so load-drill-key's `read -s` actually
+  # suppresses echo. Failure here does not abort the deploy — app and
+  # backups are already serving — but a loud warning prevents the
+  # "silent skip until the badge goes amber days later" trap.
+  if ! docker exec -it projekt-manager-backup-1 load-drill-key; then
+    echo "WARN: drill key not loaded — Tier 2 drills will skip until you run:" >&2
+    echo "      docker exec -it projekt-manager-backup-1 load-drill-key" >&2
+  fi
+fi
+
 echo "Deploy verified — healthy at $(git rev-parse --short HEAD)"
