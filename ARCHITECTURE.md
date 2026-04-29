@@ -8,19 +8,21 @@ For the full product specification, see [docs/spec/](docs/spec/index.md).
 
 ## Tech Stack
 
-| Technology  | Version       | Purpose                                 | Docs                                                  |
-| ----------- | ------------- | --------------------------------------- | ----------------------------------------------------- |
-| TypeScript  | 6.0           | Language (strict, shared client+server) | [typescriptlang.org](https://www.typescriptlang.org/) |
-| React       | 19            | UI rendering                            | [react.dev](https://react.dev/)                       |
-| Vite        | 8             | Dev server, bundler, HMR                | [vite.dev](https://vite.dev/)                         |
-| Zustand     | 5             | Client-side state management            | [zustand](https://github.com/pmndrs/zustand)          |
-| Fastify     | 5             | HTTP server and API framework           | [fastify.dev](https://fastify.dev/)                   |
-| Drizzle ORM | 0.45          | Type-safe SQL, schema, migrations       | [orm.drizzle.team](https://orm.drizzle.team/)         |
-| PostgreSQL  | 17            | Relational database                     | [postgresql.org](https://www.postgresql.org/)         |
-| MinIO       | S3-compatible | Object/file storage (future uploads)    | [min.io](https://min.io/)                             |
-| Caddy       | 2             | Reverse proxy, automatic HTTPS          | [caddyserver.com](https://caddyserver.com/)           |
-| Vitest      | 4             | Unit and component tests                | [vitest.dev](https://vitest.dev/)                     |
-| Playwright  | 1.59          | End-to-end tests                        | [playwright.dev](https://playwright.dev/)             |
+| Technology    | Version       | Purpose                                                          | Docs                                                                |
+| ------------- | ------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------- |
+| TypeScript    | 6.0           | Language (strict, shared client+server)                          | [typescriptlang.org](https://www.typescriptlang.org/)               |
+| React         | 19            | UI rendering                                                     | [react.dev](https://react.dev/)                                     |
+| Vite          | 8             | Dev server, bundler, HMR                                         | [vite.dev](https://vite.dev/)                                       |
+| Zustand       | 5             | Client-side state management                                     | [zustand](https://github.com/pmndrs/zustand)                        |
+| Fastify       | 5             | HTTP server and API framework                                    | [fastify.dev](https://fastify.dev/)                                 |
+| Drizzle ORM   | 0.45          | Type-safe SQL, schema, migrations                                | [orm.drizzle.team](https://orm.drizzle.team/)                       |
+| PostgreSQL    | 17            | Relational database                                              | [postgresql.org](https://www.postgresql.org/)                       |
+| Backblaze B2  | S3-compatible | Object/file storage (prod) — versioning + Compliance Object Lock | [backblaze.com/b2](https://www.backblaze.com/b2/cloud-storage.html) |
+| MinIO         | S3-compatible | Object/file storage (dev mirror)                                 | [min.io](https://min.io/)                                           |
+| Cloudflare R2 | S3-compatible | Encrypted DB-backup destination (Layer 2)                        | [r2 docs](https://developers.cloudflare.com/r2/)                    |
+| Caddy         | 2             | Reverse proxy, automatic HTTPS                                   | [caddyserver.com](https://caddyserver.com/)                         |
+| Vitest        | 4             | Unit and component tests                                         | [vitest.dev](https://vitest.dev/)                                   |
+| Playwright    | 1.59          | End-to-end tests                                                 | [playwright.dev](https://playwright.dev/)                           |
 
 Stack decisions are recorded in ADRs: [ADR-0002](docs/adr/0002-tech-stack-typescript-react-vite-zustand.md) (frontend), [ADR-0003](docs/adr/0003-deployment-infrastructure-vps-docker-compose-github-actions.md) (infra), [ADR-0004](docs/adr/0004-backend-stack-fastify-drizzle-node-postgres.md) (backend).
 
@@ -149,7 +151,7 @@ All HTTP endpoints exposed by the Fastify server. Concrete URL structure lives h
 
 | Method | Path                                                          | Auth    | Permission             | Rate limit | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------ | ------------------------------------------------------------- | ------- | ---------------------- | ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GET    | `/api/health`                                                 | none    | —                      | none       | Liveness probe; runs `SELECT 1` on the DB and a `HeadBucket` on MinIO in parallel. Returns `{status,checks:{db,storage}}`; 503 on any probe failure. See #48                                                                                                                                                                                                                                                                                              |
+| GET    | `/api/health`                                                 | none    | —                      | none       | Liveness probe; runs `SELECT 1` on the DB and a `HeadBucket` against the configured object store (MinIO in dev, B2 in prod) in parallel. Returns `{status,checks:{db,storage}}`; 503 on any probe failure. See #48                                                                                                                                                                                                                                        |
 | GET    | `/api/backup/status`                                          | none    | —                      | 30 / 1 min | Public read of the single-row backup-freshness surface for the owner-only login-screen badge (ADR-0020, AC-176). Body carries only data-model §5.9 fields; `{available:false}` when DB unreachable.                                                                                                                                                                                                                                                       |
 | POST   | `/api/auth/login`                                             | none    | —                      | 5 / 1 min  | Login; sets HttpOnly `session` cookie                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | POST   | `/api/auth/logout`                                            | session | —                      | none       | Invalidates the current session                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -412,4 +414,3 @@ Both halves of the validator are pure functions over structured snapshots; the I
 | Contributing guide and workflow | [CONTRIBUTING.md](CONTRIBUTING.md)                 |
 | Data persistence and recovery   | [DATA.md](DATA.md)                                 |
 | Vision and kickoff              | [docs/project/kickoff.md](docs/project/kickoff.md) |
-| Project journal                 | [docs/project/journal.md](docs/project/journal.md) |

@@ -2,6 +2,8 @@
 
 # Plan
 
+**CURRENT** The project is considered a successful MVP. There is no fixed iteration with pre-planned tasks in this repository at the moment; updates may be added as the need arises.
+
 ## Iteration 0.A - Discovery
 
 - [x] project definition
@@ -203,13 +205,13 @@ From test environment into production on Hetzner.
 - configurable notification system
   _as well as all of the "Unplanned work" ones_
 
-## Iteration 9 - e2e tests, polish, ops, data - **CURRENT**
+## Iteration 9 - e2e tests, polish, ops, data
 
-- [ ] more extensive testing with the deployed app and different clients
-- [ ] polish according to user feedback
-- [ ] extensive testing of the operator-driven processes
-- [ ] integration of B2
-- [ ] a presentation[^1]
+- [x] more extensive testing with the deployed app and different clients
+- [x] polish according to user feedback
+- [x] extensive testing of the operator-driven processes
+- [x] integration of B2
+- [x] a presentation[^1]
 
 **Artifacts**
 

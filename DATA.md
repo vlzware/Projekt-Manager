@@ -10,11 +10,11 @@ The kickoff commits to automated DB backup ([kickoff line 72](docs/project/kicko
 
 Each class of data has different size, portability, and durability properties, so each gets its own tool and its own verification story. The layers are **complementary, not substitutes** — see [ADR-0018](docs/adr/0018-data-persistence-and-recovery-layered-strategy.md) for why.
 
-| Layer                      | Captures                                           | Trigger                    | Off-site            | Status                       |
-| -------------------------- | -------------------------------------------------- | -------------------------- | ------------------- | ---------------------------- |
-| **1 — Business data**      | Customers, projects, assignments, archived rows    | Manual UI export / restore | No (file download)  | Shipped                      |
-| **2 — Full DB state**      | Everything in PostgreSQL (users, sessions, schema) | Scheduled, automatic       | Yes (encrypted, R2) | Shipped                      |
-| **3 — Binary attachments** | Uploaded files                                     | Continuous                 | Provider-owned      | Deferred (feature not built) |
+| Layer                      | Captures                                           | Trigger                    | Off-site                                     | Status  |
+| -------------------------- | -------------------------------------------------- | -------------------------- | -------------------------------------------- | ------- |
+| **1 — Business data**      | Customers, projects, assignments, archived rows    | Manual UI export / restore | No (file download)                           | Shipped |
+| **2 — Full DB state**      | Everything in PostgreSQL (users, sessions, schema) | Scheduled, automatic       | Yes (encrypted with `age`, R2)               | Shipped |
+| **3 — Binary attachments** | Uploaded files (photos, Aufmaß, PDFs, DOCX)        | Continuous (presigned PUT) | Provider-owned (B2 versioning + Object Lock) | Shipped |
 
 ---
 
@@ -45,9 +45,16 @@ Scheduled encrypted `pg_dump` → R2. Every run is verified on-create (Tier 1); 
 
 ---
 
-## Layer 3 — Binary attachments (deferred)
+## Layer 3 — Binary attachments (provider-enforced durability)
 
-Uploaded files are not yet a feature of the system. When added, durability will be a property of the storage provider; the system will document the deployment requirement rather than re-implement object-level backup. Tracked via the `storage/` module ([ADR-0018](docs/adr/0018-data-persistence-and-recovery-layered-strategy.md) §Layer 3).
+Uploaded files live on Backblaze B2. The app key cannot destroy versions; "deletion" surfaced to users is a hide on the versioned bucket, real destruction is a provider-side lifecycle action only. A finite-window Compliance Object Lock backstop catches operator-side mistakes during the first `R` days of every version. Boot-time bucket-shape and capability self-tests refuse to start on drift.
+
+- **Design rationale:** [ADR-0022](docs/adr/0022-binary-storage-b2-compliance-object-lock.md)
+- **Contract:** [spec data-model.md §5.13](docs/spec/data-model.md#513-attachment), [api.md §14.2.11](docs/spec/api.md#14211-attachments), [verification.md §15.26](docs/spec/verification.md#1526-attachments)
+- **Operator procedure:** [docs/ops/object-storage-provisioning.md](docs/ops/object-storage-provisioning.md) — B2 bucket setup, capability-restricted app key, dev-MinIO parity
+- **Code:** `src/server/services/AttachmentService.ts`, `src/server/storage/{client,safety}.ts`, sibling reapers (`attachment-orphan-reaper.ts`, `bulk-download-reaper.ts`)
+
+**Open future work — end-to-end encryption.** B2 binaries are not e2e-encrypted: the provider can read the bytes. Layer 2 backups are e2e via `age`; binaries may follow if real e2e becomes a requirement. SSE-B2 is **not** an uplift here — its keys are provider-held.
 
 ---
 
@@ -61,6 +68,8 @@ Uploaded files are not yet a feature of the system. When added, durability will 
 | Run the monthly verification drill      | [ops/backup/drills.md](docs/ops/backup/drills.md)                                     |
 | Diagnose a broken backup service        | [ops/backup/troubleshooting.md](docs/ops/backup/troubleshooting.md)                   |
 | See the full Layer 2 design             | [ADR-0020](docs/adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md) |
+| Provision the Layer 3 B2 bucket + key   | [ops/object-storage-provisioning.md](docs/ops/object-storage-provisioning.md)         |
+| See the full Layer 3 design             | [ADR-0022](docs/adr/0022-binary-storage-b2-compliance-object-lock.md)                 |
 | Export business data for a peer install | UI → Daten view                                                                       |
 
 ---

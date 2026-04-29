@@ -177,6 +177,35 @@ npm run test:e2e     # Playwright E2E tests
 
 First-time Playwright setup requires `npx playwright install` to download browser binaries.
 
+## Current state and the road ahead
+
+**State**
+
+The project is considered a successful **MVP**, deployed and E2E-tested in a realistic environment behind VPN, accessible through a real domain from different devices, with users, roles and all the real workflows in place. All operator workflows were E2E-tested as well - backup, recovery, encryption, etc.
+
+**Missing features**
+
+Missing from the original goals, defined in the Kickoff, are invoices and the bookkeeper view - these turned out not to be required for the particular target case.
+
+Also missing is the "Handbuch" - there are two reasons for this:
+
+- the first is the obvious: the rapid adding of features and big changes makes dragging such an artifact around during dev a source of friction;
+- the second is much more interesting - as it turned out during demonstrations, the app _does not need_ a Handbuch, which can fairly be considered a mark of success. The more such a document were needed, the less of a good job we would have done with the UX.
+
+_Of course, when handing the installation over, a "Handbuch" will be present._
+
+**Future improvements**
+
+R2 was enjoyable to fiddle with; however, for the real-user installation I would consider consolidating backups and binaries to B2.
+
+The binaries on B2 are still not e2e encrypted. Even if not as critical as the business data, encryption is definitely the way here as well.
+
+**Next steps**
+
+The next step would be a final customization sweep with the real users, which of course can't be part of this repo. After that, a feature freeze and a side-by-side run with the existing system for some time, gathering extensive feedback for more polishing. This open-source repo will still get updates, but without pre-planned iterations.
+
+A project of this type can never really be considered "finished" - user needs and their environment evolve, and new insights into process optimization surface with time. However, in this current state, I consider it proof that these very realistic needs, described [above](#who-is-this-for), can be met with manageable resources, while maintaining reasonable confidence in the concerns of critical importance - data integrity and security. All of this while staying focused on the real users and their working day, providing a very low bar for acceptance and engagement and, in the end, a more efficient and enjoyable working experience for everyone.
+
 ## License
 
 [AGPL-3.0-only](LICENSE) - open and copyleft, including for network use.
