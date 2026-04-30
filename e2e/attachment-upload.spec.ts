@@ -358,20 +358,15 @@ test.describe('Attachment bulk-fetch + browser-side streaming zip', () => {
     const bulkFetchResponse = await bulkFetchPromise;
     expect(bulkFetchResponse.ok()).toBe(true);
 
-    // 2. Response is per-file (≥ 2 entries given two selected rows).
-    //    The shape is `[{ attachmentId, originalUrl, originalDekMaterial,
-    //    ciphertextSizeBytes, thumbUrl?, thumbDekMaterial?, ciphertextThumbSizeBytes? }]`
-    //    per the BulkFetchEntry interface in api.md §14.2.11.
-    const body = (await bulkFetchResponse.json()) as { data?: unknown };
-    // The server wraps payloads in `{ data: ... }` per the API
-    // envelope convention (see other endpoints); fall through to
-    // raw-array shape if the future contract drops the wrapper.
-    const entries = (Array.isArray(body) ? body : body?.data) as Array<{
-      attachmentId: string;
-      originalUrl: string;
-      originalDekMaterial: string;
-    }>;
-    expect(Array.isArray(entries), 'bulk-fetch returns an array of per-file payloads').toBe(true);
+    // 2. Response is `{ data: BulkFetchEntry[] }` (api.md §14.2.11) with
+    //    per-file payloads `{ attachmentId, originalUrl, originalDekMaterial,
+    //    ciphertextSizeBytes, thumbUrl?, thumbDekMaterial?, ciphertextThumbSizeBytes? }`.
+    //    ≥ 2 entries given two selected rows.
+    const body = (await bulkFetchResponse.json()) as {
+      data: Array<{ attachmentId: string; originalUrl: string; originalDekMaterial: string }>;
+    };
+    const entries = body.data;
+    expect(Array.isArray(entries), 'bulk-fetch returns { data: BulkFetchEntry[] }').toBe(true);
     expect(entries.length).toBeGreaterThanOrEqual(2);
     for (const entry of entries) {
       expect(entry.attachmentId, 'each entry carries the attachmentId').toBeTruthy();

@@ -1033,11 +1033,10 @@ describe('Attachment routes — integration (issue #108)', () => {
         attachmentIds: requested,
       });
       expect(res.statusCode).toBe(200);
-      const body = res.json() as {
-        data?: Array<Record<string, unknown>>;
-        attachments?: Array<Record<string, unknown>>;
-      };
-      const entries = body.data ?? body.attachments;
+      // api.md §14.2.11 pins the response as `{ data: BulkFetchEntry[] }` —
+      // assert the wrapper shape directly, no fallback paths.
+      const body = res.json() as { data: Array<Record<string, unknown>> };
+      const entries = body.data;
       expect(Array.isArray(entries)).toBe(true);
       expect(entries).toHaveLength(3);
 
