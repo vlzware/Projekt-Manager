@@ -59,6 +59,11 @@ function makeEnv(overrides: Partial<Env>): Env {
     R2_REGION: 'auto',
     AGE_RECIPIENT: undefined,
     AGE_IDENTITY_PATH: '/run/drill-key/identity',
+    // BINARY_AGE_RECIPIENT placeholder so happy-path fixtures pass the
+    // app-server presence check (ADR-0024). Per-test arms override to
+    // undefined when exercising the missing-field branch.
+    BINARY_AGE_RECIPIENT: 'age1unused',
+    BINARY_AGE_IDENTITY_PATH: '/run/binary-key/identity',
     VAPID_PRIVATE_KEY: undefined,
     VAPID_SUBJECT: undefined,
     ...overrides,
@@ -137,6 +142,15 @@ describe('assertAppServerEnv', () => {
   it('throws when STORAGE_REGION is missing', () => {
     expect(() => assertAppServerEnv(makeEnv({ STORAGE_REGION: undefined }))).toThrow(
       /STORAGE_REGION/,
+    );
+  });
+
+  it('throws when BINARY_AGE_RECIPIENT is missing (ADR-0024 boot probe upstream)', () => {
+    // Presence check happens before the boot probe so an unset env var
+    // surfaces as "BINARY_AGE_RECIPIENT not configured" rather than the
+    // probe's "wrong identity loaded" diagnostic — see start.ts wiring.
+    expect(() => assertAppServerEnv(makeEnv({ BINARY_AGE_RECIPIENT: undefined }))).toThrow(
+      /BINARY_AGE_RECIPIENT/,
     );
   });
 
@@ -417,6 +431,10 @@ describe('dev-default credentials guard in env.ts', () => {
       STORAGE_SECRET_KEY: 'sk',
       STORAGE_BUCKET: 'pm',
       STORAGE_REGION: 'us-east-1',
+      // App-server presence requirement (ADR-0024). Tests in this block
+      // exercise the dev-default credentials guard, not the binary-age
+      // wiring; a placeholder keeps the unrelated guard from tripping.
+      BINARY_AGE_RECIPIENT: 'age1unused',
       ALLOW_INSECURE_HTTP: 'false',
       ...extra,
     };
@@ -546,14 +564,15 @@ describe('guard predicates: throw helper and aggregator agree', () => {
   it('checkAppServerEnv: same message in throw and aggregated paths', () => {
     // Input that ONLY trips app-server presence. NODE_ENV=test so the
     // production-safety + container-host guards stay quiet. Every
-    // STORAGE_* the guard inspects is undefined so the message lists
-    // the full set in both paths.
+    // app-server-required var the guard inspects is undefined so the
+    // message lists the full set in both paths.
     const env = makeEnv({
       NODE_ENV: 'test',
       STORAGE_ENDPOINT: undefined,
       STORAGE_ACCESS_KEY: undefined,
       STORAGE_SECRET_KEY: undefined,
       STORAGE_REGION: undefined,
+      BINARY_AGE_RECIPIENT: undefined,
     });
     const throwMsg = captureMessage(() => assertAppServerEnv(env));
     expect(throwMsg, 'expected assertAppServerEnv to throw').not.toBeNull();

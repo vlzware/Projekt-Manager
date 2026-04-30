@@ -23,6 +23,11 @@ COPY --from=build /app/dist ./dist
 # Copy migration SQL files (read at runtime by Drizzle migrator)
 COPY --from=build /app/src/server/db/migrations ./dist/server/db/migrations
 
+# `age` binary — required by KeyEnvelopeService at every download-url /
+# bulk-fetch unwrap (ADR-0024). The boot probe reads age-keygen at
+# startup; both must be on PATH before the process forks them.
+RUN apk add --no-cache age
+
 RUN addgroup -S app && adduser -S app -G app \
  && chown -R app:app /app
 

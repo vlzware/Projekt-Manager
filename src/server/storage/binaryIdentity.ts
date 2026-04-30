@@ -1,0 +1,260 @@
+/**
+ * Boot-time binary `age` identity probe (ADR-0024 § Boot probe).
+ *
+ * The app refuses to start when the operator-loaded binary `age` private
+ * identity is not available — same character as `assertStorageBucketSafe`
+ * for ADR-0022. Degraded modes ("uploads-yes-downloads-no", "fall back to
+ * plaintext") are explicitly rejected: they would create a misleading-state
+ * defect class (ADR-0014) and are unnecessary in a single-operator topology
+ * where the boot gate aligns "identity loaded?" with "user can see
+ * attachments?".
+ *
+ * Mirrors `storage/safety.ts`:
+ *   - `evaluateBinaryIdentity` is a pure validator over a structured
+ *     snapshot of {file present?, readable?, derived recipient?,
+ *     configured recipient?}. Each fail-path can be unit-tested without
+ *     touching the filesystem or spawning age-keygen.
+ *   - `assertBinaryIdentityLoaded` is the orchestrator: it checks the
+ *     file, runs `age-keygen -y` (system binary at `/usr/bin/age-keygen`,
+ *     verified present in the dev image and the prod app image), builds
+ *     the snapshot, calls the validator, and throws an aggregated error
+ *     at the boot site.
+ *
+ * Aggregation contract: every defect detectable from the snapshot
+ * surfaces in the verdict's `failures` list — no fail-fast. An operator
+ * fielding a failed boot sees every offending arm in one structured
+ * message and fixes them in one round, not one redeploy per defect.
+ * Mirrors the storage-safety probe's aggregation shape.
+ */
+
+import { spawn } from 'node:child_process';
+import { access, readFile } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+
+/**
+ * Path to the system `age-keygen` binary. Pinned absolute so a
+ * compromised `$PATH` cannot redirect the round-trip — the boot probe is
+ * a security-critical surface.
+ */
+export const AGE_KEYGEN_BIN = '/usr/bin/age-keygen';
+
+/**
+ * Spawn `age-keygen -y` and pipe `input` to its stdin. Resolves to the
+ * trimmed stdout on success, or `null` on any non-zero exit / spawn
+ * error (the validator's "round-trip rejected" arm). We use `spawn`
+ * rather than `execFile + promisify` because Node's promisified
+ * `execFile` does not surface the `input` option from the callback API,
+ * and writing the secret material to a temp file just to feed argv would
+ * defeat the tmpfs-only invariant for no benefit.
+ */
+function runAgeKeygenY(input: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn(AGE_KEYGEN_BIN, ['-y'], { stdio: ['pipe', 'pipe', 'ignore'] });
+    let stdout = '';
+    let settled = false;
+    const settle = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    child.stdout.setEncoding('utf-8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on('error', () => settle(null));
+    child.on('close', (code) => {
+      if (code === 0) {
+        const trimmed = stdout.trim();
+        settle(trimmed === '' ? null : trimmed);
+      } else {
+        settle(null);
+      }
+    });
+    child.stdin.on('error', () => settle(null));
+    child.stdin.end(input);
+  });
+}
+
+/**
+ * Discriminator embedded in the thrown error so a multi-probe boot log
+ * surface (this probe + bucket-safety + capability self-test) can route
+ * the failure to the right operator runbook entry. Asserted by the
+ * orchestrator's "structured error log line" test.
+ */
+export const PROBE_EVENT_ID = 'binary-identity';
+
+/**
+ * Snapshot of the inputs the validator needs. Decoupled from the IO
+ * orchestrator so each branch is unit-testable as a pure function. The
+ * snapshot mirrors the {versioning, objectLock, lifecycleRules} shape
+ * `evaluateBucketSafety` consumes.
+ *
+ * `derivedRecipient: null` encodes "the file content failed the
+ * `age-keygen -y` round-trip" — distinct from "recipient mismatch", so
+ * the validator can produce a failure message naming `age-keygen` for
+ * the malformed-paste path and a different message for the
+ * wrong-identity-loaded path.
+ */
+export interface BinaryIdentitySnapshot {
+  /** Did `fs.access(F_OK)` on the configured path succeed? */
+  fileExists: boolean;
+  /** Did `fs.access(R_OK)` on the configured path succeed? */
+  fileReadable: boolean;
+  /**
+   * The public recipient derived by round-tripping the file's content
+   * through `age-keygen -y`. `null` when:
+   *   - the file could not be read (orchestrator skipped the round-trip), OR
+   *   - `age-keygen -y` exited non-zero (malformed identity content).
+   * The validator uses the null state to name the offending check
+   * ("age-keygen rejected the round-trip") rather than blurring it into
+   * a generic "recipient mismatch".
+   */
+  derivedRecipient: string | null;
+  /** The expected public recipient from `BINARY_AGE_RECIPIENT`. */
+  configuredRecipient: string;
+}
+
+export type BinaryIdentityVerdict = { ok: true } | { ok: false; failures: string[] };
+
+/**
+ * Pure validator. Returns the canonical pass / fail verdict — every
+ * defect is a hard failure (ADR-0024 prescribes a single canonical boot
+ * gate; degraded modes are rejected up front).
+ *
+ * Aggregation rule: every detectable defect is appended; the function
+ * does NOT short-circuit on the first failure. Same character as
+ * `evaluateBucketSafety` — operators see every offending arm at once.
+ */
+export function evaluateBinaryIdentity(snapshot: BinaryIdentitySnapshot): BinaryIdentityVerdict {
+  const failures: string[] = [];
+
+  if (!snapshot.fileExists) {
+    failures.push(
+      'binary `age` identity not loaded: file at BINARY_AGE_IDENTITY_PATH is absent. ' +
+        'Run scripts/binary-key/load-binary-key.sh on the VPS to paste the operator identity into tmpfs.',
+    );
+  } else if (!snapshot.fileReadable) {
+    // Distinct from "absent" so the operator log points at perms drift,
+    // not at a missing paste — the diagnostic actions diverge.
+    failures.push(
+      'binary `age` identity unreadable: file exists at BINARY_AGE_IDENTITY_PATH but the running ' +
+        'process lacks read permission. Check the tmpfs mount mode and the running uid.',
+    );
+  }
+
+  // Round-trip / recipient checks only make sense when the file was
+  // actually read; we still surface them when applicable so the
+  // aggregation contract holds even in the file-readable + everything-
+  // else-broken case.
+  if (snapshot.derivedRecipient === null && snapshot.fileExists && snapshot.fileReadable) {
+    failures.push(
+      'binary `age` identity malformed: the file content failed the `age-keygen -y` round-trip. ' +
+        'The pasted material is not a valid age private identity (expected an `AGE-SECRET-KEY-1...` line).',
+    );
+  }
+
+  if (
+    snapshot.derivedRecipient !== null &&
+    snapshot.derivedRecipient !== snapshot.configuredRecipient
+  ) {
+    failures.push(
+      `binary \`age\` identity recipient mismatch: derived recipient ` +
+        `"${snapshot.derivedRecipient}" does not match BINARY_AGE_RECIPIENT ` +
+        `"${snapshot.configuredRecipient}". The wrong identity was pasted into the binary loader ` +
+        `(common operator error: pasting the backup drill identity instead).`,
+    );
+  }
+
+  return failures.length === 0 ? { ok: true } : { ok: false, failures };
+}
+
+export interface AssertBinaryIdentityOptions {
+  identityPath: string;
+  configuredRecipient: string;
+}
+
+/**
+ * Orchestrator. Reads the file at `identityPath`, runs `age-keygen -y`
+ * to derive the public recipient, builds a `BinaryIdentitySnapshot`,
+ * delegates to `evaluateBinaryIdentity`, and throws an aggregated error
+ * on any failure.
+ *
+ * The error message includes the `binary-identity` event identifier so
+ * the boot site's catch handler can log+exit with one payload. Mirrors
+ * the "Refusing to start: ..." message shape from
+ * `assertStorageBucketSafe`.
+ */
+export async function assertBinaryIdentityLoaded(
+  options: AssertBinaryIdentityOptions,
+): Promise<void> {
+  const { identityPath, configuredRecipient } = options;
+
+  // Stage 1: existence + readability via fs.access. Two separate probes
+  // (F_OK then R_OK) so the snapshot can distinguish "missing" from
+  // "perms drift" — the operator diagnostics differ.
+  let fileExists = false;
+  let fileReadable = false;
+  try {
+    await access(identityPath, fsConstants.F_OK);
+    fileExists = true;
+  } catch {
+    // Fall through with fileExists=false; the validator reports the
+    // absent-file failure.
+  }
+
+  if (fileExists) {
+    try {
+      await access(identityPath, fsConstants.R_OK);
+      fileReadable = true;
+    } catch {
+      // Fall through with fileReadable=false.
+    }
+  }
+
+  // Stage 2: round-trip via age-keygen -y. Only attempted if we can
+  // actually read the file — otherwise derivedRecipient stays null and
+  // the validator surfaces the file-level failure instead of a noisy
+  // "age-keygen rejected: ENOENT" stack.
+  let derivedRecipient: string | null = null;
+  if (fileExists && fileReadable) {
+    try {
+      const content = await readFile(identityPath, 'utf-8');
+      // Pipe content via stdin. The drill-key loader passes the file path
+      // as argv to `age-keygen -y`; piping via stdin keeps the secret
+      // material out of `ps`/argv surface and matches what the
+      // integration-setup.ts harness already uses for its keypair derivation.
+      derivedRecipient = await runAgeKeygenY(content);
+    } catch {
+      // readFile failed despite R_OK passing earlier — treat as a
+      // round-trip failure so the validator surfaces a recognizable arm.
+      derivedRecipient = null;
+    }
+  }
+
+  const snapshot: BinaryIdentitySnapshot = {
+    fileExists,
+    fileReadable,
+    derivedRecipient,
+    configuredRecipient,
+  };
+
+  const verdict = evaluateBinaryIdentity(snapshot);
+  if (verdict.ok) {
+    return;
+  }
+
+  // Aggregated throw — same character as `assertStorageBucketSafe`'s
+  // message. The first failure is inlined into the header so the
+  // primary diagnostic ("recipient mismatch", "file absent", etc.) sits
+  // on the same line as "Refusing to start" — operator-grep ergonomics,
+  // and it lets dotall-less regex assertions in callers / tests still
+  // match. Subsequent failures (when present) are bulleted below.
+  // The `binary-identity` event token is load-bearing: tests pin it,
+  // and it routes the failure in a multi-probe boot log surface.
+  const [first, ...rest] = verdict.failures;
+  const tail = rest.length === 0 ? '' : `\n${rest.map((f) => `  - ${f}`).join('\n')}`;
+  throw new Error(
+    `Refusing to start: ${PROBE_EVENT_ID} probe failed (ADR-0024) — ${first}${tail}\n` +
+      `See docs/ops/binary-key/load.md.`,
+  );
+}

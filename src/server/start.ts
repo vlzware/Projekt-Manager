@@ -36,6 +36,7 @@ import { setOperationalLogger as setAuditPublisherLogger } from './services/audi
 import { AUDIT_RETENTION } from '../config/auditRetention.js';
 import { ATTACHMENT_CONFIG } from '../config/attachmentConfig.js';
 import { STATE_KEYS } from '../config/stateConfig.js';
+import { assertBinaryIdentityLoaded } from './storage/binaryIdentity.js';
 import { createStorageClient } from './storage/client.js';
 import { assertStorageBucketSafe } from './storage/safety.js';
 import { staticCacheControl } from './staticCache.js';
@@ -219,6 +220,18 @@ async function start(): Promise<void> {
   // actions, R > L). Runs before reapers so a misconfigured bucket
   // cannot accumulate side-effects.
   await assertStorageBucketSafe(attachmentStorageForReaper);
+
+  // Boot-time binary `age` identity probe (ADR-0024 §"Boot probe").
+  // Refuses to start when the operator-loaded binary private identity is
+  // missing, unreadable, malformed, or for the wrong recipient. Same
+  // fail-closed character as the bucket-safety probe above; ADR-0024
+  // explicitly rejects degraded modes (uploads-yes-downloads-no, fall
+  // back to plaintext). Presence of BINARY_AGE_RECIPIENT is enforced by
+  // checkAppServerEnv before this runs, so the recipient is non-empty.
+  await assertBinaryIdentityLoaded({
+    identityPath: env.BINARY_AGE_IDENTITY_PATH,
+    configuredRecipient: env.BINARY_AGE_RECIPIENT ?? '',
+  });
 
   const attachmentReaper = startAttachmentOrphanReaperScheduler({
     db,
