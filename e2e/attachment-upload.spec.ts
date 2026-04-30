@@ -201,7 +201,6 @@ test.describe('Attachment happy-path upload (worker on assigned project)', () =>
 test.describe('Attachment upload preserves EXIF / GPS through the pipeline', () => {
   test('photo lightbox blob retains the source APP1 segment and Make tag', async ({
     page,
-    request,
   }) => {
     // Regression guard for #126. The previous library
     // (`browser-image-compression@2.0.2`) had an EXIF copier that
@@ -235,12 +234,20 @@ test.describe('Attachment upload preserves EXIF / GPS through the pipeline', () 
     const originalUrl = await lightbox.locator('img').getAttribute('src');
     expect(originalUrl).toBeTruthy();
 
-    // Fetch the bytes the worker would see. Presigned-GET URLs are
-    // time-limited but unauth'd — Playwright's `request` context can
-    // fetch them directly without a session cookie.
-    const response = await request.get(originalUrl!);
-    expect(response.ok()).toBe(true);
-    const body = await response.body();
+    // Fetch the bytes the worker would see. Under ADR-0024 the lightbox
+    // `<img src>` is a synthetic same-origin URL (`/encrypted-storage/...`)
+    // intercepted by the in-page Service Worker, which fetches the
+    // ciphertext from B2 and decrypts it before handing plaintext back to
+    // the page. Playwright's `request` context bypasses the SW entirely,
+    // so it would either 404 or see ciphertext. The fetch must therefore
+    // happen inside the page context — that's the only seam where the
+    // SW decrypt path runs end-to-end.
+    const bytes = await page.evaluate(async (url: string) => {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`fetch failed: ${r.status}`);
+      return Array.from(new Uint8Array(await r.arrayBuffer()));
+    }, originalUrl!);
+    const body = Buffer.from(bytes);
     // EXIF magic — the 6-byte "Exif\\0\\0" header at the start of any
     // APP1/EXIF segment. Present in the fixture; must survive re-encode.
     expect(body.includes(Buffer.from([0x45, 0x78, 0x69, 0x66, 0x00, 0x00]))).toBe(true);

@@ -151,12 +151,13 @@ describe('KeyEnvelopeService — unwrap failure modes', () => {
 });
 
 describe('KeyEnvelopeService — base64 round-trip on the persisted column shape', () => {
-  it('the base64 of the wrapped envelope decodes to the same opaque bytes (data-model.md §5.13)', async () => {
+  it('wrap output round-trips through base64 to a still-unwrap-able envelope (data-model.md §5.13)', async () => {
     // `wrappedDek` is `string` in the entity — base64 of the opaque
     // envelope bytes. The persistence layer round-trips it; this test
-    // pins that the bytes the service emits are themselves base64-
-    // round-trippable without loss (i.e. the service's output is raw
-    // bytes, not "almost-base64-but-not-quite").
+    // pins that the once-base64-round-tripped buffer remains a valid
+    // input for `unwrap` (i.e. the service's output survives the wire
+    // shape end-to-end). The base64 codec itself is std-lib and is not
+    // re-asserted here.
     const { identity, recipient } = freshAgePair();
     const service = new KeyEnvelopeService({ recipient, identity });
 
@@ -165,10 +166,7 @@ describe('KeyEnvelopeService — base64 round-trip on the persisted column shape
 
     const encoded = Buffer.from(envelope).toString('base64');
     const decoded = Buffer.from(encoded, 'base64');
-    expect(decoded.length).toBe(envelope.length);
-    expect(decoded.equals(Buffer.from(envelope))).toBe(true);
 
-    // And unwrap accepts the once-round-tripped buffer.
     const unwrapped = await service.unwrap(new Uint8Array(decoded));
     expect(Buffer.from(unwrapped).equals(dek)).toBe(true);
   });

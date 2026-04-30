@@ -44,12 +44,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'drizzle-orm';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { startApp, stopApp, login, authGet, authPost, authDelete } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import { createStorageClient } from '../storage/client.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
 import { AttachmentService } from '../services/AttachmentService.js';
+import { KeyEnvelopeService } from '../services/KeyEnvelopeService.js';
 import type { AuthUser } from '../middleware/auth.js';
 import { binaryInitBody } from '../../test/fixtures/attachmentInit.js';
 import { STRINGS } from '../../config/strings.js';
@@ -84,6 +86,38 @@ function freshDekMaterial(): string {
  */
 function ciphertextBuffer(length: number): Buffer {
   return crypto.randomBytes(length);
+}
+
+/**
+ * Wrap a fresh 32-byte DEK against the per-fork test binary identity
+ * (see `src/test/integration-setup.ts` — `BINARY_AGE_RECIPIENT` /
+ * `BINARY_AGE_IDENTITY_PATH` are exported there). Returns `{ dek,
+ * wrappedBase64 }` so tests that need to compare unwrapped output
+ * against the input DEK (AC-241 "different DEKs") have both halves.
+ *
+ * Direct DB seeds use the base64 envelope on `wrapped_dek` so the
+ * route's per-request unwrap succeeds. Synthetic Buffer.alloc envelopes
+ * fail at AEAD verification under any real KeyEnvelopeService impl —
+ * happy-path tests must wrap a real DEK.
+ *
+ * Reads `process.env` directly because the env zod schema does not yet
+ * carry `BINARY_AGE_*` (implementer agent extends it in step 5). Once
+ * the schema lands, this helper can collapse to `getEnv()`.
+ */
+async function wrapFreshDek(): Promise<{ dek: Buffer; wrappedBase64: string }> {
+  const recipient = process.env.BINARY_AGE_RECIPIENT;
+  const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+  if (!recipient || !identityPath) {
+    throw new Error(
+      'wrapFreshDek: BINARY_AGE_RECIPIENT / BINARY_AGE_IDENTITY_PATH not configured. ' +
+        'Per-fork identity is set in src/test/integration-setup.ts — verify it ran before this import.',
+    );
+  }
+  const identity = readFileSync(identityPath, 'utf-8').trim();
+  const service = new KeyEnvelopeService({ recipient, identity });
+  const dek = crypto.randomBytes(32);
+  const envelope = await service.wrap(dek);
+  return { dek, wrappedBase64: Buffer.from(envelope).toString('base64') };
 }
 
 /**
@@ -671,6 +705,8 @@ describe('Attachment routes — integration (issue #108)', () => {
       const thumbKey = `attachments/${projectId}/${attId}.thumb`;
       const plaintextOversize = 2 * 1024 * 1024;
       const ciphertextOversize = 2 * 1024 * 1024 + 64;
+      // Synthetic envelopes — `complete` rejects on the per-file plaintext
+      // cap before the unwrap pipeline ever runs on this row.
       const wrappedDek = Buffer.alloc(192, 0).toString('base64');
       const wrappedThumb = Buffer.alloc(192, 1).toString('base64');
       const { db, pool } = createDatabase();
@@ -1424,6 +1460,9 @@ describe('Attachment routes — integration (issue #108)', () => {
       // source for copyFromVersion.
       const head = await s.headObject(originalKey);
       expect(head.versionId).toBeDefined();
+      // Synthetic envelope — restore copyFromVersion does not unwrap; the
+      // archive-restore arm verifies the row flips back to ready, not
+      // that the bytes can be decrypted afterwards.
       const wrappedDek = Buffer.alloc(192, 0x42).toString('base64');
       const { db, pool } = createDatabase();
       try {
@@ -1652,33 +1691,88 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(body.wrappedThumbDek).toBeUndefined();
     });
 
-    it('returns { url, expiresAt, dekMaterial } for variant=thumbnail (using wrappedThumbDek)', async () => {
-      const [id] = await seedReadyAttachments(projectId, [
-        { sizeBytes: 100, kind: 'photo', mimeType: 'image/jpeg', label: 'foto' },
-      ]);
+    it('returns { url, expiresAt, dekMaterial } for variant=thumbnail (using wrappedThumbDek) — end-to-end DEK fidelity', async () => {
+      // End-to-end fidelity arm — drives init→complete→download-url
+      // with two CLIENT-SUPPLIED DEKs. The route must return exactly
+      // those bytes back via download-url for the matching variant
+      // (original → originalDek, thumbnail → thumbDek). A regression
+      // that swapped the two columns, or returned a constant DEK for
+      // both variants, would surface here as a byte-equality failure.
+      //
+      // Seed-driven shape-only tests can't catch the column-swap
+      // regression because the seed itself doesn't pin which 32-byte
+      // value belongs to which variant.
+      const originalDek = crypto.randomBytes(32);
+      const thumbDek = crypto.randomBytes(32);
+      // Sanity floor — they were freshly generated, so they MUST differ.
+      // A regression in `randomBytes` would invalidate the variant-fidelity
+      // assertion below (both DEKs equal → byte-equality on either variant
+      // would pass tautologically), so check up-front.
+      expect(originalDek.equals(thumbDek)).toBe(false);
+
+      const initBody = {
+        ...photoInit(projectId),
+        dekMaterial: originalDek.toString('base64'),
+        thumbDekMaterial: thumbDek.toString('base64'),
+      };
+      const initRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        initBody,
+      );
+      expect(initRes.statusCode).toBe(201);
+      const body = initRes.json();
+      const attId = body.attachment.id as string;
+
+      // PUT ciphertext bytes under the issued keys so complete()'s HEAD
+      // verify passes. Sentinel content-type per the e2e contract.
+      const s = storage();
+      await s.upload(
+        body.attachment.originalKey,
+        ciphertextBuffer(initBody.ciphertextSizeBytes),
+        'application/octet-stream',
+      );
+      await s.upload(
+        body.attachment.thumbKey,
+        ciphertextBuffer(initBody.ciphertextThumbSizeBytes),
+        'application/octet-stream',
+      );
+
+      const completeRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/complete`,
+      );
+      expect(completeRes.statusCode).toBe(200);
+
       const original = await authGet(
         ownerToken,
-        `/api/projects/${projectId}/attachments/${id}/download-url?variant=original`,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=original`,
       );
       const thumb = await authGet(
         ownerToken,
-        `/api/projects/${projectId}/attachments/${id}/download-url?variant=thumbnail`,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=thumbnail`,
       );
       expect(original.statusCode).toBe(200);
       expect(thumb.statusCode).toBe(200);
 
-      // Both unwrapped DEKs have the AES-256-GCM shape.
-      expect(Buffer.from(original.json().dekMaterial, 'base64').length).toBe(32);
-      expect(Buffer.from(thumb.json().dekMaterial, 'base64').length).toBe(32);
+      const originalReturned = Buffer.from(original.json().dekMaterial, 'base64');
+      const thumbReturned = Buffer.from(thumb.json().dekMaterial, 'base64');
 
-      // The two variants must surface DIFFERENT DEKs — the original
-      // and the thumbnail are independent ciphertext objects with
-      // their own DEKs (api.md §14.2.11 "two-blob payload because
-      // thumbnails are independent ciphertext objects with their own
-      // DEKs"). A regression that returned the same DEK for both
-      // variants would render either the gallery or the lightbox
-      // garbage but pass shape-only tests.
-      expect(original.json().dekMaterial).not.toBe(thumb.json().dekMaterial);
+      // Both have the AES-256-GCM shape.
+      expect(originalReturned.length).toBe(32);
+      expect(thumbReturned.length).toBe(32);
+
+      // Variant fidelity — the route returns the column matching the
+      // requested variant. A regression that swapped columns or
+      // returned a constant DEK for both would fail at byte equality.
+      expect(originalReturned.equals(originalDek)).toBe(true);
+      expect(thumbReturned.equals(thumbDek)).toBe(true);
+
+      // And consequently the two variants surface different DEKs —
+      // api.md §14.2.11 "thumbnails are independent ciphertext objects
+      // with their own DEKs". This is now provable from the explicit
+      // input DEKs, not just the seed shape.
+      expect(originalReturned.equals(thumbReturned)).toBe(false);
     });
 
     it('does NOT persist the unwrapped DEK server-side (no caller-visible state change after the call)', async () => {
@@ -1849,6 +1943,10 @@ describe('Attachment routes — integration (issue #108)', () => {
       // the same code so the SW handles original / thumbnail with
       // one branch.
       const attId = crypto.randomUUID();
+      // Synthetic envelopes — this arm intentionally exercises the
+      // unwrap-failure branch on the THUMBNAIL path. The original
+      // envelope's wrap quality is irrelevant: variant=thumbnail
+      // unwraps `wrapped_thumb_dek`, which is the corrupt one here.
       const validOrig = Buffer.alloc(192, 0).toString('base64');
       const corruptThumb = Buffer.from('not-an-age-envelope').toString('base64');
       const { db, pool } = createDatabase();
@@ -1957,9 +2055,11 @@ describe('Attachment routes — integration (issue #108)', () => {
         fileName: 'Angebot Müller.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 100,
-        contentMd5: STUB_MD5_BASE64,
         label: 'angebot',
         hasThumbnail: false,
+        dekMaterial: freshDekMaterial(),
+        ciphertextSizeBytes: 164,
+        ciphertextContentMd5: STUB_MD5_BASE64,
       });
       expect(initRes.statusCode).toBe(201);
       expect(initRes.json().attachment.fileName).toBe('Angebot Müller.pdf');
@@ -2088,6 +2188,15 @@ async function fetchAttachmentRowSnapshot(id: string): Promise<{
  * branches. The route-driven path always commits non-null version_ids,
  * so DB-level seeding is the only way to land the regression shape
  * these tests pin.
+ *
+ * The wrapped envelope is intentionally synthetic (Buffer.alloc) — every
+ * caller of this helper hits a pre-unwrap rejection branch:
+ *   - `download-url` on hidden returns 404 before touching the envelope,
+ *   - `bulk-fetch` rejects hidden ids at the status check before unwrap,
+ *   - `restore` integrity errors fire on `version_id` shape before unwrap,
+ *   - Papierkorb listing on archived projects doesn't unwrap.
+ * A real wrap would burn an `age-keygen` round trip per hidden seed for
+ * no behaviour coverage.
  */
 async function seedHiddenAttachment(
   projectId: string,
@@ -2102,6 +2211,7 @@ async function seedHiddenAttachment(
     const filename = `hidden-${id.slice(0, 6)}.${spec.hasThumbnail ? 'jpg' : 'pdf'}`;
     const originalKey = `attachments/${projectId}/${id}.orig`;
     const thumbKey = spec.hasThumbnail ? `attachments/${projectId}/${id}.thumb` : null;
+    // Synthetic envelope — no caller of this helper reaches the unwrap.
     const wrappedDek = Buffer.alloc(192, 0x33).toString('base64');
     const wrappedThumbDek = spec.hasThumbnail ? Buffer.alloc(192, 0x44).toString('base64') : null;
     await db.execute(sql`
@@ -2137,13 +2247,17 @@ interface SeedReadySpec {
  * going through the init→complete flow. Returns the new ids in order.
  * `__tests__/` is allowlisted for AC-179's architecture check.
  *
- * Each row carries a synthetic `wrapped_dek` (and `wrapped_thumb_dek`
- * for photos) — the routes that unwrap on read (`download-url`,
- * `bulk-fetch`) need the column populated. Real-shape envelopes are
- * out of scope for direct seeds; the byte-corruption arm (AC-244)
- * exercises the unwrap-failure branch with a corrupt fixture. Tests
- * that DO need a real-shape envelope should drive the route flow
- * end-to-end (init wraps the supplied DEK material).
+ * Each row carries a REAL `wrapped_dek` (and `wrapped_thumb_dek` for
+ * photos) — the routes that unwrap on read (`download-url`,
+ * `bulk-fetch`) need an envelope the route's KeyEnvelopeService can
+ * actually unwrap. Synthetic Buffer.alloc envelopes fail at AEAD
+ * verification under any real implementation, which would surface as
+ * `DEK_UNWRAP_FAILED` on every happy-path test (and tautologically
+ * pass the AC-241 "different DEKs" arm regardless of route logic).
+ *
+ * The byte-corruption AC-244 arms keep their own explicit synthetic
+ * envelopes — those tests intentionally exercise the unwrap-failure
+ * branch.
  */
 async function seedReadyAttachments(projectId: string, specs: SeedReadySpec[]): Promise<string[]> {
   const { db, pool } = createDatabase();
@@ -2164,8 +2278,12 @@ async function seedReadyAttachments(projectId: string, specs: SeedReadySpec[]): 
       const ciphertextSize = spec.sizeBytes + 64;
       const ciphertextThumbSize =
         kind === 'photo' ? Math.max(64, Math.floor(ciphertextSize / 10)) : null;
-      const wrappedDek = Buffer.alloc(192, 0x55).toString('base64');
-      const wrappedThumbDek = kind === 'photo' ? Buffer.alloc(192, 0x66).toString('base64') : null;
+      // Wrap a fresh DEK per row (and a separate one for the thumb on
+      // photos — the original-vs-thumbnail "different DEKs" contract
+      // is real, not synthetic). The KeyEnvelopeService is the same
+      // module the route layer will use to unwrap on read.
+      const orig = await wrapFreshDek();
+      const thumb = kind === 'photo' ? await wrapFreshDek() : null;
       await db.execute(sql`
         INSERT INTO attachments
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
@@ -2176,7 +2294,7 @@ async function seedReadyAttachments(projectId: string, specs: SeedReadySpec[]): 
                 ${'file-' + id.slice(0, 6)}, ${mimeType}, ${spec.sizeBytes},
                 ${ciphertextSize}, ${ciphertextThumbSize},
                 ${originalKey}, ${thumbKey}, ${kind === 'photo'},
-                ${wrappedDek}, ${wrappedThumbDek})
+                ${orig.wrappedBase64}, ${thumb?.wrappedBase64 ?? null})
       `);
       ids.push(id);
     }
@@ -2218,8 +2336,12 @@ async function seedReadyAttachmentsWithBytes(
       // Storage object carries the sentinel content-type per ADR-0024
       // — the row's plaintext MIME stays in the row metadata only.
       await s.upload(originalKey, spec.bytes, 'application/octet-stream');
-      const wrappedDek = Buffer.alloc(192, 0x77).toString('base64');
-      const wrappedThumbDek = kind === 'photo' ? Buffer.alloc(192, 0x88).toString('base64') : null;
+      // Real wraps — `download-url` (the umlaut Content-Disposition
+      // arm) goes through the unwrap pipeline. Synthetic envelopes
+      // would surface as DEK_UNWRAP_FAILED instead of the URL the
+      // arm asserts on.
+      const orig = await wrapFreshDek();
+      const thumb = kind === 'photo' ? await wrapFreshDek() : null;
       await db.execute(sql`
         INSERT INTO attachments
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
@@ -2230,7 +2352,7 @@ async function seedReadyAttachmentsWithBytes(
                 ${spec.filename}, ${spec.mimeType}, ${spec.bytes.length},
                 ${spec.bytes.length}, ${kind === 'photo' ? spec.bytes.length : null},
                 ${originalKey}, ${thumbKey}, ${kind === 'photo'},
-                ${wrappedDek}, ${wrappedThumbDek})
+                ${orig.wrappedBase64}, ${thumb?.wrappedBase64 ?? null})
       `);
       ids.push(id);
     }

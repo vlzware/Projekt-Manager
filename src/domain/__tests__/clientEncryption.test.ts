@@ -147,7 +147,6 @@ describe('clientEncryption — DEK base64 round-trip (api.md §14.2.11 wire form
     const dek = generateDek();
     const b64 = encodeDekMaterial(dek);
     expect(typeof b64).toBe('string');
-    expect(b64.length).toBeGreaterThan(0);
     // 32-byte input encodes to ceil(32/3)*4 = 44 base64 chars.
     expect(b64.length).toBe(44);
   });

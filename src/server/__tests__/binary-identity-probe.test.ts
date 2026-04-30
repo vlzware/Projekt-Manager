@@ -103,19 +103,21 @@ describe('AC-239: binary-identity boot probe — pure validator', () => {
   it('aggregates multiple offences into one verdict (no fail-fast)', () => {
     // Same shape as `assertStorageBucketSafe` aggregation: an operator
     // fielding the failure should see every defect at once, not iterate
-    // through fix-and-redeploy cycles.
+    // through fix-and-redeploy cycles. Seed two independently-observable
+    // arms — `fileReadable: false` (perms drift) AND derived/configured
+    // recipient mismatch — so the validator must surface both, not just
+    // the first one it hits. (`>= 1` would be tautological with
+    // `verdict.ok === false`; `>= 2` is the actual aggregation contract.)
     const verdict = evaluateBinaryIdentity({
-      fileExists: false,
+      fileExists: true,
       fileReadable: false,
-      derivedRecipient: null,
-      configuredRecipient: 'age1xyz',
+      derivedRecipient: 'age1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      configuredRecipient: 'age1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     });
     expect(verdict.ok).toBe(false);
     if (!verdict.ok) {
-      // At minimum the file-absent failure is present; the unreadable +
-      // round-trip branches do not double-report when the file is
-      // missing (they have no input to inspect), so the floor is one.
-      expect(verdict.failures.length).toBeGreaterThanOrEqual(1);
+      // Two independent defects → at least two failure entries.
+      expect(verdict.failures.length).toBeGreaterThanOrEqual(2);
     }
   });
 });
