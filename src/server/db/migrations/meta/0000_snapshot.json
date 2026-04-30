@@ -1,5 +1,5 @@
 {
-  "id": "f73f1d12-5d72-4418-9acb-b19fe7dd9d16",
+  "id": "28d39b49-92c7-4c16-b856-7bb8f50d9be6",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -82,6 +82,18 @@
           "notNull": true,
           "default": false
         },
+        "ciphertext_size_bytes": {
+          "name": "ciphertext_size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ciphertext_thumb_size_bytes": {
+          "name": "ciphertext_thumb_size_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "version_id": {
           "name": "version_id",
           "type": "text",
@@ -90,6 +102,18 @@
         },
         "thumb_version_id": {
           "name": "thumb_version_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wrapped_dek": {
+          "name": "wrapped_dek",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "wrapped_thumb_dek": {
+          "name": "wrapped_thumb_dek",
           "type": "text",
           "primaryKey": false,
           "notNull": false

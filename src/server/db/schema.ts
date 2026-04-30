@@ -437,6 +437,26 @@ export const attachments = pgTable(
     thumbSizeBytes: bigint('thumb_size_bytes', { mode: 'number' }),
     hasThumbnail: boolean('has_thumbnail').notNull().default(false),
     /**
+     * Ciphertext size of the original blob — the byte count the server
+     * signs into the presigned PUT (Content-Length) and re-asserts at
+     * complete-time via HEAD. Distinct from `sizeBytes` (plaintext) which
+     * backs the per-file cap and rides the export envelope (ADR-0024 /
+     * data-model.md §5.13).
+     *
+     * Nullable here so legacy pre-e2e tests that raw-INSERT attachment
+     * rows without ciphertext metadata still typecheck under Phase 1A;
+     * Phase 2D wires the init flow to populate this column unconditionally
+     * and the production AC-245 path requires a non-null value at write
+     * time. Tightening to NOT NULL is tracked debt for Phase 2D.
+     */
+    ciphertextSizeBytes: bigint('ciphertext_size_bytes', { mode: 'number' }),
+    /**
+     * Ciphertext size of the thumbnail blob; null for non-photo kinds
+     * and for photos without a thumbnail (per data-model.md §5.13).
+     * Set at init-time alongside `wrappedThumbDek`.
+     */
+    ciphertextThumbSizeBytes: bigint('ciphertext_thumb_size_bytes', { mode: 'number' }),
+    /**
      * S3 VersionId of the current original-key version, captured at
      * complete-time from the bucket's HEAD response. Persisted so the
      * Papierkorb restore flow can `copyFromVersion(originalKey, versionId)`
@@ -451,6 +471,32 @@ export const attachments = pgTable(
      * gallery preview returns intact.
      */
     thumbVersionId: text('thumb_version_id'),
+    /**
+     * Base64 of the operator-`age`-wrapped envelope of the per-blob
+     * 32-byte AES-256-GCM DEK for the original ciphertext object
+     * (ADR-0024 / data-model.md §5.13). The unwrapped DEK is never
+     * persisted; this column is the entire crypto perimeter on B2 — a
+     * DB dump alone (without the operator-loaded binary `age` identity)
+     * cannot recover the bytes.
+     *
+     * Audit-excluded at the schema layer (see `AUDIT_EXCLUDED_FIELDS`
+     * below). The audit-payload builder strips both the camelCase JS
+     * key and the snake_case DB column name from every payload it
+     * writes — declarative on the column rather than enforced per call
+     * site, so a future column rename or new audited mutation cannot
+     * leak the envelope.
+     *
+     * Nullable for the same Phase 1A reason as `ciphertextSizeBytes`
+     * above; tightening to NOT NULL is tracked debt for Phase 2D when
+     * the route layer wraps the client-supplied DEK material at init.
+     */
+    wrappedDek: text('wrapped_dek'),
+    /**
+     * Base64 of the `age`-wrapped envelope of the per-blob DEK for the
+     * thumbnail; null for non-photo kinds and for photos without a
+     * thumbnail. Same audit-exclusion contract as `wrappedDek`.
+     */
+    wrappedThumbDek: text('wrapped_thumb_dek'),
     /**
      * Set when the attachment is moved to the Papierkorb (status =
      * 'hidden'). Null while live or pending. Bucket lifecycle reaps the
@@ -477,3 +523,48 @@ export const attachments = pgTable(
     ),
   ],
 );
+
+// ---------------------------------------------------------------
+// Schema-level audit-payload exclusion (ADR-0024 § Audit-log boundary,
+// data-model.md §5.13 "Audit exclusion", architecture.md §
+// "Schema-level audit exclusion")
+// ---------------------------------------------------------------
+/**
+ * The set of column / property names the audit-payload builder strips
+ * from every `before` / `after` snapshot it writes to `audit_log.payload`.
+ *
+ * Both the camelCase JS property (the form services use when building
+ * payloads from row objects or input shapes) AND the snake_case DB
+ * column name (the form raw-row mirrors carry) are listed — the
+ * stripping pass runs once per payload, key-by-key, and short-circuits
+ * on either form. A regression that serialised the row directly via
+ * `JSON.stringify(row)` would surface the snake_case form; a regression
+ * that built `after: { wrappedDek }` from the input would surface the
+ * camelCase form. Pin both shapes here so neither path leaks.
+ *
+ * The marker is co-located with the column definitions above (a member
+ * of this set has its column declared in the immediately-preceding
+ * table block) so a future reviewer cannot rename a column without
+ * updating the registry — they edit the same file. The architecture
+ * spec (`docs/spec/architecture.md` § "Schema-level audit exclusion")
+ * permits this shape: the contract pins the property (a flagged column
+ * is unconditionally absent from every audit payload) and the
+ * enforcement shape (an AC-pinned test asserts the absence across the
+ * full mutation surface — `attachments-audit.test.ts` AC-240). The
+ * mechanism — column allowlist consulted by the builder — is
+ * implementation-defined.
+ *
+ * Members today (ADR-0024):
+ *   - `wrappedDek` / `wrapped_dek` — the wrapped envelope of the
+ *     per-blob DEK on the original ciphertext.
+ *   - `wrappedThumbDek` / `wrapped_thumb_dek` — same for the thumbnail.
+ *
+ * The unwrapped DEK is never persisted, so it never reaches a payload
+ * to begin with — only the wrapped envelopes need exclusion.
+ */
+export const AUDIT_EXCLUDED_FIELDS: ReadonlySet<string> = new Set([
+  'wrappedDek',
+  'wrapped_dek',
+  'wrappedThumbDek',
+  'wrapped_thumb_dek',
+]);
