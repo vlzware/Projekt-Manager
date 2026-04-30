@@ -4,23 +4,30 @@
  * Every other integration test in this repo seeds bytes via direct
  * `storage.upload()` (the non-presigned SDK path), so the SigV4 /
  * signed-headers / Content-MD5 binding path that backs the production
- * upload protocol (commit 600e9b0) was never exercised. A bug in
- * `signableHeaders` / `requestChecksumCalculation` /
- * `unhoistableHeaders` propagation would have shipped silently.
+ * upload protocol was never exercised. A bug in `signableHeaders` /
+ * `requestChecksumCalculation` / `unhoistableHeaders` propagation
+ * would have shipped silently.
+ *
+ * Under ADR-0024 (e2e binary attachments) the bytes the browser PUTs
+ * are *ciphertext*, not plaintext — so the signed PUT pins the
+ * ciphertext-shaped triplet:
+ *   - Content-Type:   `application/octet-stream` (sentinel — the row's
+ *                     plaintext `mimeType` stays in the row metadata
+ *                     and never goes on the wire to storage)
+ *   - Content-Length: `ciphertextSizeBytes` from the init payload
+ *   - Content-MD5:    RFC 1864 base64 of the ciphertext body's MD5
  *
  * This file fires real `fetch()` PUTs against MinIO using exactly the
  * URL + headers the server returns from `init`. It pins:
  *
- *   1. The happy path — presigned PUT for the original blob succeeds
- *      with 2xx, ditto for the thumbnail, and `complete()` flips the
- *      row to `ready`.
+ *   1. The happy path — presigned PUT for the original ciphertext
+ *      blob succeeds with 2xx, ditto for the thumbnail ciphertext,
+ *      and `complete()` flips the row to `ready` after HEAD verifies
+ *      the sentinel content-type + ciphertext sizes.
  *   2. The negative path — a body whose MD5 differs from the signed
- *      `Content-MD5` is rejected with `BadDigest`. MinIO does enforce
- *      Content-MD5 verification (verified empirically; same shape as
- *      AWS S3 / B2), so this assertion holds in dev. If a future MinIO
- *      release changes that — or this test is run against a provider
- *      that does not verify — the assertion degrades to "any 4xx" via
- *      the comment block at the assert site.
+ *      `Content-MD5` is rejected with `BadDigest`. MinIO enforces
+ *      Content-MD5 verification empirically; same shape as AWS S3 /
+ *      B2.
  *
  * Storage env: `startApp()` calls `validateEnvRuntime()` which loads the
  * STORAGE_* vars (see api-helpers.ts). MinIO must be running locally
@@ -47,27 +54,27 @@ function md5Base64(body: Buffer): string {
 }
 
 /**
- * Synthesize a `Buffer` of `length` bytes that starts with the JPEG SOI
- * marker (`FF D8 FF`). The init route trusts the declared MIME type —
- * actual byte sniffing happens at thumbnail-pipeline time on the
- * client. Real-shaped header bytes are still preferable to an all-zero
- * buffer because they future-proof against a HEAD-time content-type
- * sniff if MinIO ever adds one.
+ * Synthesize an opaque ciphertext-shaped Buffer of `length` bytes.
+ * Under ADR-0024 the bytes the browser PUTs are AES-256-GCM ciphertext
+ * with a leading nonce — there is no JPEG / WebP / PDF magic on the
+ * wire. The buffer is filled with random bytes so the MD5 differs
+ * across runs (a regression that hardcoded a digest somewhere would
+ * trip on a stable-fill test surfacing the same MD5). The leading 12
+ * bytes mimic the AES-GCM nonce convention; the remainder is the
+ * synthetic ciphertext + 16-byte tag region.
  */
-function jpegBuffer(length: number): Buffer {
-  const buf = Buffer.alloc(length, 0xff);
-  buf[0] = 0xff;
-  buf[1] = 0xd8;
-  buf[2] = 0xff;
-  return buf;
+function ciphertextBuffer(length: number): Buffer {
+  return crypto.randomBytes(length);
 }
 
-/** Same idea, WebP RIFF header (`RIFF....WEBP`). */
-function webpBuffer(length: number): Buffer {
-  const buf = Buffer.alloc(length, 0xff);
-  buf.write('RIFF', 0);
-  buf.write('WEBP', 8);
-  return buf;
+/**
+ * Generate a 32-byte AES-256-GCM DEK encoded as base64. Mirrors what
+ * the browser produces via `crypto.getRandomValues(new Uint8Array(32))`
+ * before init. The server validates length-after-decode at the route
+ * layer per AC-211.
+ */
+function freshDekMaterial(): string {
+  return crypto.randomBytes(32).toString('base64');
 }
 
 /**
@@ -123,44 +130,72 @@ describe('Attachment presigned PUT — real upload against MinIO', () => {
   // Happy path — exercise the full presigned PUT flow end-to-end.
   // The whole point of the file: no `storage.upload()` shortcut, the
   // signed URL + headers are what the browser would actually send.
+  //
+  // Under e2e (ADR-0024) the bytes are ciphertext and the signed
+  // headers pin the *ciphertext* triplet:
+  //   Content-Type   == application/octet-stream (sentinel)
+  //   Content-Length == ciphertextSizeBytes from init
+  //   Content-MD5    == ciphertextContentMd5 from init
   // ---------------------------------------------------------------
-  it('PUTs original + thumbnail through the signed URL and completes the row', async () => {
-    const originalBytes = jpegBuffer(120);
-    const thumbBytes = webpBuffer(80);
-    const originalMd5 = md5Base64(originalBytes);
-    const thumbMd5 = md5Base64(thumbBytes);
+  it('PUTs original + thumbnail ciphertext through the signed URL and completes the row', async () => {
+    const originalCiphertext = ciphertextBuffer(180);
+    const thumbCiphertext = ciphertextBuffer(120);
+    const originalCiphertextMd5 = md5Base64(originalCiphertext);
+    const thumbCiphertextMd5 = md5Base64(thumbCiphertext);
 
     const initRes = await authPost(
       ownerToken,
       `/api/projects/${projectId}/attachments/init`,
       photoInitBody({
-        sizeBytes: originalBytes.length,
-        contentMd5: originalMd5,
-        thumbSizeBytes: thumbBytes.length,
-        thumbContentMd5: thumbMd5,
+        // Plaintext sizes on the row — the per-file cap and the export
+        // envelope read these. Storage never sees them.
+        sizeBytes: 120,
+        thumbSizeBytes: 80,
+        // Ciphertext sizes drive the signed Content-Length.
+        ciphertextSizeBytes: originalCiphertext.length,
+        ciphertextContentMd5: originalCiphertextMd5,
+        ciphertextThumbSizeBytes: thumbCiphertext.length,
+        ciphertextThumbContentMd5: thumbCiphertextMd5,
+        dekMaterial: freshDekMaterial(),
+        thumbDekMaterial: freshDekMaterial(),
       }),
     );
     expect(initRes.statusCode).toBe(201);
     const body = initRes.json();
     expect(body.attachment.status).toBe('pending');
-    expect(body.originalUpload.headers['Content-MD5']).toBe(originalMd5);
-    expect(body.thumbnailUpload.headers['Content-MD5']).toBe(thumbMd5);
 
-    // PUT the original.
-    const originalPut = await presignedPut(body.originalUpload, originalBytes);
+    // Sentinel content-type — the row's plaintext mimeType never
+    // reaches storage on the wire. Pin both PUT descriptors to the
+    // sentinel so a regression that signs the plaintext MIME would
+    // trip here (and the storage provider would also accept the
+    // mismatching content-type at PUT time, which is exactly the
+    // smell this assertion catches before `complete` does).
+    expect(body.originalUpload.headers['Content-Type']).toBe('application/octet-stream');
+    expect(body.thumbnailUpload.headers['Content-Type']).toBe('application/octet-stream');
+    // Ciphertext sizes — Content-Length matches the ciphertext, not
+    // the row's plaintext sizeBytes.
+    expect(body.originalUpload.headers['Content-Length']).toBe(String(originalCiphertext.length));
+    expect(body.thumbnailUpload.headers['Content-Length']).toBe(String(thumbCiphertext.length));
+    // Ciphertext MD5 — RFC 1864 base64 of the ciphertext body.
+    expect(body.originalUpload.headers['Content-MD5']).toBe(originalCiphertextMd5);
+    expect(body.thumbnailUpload.headers['Content-MD5']).toBe(thumbCiphertextMd5);
+
+    // PUT the original ciphertext.
+    const originalPut = await presignedPut(body.originalUpload, originalCiphertext);
     expect(originalPut.status).toBeGreaterThanOrEqual(200);
     expect(originalPut.status).toBeLessThan(300);
     // Drain to keep the keep-alive socket clean (some Node fetch
     // configurations leak a half-read body into the agent pool).
     await originalPut.arrayBuffer();
 
-    // PUT the thumbnail.
-    const thumbPut = await presignedPut(body.thumbnailUpload, thumbBytes);
+    // PUT the thumbnail ciphertext.
+    const thumbPut = await presignedPut(body.thumbnailUpload, thumbCiphertext);
     expect(thumbPut.status).toBeGreaterThanOrEqual(200);
     expect(thumbPut.status).toBeLessThan(300);
     await thumbPut.arrayBuffer();
 
-    // Flip pending → ready.
+    // Flip pending → ready. complete() HEADs the ciphertext and
+    // verifies size + sentinel content-type per AC-212.
     const completeRes = await authPost(
       ownerToken,
       `/api/projects/${projectId}/attachments/${body.attachment.id}/complete`,
@@ -181,19 +216,21 @@ describe('Attachment presigned PUT — real upload against MinIO', () => {
   //   did not match what we received.</Message>
   // with HTTP status 400. AWS S3 / B2 share the same shape.
   // ---------------------------------------------------------------
-  it('rejects a body whose MD5 does not match the signed Content-MD5', async () => {
-    const advertisedBytes = jpegBuffer(120);
-    const advertisedMd5 = md5Base64(advertisedBytes);
-    const tamperedBytes = jpegBuffer(120);
-    tamperedBytes[100] ^= 0xff; // flip a single byte to invalidate the digest
-    expect(md5Base64(tamperedBytes)).not.toBe(advertisedMd5);
+  it('rejects a ciphertext body whose MD5 does not match the signed Content-MD5', async () => {
+    const advertisedCiphertext = ciphertextBuffer(160);
+    const advertisedCiphertextMd5 = md5Base64(advertisedCiphertext);
+    const tamperedCiphertext = Buffer.from(advertisedCiphertext);
+    tamperedCiphertext[100] ^= 0xff; // flip a single byte to invalidate the digest
+    expect(md5Base64(tamperedCiphertext)).not.toBe(advertisedCiphertextMd5);
 
     const initRes = await authPost(
       ownerToken,
       `/api/projects/${projectId}/attachments/init`,
       photoInitBody({
-        sizeBytes: advertisedBytes.length,
-        contentMd5: advertisedMd5,
+        sizeBytes: 120,
+        ciphertextSizeBytes: advertisedCiphertext.length,
+        ciphertextContentMd5: advertisedCiphertextMd5,
+        dekMaterial: freshDekMaterial(),
         // No thumbnail — keeps the test focused on a single PUT.
         hasThumbnail: false,
       }),
@@ -205,7 +242,7 @@ describe('Attachment presigned PUT — real upload against MinIO', () => {
     // MD5. Storage MUST reject — the Content-MD5 header (echoed from the
     // signed descriptor) advertises one digest, the body computes
     // another.
-    const putRes = await presignedPut(body.originalUpload, tamperedBytes);
+    const putRes = await presignedPut(body.originalUpload, tamperedCiphertext);
     expect(putRes.status).toBeGreaterThanOrEqual(400);
     const text = await putRes.text();
     expect(text.toLowerCase()).toContain('baddigest');

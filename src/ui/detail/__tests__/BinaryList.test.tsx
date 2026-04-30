@@ -1,39 +1,51 @@
 /**
- * BinaryList — tabular list of non-photo attachments + bulk-download
- * selection + "Datei fehlt" on download-click.
+ * BinaryList — synthetic-origin Service-Worker download path
+ * (ADR-0024, spec ui/project-detail.md §8.15.5), browser-side
+ * streaming-zip bulk-fetch pipeline (AC-223), and the two lazy
+ * placeholder branches (`"Datei fehlt"` AC-224, `"Schlüssel nicht
+ * verfügbar"` AC-244).
  *
- * Covers AC-223 (rows render filename/label/uploader/timestamp/
- * download; a `Auswahl als ZIP` action respects client-side caps and
- * the client message names both caps) and the binary side of AC-224
- * (on a download 404 the row flips to `"Datei fehlt"` and the download
- * action is disabled; the row is excluded from bulk-download).
- *
- * The bulk-download cap numbers live in config **[C]**; the test pins
- * the cap names (file count + byte size) and asserts the client's
- * German validation message references both, without hard-coding the
- * numeric values a config edit can move.
+ * Under the e2e contract:
+ *   - The `Herunterladen` action issues a fetch / anchor click against
+ *     `/encrypted-storage/<projectId>/<attachmentId>.original`; the SW
+ *     intercepts, calls `download-url`, fetches the ciphertext from
+ *     B2, AES-256-GCM-decrypts, and serves plaintext via the Fetch
+ *     response. Bytes never round-trip the application server.
+ *   - `Auswahl als ZIP` calls `POST /api/projects/:id/attachments/bulk-fetch`
+ *     and gets back per-file `{originalUrl, originalDekMaterial, ...}`
+ *     payloads (api.md §14.2.11). The browser streams each ciphertext
+ *     through the streaming-zip pipeline, decrypts per-file with the
+ *     returned DEK material, and produces a single download at the end.
+ *   - Cap-breach selection is blocked client-side with a German
+ *     validation message naming both caps before any request issues.
+ *   - `<img onError>` analog for binaries: the SW returns a non-2xx
+ *     Response on the download request; the row flips to the matching
+ *     placeholder, the Herunterladen button is disabled, and the row
+ *     is excluded from bulk-fetch selection.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ApiResult, AttachmentDownloadUrlResponse } from '@/api/client';
+import type { ApiResult } from '@/api/client';
 import type { Attachment } from '@/domain/types';
+// `BulkFetchEntry` is the wire shape returned by the new bulk-fetch
+// endpoint (api.md §14.2.11). It does not exist yet — the import fails
+// until the API client exposes it. That is the failing-test signal.
+import type { BulkFetchEntry } from '@/api/client';
 
 type ListResult = ApiResult<{ data: Attachment[] }>;
-type DownloadUrlResult = ApiResult<AttachmentDownloadUrlResponse>;
+type BulkFetchResult = ApiResult<{ data: BulkFetchEntry[] }>;
 
 const listMock = vi.fn<(projectId: string) => Promise<ListResult>>();
-const downloadUrlMock =
-  vi.fn<
-    (
-      projectId: string,
-      attachmentId: string,
-      variant: 'original' | 'thumbnail',
-    ) => Promise<DownloadUrlResult>
-  >();
-const bulkDownloadUrlMock =
-  vi.fn<(projectId: string, attachmentIds: string[]) => Promise<DownloadUrlResult>>();
+const bulkFetchMock =
+  vi.fn<(projectId: string, attachmentIds: string[]) => Promise<BulkFetchResult>>();
+
+// Streaming-zip assembler — mocked at the module boundary. The
+// component awaits this pipeline; the mock asserts the call shape and
+// resolves with a synthetic Blob the component can wrap into a
+// download anchor.
+const streamingZipMock = vi.fn<(entries: BulkFetchEntry[]) => Promise<Blob>>();
 
 vi.mock('@/api/client', async (importActual) => {
   const actual = (await importActual()) as Record<string, unknown>;
@@ -41,10 +53,12 @@ vi.mock('@/api/client', async (importActual) => {
     ...actual,
     attachmentApi: {
       list: (...args: unknown[]) => listMock(...(args as Parameters<typeof listMock>)),
-      downloadUrl: (...args: unknown[]) =>
-        downloadUrlMock(...(args as Parameters<typeof downloadUrlMock>)),
-      bulkDownloadUrl: (...args: unknown[]) =>
-        bulkDownloadUrlMock(...(args as Parameters<typeof bulkDownloadUrlMock>)),
+      // Under the SW-mediated path the BinaryList does not call
+      // `downloadUrl` itself — the SW does on every Herunterladen
+      // fetch. Stub it so the import-time mock is complete.
+      downloadUrl: vi.fn(),
+      bulkFetch: (...args: unknown[]) =>
+        bulkFetchMock(...(args as Parameters<typeof bulkFetchMock>)),
       initUpload: vi.fn(),
       completeUpload: vi.fn(),
       delete: vi.fn(),
@@ -56,6 +70,14 @@ vi.mock('@/api/client', async (importActual) => {
     },
   };
 });
+
+// Mock the streaming-zip module — concrete path is the implementer's
+// choice; the test pins the call shape so a renamed module surfaces
+// as a failed-mock symptom rather than a silent regression.
+vi.mock('@/domain/streamingZip', () => ({
+  assembleStreamingZip: (...args: unknown[]) =>
+    streamingZipMock(...(args as Parameters<typeof streamingZipMock>)),
+}));
 
 const { BinaryList } = await import('@/ui/detail/BinaryList');
 const { useAuthStore } = await import('@/state/authStore');
@@ -87,8 +109,8 @@ function ok<T>(data: T): ApiResult<T> {
 
 beforeEach(() => {
   listMock.mockReset();
-  downloadUrlMock.mockReset();
-  bulkDownloadUrlMock.mockReset();
+  bulkFetchMock.mockReset();
+  streamingZipMock.mockReset();
 
   useAttachmentStore.setState({ byProject: {}, pendingUploads: {}, error: null });
   useAuthStore.setState({
@@ -139,44 +161,99 @@ beforeEach(() => {
     }),
   );
 
-  downloadUrlMock.mockResolvedValue(
-    ok({ url: 'https://storage/dl', expiresAt: '2026-04-20T10:05:00Z' }),
+  bulkFetchMock.mockResolvedValue(
+    ok({
+      data: [
+        {
+          attachmentId: 'bin-pdf',
+          originalUrl: 'https://storage.example/cipher-pdf',
+          originalDekMaterial: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+          ciphertextSizeBytes: 120_000 + 28,
+        },
+        {
+          attachmentId: 'bin-docx',
+          originalUrl: 'https://storage.example/cipher-docx',
+          originalDekMaterial: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+          ciphertextSizeBytes: 80_000 + 28,
+        },
+      ] as BulkFetchEntry[],
+    }),
   );
-  bulkDownloadUrlMock.mockResolvedValue(
-    ok({ url: 'https://storage/zip', expiresAt: '2026-04-20T10:05:00Z' }),
-  );
+
+  streamingZipMock.mockResolvedValue(new Blob([new Uint8Array(8)], { type: 'application/zip' }));
 });
 
-describe('BinaryList — row rendering (AC-223)', () => {
-  it('renders one row per ready binary with filename/label/uploader/download', async () => {
+describe('BinaryList — Herunterladen routes through synthetic origin (AC-223)', () => {
+  it('renders one row per ready binary with filename / label / uploader / timestamp', async () => {
     render(<BinaryList projectId="p-42" />);
 
-    // Resolve rows by their per-row testid rather than by text-matching:
-    // the selector pins the row contract independent of German labels.
+    // Resolve rows by per-row testid rather than text-matching: pins
+    // the row contract independent of German labels.
     const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
     const docxRow = await screen.findByTestId('attachment-binary-row-bin-docx');
-    // Fixture has 2 ready binaries (pdf + docx); photo + pending are excluded.
     expect(docxRow).toBeDefined();
     expect(pdfRow.textContent).toContain('angebot.pdf');
     expect(pdfRow.textContent?.toLowerCase()).toContain('angebot');
     expect(pdfRow.textContent).toContain('Anna Arbeiter');
+    // Timestamp is rendered via the German date formatter — the year
+    // alone is a stable proxy for "the createdAt cell rendered something".
+    expect(pdfRow.textContent).toContain('2026');
     expect(within(pdfRow).getByTestId('attachment-download')).toBeInTheDocument();
   });
 
-  it('excludes photo attachments from the binary list', async () => {
+  it('excludes photo and pending rows from the binary list', async () => {
     render(<BinaryList projectId="p-42" />);
     await screen.findByTestId('attachment-binary-row-bin-pdf');
     expect(screen.queryByTestId('attachment-binary-row-ph-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('attachment-binary-row-bin-pending')).not.toBeInTheDocument();
   });
 
-  it('excludes pending binary attachments from the list', async () => {
-    render(<BinaryList projectId="p-42" />);
-    await screen.findByTestId('attachment-binary-row-bin-pdf');
-    expect(screen.queryByTestId('attachment-binary-row-bin-pending')).not.toBeInTheDocument();
+  it('Herunterladen issues a request against /encrypted-storage/<projectId>/<attachmentId>.original', async () => {
+    // The single-file download path goes through the synthetic origin
+    // (ui/project-detail.md §8.15.5). The SW intercepts the fetch /
+    // anchor-click, calls download-url, decrypts the ciphertext, and
+    // returns plaintext bytes. The component is responsible for
+    // pointing the request at the synthetic URL — the SW is the one
+    // that does the crypto work.
+    //
+    // The implementer may use either an `<a download href="...">`
+    // anchor or a programmatic `fetch` + Blob URL. Both expose the
+    // synthetic URL on the DOM at the moment of click — the test
+    // checks that *some* observable artefact (anchor `href` or fetch
+    // call URL) carries it. We monkey-patch the click on the in-memory
+    // anchor used by the existing `triggerDownload` helper.
+    const observedUrls: string[] = [];
+    const originalAppendChild = document.body.appendChild.bind(document.body);
+    const appendChildSpy = vi.fn((node: Node) => {
+      if (node instanceof HTMLAnchorElement) {
+        observedUrls.push(node.href);
+        // No-op the click — jsdom would otherwise navigate the test
+        // window to a synthetic URL it cannot resolve.
+        const noopClick = vi.fn();
+        (node as HTMLAnchorElement & { click: () => void }).click = noopClick;
+      }
+      return originalAppendChild(node) as Node;
+    });
+    document.body.appendChild = appendChildSpy as unknown as typeof document.body.appendChild;
+
+    try {
+      render(<BinaryList projectId="p-42" />);
+      const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
+      await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
+
+      await waitFor(() => {
+        expect(observedUrls.length).toBeGreaterThan(0);
+      });
+      expect(observedUrls.some((u) => u.endsWith('/encrypted-storage/p-42/bin-pdf.original'))).toBe(
+        true,
+      );
+    } finally {
+      document.body.appendChild = originalAppendChild;
+    }
   });
 });
 
-describe('BinaryList — bulk selection + caps (AC-223)', () => {
+describe('BinaryList — Auswahl als ZIP triggers bulk-fetch (AC-223)', () => {
   it('shows Auswahl als ZIP only once at least one row is selected', async () => {
     render(<BinaryList projectId="p-42" />);
     const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
@@ -206,52 +283,132 @@ describe('BinaryList — bulk selection + caps (AC-223)', () => {
     expect(block.textContent?.toLowerCase()).toMatch(/mb|byte|gr[oö]ße/);
 
     // Client-side block — no network call to the server.
-    expect(bulkDownloadUrlMock).not.toHaveBeenCalled();
+    expect(bulkFetchMock).not.toHaveBeenCalled();
+    expect(streamingZipMock).not.toHaveBeenCalled();
+  });
+
+  it('calls bulk-fetch with the selected ids and pipes the returned payloads into the streaming-zip pipeline', async () => {
+    render(<BinaryList projectId="p-42" />);
+    const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
+    const docxRow = await screen.findByTestId('attachment-binary-row-bin-docx');
+
+    await userEvent.click(within(pdfRow).getByRole('checkbox'));
+    await userEvent.click(within(docxRow).getByRole('checkbox'));
+    await userEvent.click(screen.getByTestId('binary-bulk-download'));
+
+    // Wire contract: POST /api/projects/:id/attachments/bulk-fetch with
+    // the selected ids in the body (api.md §14.2.11). The component
+    // does not call the legacy `bulk-download` endpoint.
+    await waitFor(() => {
+      expect(bulkFetchMock).toHaveBeenCalledTimes(1);
+    });
+    const [callProjectId, callIds] = bulkFetchMock.mock.calls[0];
+    expect(callProjectId).toBe('p-42');
+    expect(new Set(callIds)).toEqual(new Set(['bin-pdf', 'bin-docx']));
+
+    // Streaming-zip pipeline receives the per-file payloads from the
+    // server — the component must pass them through unchanged so the
+    // pipeline can decrypt + assemble locally.
+    await waitFor(() => {
+      expect(streamingZipMock).toHaveBeenCalledTimes(1);
+    });
+    const [entries] = streamingZipMock.mock.calls[0];
+    expect(entries.map((e) => e.attachmentId).sort()).toEqual(['bin-docx', 'bin-pdf']);
+    // Each entry carries the unwrapped DEK + presigned URL — both are
+    // load-bearing for the per-file decrypt the pipeline performs.
+    expect(entries.every((e) => typeof e.originalDekMaterial === 'string')).toBe(true);
+    expect(entries.every((e) => typeof e.originalUrl === 'string')).toBe(true);
   });
 });
 
-describe('BinaryList — "Datei fehlt" on download-click 404 (AC-224 binary side)', () => {
-  it('flips the row to "Datei fehlt" and disables the download when the fetch fails', async () => {
-    // Lazy detection: the list endpoint does not probe storage; the
-    // UI learns bytes are missing only when the user clicks download
-    // and the presigned-GET resolves to a 404.
-    downloadUrlMock.mockResolvedValueOnce({
-      ok: false,
-      error: { code: 'NOT_FOUND', message: 'Datei nicht gefunden.' },
-      category: 'not_found',
-      sessionExpired: false,
-    });
+describe('BinaryList — "Datei fehlt" on download 404 (AC-224 binary side)', () => {
+  it('flips the row to "Datei fehlt" and disables the download when the SW signals object-absent', async () => {
+    // Lazy detection per ui/project-detail.md §8.15.7: the list endpoint
+    // does not probe storage. The UI learns bytes are missing when the
+    // user clicks Herunterladen and the SW's ciphertext fetch resolves
+    // to a non-2xx Response (storage 404). The component flags the row
+    // and disables the action.
+    //
+    // Mock global fetch so the synthetic-origin request the SW would
+    // intercept fails with a 404 here, simulating the SW's translated
+    // response surface.
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('not found', { status: 404 }));
 
-    render(<BinaryList projectId="p-42" />);
+    try {
+      render(<BinaryList projectId="p-42" />);
 
-    const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
-    await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
+      const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
+      await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
 
-    await waitFor(() => {
-      expect(within(pdfRow).getByText(/datei fehlt/i)).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(within(pdfRow).getByText(/datei fehlt/i)).toBeInTheDocument();
+      });
 
-    expect(within(pdfRow).getByTestId('attachment-download')).toBeDisabled();
+      expect(within(pdfRow).getByTestId('attachment-download')).toBeDisabled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
-  it('excludes a missing-file row from bulk-download selection', async () => {
-    downloadUrlMock.mockResolvedValueOnce({
-      ok: false,
-      error: { code: 'NOT_FOUND', message: 'Datei nicht gefunden.' },
-      category: 'not_found',
-      sessionExpired: false,
-    });
+  it('excludes a "Datei fehlt" row from bulk-fetch selection', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response('not found', { status: 404 }));
 
-    render(<BinaryList projectId="p-42" />);
+    try {
+      render(<BinaryList projectId="p-42" />);
 
-    const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
-    await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
+      const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
+      await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
 
-    await waitFor(() => {
-      expect(within(pdfRow).getByText(/datei fehlt/i)).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(within(pdfRow).getByText(/datei fehlt/i)).toBeInTheDocument();
+      });
 
-    const checkbox = within(pdfRow).queryByRole('checkbox');
-    if (checkbox) expect(checkbox).toBeDisabled();
+      const checkbox = within(pdfRow).queryByRole('checkbox');
+      if (checkbox) expect(checkbox).toBeDisabled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+});
+
+describe('BinaryList — Schlüssel nicht verfügbar render (AC-244)', () => {
+  it('flips the row to "Schlüssel nicht verfügbar" when the SW signals envelope-unwrap failure', async () => {
+    // Per AC-244 + ui/project-detail.md §8.15.7: an envelope unwrap
+    // failure on the SW's download-url call (e.g. partial key rotation,
+    // recipient drift) surfaces a distinct German placeholder from
+    // AC-224. The SW returns a 422 Response carrying
+    // `{ code: 'DEK_UNWRAP_FAILED' }`; the component reads the body
+    // (or an equivalent SW-attached header) to disambiguate. The
+    // German label is locked at the component layer.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'DEK_UNWRAP_FAILED' }), {
+        status: 422,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+
+    try {
+      render(<BinaryList projectId="p-42" />);
+
+      const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
+      await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
+
+      await waitFor(() => {
+        expect(within(pdfRow).getByText(/schlüssel nicht verfügbar/i)).toBeInTheDocument();
+      });
+
+      // Download disabled and the row excluded from bulk-fetch
+      // selection — same exclusion rule as AC-224 with a different
+      // remediation prompt.
+      expect(within(pdfRow).getByTestId('attachment-download')).toBeDisabled();
+      const checkbox = within(pdfRow).queryByRole('checkbox');
+      if (checkbox) expect(checkbox).toBeDisabled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

@@ -44,13 +44,23 @@ async function seedReadyAttachment(projectId: string, createdBy: string | null):
   const { db, pool } = createDatabase();
   try {
     const id = crypto.randomUUID();
+    // Synthetic wrapped envelope — the route layer's `download-url`
+    // arm here exercises the unwrap path. AC-241 separately asserts
+    // the unwrapped DEK is 32 bytes; the byte-corruption / recipient-
+    // mismatch arms live in attachments-routes.test.ts. Real-shape
+    // envelopes are out of scope for direct seeds.
+    const wrappedDek = Buffer.alloc(192, 0xaa).toString('base64');
     await db.execute(sql`
       INSERT INTO attachments
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-         original_key, thumb_key, has_thumbnail, created_by)
+         ciphertext_size_bytes,
+         original_key, thumb_key, has_thumbnail,
+         wrapped_dek, wrapped_thumb_dek, created_by)
       VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
               ${'f-' + id.slice(0, 6)}, 'application/pdf', 100,
-              ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE, ${createdBy})
+              164,
+              ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
+              ${wrappedDek}, NULL, ${createdBy})
     `);
     return id;
   } finally {
@@ -166,6 +176,17 @@ describe('Attachment scope (AC-214, AC-217)', () => {
         `/api/projects/${assignedProjectId}/attachments/${inScopeAttachmentId}/download-url?variant=original`,
       );
       expect(res.statusCode).toBe(200);
+      // The 200 surface carries `{ url, expiresAt, dekMaterial }` per
+      // AC-241 — the SW consumes all three to fetch + decrypt. A
+      // regression that returned the legacy `{ url, expiresAt }` shape
+      // (pre-ADR-0024) would fail here.
+      const body = res.json();
+      expect(typeof body.url).toBe('string');
+      expect(typeof body.expiresAt).toBe('string');
+      expect(typeof body.dekMaterial).toBe('string');
+      // 32 bytes after base64-decode — the AES-256-GCM key shape.
+      const decoded = Buffer.from(body.dekMaterial, 'base64');
+      expect(decoded.length).toBe(32);
     });
 
     it('worker receives 403 NOT_PERMITTED for an attachment on an unassigned project', async () => {
@@ -192,16 +213,23 @@ describe('Attachment scope (AC-214, AC-217)', () => {
       ['office', () => officeToken],
       ['bookkeeper', () => bookkeeperToken],
     ] as const)(
-      '%s receives 200 for any attachment (regression — unscoped)',
+      '%s receives 200 with `dekMaterial` for any attachment (regression — unscoped)',
       async (_label, getToken) => {
         // Out-of-scope for a scoped worker, but the unscoped roles must
         // still see it — that is the AC-217 contract (attachment:read is
-        // unscoped for owner/office/bookkeeper).
+        // unscoped for owner/office/bookkeeper). Under e2e (AC-241) the
+        // returned shape carries `dekMaterial` so the SW can decrypt;
+        // pin the field's presence on the unscoped path so a regression
+        // that exposed the URL but stripped the DEK on a role split
+        // would trip here.
         const res = await authGet(
           getToken(),
           `/api/projects/${unassignedProjectId}/attachments/${outOfScopeAttachmentId}/download-url?variant=original`,
         );
         expect(res.statusCode).toBe(200);
+        const body = res.json();
+        expect(typeof body.dekMaterial).toBe('string');
+        expect(Buffer.from(body.dekMaterial, 'base64').length).toBe(32);
       },
     );
   });

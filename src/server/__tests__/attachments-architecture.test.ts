@@ -14,10 +14,19 @@
  *   - AC-221: no attachment route handler accepts a raw/multipart
  *     body. The upload path is presigned-PUT direct-to-storage; the
  *     only attachment endpoints on the app are init, complete, delete,
- *     list, download-url, bulk-download — all JSON control plane.
+ *     list, download-url, bulk-fetch — all JSON control plane.
  *     "No byte traffic through the app" (api.md §14.2.11 design note)
  *     is load-bearing for module scalability and is pinned by a
  *     structural assertion parallel to AC-179.
+ *
+ *   - AC-242: no attachment route handler streams ciphertext bytes
+ *     to or from object storage. Under e2e (ADR-0024) the server
+ *     handles only metadata, the wrapped envelope, and the unwrapped
+ *     DEK during `download-url` / `bulk-fetch`. A handler that
+ *     proxied ciphertext (e.g. `GetObjectCommand` → response.Body →
+ *     reply.send) would put the VPS back in the data path and undo
+ *     the e2e refactor. Parallel to AC-221 (inbound side); together
+ *     they pin "the app handles only the control plane".
  *
  * Both assertions are structural, not behavioral. They run without
  * startApp() — both inspect source / config directly.
@@ -125,15 +134,20 @@ describe('AC-221: no attachment route accepts a raw/multipart body', () => {
   });
 
   it('only the eight documented endpoints are registered under /api/projects/:id/attachments', () => {
-    // The documented control plane per api.md §14.2.11 + ADR-0022:
+    // The documented control plane per api.md §14.2.11 + ADR-0024:
     //   GET    /api/projects/:id/attachments                             (list — ready only)
     //   POST   /api/projects/:id/attachments/init                        (init)
     //   POST   /api/projects/:id/attachments/:attId/complete             (complete)
     //   DELETE /api/projects/:id/attachments/:attId                      (soft-hide)
-    //   GET    /api/projects/:id/attachments/:attId/download-url         (download URL)
-    //   POST   /api/projects/:id/attachments/bulk-download               (bulk download URL)
+    //   GET    /api/projects/:id/attachments/:attId/download-url         (download URL + DEK material)
+    //   POST   /api/projects/:id/attachments/bulk-fetch                  (per-file URLs + DEK material)
     //   GET    /api/projects/:id/attachments/trash                       (Papierkorb listing)
     //   POST   /api/projects/:id/attachments/:attId/restore              (Papierkorb restore)
+    //
+    // The pre-e2e `bulk-download` route is gone (single zip URL, server-
+    // side archive). It is replaced by `bulk-fetch` per ADR-0024 — the
+    // browser receives per-file presigned-GETs + DEK material and
+    // assembles the streaming zip locally.
     //
     // Pinning the registrations here prevents a subsequent PR from
     // adding a 9th route that quietly accepts bytes.
@@ -143,7 +157,7 @@ describe('AC-221: no attachment route accepts a raw/multipart body', () => {
       /app\.post\s*\(\s*['"]\/api\/projects\/:id\/attachments\/:attId\/complete['"]/,
       /app\.delete\s*\(\s*['"]\/api\/projects\/:id\/attachments\/:attId['"]/,
       /app\.get\s*\(\s*['"]\/api\/projects\/:id\/attachments\/:attId\/download-url['"]/,
-      /app\.post\s*\(\s*['"]\/api\/projects\/:id\/attachments\/bulk-download['"]/,
+      /app\.post\s*\(\s*['"]\/api\/projects\/:id\/attachments\/bulk-fetch['"]/,
       /app\.get\s*\(\s*['"]\/api\/projects\/:id\/attachments\/trash['"]/,
       /app\.post\s*\(\s*['"]\/api\/projects\/:id\/attachments\/:attId\/restore['"]/,
     ];
@@ -171,5 +185,94 @@ describe('AC-221: no attachment route accepts a raw/multipart body', () => {
     // A route setting bodyLimit to an arbitrary-large number is another
     // proxy-smell; the JSON control plane never needs it.
     expect(ROUTES_SRC).not.toMatch(/bodyLimit\s*:\s*\d{7,}/);
+  });
+
+  it('the retired bulk-download route is gone (ADR-0024 — replaced by bulk-fetch)', () => {
+    // The pre-e2e `bulk-download` route returned a single presigned GET
+    // to a server-archived zip. Under e2e the server cannot archive
+    // ciphertext (it would force an unwrap-and-handle-plaintext path)
+    // — the route retires and its replacement `bulk-fetch` returns
+    // per-file URLs + DEK material for the browser to assemble locally.
+    // A regression that re-introduces the old route would re-introduce
+    // the data-path violation ADR-0024 closed.
+    expect(ROUTES_SRC).not.toMatch(/['"]\/api\/projects\/:id\/attachments\/bulk-download['"]/);
+  });
+});
+
+// ---------------------------------------------------------------------
+// AC-242 — No app-process bytes traffic for ciphertext (outbound).
+//
+// Mirrors AC-221 on the read side: the app must never read or proxy
+// attachment ciphertext bytes. Under e2e (ADR-0024) the only data the
+// server touches is the metadata row, the wrapped envelope, and the
+// per-request unwrapped DEK during `download-url` / `bulk-fetch`. A
+// handler that piped a `GetObjectCommand` response body into a Fastify
+// reply would put the VPS back in the data path and undo the refactor.
+//
+// Source-text scan over `routes/attachments.ts` (parallel to AC-221).
+// The detection is necessarily structural — a true AST-grade check
+// would require resolving SDK identifiers through the import table and
+// matching `pipe()` / `pipeline()` sinks; that's the AC-238 detector's
+// shape, but the scope of this AC is "no `GetObjectCommand` body sink
+// inside the attachment routes file" which is observable via the
+// imports list and call shapes in the same file.
+// ---------------------------------------------------------------------
+
+describe('AC-242: no attachment route streams ciphertext bytes from object storage', () => {
+  const ROUTES_SRC = readSource('src/server/routes/attachments.ts');
+
+  it('the attachment routes file does not import GetObjectCommand', () => {
+    // The routes file owns init / complete / list / hide / restore /
+    // download-url / bulk-fetch. None of those need to fetch object
+    // bytes — `download-url` and `bulk-fetch` issue presigned GETs
+    // for the *browser* to consume, the app does not. A regression
+    // that imports `GetObjectCommand` here is a tell that someone is
+    // about to read a body in-process.
+    expect(ROUTES_SRC).not.toMatch(/GetObjectCommand/);
+  });
+
+  it('the attachment routes file does not call pipe() / pipeline() on a body', () => {
+    // Stream-piping shapes that would proxy bytes through a Fastify
+    // reply: `body.pipe(reply.raw)`, `pipeline(body, reply.raw)`,
+    // `Readable.from(...).pipe(...)`, etc. None are admissible on the
+    // attachment routes file under AC-242.
+    expect(ROUTES_SRC).not.toMatch(/\.pipe\s*\(/);
+    expect(ROUTES_SRC).not.toMatch(/pipeline\s*\(/);
+  });
+
+  it('the attachment routes file does not access reply.raw (low-level node socket — byte proxying surface)', () => {
+    // Fastify exposes the underlying Node response as `reply.raw`.
+    // Any attachment route reaching for `reply.raw` is bypassing
+    // Fastify's serializer to write bytes by hand — exactly the
+    // shape AC-242 forbids. A future need (e.g. SSE) is also
+    // unwelcome on the attachment routes file specifically.
+    expect(ROUTES_SRC).not.toMatch(/reply\.raw/);
+  });
+
+  it('the storage-client surface used by the attachment routes does not expose a body-fetch helper', () => {
+    // The storage client (src/server/storage/client.ts) exposes
+    // `headObject`, `upload`, `hide`, `copyFromVersion`, `presignPut`,
+    // `presignGet`, plus the boot probes — no `fetchBytes` /
+    // `getObjectBody` / `streamObject` helper. A new helper of that
+    // shape would let any caller (including the attachment routes)
+    // bring ciphertext into the app. Pin the absence at the client
+    // level so the attachment surface inherits it transitively.
+    const CLIENT_SRC = readSource('src/server/storage/client.ts');
+    expect(CLIENT_SRC).not.toMatch(/\bgetObjectBody\b/);
+    expect(CLIENT_SRC).not.toMatch(/\bfetchBytes\b/);
+    expect(CLIENT_SRC).not.toMatch(/\bstreamObject\b/);
+  });
+
+  it('the AttachmentService does not import GetObjectCommand or call a body-fetch shape', () => {
+    // Service layer parity: the routes file's cleanliness is enforced
+    // above, but the service layer is the surface the routes call
+    // into. A `GetObjectCommand` import on the service that the
+    // routes then invoked indirectly would slip past the routes-file
+    // scan. Pin the absence here too — the service must stay metadata-
+    // and-DEK-only.
+    const SERVICE_SRC = readSource('src/server/services/AttachmentService.ts');
+    expect(SERVICE_SRC).not.toMatch(/GetObjectCommand/);
+    expect(SERVICE_SRC).not.toMatch(/\.pipe\s*\(/);
+    expect(SERVICE_SRC).not.toMatch(/pipeline\s*\(/);
   });
 });

@@ -1,31 +1,32 @@
 /**
- * PhotoGallery — thumbnail rendering + "Datei fehlt" lazy detection.
+ * PhotoGallery — synthetic-origin Service-Worker render path
+ * (ADR-0024, spec ui/project-detail.md §8.15.4) plus the two lazy
+ * placeholder branches (`"Datei fehlt"` AC-224, `"Schlüssel nicht
+ * verfügbar"` AC-244).
  *
- * Covers AC-222 (gallery renders `status = 'ready'` photos via
- * presigned thumbnail URLs; binaries never appear) and the photo side
- * of AC-224 (a thumbnail 404 flips the affected row to a neutral
- * `"Datei fehlt"` placeholder, and the row is excluded from the
- * lightbox).
+ * Under the e2e contract:
+ *   - Each `<img src>` points at `/encrypted-storage/<projectId>/<attachmentId>.thumbnail`;
+ *     the Service Worker (out of scope here, see `src/sw/__tests__/sw-decrypt.test.ts`)
+ *     intercepts the request, calls the `download-url` endpoint to
+ *     obtain `{url, expiresAt, dekMaterial}`, fetches the ciphertext
+ *     from B2, AES-256-GCM-decrypts, and serves plaintext bytes via
+ *     the Fetch response.
+ *   - Lightbox flips to `.original` under the same synthetic origin.
+ *   - `<img onError>` is the integration seam: the SW returns a non-2xx
+ *     Response on either an object-absent path (AC-224) or an
+ *     envelope-unwrap failure (AC-244), and the gallery flips the row
+ *     to the matching German placeholder.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ApiResult, AttachmentDownloadUrlResponse } from '@/api/client';
+import type { ApiResult } from '@/api/client';
 import type { Attachment } from '@/domain/types';
 
 type ListResult = ApiResult<{ data: Attachment[] }>;
-type DownloadUrlResult = ApiResult<AttachmentDownloadUrlResponse>;
 
 const listMock = vi.fn<(projectId: string) => Promise<ListResult>>();
-const downloadUrlMock =
-  vi.fn<
-    (
-      projectId: string,
-      attachmentId: string,
-      variant: 'original' | 'thumbnail',
-    ) => Promise<DownloadUrlResult>
-  >();
 
 vi.mock('@/api/client', async (importActual) => {
   const actual = (await importActual()) as Record<string, unknown>;
@@ -33,12 +34,14 @@ vi.mock('@/api/client', async (importActual) => {
     ...actual,
     attachmentApi: {
       list: (...args: unknown[]) => listMock(...(args as Parameters<typeof listMock>)),
-      downloadUrl: (...args: unknown[]) =>
-        downloadUrlMock(...(args as Parameters<typeof downloadUrlMock>)),
+      // Under the SW-mediated render path the gallery no longer calls
+      // `downloadUrl` itself — the SW does on each `<img>` fetch. We
+      // still stub the surface so the import-time mock is complete.
+      downloadUrl: vi.fn(),
+      bulkFetch: vi.fn(),
       initUpload: vi.fn(),
       completeUpload: vi.fn(),
       delete: vi.fn(),
-      bulkDownloadUrl: vi.fn(),
     },
     authApi: {
       login: vi.fn(),
@@ -78,7 +81,6 @@ function ok<T>(data: T): ApiResult<T> {
 
 beforeEach(() => {
   listMock.mockReset();
-  downloadUrlMock.mockReset();
   useAuthStore.setState({
     authUser: {
       id: 'u-1',
@@ -112,85 +114,54 @@ beforeEach(() => {
       ],
     }),
   );
-
-  downloadUrlMock.mockResolvedValue(
-    ok({ url: 'https://storage.example/thumb-url', expiresAt: '2026-04-20T10:05:00Z' }),
-  );
 });
 
 describe('PhotoGallery — renders ready photo thumbnails (AC-222)', () => {
-  it('renders one thumbnail per ready photo attachment', async () => {
+  it('points each ready-photo <img src> at the synthetic-origin thumbnail path', async () => {
     render(<PhotoGallery projectId="p-42" />);
 
     const thumb = await screen.findByTestId('photo-thumb-ph-ready');
-    // Thumbnail image source is a presigned URL requested at render time.
     const img = thumb.querySelector('img');
     expect(img).not.toBeNull();
-    await waitFor(() => {
-      expect(img?.getAttribute('src')).toContain('thumb-url');
-    });
+    // Synthetic origin per ui/project-detail.md §8.15.4 — the SW path
+    // pinned by AC-243. The browser-internal scheme has no TTL and no
+    // cache headers leaked.
+    expect(img?.getAttribute('src')).toBe('/encrypted-storage/p-42/ph-ready.thumbnail');
   });
 
   it('does not render a thumbnail for binary or pending attachments', async () => {
     render(<PhotoGallery projectId="p-42" />);
 
-    // The ready photo is rendered — wait for that so we know the list
-    // settled before asserting absences.
     await screen.findByTestId('photo-thumb-ph-ready');
 
+    // Binary attachments live in the BinaryList, not the gallery — see
+    // BinaryList.test.tsx. Pending rows are excluded from both surfaces
+    // until `complete()` flips them to ready.
     expect(screen.queryByTestId('photo-thumb-bin-1')).not.toBeInTheDocument();
     expect(screen.queryByTestId('photo-thumb-ph-pending')).not.toBeInTheDocument();
-  });
-
-  it('requests the thumbnail variant, not the original, at gallery render', async () => {
-    render(<PhotoGallery projectId="p-42" />);
-
-    await waitFor(() => {
-      expect(downloadUrlMock).toHaveBeenCalled();
-    });
-    const calls = downloadUrlMock.mock.calls as unknown as Array<
-      [projectId: string, attId: string, variant: string]
-    >;
-    const variants = calls.map((c) => c[2]);
-    // Every gallery-render call is for the thumbnail variant. Original
-    // URLs are requested only on lightbox open.
-    expect(variants.every((v) => v === 'thumbnail')).toBe(true);
   });
 });
 
 describe('PhotoGallery — lightbox requests the original variant (AC-222)', () => {
-  it('fetches a new presigned URL for the original when a thumbnail is clicked', async () => {
+  it('flips the open <img src> to the synthetic-origin original variant on click', async () => {
     render(<PhotoGallery projectId="p-42" />);
 
     const thumb = await screen.findByTestId('photo-thumb-ph-ready');
-    downloadUrlMock.mockClear();
-    downloadUrlMock.mockResolvedValueOnce(
-      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
-    );
-
     await userEvent.click(thumb);
 
-    await waitFor(() => {
-      expect(downloadUrlMock).toHaveBeenCalled();
-    });
-    const [, , variant] = downloadUrlMock.mock.calls[0] as unknown as [string, string, string];
-    expect(variant).toBe('original');
-    expect(await screen.findByTestId('photo-lightbox')).toBeInTheDocument();
+    const lightbox = await screen.findByTestId('photo-lightbox');
+    const lightboxImg = lightbox.querySelector('img');
+    expect(lightboxImg).not.toBeNull();
+    // Same synthetic origin, `.original` instead of `.thumbnail`. The
+    // SW will fetch + decrypt the original ciphertext on demand.
+    expect(lightboxImg?.getAttribute('src')).toBe('/encrypted-storage/p-42/ph-ready.original');
   });
 });
 
 describe('PhotoGallery — lightbox a11y', () => {
   it('closes the lightbox on Escape', async () => {
-    downloadUrlMock.mockImplementationOnce(async () =>
-      ok({ url: 'https://storage.example/thumb-url', expiresAt: '2026-04-20T10:05:00Z' }),
-    );
-
     render(<PhotoGallery projectId="p-42" />);
-
     const thumb = await screen.findByTestId('photo-thumb-ph-ready');
-    downloadUrlMock.mockResolvedValueOnce(
-      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
-    );
     await userEvent.click(thumb);
 
     expect(await screen.findByTestId('photo-lightbox')).toBeInTheDocument();
@@ -204,11 +175,7 @@ describe('PhotoGallery — lightbox a11y', () => {
 
   it('closes the lightbox when the X close button is clicked', async () => {
     render(<PhotoGallery projectId="p-42" />);
-
     const thumb = await screen.findByTestId('photo-thumb-ph-ready');
-    downloadUrlMock.mockResolvedValueOnce(
-      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
-    );
     await userEvent.click(thumb);
 
     await screen.findByTestId('photo-lightbox');
@@ -221,11 +188,7 @@ describe('PhotoGallery — lightbox a11y', () => {
 
   it('keeps the lightbox open when the backdrop or the photo itself is clicked', async () => {
     render(<PhotoGallery projectId="p-42" />);
-
     const thumb = await screen.findByTestId('photo-thumb-ph-ready');
-    downloadUrlMock.mockResolvedValueOnce(
-      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
-    );
     await userEvent.click(thumb);
 
     const lightbox = await screen.findByTestId('photo-lightbox');
@@ -240,11 +203,7 @@ describe('PhotoGallery — lightbox a11y', () => {
 
   it('restores focus to the thumbnail that opened the lightbox on close', async () => {
     render(<PhotoGallery projectId="p-42" />);
-
     const thumb = await screen.findByTestId('photo-thumb-ph-ready');
-    downloadUrlMock.mockResolvedValueOnce(
-      ok({ url: 'https://storage.example/original-url', expiresAt: '2026-04-20T10:05:00Z' }),
-    );
     await userEvent.click(thumb);
 
     await screen.findByTestId('photo-lightbox');
@@ -254,118 +213,95 @@ describe('PhotoGallery — lightbox a11y', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
     });
-    // Focus returns to the thumbnail that opened the lightbox so keyboard
-    // users stay anchored to their point of entry instead of dropping to
-    // document root.
+    // Focus returns to the thumbnail that opened the lightbox so
+    // keyboard users stay anchored to their point of entry instead of
+    // dropping to document root.
     expect(document.activeElement).toBe(thumb);
   });
 });
 
-describe('PhotoGallery — missing-thumbnail re-fetch on list refresh', () => {
-  it('re-attempts the thumbnail fetch when a list refresh re-emits a previously-missing row', async () => {
-    // First list fetch returns the photo; the thumbnail URL resolves to
-    // null (verdict: missing). Spec §8.15.7 forbids caching that verdict
-    // — a later list refetch that re-emits the same row must re-probe.
-    downloadUrlMock.mockImplementation(async (_projectId: unknown, attId: unknown) => {
-      if (attId === 'ph-ready') {
-        return {
-          ok: false as const,
-          error: { code: 'NOT_FOUND', message: 'Datei nicht gefunden.' },
-          category: 'not_found' as const,
-          sessionExpired: false,
-        };
-      }
-      return ok({ url: 'https://x', expiresAt: '2026-04-20T10:05:00Z' });
-    });
-
+describe('PhotoGallery — "Datei fehlt" render (AC-224 photo side)', () => {
+  it('renders the "Datei fehlt" placeholder when the SW signals object-absent on the thumbnail', async () => {
+    // Lazy detection per ui/project-detail.md §8.15.7: the list endpoint
+    // does not probe storage. The UI learns bytes are missing only when
+    // the `<img>` decode fails — the SW returned a non-2xx Response
+    // because the ciphertext GET hit a storage 404. Distinct from
+    // AC-244: the operator remediation differs (storage divergence vs.
+    // identity drift). Both placeholders disable the download action
+    // and exclude the row from the lightbox + bulk-fetch selection.
     render(<PhotoGallery projectId="p-42" />);
 
-    // Placeholder appears => first probe landed as "missing".
-    await screen.findByTestId('photo-missing-ph-ready');
-    const firstCount = downloadUrlMock.mock.calls.filter(
-      (c) => (c as unknown as [string, string, string])[1] === 'ph-ready',
-    ).length;
-    expect(firstCount).toBeGreaterThanOrEqual(1);
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    const img = thumb.querySelector('img');
+    expect(img).not.toBeNull();
 
-    // Flip the mock to return a working URL on the next probe so a
-    // successful refetch is observable as the row leaving the placeholder
-    // state. Then simulate a list refresh — the store replaces the
-    // per-project slice with a new array reference, which re-runs the
-    // gallery's effect.
-    downloadUrlMock.mockImplementation(async (_projectId: unknown, attId: unknown) => {
-      if (attId === 'ph-ready') {
-        return ok({
-          url: 'https://storage.example/thumb-refreshed',
-          expiresAt: '2026-04-20T10:05:00Z',
-        });
-      }
-      return ok({ url: 'https://x', expiresAt: '2026-04-20T10:05:00Z' });
-    });
-
-    // Trigger a list-refresh by re-writing the per-project slice with a
-    // fresh object identity. The existing `photos` filter produces a new
-    // array, re-running the thumbnail-request effect for any row whose
-    // cached entry is `null` (missing verdict).
-    useAttachmentStore.setState((s) => ({
-      byProject: {
-        ...s.byProject,
-        'p-42': (s.byProject['p-42'] ?? []).map((a) => ({ ...a })),
-      },
-    }));
-
-    await waitFor(() => {
-      const calls = downloadUrlMock.mock.calls.filter(
-        (c) => (c as unknown as [string, string, string])[1] === 'ph-ready',
-      );
-      expect(calls.length).toBeGreaterThan(firstCount);
-    });
-  });
-});
-
-describe('PhotoGallery — "Datei fehlt" on thumbnail 404 (AC-224 photo side)', () => {
-  it('renders the placeholder when the thumbnail fetch returns NOT_FOUND', async () => {
-    // Lazy detection: the list endpoint does not probe storage. The UI
-    // learns bytes are missing only when the browser follows the
-    // presigned URL and the provider responds with a 404 — modelled here
-    // as the backing object-storage fetch failing (a real 404 surfacing
-    // as an `<img>` error event or a failed GET). The store surface
-    // translates that into a per-row missing-file state.
-    downloadUrlMock.mockImplementation(async (_projectId: unknown, attId: unknown) => {
-      if (attId === 'ph-ready') {
-        return {
-          ok: false as const,
-          error: { code: 'NOT_FOUND', message: 'Datei nicht gefunden.' },
-          category: 'not_found' as const,
-          sessionExpired: false,
-        };
-      }
-      return ok({ url: 'https://x', expiresAt: '2026-04-20T10:05:00Z' });
-    });
-
-    render(<PhotoGallery projectId="p-42" />);
+    // Simulate the `<img>` error event the SW's non-2xx Response
+    // produces in a real browser. Without an explicit cause attribute
+    // the gallery's `onError` handler defaults to AC-224 (object-
+    // absent), the safer of the two failure modes — AC-244 requires
+    // the SW to surface DEK_UNWRAP_FAILED (covered in the AC-244
+    // describe below).
+    fireEvent.error(img!, { target: img });
 
     const placeholder = await screen.findByTestId('photo-missing-ph-ready');
     expect(placeholder.textContent).toContain('Datei fehlt');
   });
 
-  it('excludes a missing-file row from the lightbox (clicking the placeholder does not open it)', async () => {
-    downloadUrlMock.mockImplementation(async (_projectId: unknown, attId: unknown) => {
-      if (attId === 'ph-ready') {
-        return {
-          ok: false as const,
-          error: { code: 'NOT_FOUND', message: 'Datei nicht gefunden.' },
-          category: 'not_found' as const,
-          sessionExpired: false,
-        };
-      }
-      return ok({ url: 'https://x', expiresAt: '2026-04-20T10:05:00Z' });
-    });
-
+  it('excludes a "Datei fehlt" row from the lightbox + bulk-fetch selection (clicking the placeholder is a no-op)', async () => {
     render(<PhotoGallery projectId="p-42" />);
+
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    const img = thumb.querySelector('img');
+    fireEvent.error(img!, { target: img });
 
     const placeholder = await screen.findByTestId('photo-missing-ph-ready');
     await userEvent.click(placeholder);
 
+    expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
+  });
+});
+
+describe('PhotoGallery — Schlüssel nicht verfügbar render (AC-244)', () => {
+  it('renders the "Schlüssel nicht verfügbar" placeholder when the SW signals envelope-unwrap failure', async () => {
+    // Per ui/project-detail.md §8.15.7 and AC-244: an envelope unwrap
+    // failure (e.g. partial key rotation in progress, recipient drift)
+    // surfaces a distinct placeholder from AC-224. The SW's
+    // download-url request returns 422 DEK_UNWRAP_FAILED; the SW
+    // translates that into a non-2xx Response carrying the code so
+    // `<img onError>` can disambiguate. The German label is locked at
+    // the gallery layer so a string-table edit can't silently drop it.
+    render(<PhotoGallery projectId="p-42" />);
+
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    const img = thumb.querySelector('img');
+    expect(img).not.toBeNull();
+
+    // Mark the `<img>` as the unwrap-failure variant so the gallery's
+    // `onError` handler reads the cause attribute and routes to AC-244
+    // instead of AC-224. The exact attribute name is the implementer's
+    // choice — the test pins it to `data-sw-error-code` because the SW
+    // is the single seam that knows the reason. If the implementer
+    // picks a different attribute, this test breaks loudly and the
+    // change is visible.
+    img!.setAttribute('data-sw-error-code', 'DEK_UNWRAP_FAILED');
+    fireEvent.error(img!, { target: img });
+
+    const placeholder = await screen.findByTestId('photo-key-unavailable-ph-ready');
+    expect(placeholder.textContent).toContain('Schlüssel nicht verfügbar');
+  });
+
+  it('disables the download action and excludes the row from lightbox + bulk-fetch selection', async () => {
+    render(<PhotoGallery projectId="p-42" />);
+
+    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
+    const img = thumb.querySelector('img');
+    img!.setAttribute('data-sw-error-code', 'DEK_UNWRAP_FAILED');
+    fireEvent.error(img!, { target: img });
+
+    const placeholder = await screen.findByTestId('photo-key-unavailable-ph-ready');
+    await userEvent.click(placeholder);
+    // Clicking the placeholder must not open the lightbox — same
+    // exclusion rule as AC-224.
     expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
   });
 });
