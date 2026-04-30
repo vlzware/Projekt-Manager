@@ -523,6 +523,9 @@ export const STRINGS = {
     // Missing-file placeholder (AC-224)
     fileMissing: 'Datei fehlt',
 
+    // Unwrappable-envelope placeholder (AC-244, ADR-0024)
+    keyUnavailable: 'Schlüssel nicht verfügbar',
+
     // Deletion (soft-hide → Papierkorb, ADR-0022)
     deleteConfirmTitle: 'Datei löschen?',
     deleteConfirmMessage:

@@ -54,6 +54,7 @@ export default defineConfig({
           include: [
             'src/ui/**/__tests__/**/*.test.{ts,tsx}',
             'src/hooks/**/__tests__/**/*.test.{ts,tsx}',
+            'src/sw/__tests__/**/*.test.ts',
           ],
           setupFiles: ['src/test/component-setup.ts'],
         },
