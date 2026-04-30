@@ -12,12 +12,13 @@
 
 ## Operations (repeatable)
 
-| Document                                                       | Purpose                                                     |
-| -------------------------------------------------------------- | ----------------------------------------------------------- |
-| [manual-deploy.md](manual-deploy.md)                           | Deploy, rollback, secrets management                        |
-| [sync-dev-to-vps.md](sync-dev-to-vps.md)                       | Destructive sync of dev DB + object storage to the VPS      |
-| [sync-vps-to-dev.md](sync-vps-to-dev.md)                       | Destructive sync in reverse — VPS state back into dev       |
-| [recover-from-schema-change.md](recover-from-schema-change.md) | Wipe + reseed + sync after a `0000_baseline.sql` edit       |
-| [backup/](backup/overview.md)                                  | Layer 2 backup — setup, DR restore, drills, troubleshooting |
-| [local-dev.md](local-dev.md)                                   | Local development environment                               |
-| [http-only-evaluation.md](http-only-evaluation.md)             | Domain-less HTTP testing on a bare VPS                      |
+| Document                                                       | Purpose                                                                                                |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| [manual-deploy.md](manual-deploy.md)                           | Deploy, rollback, secrets management                                                                   |
+| [sync-dev-to-vps.md](sync-dev-to-vps.md)                       | Destructive sync of dev DB + object storage to the VPS                                                 |
+| [sync-vps-to-dev.md](sync-vps-to-dev.md)                       | Destructive sync in reverse — VPS state back into dev                                                  |
+| [recover-from-schema-change.md](recover-from-schema-change.md) | Wipe + reseed + sync after a `0000_baseline.sql` edit                                                  |
+| [backup/](backup/overview.md)                                  | Layer 2 backup — setup, DR restore, drills, troubleshooting                                            |
+| [binary-key/](binary-key/overview.md)                          | Layer 3 binary `age` identity — setup, paste-after-reboot, drills, recovery, rotation, troubleshooting |
+| [local-dev.md](local-dev.md)                                   | Local development environment                                                                          |
+| [http-only-evaluation.md](http-only-evaluation.md)             | Domain-less HTTP testing on a bare VPS                                                                 |

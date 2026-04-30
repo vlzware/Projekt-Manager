@@ -1,0 +1,128 @@
+# ADR-0024: End-to-end encryption of binary attachments
+
+- **Status:** Accepted
+- **Date:** 2026-04-30
+- **Confidence:** Medium
+
+## Context
+
+[ADR-0022](0022-binary-storage-b2-compliance-object-lock.md) addresses durability of user binaries: B2 versioning + capability split + Compliance Object Lock backstop ensure the application cannot destroy the file. It does not address confidentiality. Today the browser PUTs plaintext bytes through a presigned URL directly to B2, and the provider — together with anyone holding a leaked data-plane token, anyone in the B2 admin path, and anyone subpoenaing the bucket — sees the bytes.
+
+[ADR-0020](0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md) closed the same gap for the backup direction with an operator-loaded asymmetric `age` identity: the public recipient lives in container env, the private identity lives only on the operator workstation and is pasted into a tmpfs mount on the VPS. The pattern — and most of its operational ergonomics — generalizes to binaries. [DATA.md §Layer 3](../../DATA.md#layer-3--binary-attachments-provider-enforced-durability--e2e) currently flags e2e as open future work; this ADR closes it.
+
+Forces:
+
+- **VPS not in the data path.** ADR-0022's serving model (browser ↔ B2 via presigned URLs) is load-bearing for cost and bandwidth. Any e2e design must keep the bulk bytes off the VPS — including on download.
+- **Single tenant, trusted operator.** A small office with one operator role; no per-user key provisioning machinery worth the redesign.
+- **Operator parity.** The operator already pastes one identity per VPS reboot for backups. A second paste for binaries is acceptable; an entirely new key-management mental model is not.
+- **No backwards compatibility.** Existing B2 contents are test data; they will be wiped at cutover. A migration / dual-mode / "legacy plaintext rows still readable" path is rejected — it would carry the unencrypted threat model into the new design indefinitely.
+- **ADR-0022's bucket primitives stay; its complete() contract does not.** Versioning, the capability split, and the Compliance Object Lock backstop operate on opaque bytes — they defend ciphertext exactly as they defended plaintext. The `complete()` HEAD assertions (size + content-type) need to be reframed against ciphertext (rewritten, not deleted — see Decision § Complete() flow rework).
+
+## Decision
+
+Binaries are encrypted end-to-end with **per-attachment envelope encryption** anchored on an operator-loaded asymmetric identity. The closest production analogue is the **Cryptomator vault format**: per-file content key, locally-loaded master key wrapping each content key, ciphertext stored alongside the wrapped key on commodity object storage. The master-key role is played by an operator-loaded `age` identity in tmpfs on the VPS, mirroring ADR-0020. Envelope encryption against an online KMS (AWS S3 CSE-KMS) is the canonical comparison for the wrapping shape but differs operationally — KMS is high-availability and online, the operator-loaded identity is neither.
+
+- **Encryption.** Bulk content is encrypted in the browser with **AES-256-GCM** via WebCrypto. Per blob, a fresh random nonce is prefixed to the ciphertext (standard AES-GCM convention; no separate column). The 16-byte AES-GCM auth tag verified on decrypt is the cryptographic-integrity guarantee for the bytes; the storage-level `Content-MD5` (see Storage below) is the body-match guarantee on PUT.
+- **DEK provenance.** The browser generates the 32-byte data-encryption key with `crypto.getRandomValues(new Uint8Array(32))`, fresh per attachment, before init. WebCrypto's `getRandomValues` is a W3C-mandated CSPRNG backed by the OS entropy source on every browser in scope (the same source Node's `crypto.randomBytes` uses on the server). Generating server-side was rejected — it forces a two-round-trip init because the presigned PUT must be signed against the **ciphertext's** MD5/length and the client cannot compute those without first holding the DEK; client-side DEK collapses init to one round trip and matches the canonical CSE-KMS / Cryptomator / Tresorit shape. A malicious browser supplying a chosen DEK gains nothing — the DEK is per-blob single-use and protects only that user's own upload.
+- **Init flow.** Client generates DEK and nonce → encrypts blob locally → computes ciphertext MD5 + length → calls `init` with `{ ciphertextSizeBytes, ciphertextContentMd5, dekMaterial, label, mimeType, fileName }`. Server wraps the DEK with the operator's binary `age` public recipient and persists the wrapped envelope in the attachment row, signs the presigned PUT against the **ciphertext's** size and MD5, returns the descriptor. Server never persists the unwrapped DEK.
+- **Wrapping.** The server wraps the DEK using the operator's `age` public recipient (X25519 KEM, ChaCha20-Poly1305 over the wrapped payload — the standard `age` envelope shape). The wrapped envelope lives in a new `bytea` column on the `attachments` table (precise name in spec), is written once at init, and is never rewritten. Per-blob nonce travels with the ciphertext; the row stores only what the server hands back to the browser at download.
+- **Storage.** Bucket configuration is unchanged from ADR-0022: versioning ON, default Compliance retention `R`, lifecycle `daysFromHidingToDeleting = L`, app credential without `deleteFiles`. Stored objects carry a fixed sentinel `Content-Type` of `application/octet-stream` (the row's `mimeType` keeps the plaintext MIME for download `Content-Disposition`). The row gains an explicit `ciphertextSizeBytes` (or equivalent — name in spec); `sizeBytes` keeps the plaintext size for UX surfaces. R-day recovery is gated on the binary identity remaining loaded on the operator workstation throughout the recovery window — a lost identity inside the R window forfeits the backstop.
+- **Complete() flow rework.** The complete() HEAD assertions from ADR-0022 are rewritten, not preserved. HEAD returns ciphertext size and the sentinel content-type; complete() asserts `head.size == row.ciphertextSizeBytes` and `head.contentType == 'application/octet-stream'` (or equivalent sentinel). The thumbnail's `startsWith('image/')` check drops entirely — thumbnails are also `application/octet-stream` ciphertext. Spec deltas land against AC-212.
+- **Service-Worker decryption (in scope).** Today `<img src={presignedUrl}>` works because the URL serves decoded image bytes. Under e2e the same pattern fails (the bytes are ciphertext). The chosen path: a Service Worker installed by the SPA intercepts requests to a synthetic origin (working name `/encrypted-storage/<projectId>/<attachmentId>.<variant>`), calls the existing `download-url` app endpoint to obtain the presigned GET and the unwrapped DEK in one round trip (the server unwraps the envelope per request and returns DEK material to the same-origin SW), fetches the ciphertext from B2 via that presigned GET, decrypts, and serves plaintext bytes through the Fetch response. `<img>`, `<iframe>` PDF preview, and `<a href download>` keep working unchanged. This is the Cryptomator-Web / MEGA model, and is what makes the gallery refactor a SW install + URL-rewrite, not a rewrite of every consumer to fetch+decrypt+blob-URL. The SW is **part of this ADR's surface**, not a follow-up.
+- **Bulk download.** The server-side zip path retires. Today `BulkDownloadOrchestrator` archives via `archiver` and uploads the zip to `bulk-downloads/`; `bulk-download-reaper` sweeps the prefix. Under e2e, a server-side zip would be useless ciphertext or would force the server to unwrap and handle plaintext — re-introducing the data-path constraint this ADR closes. The replacement is browser-side **streaming zip**: a generator-style library that consumes an `AsyncIterable<{name, input: ReadableStream}>` and produces a `ReadableStream` zip output (the `client-zip` family of libraries; specific package picked in spec). Combined with `ReadableStream`-based decryption, peak memory is bounded by **one in-flight file** rather than the whole batch — well below the per-tab budget on the kickoff's mobile field-capture targets. The 20-file / 20-MB cap (`ATTACHMENT_BULK_MAX_FILES` / `ATTACHMENT_BULK_MAX_BYTES`) holds. The wire contract changes (breaking): the existing `POST /api/projects/:id/attachments/bulk-download` returning a single presigned GET URL is replaced by a per-file fetch flow (working name `POST /api/projects/:id/attachments/bulk-fetch`, returning `[{ attachmentId, originalUrl, originalDekMaterial, ciphertextSizeBytes, thumbUrl?, thumbDekMaterial?, ciphertextThumbSizeBytes? }]` per requested attachment — two-blob payload because thumbnails are independent ciphertext objects with their own DEKs; the per-blob nonce is prefixed to the ciphertext per § Encryption above and is therefore not a separate field). Spec deltas land against AC-216 and AC-221 (rewritten, not deleted). Net code reduction: `BulkDownloadOrchestrator`, `bulk-download-reaper`, the scheduler, and the `bulk-downloads/` storage prefix all retire.
+- **Boot probe.** The app process refuses to start if the binary `age` identity is not present in the tmpfs mount the server reads from — same character as `assertStorageBucketSafe()` and the ADR-0022 capability self-test. Operator-absence ⇒ application down. Degraded modes ("uploads-yes-downloads-no", "fall back to plaintext") are explicitly rejected: they create a misleading-state class of defect ([ADR-0014](0014-ac-tier-system-critical-vs-design.md)) and are unnecessary in a single-operator topology where the boot gate aligns the operational truth ("identity loaded?") with the user-facing one ("can I see attachments?"). This design assumes the operator is reachable within minutes of a VPS reboot — multi-operator or auto-reboot topologies need an emergency-paste fallback that is out of scope for this iteration.
+- **Operator workflow.** A new helper `scripts/binary-key/load-binary-key.sh` mirrors `scripts/backup/load-drill-key.sh`: tmpfs invariant, paste prompt with `read -s`, `age-keygen -y` round-trip validation, recipient match against `BINARY_AGE_RECIPIENT`. After a VPS reboot, the operator pastes two identities (binary + backup); failure to load the binary identity surfaces as the boot probe refusing to start the `app` service. **Custody:** the binary private identity is replicated to **at least two off-system locations** per the operator runbook (e.g. owner workstation + sealed paper copy in a safe) — binaries are deliverables, not recovery artifacts, and identity loss is worse than backup-key loss. **Drill cadence:** a monthly operator-side drill (download a sample ciphertext, decrypt with the off-system identity, verify against a known plaintext checksum) mirrors ADR-0020's Tier 2 cadence and proves the off-system custody copy still works.
+- **Key separation.** The binary identity is independent of the backup identity — separate env var (`BINARY_AGE_RECIPIENT`), separate keypair, separate tmpfs file, independent rotation cadence, and independent blast radius if either is compromised. Coupling would mean a single leaked identity exposes both the encrypted backup history and every binary on B2.
+- **Threat model.** B2 (provider operations, support staff with bucket access, leaked data-plane S3 token, subpoenas served to Backblaze) sees only ciphertext. A live VPS with the identity loaded is **out of scope** — an attacker with code execution on the running app process can read DEKs as the app does. Browser-side adversaries with code execution in the user's tab (malicious extension, hostile CSP bypass) are also out of scope: the DEK and plaintext are unavoidably in process memory during render. Lost VPS disk is fine — the identity is tmpfs-only and does not survive reboot. Lost operator-side identity custody = unrecoverable binaries (same shape as backup-key loss in ADR-0020, with worse business impact since binaries are deliverables — see Custody above).
+- **Key rotation.** Out of scope for this ADR. The operator can mint a new keypair and re-encrypt by re-uploading; a "rotate in place" path would re-encrypt every wrapped envelope and is design surface for a follow-up if rotation cadence ever justifies it.
+- **Audit-log boundary.** The wrapped-envelope column is **schema-level audit-excluded** — declarative on the column, not service-level — so a future column-rename or new audited mutation cannot leak it. A test pinned by an AC asserts the column never appears in any audit payload (the wrapped DEKs are the entire crypto perimeter; a leaked DB dump including audit JSON must remain useless without the operator identity).
+
+Two layers, with different scopes — orthogonal to ADR-0022:
+
+1. **Confidentiality (this ADR).** B2 sees only ciphertext. Defends against provider-side observation, token leak, and subpoena. Continuous, for the entire lifetime of every version.
+2. **Durability (ADR-0022).** B2 cannot be made to destroy versions by the running app, and Compliance Object Lock catches operator mistakes for `R` days. Unchanged here — the bucket primitives operate on opaque bytes.
+
+## Alternatives Considered
+
+### Symmetric KEK loaded by the operator (one AES key wraps every DEK)
+
+Simpler crypto: drop the X25519 KEM, hold one operator-loaded AES key in tmpfs and AES-wrap each DEK against it. Ruled out: uploads die without the operator (the wrapping happens server-side), making the boot-probe character "no operator, no app" the same as the asymmetric design without buying any operational simplification. The asymmetric design also matches ADR-0020 byte-for-byte at the operator's mental model and lets the public recipient sit in container env — wrapping does not need the operator present, only unwrapping does. The binary case happens to need both at boot anyway, but the asymmetric shape generalizes if a future flow (e.g., automated upload from a CI artifact) needs key-less wrapping.
+
+### Provider-managed encryption (SSE-B2 / SSE-C)
+
+Backblaze handles keys. Wrong layer: the keys are provider-held (SSE-B2) or provider-pass-through (SSE-C with the key in the request header). Neither closes the threat model — a leaked data-plane token can still read plaintext through the API, and a provider-side actor still sees the bytes. Captured in [DATA.md §Layer 3](../../DATA.md#layer-3--binary-attachments-provider-enforced-durability--e2e).
+
+### Server-side decrypt-and-stream-zip on bulk download
+
+Keep `BulkDownloadOrchestrator` and have the server unwrap the envelope, fetch ciphertext, decrypt, repack as a plaintext zip, return a presigned GET to that zip. Ruled out: puts the VPS in the data path for the bytes (the very constraint presigned URLs exist to avoid), forces the server to handle plaintext at all (broadens the in-memory exposure window), and requires the server to write a plaintext archive object back to B2 — re-introducing the threat the ADR closes.
+
+### Per-user keypairs (Bitwarden vault model)
+
+Each user holds a private key derived from their password; attachments wrap to all authorized recipients. The strongest threat-model against insider risk. Ruled out: the org is 5–10 users; provisioning, password-change re-wrap, role-change re-encryption, and recovery-on-forgotten-password are an order of magnitude more design surface than this iteration justifies. Operator-loaded key matches the existing trust model (single trusted operator) without the redesign.
+
+### Explicit fetch + decrypt + blob URL in every consumer (no Service Worker)
+
+Refactor `PhotoGallery`, `BinaryList`, the lightbox, and the PDF preview to fetch ciphertext via JS, decrypt with WebCrypto, build a `Blob` URL via `URL.createObjectURL`, and pass that to `<img src=>` / `<iframe src=>`. Ruled out: every consumer of an attachment URL becomes a stateful component holding `id → blobUrl` maps with `revokeObjectURL` cleanup, gallery-open latency grows from native HTTP image-decode (off main thread, with cache) to per-thumb sequential WebCrypto decrypt on the main thread, and the diff touches every place attachments render. The Service Worker path (chosen, see Decision) keeps `<img src="...">` working unchanged and centralizes the decrypt logic in one place.
+
+### Reuse the backup `AGE_RECIPIENT`
+
+One identity for both backups and binaries. Ruled out: coupled rotation (rotating one forces re-encryption of the other domain), and a single compromised identity exposes both the backup history on R2 and every binary on B2 — twice the blast radius for a fixed operator burden saving.
+
+### Server-generated DEK at init
+
+Server generates the 32-byte DEK at init via `crypto.randomBytes(32)`, wraps it with the binary recipient, persists the envelope, returns DEK + nonce material to the browser alongside the presigned PUT. Ruled out on a timing constraint: the presigned PUT must sign `Content-MD5` and `Content-Length` of the **ciphertext**, and the client cannot compute either without first holding the DEK. Server-DEK forces a two-round-trip init (issue DEK → client encrypts → init-with-ciphertext-metadata → presigned PUT) for no security gain — `crypto.getRandomValues` is a W3C-mandated CSPRNG sourced from the OS entropy pool on every browser in scope, identical to the source Node uses on the server. Client-DEK is the canonical CSE-KMS / Cryptomator / Tresorit shape and matches their reasoning exactly.
+
+## Consequences
+
+### Positive
+
+- B2 sees only ciphertext — the kickoff e2e goal is met for the binary domain (already met for the backup domain via ADR-0020).
+- Operator workflow parity with ADR-0020: same paste model, same tmpfs invariant, same `age-keygen -y` validation; `load-binary-key.sh` mirrors `load-drill-key.sh`.
+- Net code reduction: `BulkDownloadOrchestrator`, `bulk-download-reaper`, the scheduler, and the `bulk-downloads/` storage prefix retire. One fewer background loop, one fewer storage convention to maintain.
+- No provider-side dependency for crypto correctness — the cipher is industry-standard AES-256-GCM and the KEM is `age`'s stable format; provider quirks affect bytes, not security.
+- Defense layers stay cleanly separated: confidentiality (this ADR) and durability (ADR-0022) compose without overlap.
+
+### Negative
+
+- **App refuses to start without the binary identity loaded.** Operator gate on every VPS reboot — same character as the drill-key refresh, but fires more often (every reboot, vs. only when the operator wants Tier 2 verification). Documented in the runbook; not system-enforceable to prevent a "forgot to paste" outage. Implies the operator-availability assumption stated in the boot-probe paragraph above.
+- **Two operator pastes after a reboot.** Backup identity + binary identity. The order does not matter; both are checked by their respective boot/load surfaces. The failure modes diverge: a missed backup paste only stales Tier 2 drills (badge amber), a missed binary paste keeps the app down.
+- **UI refactor for the Service Worker decrypt path.** Non-trivial scope: SW install + lifecycle, synthetic-origin URL scheme, DEK-fetch endpoint, plus rewriting `<img src=>` consumers (`PhotoGallery`, lightbox, `BinaryList` thumbnails, PDF preview) to point at the synthetic origin. Centralized in the SW, not scattered — but still a meaningful chunk of work for the implementing iteration to size.
+- **Lost binary identity = unrecoverable customer deliverables.** Worse business impact than backup-key loss: binaries are the work-product the company was paid for (Aufmaß, photos, signed offers — see [DATA.md §Layer 3](../../DATA.md#layer-3--binary-attachments-provider-enforced-durability--e2e)), not a recovery artifact. Mitigated by the ≥2 off-system custody locations + monthly drill required in the Operator workflow paragraph above; not eliminated.
+- **Bulk download is bounded by the streaming-zip generator's per-file working set.** With a streaming generator (one in-flight file decrypted, encoded into the zip stream, released), peak memory scales with the largest individual file, not the whole batch — the 20-file / 20-MB cap stays safe on the kickoff's mobile field-capture targets. A non-streaming JSZip-style implementation would hold ciphertext + plaintext + zip-internal buffer + final blob simultaneously (≈3-4× the cap budget) and is incompatible with the cap; the streaming choice is load-bearing, not aesthetic.
+
+### Operational
+
+- Schema delta lands as edits to `src/server/db/schema.ts` and a regenerated baseline migration only — no incremental Drizzle migration files (project convention; no production data to preserve). The new wrapped-envelope and `ciphertextSizeBytes` columns are added in the same edit.
+- Schema-level audit-exclusion mechanism for the wrapped-envelope column — declarative on the column, with a test pinned by an AC asserting the column never appears in any audit JSON payload (mechanism + AC drafted in spec).
+- New `tmpfs` mount on the `app` service in `docker-compose.yml`, modeled on the `backup` service's drill-key mount.
+- New env var `BINARY_AGE_RECIPIENT` and corresponding entry in `.env.production.example` / `secrets.manifest.txt` (CI drift gate at `scripts/check-env-drift.sh` enforces presence).
+- New ops script `scripts/binary-key/load-binary-key.sh` modeled on `scripts/backup/load-drill-key.sh`.
+- New service-worker bundle in `public/` (or equivalent build output) handling the synthetic-origin decrypt path.
+- New API endpoint: `POST /api/projects/:id/attachments/bulk-fetch` (replaces today's `bulk-download` route — breaking change). The spec extends the existing `GET /api/projects/:id/attachments/:attId/download-url` endpoint to return `{ url, expiresAt, dekMaterial }` so the SW makes one round trip per blob rather than two (this collapses the originally-envisioned `/dek` companion endpoint into `download-url`). AC-212, AC-216, AC-221, AC-241 rewritten / added in the spec delta to match.
+- **Security audit required** under [CONTRIBUTING.md §Security audit](../../CONTRIBUTING.md#security-audit): new long-lived encryption keys, new tmpfs private-key handling, a new on-the-wire crypto protocol, and a new service-worker decrypt path all meet the trigger.
+
+### Confidence: Medium — sources of uncertainty
+
+Three implementation-blocking questions are settled in design but not yet validated in code:
+
+1. **Service Worker decrypt correctness** — synthetic-origin interception, DEK fetch sequencing, lifecycle across page reloads, and interaction with the existing notification SW (`public/sw.js`) need a working spike before AC text is final.
+2. **Streaming-zip memory budget under load** — the streaming-generator family of libraries (`client-zip` and similar) need a measured peak-resident-set verification against the 20-file / 20-MB cap on a representative low-end mobile, not just an analytic argument.
+3. **Two-paste operator ergonomics** — the boot-probe failure mode is documented, but the post-reboot recovery flow (which paste comes first, what error surfaces if the operator pastes the wrong identity into the wrong loader) needs to be exercised end-to-end.
+
+Confidence escalates to High once those three are settled in implementation.
+
+## References
+
+- [Kickoff](../project/kickoff.md) — e2e as a project goal; this ADR closes the binary domain.
+- [ADR-0014](0014-ac-tier-system-critical-vs-design.md) — misleading-state critical defect class; the boot probe enforces alignment between "identity loaded" and "user can see attachments".
+- [ADR-0020](0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md) — operator-loaded-key precedent; binary identity mirrors the pattern with an independent keypair.
+- [ADR-0022](0022-binary-storage-b2-compliance-object-lock.md) — durability defense layers; unchanged by this ADR.
+- [CONTRIBUTING.md §Security audit](../../CONTRIBUTING.md#security-audit) — trigger satisfied.
+- [DATA.md §Layer 3](../../DATA.md#layer-3--binary-attachments-provider-enforced-durability--e2e) — the open-future-work paragraph this ADR closes.
+- [Cryptomator vault format](https://docs.cryptomator.org/en/latest/security/architecture/) — primary precedent: per-file content key, locally-loaded master key, ciphertext-on-commodity-storage. The operator-loaded `age` identity replaces Cryptomator's password-derived master key; the rest of the envelope shape is the same.
+- [MEGA](https://mega.nz/security) — Service Worker decryption for transparent media rendering; the chosen path for this ADR's `<img>` consumers.
+- AWS S3 Client-Side Encryption with KMS (CSE-KMS) — comparison shape for the wrapping; differs operationally because KMS is online and high-availability, the operator-loaded identity is neither.
+- [Bitwarden Send](https://bitwarden.com/help/send-overview/) — closest small-org UX analogue: file uploaded ciphertext, key delivered out-of-band.
+- Tresorit — consumer e2e cloud storage; same DEK + KEK envelope pattern, broad-deployment evidence the shape works.
+- Signal attachment protocol — fresh AES key per attachment, key in the message envelope; same per-blob fresh-DEK discipline.
+- [Issue #148](https://github.com/vlzware/Projekt-Manager/issues/148) — implementation tracking.
