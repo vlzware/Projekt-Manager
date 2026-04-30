@@ -121,7 +121,7 @@ export function attachmentRoutes(db: Database) {
             contentMd5: body.contentMd5,
             // The service re-validates `label` against the closed enum;
             // the typing here is intentionally wide so invalid payloads
-            // reach the validator path (AC-211 422 VALIDATION_ERROR).
+            // reach the validator path (AC-245 422 VALIDATION_ERROR).
             label: body.label as never,
             hasThumbnail: Boolean(body.hasThumbnail),
             thumbSizeBytes: body.thumbSizeBytes,

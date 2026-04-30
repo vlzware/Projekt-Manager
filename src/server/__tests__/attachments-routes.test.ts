@@ -6,7 +6,7 @@
  * and the error paths in §14.4.1.
  *
  * AC coverage in this file:
- *   - AC-211: init — presigned-PUT signed-header pins (ciphertext shape
+ *   - AC-245: init — presigned-PUT signed-header pins (ciphertext shape
  *             under ADR-0024) + validation rejects on MIME / label /
  *             size / fileName / dekMaterial / ciphertextSizeBytes /
  *             ciphertextContentMd5.
@@ -72,7 +72,7 @@ const STUB_MD5_BASE64 = '1B2M2Y8AsgTpgAmY7PhCfg=='; // MD5("") — shape-valid p
  * Generate a fresh 32-byte DEK encoded as base64. Mirrors what the
  * browser produces via `crypto.getRandomValues(new Uint8Array(32))`
  * before calling init. The server validates the length-after-decode
- * at the route layer per AC-211.
+ * at the route layer per AC-245.
  */
 function freshDekMaterial(): string {
   return crypto.randomBytes(32).toString('base64');
@@ -210,11 +210,11 @@ describe('Attachment routes — integration (issue #108)', () => {
   });
 
   // -------------------------------------------------------------------
-  // AC-211 — Init validates inputs and returns a signed presigned PUT
+  // AC-245 — Init validates inputs and returns a signed presigned PUT
   // bound to the *ciphertext* triplet (sentinel content-type, ciphertext
   // size, ciphertext MD5) per ADR-0024.
   // -------------------------------------------------------------------
-  describe('AC-211: init validation + presigned-PUT signature', () => {
+  describe('AC-245: init validation + presigned-PUT signature', () => {
     it('returns 201 with a pending row and two presigned PUT descriptors for a photo', async () => {
       const init = photoInit(projectId);
       const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, init);
@@ -315,7 +315,7 @@ describe('Attachment routes — integration (issue #108)', () => {
     });
 
     it('persists wrappedDek (and wrappedThumbDek) on the row but NEVER returns it', async () => {
-      // Bridges AC-211 and AC-240: init wraps the supplied DEK
+      // Bridges AC-245 and AC-240: init wraps the supplied DEK
       // material against the operator's binary recipient and
       // persists the envelope on the row, but the response strips
       // it. A regression that surfaced the wrapped envelope on the

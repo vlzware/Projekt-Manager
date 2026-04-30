@@ -255,7 +255,7 @@ export class AttachmentService {
     }
 
     // Input validation — each branch produces `422 VALIDATION_ERROR` and
-    // persists no row (AC-211).
+    // persists no row (AC-245).
     const caps = resolveCaps();
     if (typeof input.fileName !== 'string' || input.fileName.length === 0) {
       throw validationError(STRINGS.validation.requiredString('fileName'));

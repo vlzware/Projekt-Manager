@@ -1,6 +1,6 @@
 /**
  * API integration tests — thumbnail size cap + complete-side HEAD
- * re-assertion (AC-211 / AC-212 thumb defence in depth).
+ * re-assertion (AC-245 / AC-212 thumb defence in depth).
  *
  * Two regression surfaces are pinned here:
  *

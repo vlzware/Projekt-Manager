@@ -71,7 +71,7 @@ function ciphertextBuffer(length: number): Buffer {
  * Generate a 32-byte AES-256-GCM DEK encoded as base64. Mirrors what
  * the browser produces via `crypto.getRandomValues(new Uint8Array(32))`
  * before init. The server validates length-after-decode at the route
- * layer per AC-211.
+ * layer per AC-245.
  */
 function freshDekMaterial(): string {
   return crypto.randomBytes(32).toString('base64');
