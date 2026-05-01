@@ -79,16 +79,27 @@ async function seedReadyAttachment(
   const originalKey = `attachments/${projectId}/${id}.orig`;
   const thumbKey = withThumb ? `attachments/${projectId}/${id}.thumb` : null;
   try {
+    // ADR-0024: ready rows must carry a wrapped DEK + ciphertext size
+    // (CHECK `attachments_wrapped_dek_required_when_ready`). Synthetic
+    // envelope bytes are fine — the cascade test pins DB cleanup, not
+    // unwrap-time decryption.
+    const wrappedDek = Buffer.alloc(192, 0x55).toString('base64');
+    const wrappedThumbDek = withThumb ? Buffer.alloc(192, 0x66).toString('base64') : null;
     await db.execute(sql`
       INSERT INTO attachments
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-         original_key, thumb_key, has_thumbnail)
+         ciphertext_size_bytes, ciphertext_thumb_size_bytes,
+         original_key, thumb_key, has_thumbnail,
+         wrapped_dek, wrapped_thumb_dek)
       VALUES (${id}, ${projectId}, 'ready',
               ${withThumb ? 'photo' : 'binary'},
               ${withThumb ? 'foto' : 'sonstiges'},
               ${'file-' + id.slice(0, 6)},
               ${withThumb ? 'image/jpeg' : 'application/pdf'},
-              1024, ${originalKey}, ${thumbKey}, ${withThumb})
+              1024,
+              1088, ${withThumb ? 1088 : null},
+              ${originalKey}, ${thumbKey}, ${withThumb},
+              ${wrappedDek}, ${wrappedThumbDek})
     `);
   } finally {
     await pool.end();
@@ -204,13 +215,18 @@ describe('Attachment purge cascade (AC-218)', () => {
     const { db, pool } = createDatabase();
     const id = crypto.randomUUID();
     try {
+      const wrappedDek = Buffer.alloc(192, 0x44).toString('base64');
       await db.execute(sql`
         INSERT INTO attachments
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-           original_key, thumb_key, has_thumbnail)
+           ciphertext_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek)
         VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
                 'ghost.pdf', 'application/pdf', 1,
-                ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE)
+                65,
+                ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
+                ${wrappedDek}, NULL)
       `);
     } finally {
       await pool.end();

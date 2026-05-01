@@ -1,5 +1,5 @@
 {
-  "id": "28d39b49-92c7-4c16-b856-7bb8f50d9be6",
+  "id": "d7636032-28d7-4f83-a2b8-bd7d2265c363",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -232,6 +232,10 @@
         "attachments_valid_mime_type": {
           "name": "attachments_valid_mime_type",
           "value": "\"attachments\".\"mime_type\" IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')"
+        },
+        "attachments_wrapped_dek_required_when_ready": {
+          "name": "attachments_wrapped_dek_required_when_ready",
+          "value": "\"attachments\".\"status\" != 'ready' OR (\"attachments\".\"wrapped_dek\" IS NOT NULL AND \"attachments\".\"ciphertext_size_bytes\" IS NOT NULL)"
         }
       },
       "isRLSEnabled": false

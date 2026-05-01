@@ -1,7 +1,12 @@
 /**
  * Attachment routes — control plane only. No byte traffic through the
  * app; uploads and downloads go directly to object storage via
- * presigned URLs (AC-221, api.md §14.2.11).
+ * presigned URLs (AC-221, AC-242, api.md §14.2.11).
+ *
+ * Under ADR-0024 the wire shape carries ciphertext sizes + DEK material
+ * and the bulk path returns per-file presigned-GETs + DEK material for
+ * browser-side streaming-zip assembly (the legacy server-zip
+ * `bulk-download` route retires).
  *
  * The route shape is pinned by AC-221's structural check — do not add
  * a 9th route on `/api/projects/:id/attachments/**` without updating
@@ -27,7 +32,17 @@ export function attachmentRoutes(db: Database) {
       secretKey: env.STORAGE_SECRET_KEY!,
       region: env.STORAGE_REGION,
     });
-    const service = new AttachmentService({ db, storage });
+    const service = new AttachmentService({
+      db,
+      storage,
+      // Both BINARY_AGE_* values are fail-open in env zod; the boot
+      // probe (`assertBinaryIdentityLoaded`) refuses to start the app
+      // without them, so by the time a route handler runs they are
+      // populated. The `?? ''` collapse satisfies tsc — the service
+      // itself rejects empty inputs in its constructor.
+      binaryAgeRecipient: env.BINARY_AGE_RECIPIENT ?? '',
+      binaryAgeIdentityPath: env.BINARY_AGE_IDENTITY_PATH,
+    });
 
     app.addHook('preHandler', authenticate);
 
@@ -55,6 +70,15 @@ export function attachmentRoutes(db: Database) {
 
     // ---------------------------------------------------------------
     // POST /api/projects/:id/attachments/init — create pending row
+    //
+    // ADR-0024: the body carries the ciphertext-bound triplet
+    // (`dekMaterial`, `ciphertextSizeBytes`, `ciphertextContentMd5`)
+    // plus optional thumbnail equivalents; plaintext `mimeType` /
+    // `sizeBytes` / `fileName` / `label` stay on the row for cap checks
+    // and download Content-Disposition. `additionalProperties: false`
+    // is load-bearing — a stray client-supplied `originalKey` /
+    // `wrappedDek` / `versionId` must not bypass the server's owned
+    // fields.
     // ---------------------------------------------------------------
     app.post(
       '/api/projects/:id/attachments/init',
@@ -67,33 +91,38 @@ export function attachmentRoutes(db: Database) {
           },
           body: {
             type: 'object',
-            required: ['fileName', 'mimeType', 'sizeBytes', 'contentMd5', 'label'],
-            // Strict shape — unknown fields are a 422 at the schema gate.
-            // Closes the foot-gun where a stray `versionId` / `originalKey`
-            // / `projectId` could silently land in the request and
-            // pollute future readers; the route + service never read
-            // them today, but `additionalProperties: false` is the
-            // canonical input boundary.
+            required: [
+              'fileName',
+              'mimeType',
+              'sizeBytes',
+              'label',
+              'dekMaterial',
+              'ciphertextSizeBytes',
+              'ciphertextContentMd5',
+            ],
             additionalProperties: false,
             properties: {
               fileName: { type: 'string', minLength: 1 },
               mimeType: { type: 'string', minLength: 1 },
               sizeBytes: { type: 'integer', minimum: 1 },
-              // RFC 1864 base64 of MD5 (16-byte digest → 24 chars,
-              // ending `==`). Position 22 carries only 2 significant
-              // bits, so only `[AQgw]` are valid there — the broader
-              // `[A-Za-z0-9+/]` would accept malformed values.
-              // Service re-validates with the same regex; schema-level
-              // pattern keeps a malformed payload from reaching the
-              // service layer's state-machine setup.
-              contentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{21}[AQgw]==$' },
               label: { type: 'string' },
               hasThumbnail: { type: 'boolean' },
-              // Upper bound is enforced server-side by `perThumbCapBytes`
-              // because the env override may shift the cap at runtime; a
-              // schema-level `maximum` would freeze it at deploy time.
-              thumbSizeBytes: { type: 'integer', minimum: 1 },
-              thumbContentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{21}[AQgw]==$' },
+              // ADR-0024 ciphertext fields. The server signs
+              // `ciphertextSizeBytes` into Content-Length and
+              // `ciphertextContentMd5` into Content-MD5 of the presigned
+              // PUT — see api.md §14.2.11 design notes.
+              dekMaterial: { type: 'string', minLength: 1 },
+              ciphertextSizeBytes: { type: 'integer', minimum: 1 },
+              ciphertextContentMd5: { type: 'string', pattern: '^[A-Za-z0-9+/]{21}[AQgw]==$' },
+              // Photo-only thumbnail triplet — schema-optional so binaries
+              // do not have to send the fields. Service layer enforces
+              // the photos-with-thumbnail invariant after MIME classification.
+              thumbDekMaterial: { type: 'string', minLength: 1 },
+              ciphertextThumbSizeBytes: { type: 'integer', minimum: 1 },
+              ciphertextThumbContentMd5: {
+                type: 'string',
+                pattern: '^[A-Za-z0-9+/]{21}[AQgw]==$',
+              },
             },
           },
         },
@@ -105,11 +134,14 @@ export function attachmentRoutes(db: Database) {
           fileName: string;
           mimeType: string;
           sizeBytes: number;
-          contentMd5: string;
           label: string;
           hasThumbnail?: boolean;
-          thumbSizeBytes?: number;
-          thumbContentMd5?: string;
+          dekMaterial: string;
+          ciphertextSizeBytes: number;
+          ciphertextContentMd5: string;
+          thumbDekMaterial?: string;
+          ciphertextThumbSizeBytes?: number;
+          ciphertextThumbContentMd5?: string;
         };
         const result = await service.initUpload(
           request.user!,
@@ -118,14 +150,17 @@ export function attachmentRoutes(db: Database) {
             fileName: body.fileName,
             mimeType: body.mimeType,
             sizeBytes: body.sizeBytes,
-            contentMd5: body.contentMd5,
             // The service re-validates `label` against the closed enum;
             // the typing here is intentionally wide so invalid payloads
             // reach the validator path (AC-245 422 VALIDATION_ERROR).
             label: body.label as never,
             hasThumbnail: Boolean(body.hasThumbnail),
-            thumbSizeBytes: body.thumbSizeBytes,
-            thumbContentMd5: body.thumbContentMd5,
+            dekMaterial: body.dekMaterial,
+            ciphertextSizeBytes: body.ciphertextSizeBytes,
+            ciphertextContentMd5: body.ciphertextContentMd5,
+            thumbDekMaterial: body.thumbDekMaterial,
+            ciphertextThumbSizeBytes: body.ciphertextThumbSizeBytes,
+            ciphertextThumbContentMd5: body.ciphertextThumbContentMd5,
           },
           request.log,
           request.id ?? null,
@@ -245,7 +280,12 @@ export function attachmentRoutes(db: Database) {
     );
 
     // ---------------------------------------------------------------
-    // GET /api/projects/:id/attachments/:attId/download-url — presigned GET
+    // GET /api/projects/:id/attachments/:attId/download-url — presigned
+    // GET + unwrapped DEK material (ADR-0024 / api.md §14.2.11). The
+    // server unwraps `wrappedDek` (or `wrappedThumbDek` for
+    // variant=thumbnail) per request; the unwrapped DEK is never
+    // persisted server-side. Per-row unwrap failure surfaces as 422
+    // with code DEK_UNWRAP_FAILED.
     // ---------------------------------------------------------------
     app.get(
       '/api/projects/:id/attachments/:attId/download-url',
@@ -278,10 +318,13 @@ export function attachmentRoutes(db: Database) {
     );
 
     // ---------------------------------------------------------------
-    // POST /api/projects/:id/attachments/bulk-download — presigned zip
+    // POST /api/projects/:id/attachments/bulk-fetch — per-file
+    // presigned GETs + unwrapped DEK material. Replaces the retired
+    // bulk-download zip path (ADR-0024); browser assembles the
+    // streaming zip locally.
     // ---------------------------------------------------------------
     app.post(
-      '/api/projects/:id/attachments/bulk-download',
+      '/api/projects/:id/attachments/bulk-fetch',
       {
         schema: {
           params: {
@@ -308,7 +351,7 @@ export function attachmentRoutes(db: Database) {
       async (request, reply) => {
         const { id } = request.params as { id: string };
         const body = request.body as { attachmentIds: string[] };
-        const result = await service.issueBulkDownloadUrl(request.user!, id, body.attachmentIds);
+        const result = await service.bulkFetch(request.user!, id, body.attachmentIds);
         return reply.code(200).send(result);
       },
     );

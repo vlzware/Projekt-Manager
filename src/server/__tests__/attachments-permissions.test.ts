@@ -55,13 +55,22 @@ async function seedReadyAttachment(projectId: string, createdBy: string | null):
   const { db, pool } = createDatabase();
   try {
     const id = crypto.randomUUID();
+    // ADR-0024: a `ready` row must carry a wrapped DEK envelope and a
+    // ciphertext byte count (CHECK `attachments_wrapped_dek_required_when_ready`).
+    // Synthetic envelope is fine here — this file pins the permission
+    // gate, not the unwrap pipeline.
+    const wrappedDek = Buffer.alloc(192, 0x77).toString('base64');
     await db.execute(sql`
       INSERT INTO attachments
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-         original_key, thumb_key, has_thumbnail, created_by)
+         ciphertext_size_bytes,
+         original_key, thumb_key, has_thumbnail,
+         wrapped_dek, wrapped_thumb_dek, created_by)
       VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
               ${'f-' + id.slice(0, 6)}, 'application/pdf', 100,
-              ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE, ${createdBy})
+              164,
+              ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
+              ${wrappedDek}, NULL, ${createdBy})
     `);
     return id;
   } finally {

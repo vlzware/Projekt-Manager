@@ -230,6 +230,12 @@ function toAttachmentInsert(a: EnvelopeAttachment) {
     filename: a.fileName,
     mimeType: a.mimeType,
     sizeBytes: a.sizeBytes,
+    // ADR-0024 — wrapped envelopes ride the envelope so post-import
+    // attachments stay decryptable (AC-220).
+    ciphertextSizeBytes: a.ciphertextSizeBytes,
+    ciphertextThumbSizeBytes: a.ciphertextThumbSizeBytes,
+    wrappedDek: a.wrappedDek,
+    wrappedThumbDek: a.wrappedThumbDek,
     originalKey: a.originalKey,
     thumbKey: a.thumbKey,
     hasThumbnail: a.hasThumbnail,

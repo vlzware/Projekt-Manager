@@ -396,6 +396,25 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(await countAttachmentRows()).toBe(before);
     });
 
+    it('rejects ciphertextThumbSizeBytes exceeding the per-thumb cap with 422 VALIDATION_ERROR (no row)', async () => {
+      // AC-245: per-thumb cap. Default cap is 200 KiB
+      // (architecture.md §12.2 / ATTACHMENT_CONFIG.perThumbCapBytes).
+      // 1 MiB is comfortably above any deployment-tuned value.
+      // Mirrors the per-file cap arm above — the rejection source is
+      // the cap validator, surfaced as the same German message
+      // (uploadFileTooLarge) so the UI banner can render the
+      // size-cap copy without parsing the message.
+      const before = await countAttachmentRows();
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInit(projectId),
+        ciphertextThumbSizeBytes: 1 * 1024 * 1024,
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+      expect(res.json().message).toBe(STRINGS.attachments.uploadFileTooLarge);
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
     it('rejects malformed dekMaterial (not 32 bytes after base64-decode) with 422 (no row)', async () => {
       // The spec pins the validation post-decode: 31 bytes or 33
       // bytes of base64-decoded material both fail. Use a 16-byte
@@ -1116,6 +1135,54 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(text).not.toContain('wrapped_dek');
       expect(text).not.toContain('wrapped_thumb_dek');
     });
+
+    it('rejects duplicate ids in the request body with 422 VALIDATION_ERROR (no partial-serve)', async () => {
+      // Server-side dedup would silently collapse the response to
+      // fewer entries than requested, breaking the SW's index-aligned
+      // progress accounting. Surface duplicates as a distinct
+      // validation error so the UI can show a clear message.
+      const [readyId] = await seedReadyAttachments(projectId, [{ sizeBytes: 100 }]);
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: [readyId, readyId, readyId],
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 500 SERVER_ERROR when an envelope in the batch cannot be unwrapped (defense-in-depth)', async () => {
+      // api.md §14.2.11 error paths: any unwrap failure in a bulk-fetch
+      // batch surfaces as 500 SERVER_ERROR (defense-in-depth — the
+      // boot probe blocks startup without the binary identity, so this
+      // should never be reachable). The single documented per-row 422
+      // surface is `download-url`, not bulk. Driving this requires a
+      // ready row with a corrupt envelope.
+      const attId = crypto.randomUUID();
+      const corrupted = Buffer.from(
+        'this-is-not-a-valid-age-envelope-' + crypto.randomUUID(),
+      ).toString('base64');
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'corrupt-bulk.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${corrupted}, NULL)
+        `);
+      } finally {
+        await pool.end();
+      }
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: [attId],
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.json().code).toBe('SERVER_ERROR');
+    });
   });
 
   // -------------------------------------------------------------------
@@ -1246,7 +1313,10 @@ describe('Attachment routes — integration (issue #108)', () => {
         ownerToken,
         `/api/projects/${projectId}/attachments/${attId}/restore`,
       );
-      expect(restoreRes.statusCode).toBe(200);
+      expect({ statusCode: restoreRes.statusCode, body: restoreRes.json() }).toEqual({
+        statusCode: 200,
+        body: expect.objectContaining({ status: 'ready' }),
+      });
       const restored = restoreRes.json() as Attachment;
       expect(restored.status).toBe('ready');
       expect(restored.hiddenAt).toBeNull();
@@ -1629,7 +1699,12 @@ describe('Attachment routes — integration (issue #108)', () => {
       // wiring uses the real storage client.
       const { db: serviceDb, pool: servicePool } = createDatabase();
       try {
-        const service = new AttachmentService({ db: serviceDb, storage: flakyStorage });
+        const service = new AttachmentService({
+          db: serviceDb,
+          storage: flakyStorage,
+          binaryAgeRecipient: process.env.BINARY_AGE_RECIPIENT ?? '',
+          binaryAgeIdentityPath: process.env.BINARY_AGE_IDENTITY_PATH ?? '',
+        });
         const owner: AuthUser = {
           id: ownerId,
           username: SEED_USERS.owner.username,

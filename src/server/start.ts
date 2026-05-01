@@ -31,7 +31,6 @@ import { deleteExpiredSessions } from './repositories/session.js';
 import { startSessionReaper } from './session-reaper.js';
 import { startAuditRetentionScheduler } from './audit-retention-scheduler.js';
 import { startAttachmentOrphanReaperScheduler } from './attachment-orphan-reaper-scheduler.js';
-import { startBulkDownloadReaperScheduler } from './bulk-download-reaper-scheduler.js';
 import { setOperationalLogger as setAuditPublisherLogger } from './services/audit-publisher.js';
 import { AUDIT_RETENTION } from '../config/auditRetention.js';
 import { ATTACHMENT_CONFIG } from '../config/attachmentConfig.js';
@@ -245,22 +244,10 @@ async function start(): Promise<void> {
     },
   });
 
-  // Bulk-download temp-zip reaper (#108). Storage-side ephemera are not
-  // tracked in the DB, so this sibling sweeps `bulk-downloads/` by
-  // LastModified age. Reuses the orphan-reaper TTL (`[C]` default
-  // 15 min) because both values describe "staleness of a short-lived
-  // storage artifact" — see `bulk-download-reaper.ts` header for the
-  // TTL rationale.
-  const bulkDownloadReaper = startBulkDownloadReaperScheduler({
-    storage: attachmentStorageForReaper,
-    intervalMinutes: env.ATTACHMENT_ORPHAN_REAPER_INTERVAL_MINUTES ?? 5,
-    ttlMinutes:
-      env.ATTACHMENT_ORPHAN_REAPER_TTL_MINUTES ?? ATTACHMENT_CONFIG.orphanReaperTtlMinutes,
-    logger: {
-      info: (ctx, event) => console.log(event, ctx),
-      error: (ctx, event) => console.error(event, ctx),
-    },
-  });
+  // (Pre-e2e bulk-download temp-zip reaper retired under ADR-0024 —
+  // bulk assembly is browser-side streaming-zip; the server never
+  // produces a `bulk-downloads/` artifact, so there is nothing to
+  // sweep.)
 
   const app = buildApp({ logger: true, db });
 
@@ -326,12 +313,7 @@ async function start(): Promise<void> {
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, async () => {
       // Wait for any in-flight sweep so pool.end() isn't called under its feet.
-      await Promise.all([
-        reaper.stop(),
-        auditRetention.stop(),
-        attachmentReaper.stop(),
-        bulkDownloadReaper.stop(),
-      ]);
+      await Promise.all([reaper.stop(), auditRetention.stop(), attachmentReaper.stop()]);
       await app.close();
       await pool.end();
       process.exit(0);

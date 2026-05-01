@@ -521,6 +521,19 @@ export const attachments = pgTable(
       'attachments_valid_mime_type',
       sql`${table.mimeType} IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')`,
     ),
+    // ADR-0024: a `ready` row MUST carry a wrapped DEK envelope and a
+    // ciphertext byte count — the column pair that lets the SW unwrap
+    // and decrypt the bytes on B2. Pending rows can have nulls (the row
+    // exists before init wraps the DEK in legacy raw-INSERT seed paths;
+    // production init always populates both columns); hidden rows
+    // inherit the values they had at `ready` time. NOT NULL is too tight
+    // (it breaks pending-state seeds in tests); the CHECK is the right
+    // shape — the column pair is mandatory exactly when the row is
+    // user-visible. Mirrors the `projects_end_requires_start` shape.
+    check(
+      'attachments_wrapped_dek_required_when_ready',
+      sql`${table.status} != 'ready' OR (${table.wrappedDek} IS NOT NULL AND ${table.ciphertextSizeBytes} IS NOT NULL)`,
+    ),
   ],
 );
 

@@ -55,6 +55,12 @@ export interface EnvelopeAssignment {
  * Attachment row in the export envelope — `status = 'ready'` only per
  * data-model.md §5.8. Bytes remain storage-owned (ADR-0018); this
  * envelope carries only the metadata row.
+ *
+ * Under ADR-0024 the wrapped envelope ride the export envelope so
+ * attachments restore decryptable post-import (AC-220). The export
+ * envelope is therefore sensitive material with the same handling
+ * discipline as a DB dump — but the audit-exclusion contract still
+ * applies (the wrapped envelopes never appear in `audit_log` payloads).
  */
 export interface EnvelopeAttachment {
   id: string;
@@ -65,9 +71,17 @@ export interface EnvelopeAttachment {
   fileName: string;
   mimeType: string;
   sizeBytes: number;
+  /** Ciphertext byte count — ADR-0024 / api.md §14.2.11. */
+  ciphertextSizeBytes: number;
+  /** Ciphertext byte count of the thumbnail; null for non-photo. */
+  ciphertextThumbSizeBytes: number | null;
   originalKey: string;
   thumbKey: string | null;
   hasThumbnail: boolean;
+  /** Base64 of the wrapped envelope of the per-blob DEK for the original. */
+  wrappedDek: string;
+  /** Base64 of the wrapped envelope for the thumbnail; null for non-photo. */
+  wrappedThumbDek: string | null;
   createdAt: string;
   createdBy: string | null;
 }

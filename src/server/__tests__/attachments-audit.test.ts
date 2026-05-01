@@ -158,7 +158,10 @@ describe('Attachment audit contract (AC-219)', () => {
     const body = initRes.json();
     const attachmentId = body.attachment.id as string;
 
-    // Stage backing bytes so the HEAD verify succeeds.
+    // Stage backing bytes so the HEAD verify succeeds. Sizes must match
+    // the persisted `ciphertextSizeBytes` / `ciphertextThumbSizeBytes`
+    // (fixture defaults: 120_064 + 8_064) and content-type must be the
+    // sentinel `application/octet-stream` per ADR-0024.
     const env = getEnv();
     const s = createStorageClient({
       endpoint: env.STORAGE_ENDPOINT!,
@@ -166,8 +169,12 @@ describe('Attachment audit contract (AC-219)', () => {
       accessKey: env.STORAGE_ACCESS_KEY!,
       secretKey: env.STORAGE_SECRET_KEY!,
     });
-    await s.upload(body.attachment.originalKey, Buffer.alloc(120_000, 0xff), 'image/jpeg');
-    await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
+    await s.upload(
+      body.attachment.originalKey,
+      Buffer.alloc(120_064, 0xff),
+      'application/octet-stream',
+    );
+    await s.upload(body.attachment.thumbKey, Buffer.alloc(8_064, 0xaa), 'application/octet-stream');
 
     const afterInit = await countAuditRows();
 

@@ -1,33 +1,48 @@
 /**
  * Attachment service — init / complete / hide / restore / list /
- * Papierkorb listing / download-url / bulk-download orchestration.
+ * Papierkorb listing / download-url / bulk-fetch.
  *
- * The state machine is pinned by api.md §14.2.11, data-model.md §5.13
- * and ADR-0022 (capability split + Papierkorb):
+ * The state machine is pinned by api.md §14.2.11, data-model.md §5.13,
+ * ADR-0022 (capability split + Papierkorb), and ADR-0024
+ * (per-attachment envelope encryption):
  *
- *   init        → row created at `status = 'pending'`; presigned PUT(s)
- *                 issued for original (+thumb), pinning Content-Type,
- *                 Content-Length, and Content-MD5 via SigV4. Audit row
+ *   init        → row created at `status = 'pending'`; the supplied DEK
+ *                 material is wrapped against the operator-loaded
+ *                 binary `age` recipient and persisted as `wrappedDek`
+ *                 (and `wrappedThumbDek` for photos). Presigned PUT(s)
+ *                 are signed against the *ciphertext* triplet —
+ *                 sentinel `application/octet-stream` content-type,
+ *                 `ciphertextSizeBytes` length, and
+ *                 `ciphertextContentMd5` body hash. Audit row
  *                 (`attachment:add`) via `mutate()`.
- *   complete    → HEAD verify both objects; flip to `status = 'ready'`
- *                 and persist the per-version-id pair (ADR-0022).
- *                 No audit row (AC-219 — state-machine finalize).
- *   hide        → `DeleteObject` (no versionId) on each storage key
- *                 writes a delete marker on the versioned bucket;
- *                 the prior version stays intact for restore. Then
- *                 the CAS `ready` → `hidden` and the audit row commit
- *                 atomically inside `mutate()`. Storage runs FIRST so
- *                 a transient storage outage surfaces as 5xx (the
- *                 user retries) instead of leaving a `hidden` row
- *                 paired with a still-current storage object that
- *                 lifecycle would never reap.
- *   restore     → flip `hidden` → `ready` via CAS, then
- *                 `copyFromVersion` to promote the persisted version
- *                 back to current, then write the freshly-issued
- *                 version-ids. All inside one `mutate()` tx — the
- *                 storage advance is reachable only after the CAS
- *                 commits, so two concurrent restores cannot both
- *                 advance storage. Audit row (`attachment:restore`).
+ *   complete    → HEAD verify both objects against the persisted
+ *                 ciphertext sizes + sentinel content-type, flip to
+ *                 `status = 'ready'`, persist version-ids (ADR-0022).
+ *                 No audit row (AC-219).
+ *   hide        → see ADR-0022 — DeleteObject (no versionId) writes a
+ *                 delete marker; CAS `ready → hidden` + audit row
+ *                 commit atomically inside `mutate()`. Storage-first
+ *                 ordering so a transient storage outage surfaces as
+ *                 5xx (the user retries).
+ *   restore     → flip `hidden → ready` via CAS, then `copyFromVersion`
+ *                 to promote the persisted version back to current,
+ *                 then write the freshly-issued version-ids — all
+ *                 inside one `mutate()` tx. Audit row
+ *                 (`attachment:restore`).
+ *   download-url → unwrap `wrappedDek` (or `wrappedThumbDek` for
+ *                  variant=thumbnail) per request via
+ *                  `KeyEnvelopeService`, return
+ *                  `{ url, expiresAt, dekMaterial }`. Per-row unwrap
+ *                  failure surfaces as 422 DEK_UNWRAP_FAILED — the SW
+ *                  branch discriminator (AC-244).
+ *   bulk-fetch  → batch download-url. Returns `{ data: BulkFetchEntry[] }`
+ *                 with one entry per requested id, in the order
+ *                 requested. Caps on count + summed plaintext size;
+ *                 whole-batch reject on any cap breach or per-id
+ *                 validation failure (no partial-serve). The legacy
+ *                 server-zip `bulk-download` path retires under
+ *                 ADR-0024 — bulk assembly is browser-side streaming
+ *                 zip.
  *
  * Worker scoping: the repository predicate narrows reads; the service
  * layer additionally rejects worker write/init on an unassigned project
@@ -37,6 +52,12 @@
  * (read-only preview); restore is permitted on archived projects so
  * binaries in an archived project's trash are not silently reaped by
  * lifecycle.
+ *
+ * The unwrapped DEK is NEVER persisted — the column does not exist;
+ * each `download-url` / `bulk-fetch` call constructs a per-request
+ * `KeyEnvelopeService` against the operator-loaded identity path
+ * (`BINARY_AGE_IDENTITY_PATH`), unwraps in-memory, and returns the
+ * base64 to the caller. ADR-0024 §"Service-Worker decryption".
  */
 
 import crypto from 'node:crypto';
@@ -63,6 +84,7 @@ import {
   setVersionIds,
   getById,
   listByProject,
+  listByIdsForProject,
   listHiddenByProject,
   markReady,
   type AttachmentRow,
@@ -70,13 +92,31 @@ import {
 } from '../repositories/attachment.js';
 import { getProjectRowById } from '../repositories/project.js';
 import { mutate } from './mutate.js';
-import { conflict, notFound, notPermitted, validationError } from '../errors.js';
+import {
+  bulkLimitExceeded,
+  conflict,
+  dekUnwrapFailed,
+  notFound,
+  notPermitted,
+  serverError,
+  validationError,
+} from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
 import { ATTACHMENT_CONFIG } from '../../config/attachmentConfig.js';
 import { getEnv } from '../config/env.js';
-import { BulkDownloadOrchestrator } from './BulkDownloadOrchestrator.js';
+import { KeyEnvelopeService, KeyEnvelopeUnwrapError } from './KeyEnvelopeService.js';
 
 const FILE_NAME_MAX = 255;
+/**
+ * Sentinel storage `Content-Type` for every ciphertext object on B2
+ * (ADR-0024 §"Storage"). The plaintext `mimeType` lives on the row
+ * (drives download Content-Disposition) but never crosses the wire to
+ * storage — the SigV4-signed PUT and the complete()-time HEAD assertion
+ * both pin this constant.
+ */
+const CIPHERTEXT_CONTENT_TYPE = 'application/octet-stream';
+/** AES-256-GCM key length — the spec contract for `dekMaterial` after base64-decode. */
+const DEK_BYTE_LENGTH = 32;
 
 const LABEL_VALUES = new Set<string>(ATTACHMENT_LABELS.map((entry) => entry.value));
 const MIME_WHITELIST = new Set<string>(ATTACHMENT_MIME_WHITELIST);
@@ -92,20 +132,22 @@ export type PresignedUpload = PresignedPutDescriptor;
 export interface InitUploadInput {
   fileName: string;
   mimeType: string;
+  /** Plaintext byte count — drives the per-file cap + export envelope. */
   sizeBytes: number;
-  /** RFC 1864 base64 of the original blob's MD5 (24 chars, ends `==`). */
-  contentMd5: string;
   label: AttachmentLabel;
   hasThumbnail: boolean;
-  /**
-   * Required when `hasThumbnail = true`. The client computes the
-   * thumbnail before init so the server can sign a tight, exact-size
-   * PUT (parity with the original-upload pin) instead of a liberal
-   * `[1, perFileCap]` range that the POST policy used to express.
-   */
-  thumbSizeBytes?: number;
-  /** Required when `hasThumbnail = true`. RFC 1864 base64 MD5. */
-  thumbContentMd5?: string;
+  /** Base64 of the 32-byte AES-256-GCM DEK for the original blob. */
+  dekMaterial: string;
+  /** Ciphertext byte count for the original blob — what the server signs as Content-Length. */
+  ciphertextSizeBytes: number;
+  /** RFC 1864 base64 MD5 of the ciphertext bytes. */
+  ciphertextContentMd5: string;
+  /** Base64 of the 32-byte DEK for the thumbnail — required when `hasThumbnail = true`. */
+  thumbDekMaterial?: string;
+  /** Ciphertext byte count for the thumbnail — required when `hasThumbnail = true`. */
+  ciphertextThumbSizeBytes?: number;
+  /** RFC 1864 base64 MD5 of the thumbnail ciphertext — required when `hasThumbnail = true`. */
+  ciphertextThumbContentMd5?: string;
 }
 
 export interface InitUploadResult {
@@ -117,13 +159,50 @@ export interface InitUploadResult {
 export interface DownloadUrlResult {
   url: string;
   expiresAt: string;
+  /** Base64 of the unwrapped 32-byte DEK that decrypts the requested variant. */
+  dekMaterial: string;
 }
 
 export type DownloadVariant = 'original' | 'thumbnail';
 
+/**
+ * Per-attachment entry in a bulk-fetch response (api.md §14.2.11
+ * `BulkFetchEntry`). Photos carry both the original and the thumbnail
+ * triplet; binaries set the thumbnail fields to null (or omit them —
+ * both shapes are admissible per the spec).
+ */
+export interface BulkFetchEntry {
+  attachmentId: string;
+  originalUrl: string;
+  /** Base64 of the unwrapped 32-byte DEK for the original. */
+  originalDekMaterial: string;
+  ciphertextSizeBytes: number;
+  thumbUrl?: string;
+  /** Base64 of the unwrapped 32-byte DEK for the thumbnail; null for non-photo. */
+  thumbDekMaterial?: string;
+  ciphertextThumbSizeBytes?: number;
+}
+
+export interface BulkFetchResponse {
+  data: BulkFetchEntry[];
+}
+
 export interface AttachmentServiceDeps {
   db: Database;
   storage: AttachmentStorageClient;
+  /**
+   * Operator-loaded binary `age` recipient (public X25519 key). Used to
+   * wrap each DEK at init. Sourced from `BINARY_AGE_RECIPIENT` env at
+   * the route layer.
+   */
+  binaryAgeRecipient: string;
+  /**
+   * Path to the operator-loaded binary `age` private identity (tmpfs
+   * resident). Used to unwrap each row's `wrappedDek` per request on
+   * `download-url` / `bulk-fetch`. Sourced from
+   * `BINARY_AGE_IDENTITY_PATH` env.
+   */
+  binaryAgeIdentityPath: string;
 }
 
 interface ResolvedCaps {
@@ -202,13 +281,45 @@ function storageKey(projectId: string, attachmentId: string, suffix: 'orig' | 't
  * [A-Za-z0-9+/], one of [AQgw] at position 22 (only those four
  * carry zero-bit alignment for a 16-byte digest), then `==`. The
  * tighter alphabet at position 22 rejects malformed values that the
- * coarser `[A-Za-z0-9+/]{22}==` would accept. Used both at the
- * service-layer for `contentMd5` and via the route schema's pattern.
+ * coarser `[A-Za-z0-9+/]{22}==` would accept.
  */
 const MD5_BASE64_RE = /^[A-Za-z0-9+/]{21}[AQgw]==$/;
 
 function isMd5Base64(value: unknown): value is string {
   return typeof value === 'string' && MD5_BASE64_RE.test(value);
+}
+
+/**
+ * Decode `dekMaterial` (base64) and assert the post-decode byte length
+ * matches the AES-256-GCM key shape. Returns the raw 32-byte buffer on
+ * success; throws a 422 VALIDATION_ERROR on any malformed input. Used
+ * at init for both the original and thumbnail DEK material.
+ */
+function decodeDekMaterial(value: unknown, fieldHint: string): Uint8Array {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw validationError(STRINGS.errors.invalidInput);
+  }
+  // Reject anything that isn't valid base64. Buffer.from with 'base64'
+  // silently drops non-base64 bytes, so a malformed input would decode
+  // to a too-short buffer — caught by the length check below — but the
+  // explicit alphabet test catches malformed input one layer earlier
+  // (cleaner failure surface for `@@@-not-base64-@@@` style payloads).
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) {
+    throw validationError(STRINGS.errors.invalidInput);
+  }
+  const decoded = Buffer.from(value, 'base64');
+  if (decoded.length !== DEK_BYTE_LENGTH) {
+    throw validationError(STRINGS.errors.invalidInput);
+  }
+  // Round-trip check: re-encode and compare. Catches non-canonical
+  // base64 that would silently truncate (e.g. extra whitespace, off-by-one
+  // padding). The encoded form here uses no whitespace, so any divergence
+  // signals input that wouldn't reproduce.
+  if (decoded.toString('base64') !== value) {
+    throw validationError(STRINGS.errors.invalidInput);
+  }
+  void fieldHint;
+  return decoded;
 }
 
 function attachmentAuditLabel(row: AttachmentRow): string {
@@ -218,20 +329,32 @@ function attachmentAuditLabel(row: AttachmentRow): string {
 export class AttachmentService {
   private readonly db: Database;
   private readonly storage: AttachmentStorageClient;
-  private readonly bulkDownload: BulkDownloadOrchestrator;
+  private readonly binaryAgeRecipient: string;
+  private readonly binaryAgeIdentityPath: string;
 
   constructor(deps: AttachmentServiceDeps) {
     this.db = deps.db;
     this.storage = deps.storage;
-    // Bulk-download is a self-contained sub-flow (zip assembly +
-    // temp-object upload + presigned GET). The orchestrator shares
-    // `db` and `storage` but none of the state-machine helpers; caps
-    // are resolved here and passed in per-call.
-    this.bulkDownload = new BulkDownloadOrchestrator({ db: deps.db, storage: deps.storage });
+    this.binaryAgeRecipient = deps.binaryAgeRecipient;
+    this.binaryAgeIdentityPath = deps.binaryAgeIdentityPath;
   }
 
   /**
-   * Init: validate inputs, ensure caller scope, write a pending row via
+   * Construct a per-request `KeyEnvelopeService` against the
+   * operator-loaded identity path. The path-shape construction is
+   * cheap (no temp file) and does not need `close()` — the file is
+   * borrowed (`ownsIdentityFile = false`).
+   */
+  private envelopeService(): KeyEnvelopeService {
+    return new KeyEnvelopeService({
+      recipient: this.binaryAgeRecipient,
+      identityPath: this.binaryAgeIdentityPath,
+    });
+  }
+
+  /**
+   * Init: validate inputs, ensure caller scope, wrap each supplied DEK
+   * against the operator-loaded recipient, write a pending row via
    * `mutate()`, issue presigned PUT descriptors (one per blob).
    */
   async initUpload(
@@ -284,43 +407,62 @@ export class AttachmentService {
     ) {
       throw validationError(STRINGS.attachments.uploadFileTooLarge);
     }
-    // RFC 1864 base64 of 16-byte MD5 → 24 chars, last two `==`. Reject
-    // anything else here so the storage signer cannot be handed a
-    // malformed value. The storage provider's `BadDigest` check is the
-    // next layer.
-    if (!isMd5Base64(input.contentMd5)) {
+    if (!Number.isInteger(input.ciphertextSizeBytes) || input.ciphertextSizeBytes <= 0) {
       throw validationError(STRINGS.errors.invalidInput);
     }
+    // RFC 1864 base64 of 16-byte MD5 → 24 chars, last two `==`.
+    if (!isMd5Base64(input.ciphertextContentMd5)) {
+      throw validationError(STRINGS.errors.invalidInput);
+    }
+    // 32-byte DEK after base64-decode. The validator throws on malformed input.
+    const dekBytes = decodeDekMaterial(input.dekMaterial, 'dekMaterial');
 
     const kind = classifyKind(input.mimeType);
     // The client signals `hasThumbnail`. A photo without a thumbnail is
     // legal (no gallery render), but a binary with a thumbnail is not.
     const hasThumbnail = kind === 'photo' ? input.hasThumbnail : false;
 
-    // Thumbnail size + MD5 are required when a thumbnail is being
-    // signed. The client must run the image pipeline to know the
-    // thumbnail blob's exact bytes before calling init — that gives us
-    // the same exact-size pin on the thumbnail upload that we already
-    // have on the original. The cap is `perThumbCapBytes`, NOT the
-    // per-file cap: the thumbnail is server-encoded WebP at 320 px /
-    // q=0.72 (`attachmentPipeline.ts`) — sized in the tens of KB.
-    // Allowing a 1 MB "thumbnail" through would be a policy bypass.
-    let thumbSizeBytes: number | undefined;
-    let thumbContentMd5: string | undefined;
+    // Thumbnail triplet — required when a thumbnail is being signed.
+    let ciphertextThumbSizeBytes: number | undefined;
+    let ciphertextThumbContentMd5: string | undefined;
+    let thumbDekBytes: Uint8Array | undefined;
     if (hasThumbnail) {
       if (
-        typeof input.thumbSizeBytes !== 'number' ||
-        !Number.isInteger(input.thumbSizeBytes) ||
-        input.thumbSizeBytes <= 0 ||
-        input.thumbSizeBytes > caps.perThumbCapBytes
+        typeof input.ciphertextThumbSizeBytes !== 'number' ||
+        !Number.isInteger(input.ciphertextThumbSizeBytes) ||
+        input.ciphertextThumbSizeBytes <= 0
       ) {
-        throw validationError(STRINGS.attachments.uploadFileTooLarge);
-      }
-      if (!isMd5Base64(input.thumbContentMd5)) {
         throw validationError(STRINGS.errors.invalidInput);
       }
-      thumbSizeBytes = input.thumbSizeBytes;
-      thumbContentMd5 = input.thumbContentMd5;
+      // Per-thumb cap (AC-245). Mirrors the original-side
+      // perFileCapBytes guard above; an oversized thumbnail
+      // ciphertext rejects with the same shape (uploadFileTooLarge),
+      // and persists no row.
+      if (input.ciphertextThumbSizeBytes > caps.perThumbCapBytes) {
+        throw validationError(STRINGS.attachments.uploadFileTooLarge);
+      }
+      if (!isMd5Base64(input.ciphertextThumbContentMd5)) {
+        throw validationError(STRINGS.errors.invalidInput);
+      }
+      thumbDekBytes = decodeDekMaterial(input.thumbDekMaterial, 'thumbDekMaterial');
+      ciphertextThumbSizeBytes = input.ciphertextThumbSizeBytes;
+      ciphertextThumbContentMd5 = input.ciphertextThumbContentMd5;
+    }
+
+    // Wrap each DEK against the operator-loaded recipient. The wrapping
+    // uses only the public recipient; no identity file is consulted, so
+    // construction with `identityPath` (borrowed file) is the right
+    // shape — the file is irrelevant to `wrap()`. Errors here are
+    // operator conditions (missing `age` binary, malformed recipient)
+    // and bubble as 5xx — the per-row 422 surface is for unwrap-time
+    // failures only (api.md §14.2.11 design notes).
+    const envelope = this.envelopeService();
+    const wrappedDekBytes = await envelope.wrap(dekBytes);
+    const wrappedDekBase64 = Buffer.from(wrappedDekBytes).toString('base64');
+    let wrappedThumbDekBase64: string | null = null;
+    if (thumbDekBytes !== undefined) {
+      const wrappedThumbBytes = await envelope.wrap(thumbDekBytes);
+      wrappedThumbDekBase64 = Buffer.from(wrappedThumbBytes).toString('base64');
     }
 
     const attachmentId = crypto.randomUUID();
@@ -344,8 +486,18 @@ export class AttachmentService {
             sizeBytes: input.sizeBytes,
             originalKey,
             thumbKey,
-            thumbSizeBytes: thumbSizeBytes ?? null,
+            // Plaintext-thumb-size column kept for legacy tests that
+            // still seed it; the real defence in depth at complete-time
+            // is the ciphertext-side `ciphertextThumbSizeBytes`. Set
+            // null here so a non-thumb row stays clean and a photo
+            // row's thumb column reflects the ciphertext figure
+            // through `ciphertextThumbSizeBytes`.
+            thumbSizeBytes: null,
             hasThumbnail,
+            ciphertextSizeBytes: input.ciphertextSizeBytes,
+            ciphertextThumbSizeBytes: ciphertextThumbSizeBytes ?? null,
+            wrappedDek: wrappedDekBase64,
+            wrappedThumbDek: wrappedThumbDekBase64,
             createdBy: caller.id,
           });
           return {
@@ -371,25 +523,25 @@ export class AttachmentService {
 
     log.info({ attachmentId: row.id, projectId }, 'attachment_init');
 
-    // Sign one presigned PUT per blob. Each binds Content-Type +
-    // Content-Length + Content-MD5 (see `createPresignedPut`); a client
-    // that mutates any of the three fails signature verification. The
-    // body MD5 is verified against received bytes by the storage
-    // provider (`BadDigest`), so the URL is reusable only for the exact
-    // bytes the client committed to at init time.
+    // Sign one presigned PUT per blob against the *ciphertext* triplet
+    // (sentinel content-type, ciphertext size, ciphertext MD5). The
+    // SigV4 binding rejects any client-side divergence on these three
+    // fields before the bytes reach the storage provider; the provider
+    // additionally verifies Content-MD5 against received bytes
+    // (`BadDigest` on mismatch).
     const originalUpload = await this.storage.createPresignedPut(
       originalKey,
-      input.mimeType,
-      input.sizeBytes,
-      input.contentMd5,
+      CIPHERTEXT_CONTENT_TYPE,
+      input.ciphertextSizeBytes,
+      input.ciphertextContentMd5,
     );
     const thumbnailUpload =
-      thumbKey && thumbSizeBytes !== undefined && thumbContentMd5 !== undefined
+      thumbKey && ciphertextThumbSizeBytes !== undefined && ciphertextThumbContentMd5 !== undefined
         ? await this.storage.createPresignedPut(
             thumbKey,
-            'image/webp',
-            thumbSizeBytes,
-            thumbContentMd5,
+            CIPHERTEXT_CONTENT_TYPE,
+            ciphertextThumbSizeBytes,
+            ciphertextThumbContentMd5,
           )
         : undefined;
 
@@ -404,8 +556,9 @@ export class AttachmentService {
   }
 
   /**
-   * Complete: HEAD-check both objects, assert size-cap + content-type,
-   * flip `pending` → `ready`. No audit row (AC-219).
+   * Complete: HEAD-check both objects, assert size against the row's
+   * persisted `ciphertextSizeBytes` + sentinel content-type, flip
+   * `pending` → `ready`. No audit row (AC-219).
    */
   async completeUpload(
     caller: AuthUser,
@@ -447,20 +600,26 @@ export class AttachmentService {
     let versionId: string | null;
     try {
       const head = await this.storage.headObject(row.originalKey);
-      // Declared-size pin first (AC-212, spec §14.2.11 error paths).
-      // The presigned PUT's signed `Content-Length` already rejects a
-      // size deviation at the signature layer, so reaching this branch
-      // means a signature bypass — refuse the flip so a size-substituted
+      // Declared-ciphertext-size pin first (ADR-0024 / AC-212). The
+      // presigned PUT's signed `Content-Length` already rejects a size
+      // deviation at the signature layer, so reaching this branch means
+      // a signature bypass — refuse the flip so a size-substituted
       // upload cannot become canonical.
-      if (head.size !== row.sizeBytes) {
+      if (row.ciphertextSizeBytes !== null && head.size !== row.ciphertextSizeBytes) {
         throw conflict(STRINGS.errors.invalidInput);
       }
-      // Defence in depth: a global cap breach is still a conflict even
-      // if the declared size matched (e.g., cap dropped since init).
-      if (head.size > caps.perFileCapBytes) {
+      // Defence in depth: a global cap breach on plaintext is still a
+      // conflict even if the declared ciphertext size matched (e.g.
+      // cap dropped since init). Reads the row's plaintext sizeBytes,
+      // which is what the per-file cap gates.
+      if (row.sizeBytes > caps.perFileCapBytes) {
         throw conflict(STRINGS.errors.invalidInput);
       }
-      if (head.contentType !== row.mimeType) {
+      // Sentinel content-type — under e2e the storage object is
+      // ciphertext under the fixed `application/octet-stream` type.
+      // Anything else means the uploader sent a different MIME (e.g.
+      // image/jpeg from a pre-e2e client) — refuse the flip.
+      if (head.contentType !== CIPHERTEXT_CONTENT_TYPE) {
         throw conflict(STRINGS.errors.invalidInput);
       }
       versionId = head.versionId ?? null;
@@ -474,25 +633,28 @@ export class AttachmentService {
     let thumbVersionId: string | null = null;
     if (row.hasThumbnail && row.thumbKey) {
       try {
-        // Defense in depth: the presigned PUT already pins
-        // Content-Length to the exact thumb size and Content-Type to
-        // image/webp via SigV4. Re-assert at HEAD so a signature bypass
-        // that slipped past storage is still caught at state-flip time.
+        // Defence in depth: the presigned PUT already pins
+        // Content-Length and the sentinel content-type via SigV4.
+        // Re-assert at HEAD so a signature bypass is still caught at
+        // state-flip time.
         const thumbHead = await this.storage.headObject(row.thumbKey);
-        // Declared-size pin first — mirrors the original-side check
-        // above. The persisted `thumb_size_bytes` is the value the
-        // client committed to at init; a HEAD reporting a different
-        // size means a signature bypass landed bytes the row never
-        // accepted. Only assert when the row carries a value: legacy
-        // pending rows that predate the column have null and fall
-        // through to the cap-only check.
-        if (row.thumbSizeBytes !== null && thumbHead.size !== row.thumbSizeBytes) {
+        // Declared-ciphertext-size pin first.
+        if (
+          row.ciphertextThumbSizeBytes !== null &&
+          thumbHead.size !== row.ciphertextThumbSizeBytes
+        ) {
           throw conflict(STRINGS.errors.invalidInput);
         }
-        if (thumbHead.size > caps.perThumbCapBytes) {
+        // Plaintext-thumb-size column — kept for legacy seed paths
+        // that populated it; defence in depth against the per-thumb
+        // plaintext cap.
+        if (row.thumbSizeBytes !== null && row.thumbSizeBytes > caps.perThumbCapBytes) {
           throw conflict(STRINGS.errors.invalidInput);
         }
-        if (!thumbHead.contentType.startsWith('image/')) {
+        // Sentinel content-type — no `startsWith('image/')` carve-out
+        // under e2e. Both blobs are opaque ciphertext under the fixed
+        // type (api.md §14.2.11 / ADR-0024 §"Complete() flow rework").
+        if (thumbHead.contentType !== CIPHERTEXT_CONTENT_TYPE) {
           throw conflict(STRINGS.errors.invalidInput);
         }
         thumbVersionId = thumbHead.versionId ?? null;
@@ -830,6 +992,17 @@ export class AttachmentService {
     return toAttachment(restored);
   }
 
+  /**
+   * Issue a presigned-GET URL plus the unwrapped DEK material that
+   * decrypts the requested variant. ADR-0024 / api.md §14.2.11.
+   *
+   * The unwrap runs per request via a fresh `KeyEnvelopeService` against
+   * the operator-loaded identity path. Per-row unwrap failures
+   * (envelope corrupt, recipient mismatch) surface as
+   * `422 DEK_UNWRAP_FAILED`; wholesale failures (operator identity not
+   * loaded) bubble as 5xx — the boot probe is supposed to make that
+   * unreachable in normal operation.
+   */
   async issueDownloadUrl(
     caller: AuthUser,
     projectId: string,
@@ -855,7 +1028,9 @@ export class AttachmentService {
     // Pending rows are invisible to consumers — matches `listByProject`
     // which only surfaces ready rows. Issuing a download URL for an
     // unverified upload would leak partially-uploaded bytes past the
-    // HEAD-verify gate. 404 mirrors the reaper-removed branch.
+    // HEAD-verify gate. 404 mirrors the reaper-removed branch. Hidden
+    // rows likewise — they carry a delete marker on the current
+    // version, so the presigned GET would 404 from storage anyway.
     if (row.status !== 'ready') {
       throw notFound(STRINGS.entities.resource);
     }
@@ -864,29 +1039,187 @@ export class AttachmentService {
       if (row.kind !== 'photo' || !row.thumbKey) {
         throw validationError(STRINGS.errors.invalidInput);
       }
-      return this.storage.createPresignedGet(row.thumbKey);
     }
-    // Originals download with attachment semantics so the browser honours
-    // the row's fileName even on cross-origin storage hosts.
-    return this.storage.createPresignedGet(row.originalKey, undefined, row.filename);
+
+    // Variant-specific column selection. A thumbnail variant request
+    // requires `wrappedThumbDek`; the schema CHECK ensures `wrappedDek`
+    // exists on every ready row, but `wrappedThumbDek` may be null for
+    // photos without a thumb (legacy seed). Surface that specific shape
+    // as DEK_UNWRAP_FAILED — there is no decryptable envelope to return.
+    const wrappedBase64 = variant === 'thumbnail' ? row.wrappedThumbDek : row.wrappedDek;
+    if (!wrappedBase64) {
+      throw dekUnwrapFailed();
+    }
+    const wrappedBytes = Buffer.from(wrappedBase64, 'base64');
+
+    const envelope = this.envelopeService();
+    let dekBytes: Uint8Array;
+    try {
+      dekBytes = await envelope.unwrap(wrappedBytes);
+    } catch (err) {
+      if (err instanceof KeyEnvelopeUnwrapError) {
+        // Per-row failure — corrupt envelope or recipient mismatch.
+        // Propagate as 422 with the documented code so the SW renders
+        // the placeholder (AC-244).
+        throw dekUnwrapFailed();
+      }
+      throw err;
+    }
+    const dekMaterial = Buffer.from(dekBytes).toString('base64');
+
+    const presigned =
+      variant === 'thumbnail'
+        ? await this.storage.createPresignedGet(row.thumbKey!)
+        : await this.storage.createPresignedGet(row.originalKey, undefined, row.filename);
+
+    return {
+      url: presigned.url,
+      expiresAt: presigned.expiresAt,
+      dekMaterial,
+    };
   }
 
   /**
-   * Entry point for the bulk-download flow. Resolves caps and delegates
-   * to `BulkDownloadOrchestrator` — see that module for the zip-assembly
-   * contract, entry-naming policy and cleanup model (api.md §14.2.11,
-   * AC-216, AC-221).
+   * Bulk fetch — per-file presigned-GETs + unwrapped DEK material for
+   * each requested attachment. ADR-0024 / api.md §14.2.11. The browser
+   * fetches each ciphertext, decrypts with the DEK, and assembles the
+   * archive locally (streaming-zip).
+   *
+   * Caps:
+   *   - count: `attachmentIds.length` ≤ `bulkDownloadMaxFiles`
+   *   - bytes: summed plaintext `sizeBytes` ≤ `bulkDownloadMaxBytes`
+   *
+   * Rejection on either cap returns 422 BULK_LIMIT_EXCEEDED. A per-id
+   * validation failure (cross-project id, non-ready status) rejects
+   * the whole batch as 422 VALIDATION_ERROR — no partial-serve.
+   *
+   * Order is preserved: the response carries one entry per requested
+   * id, in the order the client supplied. A regression that re-sorted
+   * by createdAt would break the SW's progress accounting.
    */
-  async issueBulkDownloadUrl(
+  async bulkFetch(
     caller: AuthUser,
     projectId: string,
     attachmentIds: string[],
-  ): Promise<DownloadUrlResult> {
+  ): Promise<BulkFetchResponse> {
+    if (!Array.isArray(attachmentIds) || attachmentIds.length === 0) {
+      throw validationError(STRINGS.errors.invalidInput);
+    }
+
+    // Reject duplicate ids in the request BEFORE the DB read. Without
+    // this guard, `[id, id, id]` produces a single-row fetch and
+    // surfaces as a generic "id not in project" — making the failure
+    // indistinguishable from an actually-invalid id. Deduplicating on
+    // the server is also wrong (would silently collapse the response
+    // to fewer entries than requested, breaking the SW's index-aligned
+    // progress accounting). Fail fast with a distinct message.
+    if (new Set(attachmentIds).size !== attachmentIds.length) {
+      throw validationError(STRINGS.errors.invalidInput);
+    }
+
     const caps = resolveCaps();
-    return this.bulkDownload.issueBulkDownloadUrl(caller, projectId, attachmentIds, {
-      bulkDownloadMaxFiles: caps.bulkDownloadMaxFiles,
-      bulkDownloadMaxBytes: caps.bulkDownloadMaxBytes,
-    });
+    // Count cap fires FIRST — failing fast on count keeps a flood of
+    // fake ids from triggering a DB round-trip.
+    if (attachmentIds.length > caps.bulkDownloadMaxFiles) {
+      throw bulkLimitExceeded({
+        limits: {
+          maxFiles: caps.bulkDownloadMaxFiles,
+          maxBytes: caps.bulkDownloadMaxBytes,
+        },
+      });
+    }
+
+    const projectRow = await getProjectRowById(this.db, projectId);
+    if (!projectRow) throw notFound(STRINGS.entities.project);
+    if (!(await isProjectInScope(this.db, caller, projectId))) {
+      throw notPermitted();
+    }
+
+    const rows = await listByIdsForProject(this.db, projectId, attachmentIds, caller);
+    // Every requested id must exist on this project.
+    if (rows.length !== attachmentIds.length) {
+      throw validationError(STRINGS.errors.invalidInput);
+    }
+    // No pending or hidden rows in the batch (api.md §14.2.11 design
+    // notes "Non-`ready` rows are ineligible for bulk fetch").
+    if (rows.some((r) => r.status !== 'ready')) {
+      throw validationError(STRINGS.errors.invalidInput);
+    }
+
+    // Plaintext-bytes cap. The user-visible quantity is plaintext —
+    // that's what the operator ultimately decrypts and downloads.
+    const totalBytes = rows.reduce((sum, r) => sum + r.sizeBytes, 0);
+    if (totalBytes > caps.bulkDownloadMaxBytes) {
+      throw bulkLimitExceeded({
+        limits: {
+          maxFiles: caps.bulkDownloadMaxFiles,
+          maxBytes: caps.bulkDownloadMaxBytes,
+        },
+      });
+    }
+
+    // Order-preserve the response by indexing rows by id and walking
+    // the input order. `listByIdsForProject` returns rows in
+    // DB-insertion order, which is not what the user sees.
+    const rowById = new Map(rows.map((r) => [r.id, r] as const));
+    const orderedRows = attachmentIds.map((id) => rowById.get(id)!);
+
+    const envelope = this.envelopeService();
+    const entries: BulkFetchEntry[] = [];
+    for (const row of orderedRows) {
+      // Original-side unwrap. Any failure here — including a missing
+      // `wrappedDek` column on a 'ready' row — propagates as 500 per
+      // api.md §14.2.11 ("any unwrap failure in the batch → 500
+      // SERVER_ERROR"). The boot probe is supposed to make
+      // `KeyEnvelopeUnwrapError` unreachable, so a hit here signals a
+      // data-integrity break (corrupt envelope on a ready row, or a
+      // partial key rotation that left some envelopes wrapped to a
+      // different recipient). The single documented per-row 422
+      // surface is `download-url`, not bulk.
+      let originalDekBytes: Uint8Array;
+      try {
+        if (!row.wrappedDek) {
+          throw new Error('wrapped_dek missing on ready row');
+        }
+        originalDekBytes = await envelope.unwrap(Buffer.from(row.wrappedDek, 'base64'));
+      } catch {
+        throw serverError();
+      }
+      const originalUpload = await this.storage.createPresignedGet(
+        row.originalKey,
+        undefined,
+        row.filename,
+      );
+      const entry: BulkFetchEntry = {
+        attachmentId: row.id,
+        originalUrl: originalUpload.url,
+        originalDekMaterial: Buffer.from(originalDekBytes).toString('base64'),
+        ciphertextSizeBytes: row.ciphertextSizeBytes ?? row.sizeBytes,
+      };
+      // Photos with a thumbKey MUST carry a `wrappedThumbDek` envelope
+      // — silently omitting the thumb would produce a partial-payload
+      // entry that the SW cannot reconcile. Surface the missing column
+      // as 500 (data integrity), the same shape as an unwrap failure.
+      // Only when the row legitimately has no thumbnail (no `thumbKey`)
+      // should the thumb fields be absent from the entry.
+      if (row.kind === 'photo' && row.thumbKey) {
+        let thumbDekBytes: Uint8Array;
+        try {
+          if (!row.wrappedThumbDek) {
+            throw new Error('wrapped_thumb_dek missing on photo row with thumbKey');
+          }
+          thumbDekBytes = await envelope.unwrap(Buffer.from(row.wrappedThumbDek, 'base64'));
+        } catch {
+          throw serverError();
+        }
+        const thumbUpload = await this.storage.createPresignedGet(row.thumbKey);
+        entry.thumbUrl = thumbUpload.url;
+        entry.thumbDekMaterial = Buffer.from(thumbDekBytes).toString('base64');
+        entry.ciphertextThumbSizeBytes = row.ciphertextThumbSizeBytes ?? undefined;
+      }
+      entries.push(entry);
+    }
+    return { data: entries };
   }
 }
 

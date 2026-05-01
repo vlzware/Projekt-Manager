@@ -567,9 +567,37 @@ export interface AttachmentInitResponse {
   thumbnailUpload?: PresignedUpload;
 }
 
+/**
+ * Download-URL response — ADR-0024 / api.md §14.2.11. The server
+ * unwraps `wrappedDek` (or `wrappedThumbDek` for the thumbnail variant)
+ * per request and returns the raw 32-byte DEK as base64 alongside the
+ * presigned-GET URL. The Service Worker fetches `url` and decrypts with
+ * `dekMaterial`.
+ */
 export interface AttachmentDownloadUrlResponse {
   url: string;
   expiresAt: string;
+  dekMaterial: string;
+}
+
+/**
+ * One row in a bulk-fetch response (api.md §14.2.11 `BulkFetchEntry`).
+ * Photos carry both the original and thumbnail triplet; binaries omit
+ * the thumbnail fields. Ordered by request: the response array's
+ * indices align with the supplied `attachmentIds` indices.
+ */
+export interface BulkFetchEntry {
+  attachmentId: string;
+  originalUrl: string;
+  originalDekMaterial: string;
+  ciphertextSizeBytes: number;
+  thumbUrl?: string;
+  thumbDekMaterial?: string;
+  ciphertextThumbSizeBytes?: number;
+}
+
+export interface BulkFetchResponse {
+  data: BulkFetchEntry[];
 }
 
 export interface AttachmentListResponse {
@@ -586,11 +614,14 @@ export const attachmentApi = {
       fileName: string;
       mimeType: string;
       sizeBytes: number;
-      contentMd5: string;
       label: AttachmentLabel;
       hasThumbnail: boolean;
-      thumbSizeBytes?: number;
-      thumbContentMd5?: string;
+      dekMaterial: string;
+      ciphertextSizeBytes: number;
+      ciphertextContentMd5: string;
+      thumbDekMaterial?: string;
+      ciphertextThumbSizeBytes?: number;
+      ciphertextThumbContentMd5?: string;
     },
     signal?: AbortSignal,
   ) =>
@@ -624,8 +655,8 @@ export const attachmentApi = {
       `/api/projects/${projectId}/attachments/${attachmentId}/download-url` + toQuery({ variant }),
     ),
 
-  bulkDownloadUrl: (projectId: string, attachmentIds: string[]) =>
-    apiCall<AttachmentDownloadUrlResponse>(`/api/projects/${projectId}/attachments/bulk-download`, {
+  bulkFetch: (projectId: string, attachmentIds: string[]) =>
+    apiCall<BulkFetchResponse>(`/api/projects/${projectId}/attachments/bulk-fetch`, {
       method: 'POST',
       body: { attachmentIds },
     }),
