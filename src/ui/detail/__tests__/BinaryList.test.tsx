@@ -29,9 +29,6 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ApiResult } from '@/api/client';
 import type { Attachment } from '@/domain/types';
-// `BulkFetchEntry` is the wire shape returned by the new bulk-fetch
-// endpoint (api.md §14.2.11). It does not exist yet — the import fails
-// until the API client exposes it. That is the failing-test signal.
 import type { BulkFetchEntry } from '@/api/client';
 
 type ListResult = ApiResult<{ data: Attachment[] }>;
@@ -40,12 +37,6 @@ type BulkFetchResult = ApiResult<{ data: BulkFetchEntry[] }>;
 const listMock = vi.fn<(projectId: string) => Promise<ListResult>>();
 const bulkFetchMock =
   vi.fn<(projectId: string, attachmentIds: string[]) => Promise<BulkFetchResult>>();
-
-// Streaming-zip assembler — mocked at the module boundary. The
-// component awaits this pipeline; the mock asserts the call shape and
-// resolves with a synthetic Blob the component can wrap into a
-// download anchor.
-const streamingZipMock = vi.fn<(entries: BulkFetchEntry[]) => Promise<Blob>>();
 
 vi.mock('@/api/client', async (importActual) => {
   const actual = (await importActual()) as Record<string, unknown>;
@@ -70,14 +61,6 @@ vi.mock('@/api/client', async (importActual) => {
     },
   };
 });
-
-// Mock the streaming-zip module — concrete path is the implementer's
-// choice; the test pins the call shape so a renamed module surfaces
-// as a failed-mock symptom rather than a silent regression.
-vi.mock('@/domain/streamingZip', () => ({
-  assembleStreamingZip: (...args: unknown[]) =>
-    streamingZipMock(...(args as Parameters<typeof streamingZipMock>)),
-}));
 
 const { BinaryList } = await import('@/ui/detail/BinaryList');
 const { useAuthStore } = await import('@/state/authStore');
@@ -110,7 +93,6 @@ function ok<T>(data: T): ApiResult<T> {
 beforeEach(() => {
   listMock.mockReset();
   bulkFetchMock.mockReset();
-  streamingZipMock.mockReset();
 
   useAttachmentStore.setState({ byProject: {}, pendingUploads: {}, error: null });
   useAuthStore.setState({
@@ -179,8 +161,6 @@ beforeEach(() => {
       ] as BulkFetchEntry[],
     }),
   );
-
-  streamingZipMock.mockResolvedValue(new Blob([new Uint8Array(8)], { type: 'application/zip' }));
 });
 
 describe('BinaryList — Herunterladen routes through synthetic origin (AC-223)', () => {
@@ -210,27 +190,26 @@ describe('BinaryList — Herunterladen routes through synthetic origin (AC-223)'
 
   it('Herunterladen issues a request against /encrypted-storage/<projectId>/<attachmentId>.original', async () => {
     // The single-file download path goes through the synthetic origin
-    // (ui/project-detail.md §8.15.5). The SW intercepts the fetch /
-    // anchor-click, calls download-url, decrypts the ciphertext, and
-    // returns plaintext bytes. The component is responsible for
-    // pointing the request at the synthetic URL — the SW is the one
-    // that does the crypto work.
-    //
-    // The implementer may use either an `<a download href="...">`
-    // anchor or a programmatic `fetch` + Blob URL. Both expose the
-    // synthetic URL on the DOM at the moment of click — the test
-    // checks that *some* observable artefact (anchor `href` or fetch
-    // call URL) carries it. We monkey-patch the click on the in-memory
-    // anchor used by the existing `triggerDownload` helper.
-    const observedUrls: string[] = [];
+    // (ui/project-detail.md §8.15.5). The component issues a fetch
+    // against the synthetic URL; the SW intercepts the request, calls
+    // download-url, decrypts the ciphertext, and returns plaintext
+    // bytes through the Fetch response. On 200 the component wraps
+    // the response in a Blob URL and triggers an `<a download>` —
+    // the test checks both: the synthetic URL was fetched, and an
+    // anchor was appended afterwards (the click drives the browser
+    // download dialog).
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(new Uint8Array([0x25, 0x50, 0x44, 0x46]).slice()));
+
+    const appendedAnchors: HTMLAnchorElement[] = [];
     const originalAppendChild = document.body.appendChild.bind(document.body);
     const appendChildSpy = vi.fn((node: Node) => {
       if (node instanceof HTMLAnchorElement) {
-        observedUrls.push(node.href);
+        appendedAnchors.push(node);
         // No-op the click — jsdom would otherwise navigate the test
-        // window to a synthetic URL it cannot resolve.
-        const noopClick = vi.fn();
-        (node as HTMLAnchorElement & { click: () => void }).click = noopClick;
+        // window to a Blob URL it cannot resolve.
+        (node as HTMLAnchorElement & { click: () => void }).click = vi.fn();
       }
       return originalAppendChild(node) as Node;
     });
@@ -241,13 +220,30 @@ describe('BinaryList — Herunterladen routes through synthetic origin (AC-223)'
       const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
       await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
 
+      // Synthetic URL fetched — the SW seam (in production) intercepts
+      // here; in jsdom the spy's resolved Response stands in for the
+      // SW's plaintext output.
       await waitFor(() => {
-        expect(observedUrls.length).toBeGreaterThan(0);
+        expect(fetchSpy).toHaveBeenCalled();
       });
-      expect(observedUrls.some((u) => u.endsWith('/encrypted-storage/p-42/bin-pdf.original'))).toBe(
+      const calledUrls = fetchSpy.mock.calls.map(([input]) =>
+        typeof input === 'string' ? input : ((input as Request).url ?? String(input)),
+      );
+      expect(calledUrls.some((u) => u.endsWith('/encrypted-storage/p-42/bin-pdf.original'))).toBe(
         true,
       );
+
+      // Anchor appended with the Blob URL + download attribute set to
+      // the file's name — the user-gesture continuation that triggers
+      // the browser save dialog.
+      await waitFor(() => {
+        expect(appendedAnchors.length).toBeGreaterThan(0);
+      });
+      const anchor = appendedAnchors[0];
+      expect(anchor.download).toBe('angebot.pdf');
+      expect(anchor.href.startsWith('blob:')).toBe(true);
     } finally {
+      fetchSpy.mockRestore();
       document.body.appendChild = originalAppendChild;
     }
   });
@@ -284,40 +280,65 @@ describe('BinaryList — Auswahl als ZIP triggers bulk-fetch (AC-223)', () => {
 
     // Client-side block — no network call to the server.
     expect(bulkFetchMock).not.toHaveBeenCalled();
-    expect(streamingZipMock).not.toHaveBeenCalled();
   });
 
-  it('calls bulk-fetch with the selected ids and pipes the returned payloads into the streaming-zip pipeline', async () => {
-    render(<BinaryList projectId="p-42" />);
-    const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
-    const docxRow = await screen.findByTestId('attachment-binary-row-bin-docx');
-
-    await userEvent.click(within(pdfRow).getByRole('checkbox'));
-    await userEvent.click(within(docxRow).getByRole('checkbox'));
-    await userEvent.click(screen.getByTestId('binary-bulk-download'));
-
-    // Wire contract: POST /api/projects/:id/attachments/bulk-fetch with
-    // the selected ids in the body (api.md §14.2.11). The component
-    // does not call the legacy `bulk-download` endpoint.
-    await waitFor(() => {
-      expect(bulkFetchMock).toHaveBeenCalledTimes(1);
+  it('calls bulk-fetch with the selected ids and triggers a Blob-URL download of the assembled zip', async () => {
+    // The component delegates zip assembly to the store's
+    // `requestBulkZipBlob`, which calls `attachmentApi.bulkFetch` and
+    // streams the per-file ciphertexts through `client-zip` after
+    // per-file decryption. Replace the store action with a stub so
+    // this component test is not coupled to the store's encryption
+    // path (covered by `state/__tests__/attachmentStore.test.ts`).
+    const requestBulkZipBlobStub = vi
+      .fn()
+      .mockResolvedValue(new Blob([new Uint8Array(8)], { type: 'application/zip' }));
+    useAttachmentStore.setState({
+      requestBulkZipBlob: requestBulkZipBlobStub as unknown as ReturnType<
+        typeof useAttachmentStore.getState
+      >['requestBulkZipBlob'],
     });
-    const [callProjectId, callIds] = bulkFetchMock.mock.calls[0];
-    expect(callProjectId).toBe('p-42');
-    expect(new Set(callIds)).toEqual(new Set(['bin-pdf', 'bin-docx']));
 
-    // Streaming-zip pipeline receives the per-file payloads from the
-    // server — the component must pass them through unchanged so the
-    // pipeline can decrypt + assemble locally.
-    await waitFor(() => {
-      expect(streamingZipMock).toHaveBeenCalledTimes(1);
+    const appendedAnchors: HTMLAnchorElement[] = [];
+    const originalAppendChild = document.body.appendChild.bind(document.body);
+    const appendChildSpy = vi.fn((node: Node) => {
+      if (node instanceof HTMLAnchorElement) {
+        appendedAnchors.push(node);
+        (node as HTMLAnchorElement & { click: () => void }).click = vi.fn();
+      }
+      return originalAppendChild(node) as Node;
     });
-    const [entries] = streamingZipMock.mock.calls[0];
-    expect(entries.map((e) => e.attachmentId).sort()).toEqual(['bin-docx', 'bin-pdf']);
-    // Each entry carries the unwrapped DEK + presigned URL — both are
-    // load-bearing for the per-file decrypt the pipeline performs.
-    expect(entries.every((e) => typeof e.originalDekMaterial === 'string')).toBe(true);
-    expect(entries.every((e) => typeof e.originalUrl === 'string')).toBe(true);
+    document.body.appendChild = appendChildSpy as unknown as typeof document.body.appendChild;
+
+    try {
+      render(<BinaryList projectId="p-42" />);
+      const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
+      const docxRow = await screen.findByTestId('attachment-binary-row-bin-docx');
+
+      await userEvent.click(within(pdfRow).getByRole('checkbox'));
+      await userEvent.click(within(docxRow).getByRole('checkbox'));
+      await userEvent.click(screen.getByTestId('binary-bulk-download'));
+
+      // Wire contract: the component delegates to `requestBulkZipBlob`
+      // with the selected ids; the store internally hits
+      // `POST /api/projects/:id/attachments/bulk-fetch` (api.md §14.2.11).
+      await waitFor(() => {
+        expect(requestBulkZipBlobStub).toHaveBeenCalledTimes(1);
+      });
+      const [callProjectId, callIds] = requestBulkZipBlobStub.mock.calls[0];
+      expect(callProjectId).toBe('p-42');
+      expect(new Set(callIds)).toEqual(new Set(['bin-pdf', 'bin-docx']));
+
+      // Anchor appended with a Blob URL of the assembled zip — the
+      // user-gesture continuation that triggers the browser save dialog.
+      await waitFor(() => {
+        expect(appendedAnchors.length).toBeGreaterThan(0);
+      });
+      const anchor = appendedAnchors[0];
+      expect(anchor.href.startsWith('blob:')).toBe(true);
+      expect(anchor.download).toBeTruthy();
+    } finally {
+      document.body.appendChild = originalAppendChild;
+    }
   });
 });
 

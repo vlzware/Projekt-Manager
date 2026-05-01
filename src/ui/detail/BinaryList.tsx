@@ -1,11 +1,20 @@
 /**
- * Binary list — tabular view of ready non-photo attachments with
- * download, bulk-select (client-side cap enforcement), and the "Datei
- * fehlt" placeholder on download 404 (spec §8.15.5 and §8.15.7).
+ * Binary list — tabular view of ready non-photo attachments. Per-row
+ * download + bulk-fetch ZIP under the synthetic-origin Service-Worker
+ * decrypt path (ADR-0024, spec §8.15.5 / §8.15.7).
  *
- * Bulk-download caps live in `attachmentPipeline.ts` [C]; violation
- * produces a client-side message naming both caps (file count AND
- * summed bytes) per AC-223.
+ * Per-row download issues a fetch against `/encrypted-storage/<projectId>/<id>.original`;
+ * the SW intercepts, calls `download-url`, fetches ciphertext, decrypts,
+ * and returns plaintext bytes. On a non-2xx response the row flips to
+ * one of the two divergence placeholders:
+ *   - `data-sw-error-code: OBJECT_ABSENT` (or absent code) → `"Datei fehlt"` (AC-224)
+ *   - `data-sw-error-code: DEK_UNWRAP_FAILED` → `"Schlüssel nicht verfügbar"` (AC-244)
+ *
+ * Bulk-fetch caps live in `attachmentPipeline.ts` [C]; violation
+ * produces a client-side message naming both caps before any request
+ * is issued (AC-223). The store's `requestBulkZipBlob` decrypts each
+ * ciphertext locally and assembles a streaming zip — this component
+ * then triggers a Blob-URL download.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -18,6 +27,7 @@ import { useAttachmentStore } from '@/state/attachmentStore';
 import { useAuthStore } from '@/state/authStore';
 import { useConfirmStore } from '@/state/confirmStore';
 import { formatDateDE } from '@/domain/dateFormat';
+import { synthAttachmentUrl } from '@/sw/syntheticOrigin';
 import styles from './ProjectDetail.module.css';
 
 function isPdf(row: { fileName: string; mimeType?: string | null }): boolean {
@@ -35,8 +45,10 @@ const LABEL_BY_VALUE = new Map<AttachmentLabel, string>(
   ATTACHMENT_LABELS.map((l) => [l.value, l.label]),
 );
 
+type RowError = 'object-absent' | 'key-unavailable';
+
 /**
- * Programmatically trigger a browser download for a remote URL using a
+ * Programmatically trigger a browser download for a URL using a
  * transient `<a download>` anchor. Shared by the single-file and bulk
  * paths so both use the same user-gesture-friendly approach.
  */
@@ -50,6 +62,26 @@ function triggerDownload(url: string, filename: string): void {
   anchor.remove();
 }
 
+/**
+ * Read the SW's `data-sw-error-code` signal off a non-2xx Response.
+ * Header is the canonical channel per spec §8.15.7; the body is a
+ * defense-in-depth fallback so a SW that surfaces the code via JSON
+ * still works without a code change here.
+ */
+async function readSwErrorCode(response: Response): Promise<string | null> {
+  const headerCode = response.headers.get('data-sw-error-code');
+  if (headerCode) return headerCode;
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('json')) return null;
+  try {
+    const body = (await response.clone().json()) as { code?: unknown };
+    if (typeof body.code === 'string') return body.code;
+  } catch {
+    /* not JSON, no code surface */
+  }
+  return null;
+}
+
 export function BinaryList({ projectId, archived = false }: BinaryListProps) {
   // Select the raw per-project slice then filter in useMemo so the
   // selector output is referentially stable across renders.
@@ -59,8 +91,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
     [rows],
   );
   const fetchForProject = useAttachmentStore((s) => s.fetchForProject);
-  const requestDownloadUrl = useAttachmentStore((s) => s.requestDownloadUrl);
-  const requestBulkDownloadUrl = useAttachmentStore((s) => s.requestBulkDownloadUrl);
+  const requestBulkZipBlob = useAttachmentStore((s) => s.requestBulkZipBlob);
   const hideAttachment = useAttachmentStore((s) => s.hideAttachment);
   const authUser = useAuthStore((s) => s.authUser);
 
@@ -73,24 +104,51 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
   };
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [missing, setMissing] = useState<Set<string>>(new Set());
+  // Per-row error verdict observed at click-time. Spec §8.15.7 forbids
+  // caching across list refetches — the effect below prunes entries no
+  // longer in the live binaries list.
+  const [rowErrors, setRowErrors] = useState<Record<string, RowError>>({});
   const [capError, setCapError] = useState<string | null>(null);
 
   useEffect(() => {
     void fetchForProject(projectId);
   }, [fetchForProject, projectId]);
 
+  // Drop stale row-error verdicts on list change so a refetch re-probes
+  // (spec §8.15.7 "no client-side caching of either verdict"). React's
+  // documented "adjust state on prop change during render" pattern
+  // (https://react.dev/reference/react/useState#storing-information-from-previous-renders);
+  // the effect-based equivalent triggers an extra render and is flagged
+  // by `react-hooks/set-state-in-effect`.
+  const [prevBinaries, setPrevBinaries] = useState(binaries);
+  if (prevBinaries !== binaries) {
+    setPrevBinaries(binaries);
+    const ids = new Set(binaries.map((b) => b.id));
+    setRowErrors((prev) => {
+      let changed = false;
+      const next: Record<string, RowError> = {};
+      for (const [id, err] of Object.entries(prev)) {
+        if (ids.has(id)) {
+          next[id] = err;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }
+
   // Intersect the user's `selected` set with rows that are still
-  // eligible (present + not missing). Derived on render so the set
+  // eligible (present + not erroring). Derived on render so the set
   // never disagrees with the live table; a pure useMemo avoids the
   // setState-in-effect cascade the linter guards against.
   const effectiveSelected = useMemo(() => {
     const next = new Set<string>();
     for (const id of selected) {
-      if (binaries.some((b) => b.id === id) && !missing.has(id)) next.add(id);
+      if (binaries.some((b) => b.id === id) && !rowErrors[id]) next.add(id);
     }
     return next;
-  }, [selected, binaries, missing]);
+  }, [selected, binaries, rowErrors]);
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -101,7 +159,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
     });
   };
 
-  const selectableIds = binaries.filter((b) => !missing.has(b.id)).map((b) => b.id);
+  const selectableIds = binaries.filter((b) => !rowErrors[b.id]).map((b) => b.id);
   const allSelected =
     selectableIds.length > 0 && selectableIds.every((id) => effectiveSelected.has(id));
 
@@ -113,21 +171,47 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
     }
   };
 
+  /**
+   * Probe the synthetic-origin URL via `fetch`. The SW intercepts,
+   * decrypts, and returns plaintext on success; on a storage 404 or
+   * unwrap failure it surfaces a non-2xx Response carrying the code on
+   * `data-sw-error-code`. Either way the response status is the seam
+   * by which the component decides between "trigger download" and
+   * "flip to placeholder" (spec §8.15.7 — lazy, click-triggered for
+   * binaries).
+   */
+  const probeAndDownload = async (
+    attachmentId: string,
+  ): Promise<{ ok: true; blobUrl: string } | { ok: false; verdict: RowError }> => {
+    const url = synthAttachmentUrl(projectId, attachmentId, 'original');
+    let response: Response;
+    try {
+      response = await fetch(url);
+    } catch {
+      return { ok: false, verdict: 'object-absent' };
+    }
+    if (!response.ok) {
+      const code = await readSwErrorCode(response);
+      const verdict: RowError = code === 'DEK_UNWRAP_FAILED' ? 'key-unavailable' : 'object-absent';
+      return { ok: false, verdict };
+    }
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    return { ok: true, blobUrl };
+  };
+
   const handleDownload = async (attachmentId: string) => {
-    const url = await requestDownloadUrl(projectId, attachmentId, 'original');
-    if (!url) {
-      setMissing((prev) => new Set(prev).add(attachmentId));
+    const row = binaries.find((b) => b.id === attachmentId);
+    const fileName = row?.fileName ?? '';
+    const probe = await probeAndDownload(attachmentId);
+    if (!probe.ok) {
+      setRowErrors((prev) => ({ ...prev, [attachmentId]: probe.verdict }));
       return;
     }
-    // Cross-origin downloads rely on the storage backend to send
-    // `Content-Disposition: attachment` — the server does so (see
-    // `storage/client.ts`). The `<a download>` attribute is a UX hint:
-    // on same-origin it forces the download event; on cross-origin it
-    // is advisory and acts primarily as a filename fallback when the
-    // browser honours it. Either way, the server's header is the
-    // authoritative source for attachment semantics.
-    const row = binaries.find((b) => b.id === attachmentId);
-    triggerDownload(url, row?.fileName ?? '');
+    triggerDownload(probe.blobUrl, fileName);
+    // Release the object URL after the click drains — synchronous
+    // revocation can race the browser's download-pickup on some engines.
+    setTimeout(() => URL.revokeObjectURL(probe.blobUrl), 0);
   };
 
   const [preview, setPreview] = useState<{ url: string; fileName: string } | null>(null);
@@ -136,7 +220,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
   // eagerly on close and on unmount.
   const closePreview = useCallback(() => {
     setPreview((prev) => {
-      if (prev) URL.revokeObjectURL(prev.url);
+      if (prev && prev.url.startsWith('blob:')) URL.revokeObjectURL(prev.url);
       return null;
     });
   }, []);
@@ -157,34 +241,19 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
   // while the preview is still open (e.g. navigation away).
   useEffect(() => {
     return () => {
-      if (preview) URL.revokeObjectURL(preview.url);
+      if (preview && preview.url.startsWith('blob:')) URL.revokeObjectURL(preview.url);
     };
   }, [preview]);
 
-  const handleView = async (bin: Attachment) => {
-    const url = await requestDownloadUrl(projectId, bin.id, 'original');
-    if (!url) {
-      setMissing((prev) => new Set(prev).add(bin.id));
-      return;
-    }
-    // The server emits `Content-Disposition: attachment` on the
-    // presigned URL — browsers honour that over iframe embedding and
-    // force a download. To preview inline we fetch the bytes and wrap
-    // them in a same-origin blob URL with MIME `application/pdf`; the
-    // blob URL has no disposition header and the browser renders it
-    // in its native PDF viewer.
-    try {
-      const response = await fetch(url);
-      if (!response.ok) {
-        setMissing((prev) => new Set(prev).add(bin.id));
-        return;
-      }
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
-      setPreview({ url: blobUrl, fileName: bin.fileName });
-    } catch {
-      setMissing((prev) => new Set(prev).add(bin.id));
-    }
+  /**
+   * Inline PDF preview. The synthetic-origin URL is set directly on
+   * `<iframe src>`; the SW intercepts, decrypts, and returns plaintext
+   * with `Content-Type: application/pdf` so the browser renders it
+   * inline. No separate fetch + Blob URL plumbing needed — the SW is
+   * the seam (ADR-0024 § Service-Worker decryption).
+   */
+  const handleView = (bin: Attachment): void => {
+    setPreview({ url: synthAttachmentUrl(projectId, bin.id, 'original'), fileName: bin.fileName });
   };
 
   const handleBulkDownload = async () => {
@@ -202,12 +271,16 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
       return;
     }
     setCapError(null);
-    const url = await requestBulkDownloadUrl(projectId, ids);
-    // Use the same `<a download>` pattern as the single-file path rather
-    // than `window.open` — popup blockers treat post-`await` opens as
-    // programmatic and frequently reject them. The anchor click is a
-    // direct user-gesture continuation that browsers let through.
-    if (url) triggerDownload(url, STRINGS.attachments.bulkZipFileName);
+    // Store-side: bulk-fetch + decrypt-each + streaming-zip → single
+    // Blob ready for download. `null` on cap breach (server-side
+    // re-validation) or any decrypt / network failure — the store has
+    // already populated `error` for the page banner; here we just
+    // return so the click is a no-op.
+    const blob = await requestBulkZipBlob(projectId, ids);
+    if (!blob) return;
+    const blobUrl = URL.createObjectURL(blob);
+    triggerDownload(blobUrl, STRINGS.attachments.bulkZipFileName);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
   };
 
   return (
@@ -252,7 +325,8 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
               </thead>
               <tbody>
                 {binaries.map((bin) => {
-                  const isMissing = missing.has(bin.id);
+                  const error = rowErrors[bin.id];
+                  const isErroring = Boolean(error);
                   const uploader = bin.createdBy?.displayName ?? null;
                   const canDelete =
                     authUser !== null &&
@@ -269,7 +343,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
                       data-attachment-id={bin.id}
                     >
                       <td>
-                        {isMissing ? (
+                        {isErroring ? (
                           <input
                             type="checkbox"
                             data-testid={`binary-select-${bin.id}`}
@@ -292,7 +366,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
                       <td className={styles.colUploaded}>{formatDateDE(bin.createdAt)}</td>
                       <td>
                         <div className={styles.rowActions}>
-                          {isMissing && (
+                          {error === 'object-absent' && (
                             <span
                               className={styles.missingBadge}
                               data-testid={`binary-missing-${bin.id}`}
@@ -300,13 +374,21 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
                               {STRINGS.attachments.fileMissing}
                             </span>
                           )}
+                          {error === 'key-unavailable' && (
+                            <span
+                              className={styles.missingBadge}
+                              data-testid={`binary-key-unavailable-${bin.id}`}
+                            >
+                              {STRINGS.attachments.keyUnavailable}
+                            </span>
+                          )}
                           {isPdf(bin) && (
                             <button
                               type="button"
                               className={styles.viewButton}
                               data-testid={`attachment-view-${bin.id}`}
-                              disabled={isMissing}
-                              onClick={() => void handleView(bin)}
+                              disabled={isErroring}
+                              onClick={() => handleView(bin)}
                             >
                               {STRINGS.attachments.view}
                             </button>
@@ -315,7 +397,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
                             type="button"
                             className={styles.downloadButton}
                             data-testid="attachment-download"
-                            disabled={isMissing}
+                            disabled={isErroring}
                             onClick={() => void handleDownload(bin.id)}
                           >
                             {STRINGS.attachments.download}

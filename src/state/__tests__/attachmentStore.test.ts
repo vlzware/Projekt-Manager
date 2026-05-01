@@ -16,6 +16,7 @@ import type {
   ApiResult,
   AttachmentInitResponse,
   AttachmentDownloadUrlResponse,
+  BulkFetchResponse,
 } from '@/api/client';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
 import type { ProcessedUpload } from '@/domain/imagePipeline';
@@ -25,6 +26,7 @@ type ListResult = ApiResult<{ data: Attachment[] }>;
 type InitResult = ApiResult<AttachmentInitResponse>;
 type CompleteResult = ApiResult<Attachment>;
 type DownloadUrlResult = ApiResult<AttachmentDownloadUrlResponse>;
+type BulkFetchResult = ApiResult<BulkFetchResponse>;
 type DeleteResult = ApiResult<null>;
 
 type InitInput = {
@@ -33,6 +35,12 @@ type InitInput = {
   sizeBytes: number;
   label: AttachmentLabel;
   hasThumbnail: boolean;
+  dekMaterial: string;
+  ciphertextSizeBytes: number;
+  ciphertextContentMd5: string;
+  thumbDekMaterial?: string;
+  ciphertextThumbSizeBytes?: number;
+  ciphertextThumbContentMd5?: string;
 };
 
 const listMock = vi.fn<(projectId: string) => Promise<ListResult>>();
@@ -48,8 +56,8 @@ const downloadUrlMock =
       variant: 'original' | 'thumbnail',
     ) => Promise<DownloadUrlResult>
   >();
-const bulkDownloadUrlMock =
-  vi.fn<(projectId: string, attachmentIds: string[]) => Promise<DownloadUrlResult>>();
+const bulkFetchMock =
+  vi.fn<(projectId: string, attachmentIds: string[]) => Promise<BulkFetchResult>>();
 
 // Pipeline mock — observable so the retry-cache test can assert the
 // canvas-heavy work runs at most once across a failed-then-retried
@@ -81,8 +89,8 @@ vi.mock('@/api/client', async (importActual) => {
       delete: (...args: unknown[]) => deleteMock(...(args as Parameters<typeof deleteMock>)),
       downloadUrl: (...args: unknown[]) =>
         downloadUrlMock(...(args as Parameters<typeof downloadUrlMock>)),
-      bulkDownloadUrl: (...args: unknown[]) =>
-        bulkDownloadUrlMock(...(args as Parameters<typeof bulkDownloadUrlMock>)),
+      bulkFetch: (...args: unknown[]) =>
+        bulkFetchMock(...(args as Parameters<typeof bulkFetchMock>)),
     },
     authApi: {
       login: vi.fn(),
@@ -125,7 +133,7 @@ beforeEach(() => {
   completeMock.mockReset();
   deleteMock.mockReset();
   downloadUrlMock.mockReset();
-  bulkDownloadUrlMock.mockReset();
+  bulkFetchMock.mockReset();
   runImagePipelineMock.mockReset();
   // Default: passthrough — echo the input file's bytes. Tests that want
   // to observe re-encoding override per-call with `mockImplementationOnce`.
@@ -473,14 +481,23 @@ describe('attachmentStore — retry and download URL plumbing', () => {
     expect(initMock).toHaveBeenCalledTimes(2);
   });
 
-  it('requestDownloadUrl returns the server URL on success and null on failure', async () => {
+  it('requestDownloadUrl returns { url, dekMaterial } on success and null on failure', async () => {
+    // ADR-0024 / api.md §14.2.11 — the download-url surface returns the
+    // presigned-GET URL plus the unwrapped DEK so the SW decrypt handler
+    // can fetch + decrypt with one round-trip per blob. The state layer
+    // forwards both fields verbatim; consuming the DEK is the SW's job.
+    const dekMaterial = 'A'.repeat(44); // base64 of 32 bytes (typical sample)
     downloadUrlMock.mockResolvedValueOnce(
-      ok({ url: 'https://storage/thumb', expiresAt: '2026-04-20T10:05:00Z' }),
+      ok({
+        url: 'https://storage/thumb',
+        expiresAt: '2026-04-20T10:05:00Z',
+        dekMaterial,
+      }),
     );
-    const urlOk = await useAttachmentStore
+    const okResult = await useAttachmentStore
       .getState()
       .requestDownloadUrl('proj-1', 'att-1', 'thumbnail');
-    expect(urlOk).toBe('https://storage/thumb');
+    expect(okResult).toEqual({ url: 'https://storage/thumb', dekMaterial });
 
     downloadUrlMock.mockResolvedValueOnce({
       ok: false,
@@ -488,10 +505,10 @@ describe('attachmentStore — retry and download URL plumbing', () => {
       category: 'not_found',
       sessionExpired: false,
     });
-    const urlFail = await useAttachmentStore
+    const fail = await useAttachmentStore
       .getState()
       .requestDownloadUrl('proj-1', 'att-1', 'original');
-    expect(urlFail).toBeNull();
+    expect(fail).toBeNull();
   });
 });
 
@@ -790,5 +807,256 @@ describe('attachmentStore — image processing failures and stale-row sweep', ()
     expect(rows[0].status).toBe('failed');
 
     fetchSpy.mockRestore();
+  });
+});
+
+/**
+ * Bulk-zip flow (ADR-0024 §"Bulk download" / AC-216).
+ *
+ * The state layer's `requestBulkZipBlob`:
+ *   1. calls `attachmentApi.bulkFetch` to get a per-blob descriptor list
+ *      (presigned-GET URL + unwrapped DEK + ciphertext size, ordered),
+ *   2. fetches each ciphertext via `fetch`,
+ *   3. AES-256-GCM-decrypts using the per-blob DEK,
+ *   4. feeds the decrypted bytes into `client-zip`'s streaming generator,
+ *   5. returns the assembled zip as a `Blob`.
+ *
+ * These tests verify the wire-shape mapping, the fetch+decrypt sequence,
+ * order preservation (AC-216), the cap-breach passthrough, and the
+ * decrypt-failure surface. The crypto helpers run for real against
+ * Node 22's `globalThis.crypto` — the round-trip is the only honest way
+ * to assert decrypt actually decrypted.
+ */
+describe('attachmentStore — requestBulkZipBlob', () => {
+  // Lazy import to keep the bulk-fetch tests cheap when unrelated tests run.
+  // The helpers don't run on every test in this file, only this block.
+  async function getCryptoHelpers(): Promise<{
+    generateDek: () => Uint8Array;
+    encryptBlob: (plaintext: Uint8Array, dek: Uint8Array) => Promise<Uint8Array>;
+    encodeDekMaterial: (dek: Uint8Array) => string;
+  }> {
+    const mod = await import('@/domain/clientEncryption');
+    return {
+      generateDek: mod.generateDek,
+      encryptBlob: mod.encryptBlob,
+      encodeDekMaterial: mod.encodeDekMaterial,
+    };
+  }
+
+  it('happy path: bulk-fetch → fetch ciphertext → decrypt → return zip blob', async () => {
+    const { generateDek, encryptBlob, encodeDekMaterial } = await getCryptoHelpers();
+
+    const dek = generateDek();
+    const plaintext = new TextEncoder().encode('hello world');
+    const ciphertext = await encryptBlob(plaintext, dek);
+    const dekMaterial = encodeDekMaterial(dek);
+
+    // Seed the live cache so the action picks up the row's fileName for
+    // the zip entry — falls back to attachmentId otherwise (covered in
+    // the order-preservation test below).
+    useAttachmentStore.setState({
+      byProject: {
+        'proj-1': [
+          makeAttachment({
+            id: 'att-A',
+            fileName: 'hello.txt',
+            kind: 'binary',
+            mimeType: 'text/plain',
+          }),
+        ],
+      },
+    });
+
+    bulkFetchMock.mockResolvedValueOnce(
+      ok({
+        data: [
+          {
+            attachmentId: 'att-A',
+            originalUrl: 'https://storage/att-A.ct',
+            originalDekMaterial: dekMaterial,
+            ciphertextSizeBytes: ciphertext.byteLength,
+          },
+        ],
+      }),
+    );
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      if (typeof url === 'string' && url.includes('att-A.ct')) {
+        return new Response(ciphertext.slice(0).buffer, { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${String(url)}`);
+    });
+
+    const blob = await useAttachmentStore.getState().requestBulkZipBlob('proj-1', ['att-A']);
+    fetchSpy.mockRestore();
+
+    expect(blob).toBeInstanceOf(Blob);
+    expect((blob as Blob).size).toBeGreaterThan(0);
+    // The zip blob's bytes should contain the standard local-file-header
+    // signature `PK\x03\x04` (0x504b0304) — proves `client-zip` produced
+    // a real archive and not, say, an empty stream.
+    const bytes = new Uint8Array(await (blob as Blob).arrayBuffer());
+    expect(bytes[0]).toBe(0x50);
+    expect(bytes[1]).toBe(0x4b);
+    expect(bytes[2]).toBe(0x03);
+    expect(bytes[3]).toBe(0x04);
+  });
+
+  it('walks bulkFetch entries in order and falls back to attachmentId when no name in cache', async () => {
+    const { generateDek, encryptBlob, encodeDekMaterial } = await getCryptoHelpers();
+
+    const dek1 = generateDek();
+    const dek2 = generateDek();
+    const ct1 = await encryptBlob(new TextEncoder().encode('first'), dek1);
+    const ct2 = await encryptBlob(new TextEncoder().encode('second'), dek2);
+
+    // Empty cache: every fileName falls back to the id — proves the
+    // dispatch order is `entries`, not whatever order the cache happens
+    // to enumerate.
+    useAttachmentStore.setState({ byProject: { 'proj-1': [] } });
+
+    bulkFetchMock.mockResolvedValueOnce(
+      ok({
+        data: [
+          {
+            attachmentId: 'att-Z',
+            originalUrl: 'https://storage/Z.ct',
+            originalDekMaterial: encodeDekMaterial(dek1),
+            ciphertextSizeBytes: ct1.byteLength,
+          },
+          {
+            attachmentId: 'att-A',
+            originalUrl: 'https://storage/A.ct',
+            originalDekMaterial: encodeDekMaterial(dek2),
+            ciphertextSizeBytes: ct2.byteLength,
+          },
+        ],
+      }),
+    );
+
+    const fetchOrder: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const u = String(url);
+      fetchOrder.push(u);
+      if (u.includes('Z.ct')) return new Response(ct1.slice(0).buffer, { status: 200 });
+      if (u.includes('A.ct')) return new Response(ct2.slice(0).buffer, { status: 200 });
+      throw new Error(`unexpected fetch ${u}`);
+    });
+
+    const blob = await useAttachmentStore
+      .getState()
+      .requestBulkZipBlob('proj-1', ['att-Z', 'att-A']);
+    fetchSpy.mockRestore();
+
+    expect(blob).toBeInstanceOf(Blob);
+    // The fetch order matches the request order (AC-216): Z first, A second.
+    expect(fetchOrder.length).toBe(2);
+    expect(fetchOrder[0]).toContain('Z.ct');
+    expect(fetchOrder[1]).toContain('A.ct');
+  });
+
+  it('returns null and surfaces the German cap message on BULK_LIMIT_EXCEEDED', async () => {
+    bulkFetchMock.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'BULK_LIMIT_EXCEEDED',
+        message: 'Auswahl überschreitet die Grenzen (max. 20 Dateien, 20 MB).',
+      },
+      category: 'validation',
+      sessionExpired: false,
+    });
+
+    const blob = await useAttachmentStore
+      .getState()
+      .requestBulkZipBlob('proj-1', ['att-1', 'att-2']);
+
+    expect(blob).toBeNull();
+    expect(useAttachmentStore.getState().error).toBe(
+      'Auswahl überschreitet die Grenzen (max. 20 Dateien, 20 MB).',
+    );
+  });
+
+  it('returns null on a network rejection of the bulk-fetch call', async () => {
+    bulkFetchMock.mockRejectedValueOnce(new Error('fetch failed'));
+
+    const blob = await useAttachmentStore.getState().requestBulkZipBlob('proj-1', ['att-1']);
+
+    expect(blob).toBeNull();
+    expect(useAttachmentStore.getState().error).toBe(
+      'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+    );
+  });
+
+  it('returns null and logs structured diagnostics when decrypt fails (wrong DEK)', async () => {
+    // Mismatched DEK between encrypt-side (real key) and the descriptor
+    // (a different key) — AES-GCM auth-tag verification rejects, the
+    // error bubbles out of the zip generator, the action surfaces null
+    // and a German banner.
+    const { generateDek, encryptBlob, encodeDekMaterial } = await getCryptoHelpers();
+
+    const realDek = generateDek();
+    const lyingDek = generateDek();
+    const ciphertext = await encryptBlob(new TextEncoder().encode('cargo'), realDek);
+
+    bulkFetchMock.mockResolvedValueOnce(
+      ok({
+        data: [
+          {
+            attachmentId: 'att-1',
+            originalUrl: 'https://storage/wrong.ct',
+            originalDekMaterial: encodeDekMaterial(lyingDek),
+            ciphertextSizeBytes: ciphertext.byteLength,
+          },
+        ],
+      }),
+    );
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(ciphertext.slice(0).buffer, { status: 200 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const blob = await useAttachmentStore.getState().requestBulkZipBlob('proj-1', ['att-1']);
+
+    fetchSpy.mockRestore();
+    expect(blob).toBeNull();
+    expect(useAttachmentStore.getState().error).toBe(
+      'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+    );
+    expect(warn).toHaveBeenCalledWith(
+      '[bulk-zip] failed',
+      expect.objectContaining({ projectId: 'proj-1' }),
+    );
+  });
+
+  it('returns null and surfaces a banner when a ciphertext GET returns non-2xx', async () => {
+    const { generateDek, encryptBlob, encodeDekMaterial } = await getCryptoHelpers();
+    const dek = generateDek();
+    const ciphertext = await encryptBlob(new TextEncoder().encode('x'), dek);
+
+    bulkFetchMock.mockResolvedValueOnce(
+      ok({
+        data: [
+          {
+            attachmentId: 'att-1',
+            originalUrl: 'https://storage/expired.ct',
+            originalDekMaterial: encodeDekMaterial(dek),
+            ciphertextSizeBytes: ciphertext.byteLength,
+          },
+        ],
+      }),
+    );
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 403 }));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const blob = await useAttachmentStore.getState().requestBulkZipBlob('proj-1', ['att-1']);
+    fetchSpy.mockRestore();
+
+    expect(blob).toBeNull();
+    expect(useAttachmentStore.getState().error).toBe(
+      'Änderung fehlgeschlagen. Bitte erneut versuchen.',
+    );
+    expect(warn).toHaveBeenCalled();
   });
 });

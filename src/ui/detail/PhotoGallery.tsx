@@ -1,10 +1,19 @@
 /**
- * Photo gallery — ready photos rendered via presigned-thumbnail URLs,
- * lightbox on click (original variant), lazy "Datei fehlt" placeholder
- * when a thumbnail or original 404s (spec §8.15.4, §8.15.7).
+ * Photo gallery — ready photos rendered via the synthetic-origin
+ * Service-Worker decrypt path (ADR-0024, spec §8.15.4 / §8.15.7).
  *
- * List fetching and download-URL plumbing go through the attachment
- * store; this component is a thin renderer.
+ * Each `<img src>` points at `/encrypted-storage/<projectId>/<id>.thumbnail`;
+ * the SW intercepts, calls `download-url`, fetches ciphertext, decrypts,
+ * and serves plaintext bytes. The component never calls `download-url`
+ * itself — that is the SW's job per AC-243.
+ *
+ * Two failure-mode placeholders, distinguished by the SW's
+ * `data-sw-error-code` attribute on the failing `<img>`:
+ *   - `OBJECT_ABSENT` → AC-224 `"Datei fehlt"`
+ *   - `DEK_UNWRAP_FAILED` → AC-244 `"Schlüssel nicht verfügbar"`
+ *
+ * List fetching goes through the attachment store; this component is a
+ * thin renderer.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -16,6 +25,7 @@ import { useAttachmentStore } from '@/state/attachmentStore';
 import { useAuthStore } from '@/state/authStore';
 import { useConfirmStore } from '@/state/confirmStore';
 import { formatDateDE } from '@/domain/dateFormat';
+import { synthAttachmentUrl } from '@/sw/syntheticOrigin';
 import styles from './ProjectDetail.module.css';
 
 interface PhotoGalleryProps {
@@ -24,8 +34,10 @@ interface PhotoGalleryProps {
   archived?: boolean;
 }
 
+type RowError = 'object-absent' | 'key-unavailable';
+
 export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps) {
-  // Select the raw per-project slice then filter in useMemo so the
+  // Select the raw per-project slice then filter inline so the
   // selector output is referentially stable across renders — a new
   // filtered array each render confuses Zustand's snapshot cache and
   // triggers React's "getSnapshot should be cached" warning.
@@ -35,7 +47,6 @@ export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps)
     [rows],
   );
   const fetchForProject = useAttachmentStore((s) => s.fetchForProject);
-  const requestDownloadUrl = useAttachmentStore((s) => s.requestDownloadUrl);
   const hideAttachment = useAttachmentStore((s) => s.hideAttachment);
   const authUser = useAuthStore((s) => s.authUser);
 
@@ -47,10 +58,10 @@ export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps)
     await hideAttachment(projectId, photo.id);
   };
 
-  // Thumbnail URL cache keyed by attachment id. `null` entry means a 404
-  // was observed (lazy detection — spec §8.15.7) so the row flips to the
-  // "Datei fehlt" placeholder.
-  const [thumbUrls, setThumbUrls] = useState<Record<string, string | null>>({});
+  // Per-row error state, set by `<img onError>`. Spec §8.15.7 forbids
+  // caching this verdict — a list refetch that re-emits the same row id
+  // wipes the entry; the SW re-probes on the next render.
+  const [rowErrors, setRowErrors] = useState<Record<string, RowError>>({});
   const [lightbox, setLightbox] = useState<{ attachmentId: string; url: string } | null>(null);
   // Focus-restore target: the thumbnail button that opened the lightbox.
   // Captured at open-time; restored when the lightbox closes so keyboard
@@ -62,49 +73,46 @@ export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps)
     void fetchForProject(projectId);
   }, [fetchForProject, projectId]);
 
-  useEffect(() => {
-    // Request a thumbnail presigned URL for each ready photo that does
-    // not already have a working URL cached. Rows with a `null` verdict
-    // (previously observed missing) are re-attempted on the next effect
-    // run — spec §8.15.7 forbids caching the missing verdict, so a list
-    // refetch that re-emits the same row must re-probe storage. HTTP-
-    // layer caching absorbs the cost for thumbnails that still exist.
-    for (const p of photos) {
-      if (thumbUrls[p.id]) continue;
-      void (async () => {
-        const url = await requestDownloadUrl(projectId, p.id, 'thumbnail');
-        setThumbUrls((prev) => ({ ...prev, [p.id]: url }));
-      })();
-    }
-    // `thumbUrls` is intentionally omitted from the dep array: including
-    // it would re-run the effect after each per-row setState and fire
-    // parallel fetches for still-pending rows. The effect's trigger is
-    // `photos` changing (list refetch), which is the spec's re-observe
-    // point; within a single run, the local `thumbUrls` read above
-    // prevents duplicate work for rows whose URL is already cached.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [photos, projectId, requestDownloadUrl]);
+  // Drop stale row-error verdicts when the underlying photo set changes
+  // — spec §8.15.7 forbids client-side caching of the missing/unwrap
+  // verdict across list refetches. React's documented "adjust state on
+  // prop change during render" pattern (https://react.dev/reference/react/useState#storing-information-from-previous-renders);
+  // an effect-based reset would re-render once, then setState, then
+  // re-render again — wasted work flagged by `react-hooks/set-state-in-effect`.
+  const [prevPhotos, setPrevPhotos] = useState(photos);
+  if (prevPhotos !== photos) {
+    setPrevPhotos(photos);
+    const ids = new Set(photos.map((p) => p.id));
+    setRowErrors((prev) => {
+      let changed = false;
+      const next: Record<string, RowError> = {};
+      for (const [id, err] of Object.entries(prev)) {
+        if (ids.has(id)) {
+          next[id] = err;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }
 
-  const handleOpenLightbox = async (
-    photo: Attachment,
-    trigger: HTMLElement | null,
-  ): Promise<void> => {
-    const url = await requestDownloadUrl(projectId, photo.id, 'original');
-    if (!url) {
-      // A missing original flips the row to the placeholder, same as a
-      // thumbnail 404.
-      setThumbUrls((prev) => ({ ...prev, [photo.id]: null }));
-      return;
-    }
-    // Capture the trigger so focus can return on close.
-    lightboxOpenerRef.current = trigger;
-    setLightbox({ attachmentId: photo.id, url });
+  const handleImgError = (photoId: string, target: HTMLElement | null) => {
+    // SW signals divergence via `data-sw-error-code` on the failing
+    // `<img>` element (spec §8.15.7 "Failure-mode signal contract").
+    // The two pinned values are `OBJECT_ABSENT` and `DEK_UNWRAP_FAILED`.
+    const code = target?.getAttribute('data-sw-error-code');
+    const verdict: RowError = code === 'DEK_UNWRAP_FAILED' ? 'key-unavailable' : 'object-absent';
+    setRowErrors((prev) => ({ ...prev, [photoId]: verdict }));
   };
 
-  const handleImgError = (photoId: string) => {
-    // Treat an <img> error event the same as a 404 — the backing object
-    // was there at URL-request time but the provider refused the GET.
-    setThumbUrls((prev) => ({ ...prev, [photoId]: null }));
+  const handleOpenLightbox = (photo: Attachment, trigger: HTMLElement | null): void => {
+    // Capture the trigger so focus can return on close.
+    lightboxOpenerRef.current = trigger;
+    setLightbox({
+      attachmentId: photo.id,
+      url: synthAttachmentUrl(projectId, photo.id, 'original'),
+    });
   };
 
   const closeLightbox = useCallback((): void => {
@@ -161,14 +169,33 @@ export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps)
       ) : (
         <ul className={styles.photoGrid}>
           {photos.map((photo) => {
-            const url = thumbUrls[photo.id];
-            const missing = url === null;
-            if (missing) {
+            const error = rowErrors[photo.id];
+            if (error === 'key-unavailable') {
+              // AC-244: envelope unwrap failed. Distinct placeholder
+              // because the operator remediation is to restore the
+              // matching binary `age` identity, not to investigate
+              // storage. `data-bulk-eligible="false"` excludes the row
+              // from any future bulk-fetch selection (spec §8.15.7).
+              return (
+                <li
+                  key={photo.id}
+                  className={styles.photoMissing}
+                  data-testid={`photo-key-unavailable-${photo.id}`}
+                  data-bulk-eligible="false"
+                >
+                  {STRINGS.attachments.keyUnavailable}
+                </li>
+              );
+            }
+            if (error === 'object-absent') {
+              // AC-224: storage 404 on the ciphertext fetch. Same
+              // exclusion rule — drop from bulk-fetch selection.
               return (
                 <li
                   key={photo.id}
                   className={styles.photoMissing}
                   data-testid={`photo-missing-${photo.id}`}
+                  data-bulk-eligible="false"
                 >
                   {STRINGS.attachments.fileMissing}
                 </li>
@@ -178,6 +205,7 @@ export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps)
               authUser !== null &&
               !archived &&
               canDeleteAttachment(photo, authUser, ATTACHMENT_CONFIG.workerSelfDeleteGraceMinutes);
+            const thumbSrc = synthAttachmentUrl(projectId, photo.id, 'thumbnail');
             return (
               <li key={photo.id} className={styles.photoItem} data-testid="attachment-thumbnail">
                 <button
@@ -185,15 +213,17 @@ export function PhotoGallery({ projectId, archived = false }: PhotoGalleryProps)
                   className={styles.photoThumb}
                   data-testid={`photo-thumb-${photo.id}`}
                   aria-label={thumbButtonLabel(photo)}
-                  onClick={(e) => void handleOpenLightbox(photo, e.currentTarget as HTMLElement)}
+                  onClick={(e) => handleOpenLightbox(photo, e.currentTarget as HTMLElement)}
                 >
-                  {url ? (
-                    // alt="" because the button's aria-label carries the
-                    // accessible name; a non-empty alt would double-announce.
-                    <img src={url} alt="" onError={() => handleImgError(photo.id)} />
-                  ) : (
-                    <span className={styles.photoLoading}>{STRINGS.ui.loading}</span>
-                  )}
+                  {/* alt="" because the button's aria-label carries the
+                      accessible name; a non-empty alt would double-announce.
+                      The SW intercepts this `<img>`'s ciphertext fetch and
+                      returns plaintext bytes through the Fetch response. */}
+                  <img
+                    src={thumbSrc}
+                    alt=""
+                    onError={(e) => handleImgError(photo.id, e.currentTarget)}
+                  />
                 </button>
                 {canDelete && (
                   <button
