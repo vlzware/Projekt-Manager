@@ -123,8 +123,30 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+// Vitest's jsdom env keeps Node's `Request` global (undici), which
+// requires an absolute URL — `window.location.href` is not consulted
+// for relative-URL parsing the way a real Service Worker context
+// would. Anchoring against the jsdom default origin keeps the test
+// exercising the path-parsing contract the SW handler enforces.
+const SYNTHETIC_ORIGIN = 'http://localhost';
+
 function syntheticRequest(projectId: string, attachmentId: string, variant: string): Request {
-  return new Request(`/encrypted-storage/${projectId}/${attachmentId}.${variant}`);
+  return new Request(
+    `${SYNTHETIC_ORIGIN}/encrypted-storage/${projectId}/${attachmentId}.${variant}`,
+  );
+}
+
+// jsdom's `TextEncoder` returns a `Uint8Array` from the JSDOM realm;
+// `Response#arrayBuffer()` (Node's undici) returns one from the Node
+// realm. Vitest's `toEqual` distinguishes typed-array realms, so an
+// otherwise byte-identical pair fails deep equality. Re-wrap through
+// the test-realm constructor before encoding so plaintext and the
+// SW handler's response output share a prototype.
+function utf8(s: string): Uint8Array {
+  const encoded = new TextEncoder().encode(s);
+  const realm = new Uint8Array(encoded.byteLength);
+  realm.set(encoded);
+  return realm;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,7 +156,7 @@ function syntheticRequest(projectId: string, attachmentId: string, variant: stri
 describe('AC-243: synthetic-origin intercept + decrypt', () => {
   it('decrypts the original-variant ciphertext and returns the plaintext via the Fetch response', async () => {
     const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
-    const plaintext = new TextEncoder().encode('Hello, encrypted world.');
+    const plaintext = utf8('Hello, encrypted world.');
     const ciphertext = await encryptForTest(plaintext, dek);
 
     installFetchPlan({
@@ -158,7 +180,7 @@ describe('AC-243: synthetic-origin intercept + decrypt', () => {
 
   it('decrypts the thumbnail-variant ciphertext (different DEK from the original)', async () => {
     const thumbDek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
-    const plaintext = new TextEncoder().encode('thumb-bytes');
+    const plaintext = utf8('thumb-bytes');
     const ciphertext = await encryptForTest(plaintext, thumbDek);
 
     installFetchPlan({
@@ -228,6 +250,10 @@ describe('AC-243: synthetic-origin intercept + decrypt', () => {
     // can do so without a second request.
     const body = await response.json();
     expect(body.code).toBe('DEK_UNWRAP_FAILED');
+    // §8.15.7 also pins the code on the response header so the SW
+    // wrapper / DOM-mirror layer can read it without re-parsing the
+    // body.
+    expect(response.headers.get('data-sw-error-code')).toBe('DEK_UNWRAP_FAILED');
   });
 
   it('returns a non-2xx Response when the storage GET on the ciphertext fails (object-absent path → AC-224)', async () => {
@@ -252,6 +278,7 @@ describe('AC-243: synthetic-origin intercept + decrypt', () => {
 
     expect(response.ok).toBe(false);
     expect(response.status).toBe(404);
+    expect(response.headers.get('data-sw-error-code')).toBe('OBJECT_ABSENT');
   });
 
   it('returns a non-2xx Response when the AES-GCM auth tag verification fails (tampered ciphertext)', async () => {
@@ -285,5 +312,285 @@ describe('AC-243: synthetic-origin intercept + decrypt', () => {
     );
 
     expect(response.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-244 negative-space — only sanctioned codes emit `data-sw-error-code`
+// ---------------------------------------------------------------------------
+// Per ui/project-detail.md §8.15.7 the SW MUST NOT invent additional
+// codes. `OBJECT_ABSENT` is the storage-404 path; `DEK_UNWRAP_FAILED`
+// is the explicit `422 + body.code === 'DEK_UNWRAP_FAILED'` path. Every
+// other failure surface (transport drops, non-422 metadata errors,
+// non-404 storage errors, malformed bodies) returns a Response with NO
+// `data-sw-error-code` attribute set — the consumer's `<img onError>`
+// reads the absence of the attribute as "generic error" and renders the
+// generic error path rather than mis-routing to AC-224 / AC-244.
+// ---------------------------------------------------------------------------
+
+describe('AC-244 narrowed semantics: data-sw-error-code only on sanctioned paths', () => {
+  // ----- Metadata-call failure paths (Defect 3) ----------------------------
+
+  it('omits data-sw-error-code when the metadata fetch fails in transit (network drop)', async () => {
+    fetchMock.mockImplementation(async () => {
+      throw new TypeError('NetworkError when attempting to fetch resource.');
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+
+  it('omits data-sw-error-code on a non-422 metadata error (e.g. 500)', async () => {
+    installFetchPlan({
+      downloadUrl: () => new Response('boom', { status: 500 }),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+
+  it('omits data-sw-error-code on a 422 metadata error whose body code is NOT DEK_UNWRAP_FAILED', async () => {
+    // 422 with a different VALIDATION_ERROR code (e.g. unknown variant
+    // per api.md §14.2.11). Spec sanctions DEK_UNWRAP_FAILED only for
+    // the envelope-unwrap arm; other 422 codes route to generic.
+    installFetchPlan({
+      downloadUrl: () => jsonResponse({ code: 'UNKNOWN_VARIANT' }, 422),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+
+  it('omits data-sw-error-code on a 422 metadata error whose body fails to parse as JSON', async () => {
+    installFetchPlan({
+      downloadUrl: () =>
+        new Response('not json', {
+          status: 422,
+          headers: { 'content-type': 'application/json' },
+        }),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+
+  it('omits data-sw-error-code when the metadata 200 body is missing url or dekMaterial', async () => {
+    installFetchPlan({
+      downloadUrl: () => jsonResponse({ expiresAt: '2026-04-30T12:00:00Z' }),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+
+  it('omits data-sw-error-code when dekMaterial is malformed base64 (not 32 bytes after decode)', async () => {
+    installFetchPlan({
+      downloadUrl: () =>
+        jsonResponse({
+          url: 'https://storage.example/c',
+          expiresAt: '2026-04-30T12:00:00Z',
+          dekMaterial: toBase64(new Uint8Array(8)), // wrong length
+        }),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+
+  // ----- Ciphertext-fetch failure paths (Defect 2) -------------------------
+
+  it('omits data-sw-error-code when the ciphertext fetch fails in transit (network drop)', async () => {
+    const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
+    installFetchPlan({
+      downloadUrl: () =>
+        jsonResponse({
+          url: 'https://storage.example/c',
+          expiresAt: '2026-04-30T12:00:00Z',
+          dekMaterial: toBase64(dek),
+        }),
+      ciphertext: () => {
+        throw new TypeError('storage offline');
+      },
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+
+  it('omits data-sw-error-code when the presigned URL has expired (403 from storage)', async () => {
+    // An expired presigned URL is a transient failure — the user can
+    // retry to get a fresh URL. Mis-routing this to OBJECT_ABSENT
+    // would render "Datei fehlt" and confuse the operator about
+    // storage state; spec restricts that code to 404 / NoSuchKey.
+    const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
+    installFetchPlan({
+      downloadUrl: () =>
+        jsonResponse({
+          url: 'https://storage.example/c',
+          expiresAt: '2026-04-30T12:00:00Z',
+          dekMaterial: toBase64(dek),
+        }),
+      ciphertext: () => new Response('AccessDenied', { status: 403 }),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+
+  it('omits data-sw-error-code on a 5xx storage error', async () => {
+    const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
+    installFetchPlan({
+      downloadUrl: () =>
+        jsonResponse({
+          url: 'https://storage.example/c',
+          expiresAt: '2026-04-30T12:00:00Z',
+          dekMaterial: toBase64(dek),
+        }),
+      ciphertext: () => new Response('InternalError', { status: 500 }),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.headers.get('data-sw-error-code')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-244 DOM-mirror seam — BroadcastChannel pub/sub (Defect 1)
+// ---------------------------------------------------------------------------
+// Per ui/project-detail.md §8.15.7, the SW writes `data-sw-error-code`
+// on BOTH the failing Response (header) AND the requesting `<img>` /
+// `<iframe>` element (DOM attribute). A Service Worker cannot touch the
+// DOM directly, so the handler posts the code over a BroadcastChannel
+// for a window-side listener to mirror onto the matching element. The
+// channel name is the stable contract; the listener lives in
+// `src/sw/installAttachmentErrorListener.ts`.
+// ---------------------------------------------------------------------------
+
+describe('AC-244 DOM-mirror: handler posts to BroadcastChannel on sanctioned-code paths', () => {
+  it('posts { requestUrl, code: OBJECT_ABSENT } when storage returns 404', async () => {
+    const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
+    const channelMessages: Array<{ requestUrl: string; code: string }> = [];
+    const listener = new BroadcastChannel('sw-attachment-errors');
+    listener.onmessage = (event) => {
+      channelMessages.push(event.data as { requestUrl: string; code: string });
+    };
+
+    try {
+      installFetchPlan({
+        downloadUrl: () =>
+          jsonResponse({
+            url: 'https://storage.example/c',
+            expiresAt: '2026-04-30T12:00:00Z',
+            dekMaterial: toBase64(dek),
+          }),
+        ciphertext: () => new Response('NoSuchKey', { status: 404 }),
+      });
+
+      const requestUrl = `${SYNTHETIC_ORIGIN}/encrypted-storage/p-42/att-1.original`;
+      await handleEncryptedStorageRequest(new Request(requestUrl));
+
+      // BroadcastChannel delivery on the same realm is microtask-
+      // scheduled; flush.
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(channelMessages).toEqual([{ requestUrl, code: 'OBJECT_ABSENT' }]);
+    } finally {
+      listener.close();
+    }
+  });
+
+  it('posts { requestUrl, code: DEK_UNWRAP_FAILED } when download-url returns 422 + DEK_UNWRAP_FAILED', async () => {
+    const channelMessages: Array<{ requestUrl: string; code: string }> = [];
+    const listener = new BroadcastChannel('sw-attachment-errors');
+    listener.onmessage = (event) => {
+      channelMessages.push(event.data as { requestUrl: string; code: string });
+    };
+
+    try {
+      installFetchPlan({
+        downloadUrl: () =>
+          jsonResponse({ code: 'DEK_UNWRAP_FAILED', message: 'envelope unwrap failed' }, 422),
+      });
+
+      const requestUrl = `${SYNTHETIC_ORIGIN}/encrypted-storage/p-42/att-1.thumbnail`;
+      await handleEncryptedStorageRequest(new Request(requestUrl));
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(channelMessages).toEqual([{ requestUrl, code: 'DEK_UNWRAP_FAILED' }]);
+    } finally {
+      listener.close();
+    }
+  });
+
+  it('does NOT post on generic-error paths (no sanctioned code)', async () => {
+    // Network drop on storage fetch — the handler returns a generic
+    // Response. The BroadcastChannel must stay silent so the SPA-side
+    // listener does not write a poisoned attribute onto the element.
+    const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
+    const channelMessages: Array<{ requestUrl: string; code: string }> = [];
+    const listener = new BroadcastChannel('sw-attachment-errors');
+    listener.onmessage = (event) => {
+      channelMessages.push(event.data as { requestUrl: string; code: string });
+    };
+
+    try {
+      installFetchPlan({
+        downloadUrl: () =>
+          jsonResponse({
+            url: 'https://storage.example/c',
+            expiresAt: '2026-04-30T12:00:00Z',
+            dekMaterial: toBase64(dek),
+          }),
+        ciphertext: () => {
+          throw new TypeError('storage offline');
+        },
+      });
+
+      const requestUrl = `${SYNTHETIC_ORIGIN}/encrypted-storage/p-42/att-1.original`;
+      await handleEncryptedStorageRequest(new Request(requestUrl));
+
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(channelMessages).toEqual([]);
+    } finally {
+      listener.close();
+    }
   });
 });
