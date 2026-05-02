@@ -265,6 +265,40 @@ docker compose run --rm --no-deps -T app node /app/dist/server/deploy-preflight-
 # scheduled tick. See docs/ops/backup/setup.md §4 and ADR-0020.
 docker compose --profile backup up -d
 
+# --- Binary-key reload (operator-loaded; ADR-0024 boot probe) --------
+# Container recreation wipes the tmpfs at /run/binary-key. The app boot
+# probe (assertBinaryIdentityLoaded) refuses to start the container
+# until the identity lands — so the failure mode is HARD DOWN. This
+# block runs BEFORE the smoke probe: without the paste, the app crash-
+# loops and smoke-app-health would fail with 30 × ECONNREFUSED, masking
+# the real cause and aborting the deploy before the operator ever sees
+# the prompt. Sequence: compose up → paste binary key → smoke gate.
+#
+# The drill-key block (further down) runs AFTER the smoke probe because
+# its container has no boot gate — backups serve in degraded mode if
+# the drill key is missing.
+#
+# Skip when the tmpfs is still warm (compose-only changes that didn't
+# recreate the app container).
+if docker exec projekt-manager-app-1 test -s /run/binary-key/identity 2>/dev/null; then
+  echo "Binary identity already in tmpfs — skipping reload."
+else
+  echo
+  echo "==> Loading binary identity (operator paste; ADR-0024 tmpfs-only)"
+  # `-it` allocates a pseudo-TTY so load-binary-key's `read -s` actually
+  # suppresses echo. A missed paste keeps the app DOWN — the boot probe
+  # is fail-closed, no degraded mode — so we abort the deploy rather
+  # than pretend "verified" downstream.
+  if ! docker exec -it projekt-manager-app-1 load-binary-key; then
+    echo "ERROR: binary identity not loaded — aborting deploy." >&2
+    echo "       The app boot probe is fail-closed (ADR-0024); without the" >&2
+    echo "       identity the next container start will refuse to serve." >&2
+    echo "       Re-run the deploy after resolving the paste failure, or:" >&2
+    echo "       docker exec -it projekt-manager-app-1 load-binary-key" >&2
+    exit 1
+  fi
+fi
+
 # Smoke test: probe /api/health from inside the app container, bypassing
 # Caddy and the TLS chain. Verifies app + db + storage are reachable
 # without depending on the network-layer topology. Single source of truth
@@ -303,33 +337,6 @@ fi
 # unchanged" when nothing differs.
 echo "Reloading Caddy config..."
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --force
-
-# --- Binary-key reload (operator-loaded; ADR-0024 boot probe) --------
-# Container recreation wipes the tmpfs at /run/binary-key. The app boot
-# probe (assertBinaryIdentityLoaded) refuses to start the container
-# until the identity lands — so the failure mode is HARD DOWN, not a
-# silent stale-badge like the backup case below. Fold the paste into
-# the deploy session for the same reason: same TTY the operator used
-# to decrypt secrets.env.age above, no AC weakening (load-binary-key
-# still reads over restricted-mode stdin and writes only to tmpfs).
-#
-# Skip when the tmpfs is still warm (compose-only changes that didn't
-# recreate the app container).
-if docker exec projekt-manager-app-1 test -s /run/binary-key/identity 2>/dev/null; then
-  echo "Binary identity already in tmpfs — skipping reload."
-else
-  echo
-  echo "==> Loading binary identity (operator paste; ADR-0024 tmpfs-only)"
-  # `-it` allocates a pseudo-TTY so load-binary-key's `read -s` actually
-  # suppresses echo. A missed paste keeps the app DOWN — the boot probe
-  # refuses to start without the identity — so the warning is louder
-  # than the backup-side equivalent below.
-  if ! docker exec -it projekt-manager-app-1 load-binary-key; then
-    echo "ERROR: binary identity not loaded — the app will REFUSE TO START until you run:" >&2
-    echo "       docker exec -it projekt-manager-app-1 load-binary-key" >&2
-    echo "       (boot probe is fail-closed; no degraded mode — see ADR-0024)" >&2
-  fi
-fi
 
 # --- Drill-key reload (operator-loaded; AC-175 tmpfs-only) -----------
 # Container recreation wipes the tmpfs at /run/drill-key. Until the
