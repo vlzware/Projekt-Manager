@@ -503,13 +503,41 @@ describe('AC-244 narrowed semantics: data-sw-error-code only on sanctioned paths
 // ---------------------------------------------------------------------------
 
 describe('AC-244 DOM-mirror: handler posts to BroadcastChannel on sanctioned-code paths', () => {
+  // Same-realm BroadcastChannel delivery is microtask-scheduled; a bare
+  // `setTimeout(0)` flush is racy because we have no guarantee the
+  // scheduled message is dispatched on that exact tick. For positive
+  // assertions (a message MUST arrive) we await it deterministically.
+  // For the negative case (no message) we still need a fixed window —
+  // see that test for the rationale.
+  async function awaitMessage<T>(
+    channel: BroadcastChannel,
+    predicate: (msg: T) => boolean,
+    timeoutMs = 200,
+  ): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`awaitMessage timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
+      channel.addEventListener('message', (event) => {
+        const data = event.data as T;
+        if (predicate(data)) {
+          clearTimeout(timer);
+          resolve(data);
+        }
+      });
+    });
+  }
+
   it('posts { requestUrl, code: OBJECT_ABSENT } when storage returns 404', async () => {
     const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
-    const channelMessages: Array<{ requestUrl: string; code: string }> = [];
     const listener = new BroadcastChannel('sw-attachment-errors');
-    listener.onmessage = (event) => {
-      channelMessages.push(event.data as { requestUrl: string; code: string });
-    };
+    // Node's BroadcastChannel takes one event-loop turn to fully join
+    // the named channel after construction; without this flush, a
+    // post-on-construction race intermittently drops the very first
+    // message when the SW handler's freshly-created publisher posts.
+    // Same shape as `installAttachmentErrorListener.test.ts` beforeEach.
+    await new Promise((r) => setTimeout(r, 0));
 
     try {
       installFetchPlan({
@@ -523,24 +551,22 @@ describe('AC-244 DOM-mirror: handler posts to BroadcastChannel on sanctioned-cod
       });
 
       const requestUrl = `${SYNTHETIC_ORIGIN}/encrypted-storage/p-42/att-1.original`;
+      const expected = awaitMessage<{ requestUrl: string; code: string }>(
+        listener,
+        (m) => m.code === 'OBJECT_ABSENT',
+      );
       await handleEncryptedStorageRequest(new Request(requestUrl));
 
-      // BroadcastChannel delivery on the same realm is microtask-
-      // scheduled; flush.
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(channelMessages).toEqual([{ requestUrl, code: 'OBJECT_ABSENT' }]);
+      const msg = await expected;
+      expect(msg).toEqual({ requestUrl, code: 'OBJECT_ABSENT' });
     } finally {
       listener.close();
     }
   });
 
   it('posts { requestUrl, code: DEK_UNWRAP_FAILED } when download-url returns 422 + DEK_UNWRAP_FAILED', async () => {
-    const channelMessages: Array<{ requestUrl: string; code: string }> = [];
     const listener = new BroadcastChannel('sw-attachment-errors');
-    listener.onmessage = (event) => {
-      channelMessages.push(event.data as { requestUrl: string; code: string });
-    };
+    await new Promise((r) => setTimeout(r, 0));
 
     try {
       installFetchPlan({
@@ -549,11 +575,14 @@ describe('AC-244 DOM-mirror: handler posts to BroadcastChannel on sanctioned-cod
       });
 
       const requestUrl = `${SYNTHETIC_ORIGIN}/encrypted-storage/p-42/att-1.thumbnail`;
+      const expected = awaitMessage<{ requestUrl: string; code: string }>(
+        listener,
+        (m) => m.code === 'DEK_UNWRAP_FAILED',
+      );
       await handleEncryptedStorageRequest(new Request(requestUrl));
 
-      await new Promise((r) => setTimeout(r, 0));
-
-      expect(channelMessages).toEqual([{ requestUrl, code: 'DEK_UNWRAP_FAILED' }]);
+      const msg = await expected;
+      expect(msg).toEqual({ requestUrl, code: 'DEK_UNWRAP_FAILED' });
     } finally {
       listener.close();
     }
@@ -563,12 +592,21 @@ describe('AC-244 DOM-mirror: handler posts to BroadcastChannel on sanctioned-cod
     // Network drop on storage fetch — the handler returns a generic
     // Response. The BroadcastChannel must stay silent so the SPA-side
     // listener does not write a poisoned attribute onto the element.
+    //
+    // Absence-proof needs a fixed window: there is no event to await,
+    // so we wait long enough that any microtask-scheduled delivery has
+    // had time to land. 50ms >> the same-realm dispatch path; smaller
+    // than a perceptible test slowdown.
     const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
     const channelMessages: Array<{ requestUrl: string; code: string }> = [];
     const listener = new BroadcastChannel('sw-attachment-errors');
     listener.onmessage = (event) => {
       channelMessages.push(event.data as { requestUrl: string; code: string });
     };
+    // Channel-join warm-up so a stray (bug-introduced) post wouldn't
+    // be silently dropped by the join race and falsely pass the
+    // assertion. Mirrors the positive cases above.
+    await new Promise((r) => setTimeout(r, 0));
 
     try {
       installFetchPlan({
@@ -586,7 +624,7 @@ describe('AC-244 DOM-mirror: handler posts to BroadcastChannel on sanctioned-cod
       const requestUrl = `${SYNTHETIC_ORIGIN}/encrypted-storage/p-42/att-1.original`;
       await handleEncryptedStorageRequest(new Request(requestUrl));
 
-      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 50));
 
       expect(channelMessages).toEqual([]);
     } finally {

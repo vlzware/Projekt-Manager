@@ -27,7 +27,9 @@ installAttachmentErrorListener();
 // Push opt-in surfaces failure on click via `pushClient`; first paint
 // must not block on SW readiness, so the promise is fire-and-forget.
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  navigator.serviceWorker.register('/sw.js').catch((err) => {
+    console.warn('SW registration failed:', err);
+  });
 }
 
 createRoot(document.getElementById('root')!).render(
