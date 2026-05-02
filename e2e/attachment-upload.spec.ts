@@ -430,8 +430,14 @@ test.describe('Attachment placeholder for unwrappable wrapped envelope', () => {
 
     // Install the route AFTER the upload so init/complete/list are not
     // intercepted (those calls happen on different paths). Match every
-    // download-url request on this page and return the spec-pinned 422.
-    await page.route('**/api/projects/*/attachments/*/download-url**', async (route) => {
+    // download-url request and return the spec-pinned 422.
+    //
+    // Use `context().route` rather than `page.route`: under ADR-0024
+    // the download-url call is issued by the Service Worker (not the
+    // page), and `page.route` only intercepts page-originated fetches.
+    // `context().route` matches at the BrowserContext level, which
+    // covers SW-originated requests too.
+    await page.context().route('**/api/projects/*/attachments/*/download-url**', async (route) => {
       await route.fulfill({
         status: 422,
         contentType: 'application/json',

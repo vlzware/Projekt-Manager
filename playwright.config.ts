@@ -47,6 +47,35 @@ process.env.DATABASE_URL = E2E_DATABASE_URL;
 const E2E_STORAGE_BUCKET = process.env.STORAGE_BUCKET_E2E || 'projekt-manager-e2e';
 process.env.STORAGE_BUCKET = E2E_STORAGE_BUCKET;
 
+// Per-run binary `age` identity for the e2e webServer (ADR-0024). The
+// boot probe (`assertBinaryIdentityLoaded`) refuses to start the app
+// without a tmpfs-loaded identity matching `BINARY_AGE_RECIPIENT`. In
+// production the operator pastes via `load-binary-key.sh`; in unit
+// tests `src/test/integration-setup.ts` generates a per-PID keypair.
+// E2E mirrors that pattern: generate a throwaway pair at config load,
+// stash the private half in `os.tmpdir()`, and pass both env vars to
+// the webServer below. Cleanup on process exit.
+const { execFileSync } = await import('node:child_process');
+const os = await import('node:os');
+const E2E_BINARY_IDENTITY_PATH = path.join(os.tmpdir(), `pm-e2e-binary-identity-${process.pid}.txt`);
+const E2E_BINARY_IDENTITY = execFileSync('age-keygen', {
+  encoding: 'utf-8',
+  stdio: ['ignore', 'pipe', 'ignore'],
+}).trim();
+const E2E_BINARY_RECIPIENT = execFileSync('age-keygen', ['-y'], {
+  input: E2E_BINARY_IDENTITY,
+  encoding: 'utf-8',
+  stdio: ['pipe', 'pipe', 'ignore'],
+}).trim();
+fs.writeFileSync(E2E_BINARY_IDENTITY_PATH, E2E_BINARY_IDENTITY + '\n', { mode: 0o600 });
+process.on('exit', () => {
+  try {
+    fs.unlinkSync(E2E_BINARY_IDENTITY_PATH);
+  } catch {
+    // Already gone or never written — nothing to clean.
+  }
+});
+
 // Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1` blocks
 // Chromium's namespace sandbox. Without this, Playwright injects
 // `--no-sandbox` as a fallback and Chromium renders an "unsupported flag"
@@ -223,6 +252,8 @@ export default defineConfig({
       VITE_API_PROXY_TARGET: 'http://localhost:3100',
       DATABASE_URL: E2E_DATABASE_URL,
       STORAGE_BUCKET: E2E_STORAGE_BUCKET,
+      BINARY_AGE_RECIPIENT: E2E_BINARY_RECIPIENT,
+      BINARY_AGE_IDENTITY_PATH: E2E_BINARY_IDENTITY_PATH,
     },
   },
 });
