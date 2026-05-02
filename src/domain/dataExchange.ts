@@ -82,6 +82,12 @@ export interface EnvelopeAttachment {
   wrappedDek: string;
   /** Base64 of the wrapped envelope for the thumbnail; null for non-photo. */
   wrappedThumbDek: string | null;
+  /**
+   * Wrapped-envelope format discriminator (ADR-0024). Shared between
+   * `wrappedDek` and `wrappedThumbDek`. Import validates against the
+   * known set and refuses unknown values BEFORE inserting the row.
+   */
+  wrappedDekVersion: number;
   createdAt: string;
   createdBy: string | null;
 }

@@ -18,6 +18,7 @@ import {
 } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
 import { restorePhraseMatches } from '../../config/dataExchangeConfig.js';
+import { isKnownWrappedDekVersion } from '../../domain/attachments.js';
 import {
   SCHEMA_VERSION,
   type Envelope,
@@ -108,6 +109,25 @@ function validateEnvelope(envelope: Envelope): ValidationIssue[] {
       issues.push({
         path: `project_workers[${i}].projectId`,
         message: `projectId ${pw.projectId} not present in envelope.projects`,
+      });
+    }
+  }
+
+  // ADR-0024 envelope-format guard. Refuse rows whose
+  // `wrappedDekVersion` is outside the known set BEFORE insertion —
+  // landing such a row would create a permanently-broken attachment
+  // (every render path surfaces the unwrap-time format failure as
+  // DEK_UNWRAP_FAILED). Loud-fail at import-time gives the operator a
+  // clear signal: the envelope you imported was produced by a
+  // different version of this codebase, and Layer 1 cannot recover it
+  // without a code change. Per-row issue path so the operator knows
+  // which row to investigate.
+  for (let i = 0; i < (envelope.attachments ?? []).length; i++) {
+    const a = envelope.attachments![i]!;
+    if (!isKnownWrappedDekVersion(a.wrappedDekVersion)) {
+      issues.push({
+        path: `attachments[${i}].wrappedDekVersion`,
+        message: `envelope format unknown: ${a.wrappedDekVersion}`,
       });
     }
   }
@@ -230,12 +250,15 @@ function toAttachmentInsert(a: EnvelopeAttachment) {
     filename: a.fileName,
     mimeType: a.mimeType,
     sizeBytes: a.sizeBytes,
-    // ADR-0024 — wrapped envelopes ride the envelope so post-import
-    // attachments stay decryptable (AC-220).
+    // ADR-0024 — wrapped envelopes + format discriminator ride the
+    // envelope so post-import attachments stay decryptable (AC-220).
+    // The version is validated upstream by `validateEnvelope`, so
+    // every row that reaches insert carries a known value.
     ciphertextSizeBytes: a.ciphertextSizeBytes,
     ciphertextThumbSizeBytes: a.ciphertextThumbSizeBytes,
     wrappedDek: a.wrappedDek,
     wrappedThumbDek: a.wrappedThumbDek,
+    wrappedDekVersion: a.wrappedDekVersion,
     originalKey: a.originalKey,
     thumbKey: a.thumbKey,
     hasThumbnail: a.hasThumbnail,

@@ -23,6 +23,7 @@ CREATE TABLE "attachments" (
 	"thumb_version_id" text,
 	"wrapped_dek" text,
 	"wrapped_thumb_dek" text,
+	"wrapped_dek_version" smallint NOT NULL,
 	"hidden_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"created_by" uuid,

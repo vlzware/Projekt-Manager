@@ -205,12 +205,12 @@ describe('Attachment audit contract (AC-219)', () => {
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
            ciphertext_size_bytes,
            original_key, thumb_key, has_thumbnail,
-           wrapped_dek, wrapped_thumb_dek, created_by)
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version, created_by)
         VALUES (${attachmentId}, ${projectId}, 'ready', 'binary', 'angebot',
                 'angebot-2026.pdf', 'application/pdf', 9876,
                 9940,
                 ${`attachments/${projectId}/${attachmentId}.orig`}, NULL, FALSE,
-                ${wrappedDekSeed}, NULL, NULL)
+                ${wrappedDekSeed}, NULL, 1, NULL)
       `);
     } finally {
       await pool.end();
@@ -422,12 +422,12 @@ describe('AC-240: wrapped-DEK columns never appear in audit payloads', () => {
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
            ciphertext_size_bytes,
            original_key, thumb_key, has_thumbnail,
-           wrapped_dek, wrapped_thumb_dek, created_by)
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version, created_by)
         VALUES (${attachmentId}, ${projectId}, 'ready', 'binary', 'angebot',
                 'audit-hide.pdf', 'application/pdf', 1234,
                 1234,
                 ${`attachments/${projectId}/${attachmentId}.orig`}, NULL, FALSE,
-                ${FIXTURE_WRAPPED_DEK}, NULL, NULL)
+                ${FIXTURE_WRAPPED_DEK}, NULL, 1, NULL)
       `);
     } finally {
       await pool.end();
@@ -453,14 +453,14 @@ describe('AC-240: wrapped-DEK columns never appear in audit payloads', () => {
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
            ciphertext_size_bytes, ciphertext_thumb_size_bytes,
            original_key, thumb_key, has_thumbnail,
-           wrapped_dek, wrapped_thumb_dek,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version,
            version_id, thumb_version_id, hidden_at, created_by)
         VALUES (${attachmentId}, ${projectId}, 'hidden', 'photo', 'foto',
                 'audit-restore.jpg', 'image/jpeg', 5000,
                 5000, 1000,
                 ${`attachments/${projectId}/${attachmentId}.orig`},
                 ${`attachments/${projectId}/${attachmentId}.thumb`}, TRUE,
-                ${FIXTURE_WRAPPED_DEK}, ${FIXTURE_WRAPPED_THUMB_DEK},
+                ${FIXTURE_WRAPPED_DEK}, ${FIXTURE_WRAPPED_THUMB_DEK}, 1,
                 'fake-version-id', 'fake-thumb-version-id', NOW(), NULL)
       `);
     } finally {

@@ -105,13 +105,13 @@ async function seedPendingAt(
   await db.execute(sql`
     INSERT INTO attachments
       (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-       original_key, thumb_key, has_thumbnail, created_at)
+       original_key, thumb_key, has_thumbnail, wrapped_dek_version, created_at)
     VALUES (${id}, ${projectId}, 'pending',
             ${withThumb ? 'photo' : 'binary'},
             ${withThumb ? 'foto' : 'sonstiges'},
             ${'seed-' + id.slice(0, 6)},
             ${withThumb ? 'image/jpeg' : 'application/pdf'},
-            1024, ${originalKey}, ${thumbKey}, ${withThumb},
+            1024, ${originalKey}, ${thumbKey}, ${withThumb}, 1,
             ${createdAt.toISOString()})
   `);
   return { id, originalKey, thumbKey };
@@ -128,12 +128,12 @@ async function seedReadyAt(db: Database, projectId: string, createdAt: Date): Pr
       (id, project_id, status, kind, label, filename, mime_type, size_bytes,
        ciphertext_size_bytes,
        original_key, thumb_key, has_thumbnail,
-       wrapped_dek, wrapped_thumb_dek, created_at)
+       wrapped_dek, wrapped_thumb_dek, wrapped_dek_version, created_at)
     VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
             ${'ready-' + id.slice(0, 6)}, 'application/pdf', 1024,
             1088,
             ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
-            ${wrappedDek}, NULL,
+            ${wrappedDek}, NULL, 1,
             ${createdAt.toISOString()})
   `);
   return id;

@@ -69,7 +69,9 @@ import {
   ATTACHMENT_LABELS,
   ATTACHMENT_MIME_WHITELIST,
   classifyKind,
+  isKnownWrappedDekVersion,
   isSafeFileName,
+  WRAPPED_DEK_CURRENT_VERSION,
 } from '../../domain/attachments.js';
 import {
   type AttachmentStorageClient,
@@ -498,6 +500,12 @@ export class AttachmentService {
             ciphertextThumbSizeBytes: ciphertextThumbSizeBytes ?? null,
             wrappedDek: wrappedDekBase64,
             wrappedThumbDek: wrappedThumbDekBase64,
+            // ADR-0024 envelope-format discriminator. Both wrapped
+            // envelopes on this row are produced by `envelope.wrap()`
+            // above (the same `age` X25519 KEM + ChaCha20-Poly1305
+            // shape) — the version pin is shared. A future v2 change
+            // updates the constant + this site simultaneously.
+            wrappedDekVersion: WRAPPED_DEK_CURRENT_VERSION,
             createdBy: caller.id,
           });
           return {
@@ -1050,6 +1058,17 @@ export class AttachmentService {
     if (!wrappedBase64) {
       throw dekUnwrapFailed();
     }
+    // ADR-0024 envelope-format guard. The column says which wrapping
+    // format the bytes were written under; the unwrap path validates
+    // and refuses anything outside the known set BEFORE invoking
+    // `age`. A row on a legacy / future format must not be silently
+    // fed to the v1 parser. Surfaced as the same DEK_UNWRAP_FAILED
+    // code as a corrupted envelope: from the SW's point of view both
+    // are "this row cannot be rendered today", and the operator
+    // diagnoses by reading the column directly.
+    if (!isKnownWrappedDekVersion(row.wrappedDekVersion)) {
+      throw dekUnwrapFailed();
+    }
     const wrappedBytes = Buffer.from(wrappedBase64, 'base64');
 
     const envelope = this.envelopeService();
@@ -1167,6 +1186,14 @@ export class AttachmentService {
     const envelope = this.envelopeService();
     const entries: BulkFetchEntry[] = [];
     for (const row of orderedRows) {
+      // Per-row format gate (ADR-0024). The version pin is shared by
+      // both wrapped envelopes on a row; check once before the
+      // variant-specific unwraps. A row on a legacy / future format is
+      // a data-integrity break — surface as 500 along with the other
+      // bulk-fetch unwrap failures.
+      if (!isKnownWrappedDekVersion(row.wrappedDekVersion)) {
+        throw serverError();
+      }
       // Original-side unwrap. Any failure here — including a missing
       // `wrappedDek` column on a 'ready' row — propagates as 500 per
       // api.md §14.2.11 ("any unwrap failure in the batch → 500

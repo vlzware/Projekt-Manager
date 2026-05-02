@@ -90,7 +90,7 @@ async function seedReadyAttachment(
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
          ciphertext_size_bytes, ciphertext_thumb_size_bytes,
          original_key, thumb_key, has_thumbnail,
-         wrapped_dek, wrapped_thumb_dek)
+         wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
       VALUES (${id}, ${projectId}, 'ready',
               ${withThumb ? 'photo' : 'binary'},
               ${withThumb ? 'foto' : 'sonstiges'},
@@ -99,7 +99,7 @@ async function seedReadyAttachment(
               1024,
               1088, ${withThumb ? 1088 : null},
               ${originalKey}, ${thumbKey}, ${withThumb},
-              ${wrappedDek}, ${wrappedThumbDek})
+              ${wrappedDek}, ${wrappedThumbDek}, 1)
     `);
   } finally {
     await pool.end();
@@ -221,12 +221,12 @@ describe('Attachment purge cascade (AC-218)', () => {
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
            ciphertext_size_bytes,
            original_key, thumb_key, has_thumbnail,
-           wrapped_dek, wrapped_thumb_dek)
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
         VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
                 'ghost.pdf', 'application/pdf', 1,
                 65,
                 ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
-                ${wrappedDek}, NULL)
+                ${wrappedDek}, NULL, 1)
       `);
     } finally {
       await pool.end();

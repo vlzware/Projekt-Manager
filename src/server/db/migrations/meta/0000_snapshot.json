@@ -118,6 +118,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "wrapped_dek_version": {
+          "name": "wrapped_dek_version",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
         "hidden_at": {
           "name": "hidden_at",
           "type": "timestamp with time zone",

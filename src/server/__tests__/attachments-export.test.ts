@@ -82,12 +82,12 @@ async function seedAttachment(spec: AttachmentSeed): Promise<string> {
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
          ciphertext_size_bytes, ciphertext_thumb_size_bytes,
          original_key, thumb_key, has_thumbnail,
-         wrapped_dek, wrapped_thumb_dek)
+         wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
       VALUES (${id}, ${spec.projectId}, ${spec.status}, ${kind}, ${label},
               ${fileName}, ${mimeType}, ${sizeBytes},
               ${sizeBytes}, ${kind === 'photo' ? Math.max(1, Math.floor(sizeBytes / 10)) : null},
               ${originalKey}, ${thumbKey}, ${kind === 'photo'},
-              ${wrappedDek}, ${wrappedThumbDek})
+              ${wrappedDek}, ${wrappedThumbDek}, 1)
     `);
     return id;
   } finally {
@@ -108,6 +108,8 @@ interface AttachmentInEnvelope {
   originalKey: string;
   wrappedDek: string;
   wrappedThumbDek: string | null;
+  /** Envelope-format discriminator — ADR-0024 / AC-220. Currently always 1. */
+  wrappedDekVersion: number;
   kind: 'photo' | 'binary';
 }
 
@@ -240,6 +242,21 @@ describe('Attachment export envelope (AC-220)', () => {
     }
   });
 
+  it('every ready row carries wrappedDekVersion = 1 (envelope-format discriminator on the export envelope)', async () => {
+    // AC-220 — the discriminator rides the envelope alongside the
+    // wrapped bytes so post-import rows preserve which wrapping format
+    // they were written under. Without this field on the envelope, an
+    // import would have to guess. A regression that omitted the field
+    // would surface as `undefined` here; a regression that wrote a
+    // wrong value (e.g. defaulted to 0) would surface as a non-1 value.
+    const res = await authGet(ownerToken, '/api/export');
+    const env = res.json() as { attachments: AttachmentInEnvelope[] };
+    expect(env.attachments.length).toBeGreaterThan(0);
+    for (const row of env.attachments) {
+      expect(row.wrappedDekVersion).toBe(1);
+    }
+  });
+
   it('round-trip preserves wrapped envelope bytes byte-for-byte (DB-level read)', async () => {
     // The export envelope serializes `wrappedDek` as base64 of the
     // opaque bytes. After import, a re-export must surface byte-
@@ -335,6 +352,116 @@ describe('Attachment export envelope (AC-220)', () => {
       // this the ciphertext on B2 is unrecoverable post-restore.
       expect(restored!.wrappedDek).toBe(original.wrappedDek);
       expect(restored!.wrappedThumbDek ?? null).toBe(original.wrappedThumbDek ?? null);
+      // Version discriminator preservation — without it, the post-import
+      // unwrap path cannot validate the format and the row becomes
+      // unaddressable through download-url.
+      expect(restored!.wrappedDekVersion).toBe(original.wrappedDekVersion);
+    }
+  });
+
+  // -------------------------------------------------------------------
+  // AC-220 — Import refuses an envelope row carrying an unknown
+  // wrappedDekVersion. The format discriminator is checked before
+  // insertion: a v=99 row would be unwrap-time-broken anyway, so the
+  // import path refuses it loud (rather than landing a permanently
+  // broken row that surfaces as DEK_UNWRAP_FAILED on every render).
+  // -------------------------------------------------------------------
+  it('rejects an import envelope row whose wrappedDekVersion is unknown (no row inserted)', async () => {
+    // Build a minimal valid envelope that carries one attachment row
+    // with a forged wrappedDekVersion. Wipe + import in one step —
+    // empty target so target_not_empty doesn't gate the call.
+    const { db, pool } = createDatabase();
+    try {
+      await db.execute(
+        sql`TRUNCATE TABLE attachments, project_workers, projects, customers RESTART IDENTITY CASCADE`,
+      );
+    } finally {
+      await pool.end();
+    }
+    const token = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+
+    const customerId = crypto.randomUUID();
+    const projectIdLocal = crypto.randomUUID();
+    const attachmentId = crypto.randomUUID();
+    const now = new Date().toISOString();
+
+    const envelope = {
+      schema_version: 1,
+      exported_at: now,
+      customers: [
+        {
+          id: customerId,
+          name: 'Import Refusal Probe',
+          phone: null,
+          email: null,
+          address: null,
+          notes: null,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: null,
+          updatedBy: null,
+        },
+      ],
+      projects: [
+        {
+          id: projectIdLocal,
+          number: 'IMP-9001',
+          title: 'Probe',
+          status: 'anfrage',
+          statusChangedAt: now,
+          customerId,
+          plannedStart: null,
+          plannedEnd: null,
+          estimatedValue: null,
+          notes: null,
+          deleted: false,
+          createdAt: now,
+          updatedAt: now,
+          createdBy: null,
+          updatedBy: null,
+        },
+      ],
+      project_workers: [],
+      attachments: [
+        {
+          id: attachmentId,
+          projectId: projectIdLocal,
+          status: 'ready' as const,
+          kind: 'binary' as const,
+          label: 'sonstiges',
+          fileName: 'future-format.pdf',
+          mimeType: 'application/pdf',
+          sizeBytes: 1234,
+          ciphertextSizeBytes: 1298,
+          ciphertextThumbSizeBytes: null,
+          originalKey: `attachments/${projectIdLocal}/${attachmentId}.orig`,
+          thumbKey: null,
+          hasThumbnail: false,
+          wrappedDek: Buffer.from('synthetic-envelope').toString('base64'),
+          wrappedThumbDek: null,
+          // Forged — the import path must refuse this row.
+          wrappedDekVersion: 99,
+          createdAt: now,
+          createdBy: null,
+        },
+      ],
+    };
+
+    const res = await authPost(token, '/api/import', envelope);
+    // Loud refusal — exact code is ImportService's contract; the AC
+    // pins the behaviour ("import refuses, no row inserted") not the
+    // wire shape. Accept any 4xx that signals client-side input
+    // problem.
+    expect(res.statusCode).toBeGreaterThanOrEqual(400);
+    expect(res.statusCode).toBeLessThan(500);
+
+    // No row landed.
+    const { db: db2, pool: pool2 } = createDatabase();
+    try {
+      const rows = await db2.execute(sql`SELECT id FROM attachments WHERE id = ${attachmentId}`);
+      expect(rows.rows).toHaveLength(0);
+    } finally {
+      await pool2.end();
     }
   });
 });

@@ -83,12 +83,12 @@ async function seedReadyAttachment(projectId: string, createdBy: string | null):
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
          ciphertext_size_bytes,
          original_key, thumb_key, has_thumbnail,
-         wrapped_dek, wrapped_thumb_dek, created_by)
+         wrapped_dek, wrapped_thumb_dek, wrapped_dek_version, created_by)
       VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
               ${'f-' + id.slice(0, 6)}, 'application/pdf', 100,
               164,
               ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
-              ${wrappedDek}, NULL, ${createdBy})
+              ${wrappedDek}, NULL, 1, ${createdBy})
     `);
     return id;
   } finally {

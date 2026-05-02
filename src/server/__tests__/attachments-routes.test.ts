@@ -352,6 +352,34 @@ describe('Attachment routes — integration (issue #108)', () => {
       }
     });
 
+    it('persists wrappedDekVersion = 1 alongside the wrapped envelopes (ADR-0024 envelope-format discriminator)', async () => {
+      // AC-245 — current iteration writes envelope-format version 1 on
+      // every init. The column is NOT NULL with no DB default; the
+      // service layer is the single writer. A regression that omitted
+      // the version, defaulted it at the DB level, or wrote a
+      // different value would either fail the insert outright (NOT NULL
+      // breach) or land a row that later trips the unwrap-time
+      // validation (AC-244 envelope-format unknown branch).
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        photoInit(projectId),
+      );
+      expect(res.statusCode).toBe(201);
+      const attId = res.json().attachment.id as string;
+
+      const { db, pool } = createDatabase();
+      try {
+        const rows = await db.execute(
+          sql`SELECT wrapped_dek_version FROM attachments WHERE id = ${attId}`,
+        );
+        const row = rows.rows[0] as { wrapped_dek_version: number };
+        expect(row.wrapped_dek_version).toBe(1);
+      } finally {
+        await pool.end();
+      }
+    });
+
     it('rejects a missing/malformed ciphertextContentMd5 with 422 VALIDATION_ERROR (no row)', async () => {
       const before = await countAttachmentRows();
       const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
@@ -735,12 +763,12 @@ describe('Attachment routes — integration (issue #108)', () => {
             (id, project_id, status, kind, label, filename, mime_type, size_bytes,
              ciphertext_size_bytes, ciphertext_thumb_size_bytes,
              original_key, thumb_key, has_thumbnail,
-             wrapped_dek, wrapped_thumb_dek)
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
           VALUES (${attId}, ${projectId}, 'pending', 'photo', 'foto',
                   'oversize.jpg', 'image/jpeg', ${plaintextOversize},
                   ${ciphertextOversize}, 1024,
                   ${originalKey}, ${thumbKey}, TRUE,
-                  ${wrappedDek}, ${wrappedThumb})
+                  ${wrappedDek}, ${wrappedThumb}, 1)
         `);
       } finally {
         await pool.end();
@@ -1167,12 +1195,56 @@ describe('Attachment routes — integration (issue #108)', () => {
             (id, project_id, status, kind, label, filename, mime_type, size_bytes,
              ciphertext_size_bytes,
              original_key, thumb_key, has_thumbnail,
-             wrapped_dek, wrapped_thumb_dek)
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
           VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
                   'corrupt-bulk.pdf', 'application/pdf', 1000,
                   1064,
                   ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
-                  ${corrupted}, NULL)
+                  ${corrupted}, NULL, 1)
+        `);
+      } finally {
+        await pool.end();
+      }
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: [attId],
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.json().code).toBe('SERVER_ERROR');
+    });
+
+    it('returns 500 SERVER_ERROR on a row whose wrappedDekVersion is unknown (envelope-format guard)', async () => {
+      // Bulk-fetch counterpart to the download-url v=2 test below.
+      // The unwrap-time format-discriminator gate (ADR-0024 / AC-244)
+      // must fire BEFORE `age` is invoked so a future format never
+      // silently decodes under the v1 parser. api.md §14.2.11 surfaces
+      // any bulk-fetch unwrap failure as 500 SERVER_ERROR; the per-row
+      // 422 surface is `download-url` only. Direct DB seed so the
+      // synthetic version travels exactly as a corrupted import row would.
+      const recipient = process.env.BINARY_AGE_RECIPIENT;
+      const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+      if (!recipient || !identityPath) {
+        throw new Error('binary identity env vars not configured for test fork');
+      }
+      const identity = readFileSync(identityPath, 'utf-8').trim();
+      const service = new KeyEnvelopeService({ recipient, identity });
+      const dek = crypto.randomBytes(32);
+      const wrappedBytes = await service.wrap(dek);
+      const wrappedBase64 = Buffer.from(wrappedBytes).toString('base64');
+
+      const attId = crypto.randomUUID();
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'future-format-bulk.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${wrappedBase64}, NULL, 2)
         `);
       } finally {
         await pool.end();
@@ -1540,13 +1612,13 @@ describe('Attachment routes — integration (issue #108)', () => {
             (id, project_id, status, kind, label, filename, mime_type, size_bytes,
              ciphertext_size_bytes,
              original_key, thumb_key, has_thumbnail,
-             wrapped_dek, wrapped_thumb_dek,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version,
              version_id, thumb_version_id, hidden_at)
           VALUES (${archAttId}, ${archProjectId}, 'hidden', 'binary', 'sonstiges',
                   'arch-doc.pdf', 'application/pdf', 10,
                   ${ciphertext.length},
                   ${originalKey}, NULL, FALSE,
-                  ${wrappedDek}, NULL,
+                  ${wrappedDek}, NULL, 1,
                   ${head.versionId!}, NULL, NOW())
         `);
       } finally {
@@ -1987,12 +2059,12 @@ describe('Attachment routes — integration (issue #108)', () => {
             (id, project_id, status, kind, label, filename, mime_type, size_bytes,
              ciphertext_size_bytes,
              original_key, thumb_key, has_thumbnail,
-             wrapped_dek, wrapped_thumb_dek)
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
           VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
                   'corrupt-envelope.pdf', 'application/pdf', 1000,
                   1064,
                   ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
-                  ${corrupted}, NULL)
+                  ${corrupted}, NULL, 1)
         `);
       } finally {
         await pool.end();
@@ -2030,13 +2102,13 @@ describe('Attachment routes — integration (issue #108)', () => {
             (id, project_id, status, kind, label, filename, mime_type, size_bytes,
              ciphertext_size_bytes, ciphertext_thumb_size_bytes,
              original_key, thumb_key, has_thumbnail,
-             wrapped_dek, wrapped_thumb_dek)
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
           VALUES (${attId}, ${projectId}, 'ready', 'photo', 'foto',
                   'corrupt-thumb.jpg', 'image/jpeg', 5000,
                   5064, 1064,
                   ${`attachments/${projectId}/${attId}.orig`},
                   ${`attachments/${projectId}/${attId}.thumb`}, TRUE,
-                  ${validOrig}, ${corruptThumb})
+                  ${validOrig}, ${corruptThumb}, 1)
         `);
       } finally {
         await pool.end();
@@ -2048,6 +2120,107 @@ describe('Attachment routes — integration (issue #108)', () => {
       );
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('DEK_UNWRAP_FAILED');
+    });
+
+    it('returns 422 with code DEK_UNWRAP_FAILED on a row whose wrappedDekVersion is unknown (envelope-format guard)', async () => {
+      // Pin the unwrap-time format-discriminator gate (ADR-0024 / AC-244).
+      // A row with a real-shaped envelope but a wrapped_dek_version other
+      // than 1 must NOT silently unwrap with the current parser — the
+      // service must refuse before invoking `age` so the operator can
+      // identify rows on a legacy or future format. Direct DB seed so the
+      // synthetic version travels exactly as a corrupted bulk-import row
+      // would.
+      const recipient = process.env.BINARY_AGE_RECIPIENT;
+      const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+      if (!recipient || !identityPath) {
+        throw new Error('binary identity env vars not configured for test fork');
+      }
+      const identity = readFileSync(identityPath, 'utf-8').trim();
+      const service = new KeyEnvelopeService({ recipient, identity });
+      const dek = crypto.randomBytes(32);
+      const wrappedBytes = await service.wrap(dek);
+      const wrappedBase64 = Buffer.from(wrappedBytes).toString('base64');
+
+      const attId = crypto.randomUUID();
+      const { db, pool } = createDatabase();
+      try {
+        // Seed a v=2 row — the envelope itself is a valid `age` envelope
+        // for the loaded recipient, but the column says "format 2" and
+        // the unwrap path must refuse to interpret its bytes under the
+        // v1 parser. A regression that ignored the version column would
+        // happily decrypt and surface the DEK.
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'future-format.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${wrappedBase64}, NULL, 2)
+        `);
+      } finally {
+        await pool.end();
+      }
+
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=original`,
+      );
+      // Same surface as a corrupt envelope — the SW renders the
+      // "Schlüssel nicht verfügbar" placeholder for both classes
+      // (operator condition vs. row data integrity); 422 with the
+      // DEK_UNWRAP_FAILED code keeps the SW branch single.
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('DEK_UNWRAP_FAILED');
+    });
+
+    it('successfully unwraps a row whose wrappedDekVersion = 1 (happy-path control)', async () => {
+      // Companion to the unknown-version arm above — pins that the
+      // version=1 path remains the working one. Without this control,
+      // the unknown-version test could pass for the wrong reason (the
+      // unwrap failing for any seed-related cause). Here we wrap a real
+      // DEK and assert the route returns it.
+      const recipient = process.env.BINARY_AGE_RECIPIENT;
+      const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+      if (!recipient || !identityPath) {
+        throw new Error('binary identity env vars not configured for test fork');
+      }
+      const identity = readFileSync(identityPath, 'utf-8').trim();
+      const service = new KeyEnvelopeService({ recipient, identity });
+      const dek = crypto.randomBytes(32);
+      const wrappedBytes = await service.wrap(dek);
+      const wrappedBase64 = Buffer.from(wrappedBytes).toString('base64');
+
+      const attId = crypto.randomUUID();
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'v1-row.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${wrappedBase64}, NULL, 1)
+        `);
+      } finally {
+        await pool.end();
+      }
+
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=original`,
+      );
+      expect(res.statusCode).toBe(200);
+      const returned = Buffer.from(res.json().dekMaterial as string, 'base64');
+      // Byte-equality — the route returned exactly the DEK we wrapped.
+      expect(returned.equals(dek)).toBe(true);
     });
   });
 
@@ -2293,13 +2466,13 @@ async function seedHiddenAttachment(
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
          ciphertext_size_bytes, ciphertext_thumb_size_bytes,
          original_key, thumb_key, has_thumbnail,
-         wrapped_dek, wrapped_thumb_dek,
+         wrapped_dek, wrapped_thumb_dek, wrapped_dek_version,
          version_id, thumb_version_id, hidden_at)
       VALUES (${id}, ${projectId}, 'hidden', ${kind}, ${label},
               ${filename}, ${mimeType}, 100,
               164, ${spec.hasThumbnail ? 164 : null},
               ${originalKey}, ${thumbKey}, ${spec.hasThumbnail},
-              ${wrappedDek}, ${wrappedThumbDek},
+              ${wrappedDek}, ${wrappedThumbDek}, 1,
               ${spec.versionId}, ${spec.thumbVersionId}, NOW())
     `);
     return id;
@@ -2363,12 +2536,12 @@ async function seedReadyAttachments(projectId: string, specs: SeedReadySpec[]): 
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
            ciphertext_size_bytes, ciphertext_thumb_size_bytes,
            original_key, thumb_key, has_thumbnail,
-           wrapped_dek, wrapped_thumb_dek)
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
         VALUES (${id}, ${projectId}, 'ready', ${kind}, ${label},
                 ${'file-' + id.slice(0, 6)}, ${mimeType}, ${spec.sizeBytes},
                 ${ciphertextSize}, ${ciphertextThumbSize},
                 ${originalKey}, ${thumbKey}, ${kind === 'photo'},
-                ${orig.wrappedBase64}, ${thumb?.wrappedBase64 ?? null})
+                ${orig.wrappedBase64}, ${thumb?.wrappedBase64 ?? null}, 1)
       `);
       ids.push(id);
     }
@@ -2421,12 +2594,12 @@ async function seedReadyAttachmentsWithBytes(
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
            ciphertext_size_bytes, ciphertext_thumb_size_bytes,
            original_key, thumb_key, has_thumbnail,
-           wrapped_dek, wrapped_thumb_dek)
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
         VALUES (${id}, ${projectId}, 'ready', ${kind}, ${label},
                 ${spec.filename}, ${spec.mimeType}, ${spec.bytes.length},
                 ${spec.bytes.length}, ${kind === 'photo' ? spec.bytes.length : null},
                 ${originalKey}, ${thumbKey}, ${kind === 'photo'},
-                ${orig.wrappedBase64}, ${thumb?.wrappedBase64 ?? null})
+                ${orig.wrappedBase64}, ${thumb?.wrappedBase64 ?? null}, 1)
       `);
       ids.push(id);
     }

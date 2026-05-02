@@ -14,6 +14,7 @@ import {
   text,
   boolean,
   bigint,
+  smallint,
   timestamp,
   date,
   jsonb,
@@ -497,6 +498,26 @@ export const attachments = pgTable(
      * thumbnail. Same audit-exclusion contract as `wrappedDek`.
      */
     wrappedThumbDek: text('wrapped_thumb_dek'),
+    /**
+     * Monotonic envelope-format discriminator (ADR-0024). Shared between
+     * `wrappedDek` and `wrappedThumbDek` on a row — both envelopes are
+     * written at the same init and so share the same wrapping format.
+     * Current value is `1` (age X25519 KEM + ChaCha20-Poly1305).
+     *
+     * No DB DEFAULT and NOT NULL: every insert site sets the value
+     * explicitly so a future v2 introduction is a code change at the
+     * relevant init paths, not a silent column default flip. The unwrap
+     * path validates `version === 1` and throws on any other value
+     * (`envelope format unknown: <N>`); the export envelope carries the
+     * field so post-import rows preserve the discriminator and the
+     * import path refuses unknown versions before insertion.
+     *
+     * `smallint` over `integer` because the universe of envelope
+     * formats is tiny by design (a handful of generations across the
+     * project's lifetime); the 2-byte column matches that ceiling
+     * without any pretense of precision.
+     */
+    wrappedDekVersion: smallint('wrapped_dek_version').notNull(),
     /**
      * Set when the attachment is moved to the Papierkorb (status =
      * 'hidden'). Null while live or pending. Bucket lifecycle reaps the

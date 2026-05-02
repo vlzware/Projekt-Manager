@@ -78,6 +78,12 @@ export interface CreatePendingAttachmentInput {
   wrappedDek: string;
   /** Same for the thumbnail; null for non-photo / no-thumb rows. */
   wrappedThumbDek: string | null;
+  /**
+   * Envelope-format discriminator (ADR-0024). Shared between
+   * `wrappedDek` and `wrappedThumbDek`. Current value is `1`; the
+   * unwrap path validates this and refuses unknown values.
+   */
+  wrappedDekVersion: number;
   createdBy: string | null;
 }
 
@@ -147,6 +153,7 @@ export async function createPending(
       ciphertextThumbSizeBytes: input.ciphertextThumbSizeBytes,
       wrappedDek: input.wrappedDek,
       wrappedThumbDek: input.wrappedThumbDek,
+      wrappedDekVersion: input.wrappedDekVersion,
       createdBy: input.createdBy,
     })
     .returning();

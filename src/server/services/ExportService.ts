@@ -93,12 +93,12 @@ export class ExportService {
         fileName: a.filename,
         mimeType: a.mimeType,
         sizeBytes: a.sizeBytes,
-        // ADR-0024: ciphertext sizes + wrapped envelopes ride the
-        // export envelope so attachments restore decryptable
-        // post-import (AC-220). Schema CHECK guarantees both fields
-        // are populated on every `ready` row, so the `??` collapse
-        // is structural — guards a pre-Phase-1 row where the column
-        // hasn't been backfilled.
+        // ADR-0024: ciphertext sizes + wrapped envelopes + format
+        // discriminator ride the export envelope so attachments
+        // restore decryptable post-import (AC-220). Schema CHECK
+        // guarantees both fields are populated on every `ready` row,
+        // so the `??` collapse is structural — guards a pre-Phase-1
+        // row where the column hasn't been backfilled.
         ciphertextSizeBytes: a.ciphertextSizeBytes ?? a.sizeBytes,
         ciphertextThumbSizeBytes: a.ciphertextThumbSizeBytes,
         originalKey: a.originalKey,
@@ -106,6 +106,11 @@ export class ExportService {
         hasThumbnail: a.hasThumbnail,
         wrappedDek: a.wrappedDek ?? '',
         wrappedThumbDek: a.wrappedThumbDek,
+        // Envelope-format version (ADR-0024). NOT NULL on the row, so
+        // no fallback needed — the column is always populated under
+        // the current schema. Carrying it on the export envelope lets
+        // the import path validate the discriminator before insert.
+        wrappedDekVersion: a.wrappedDekVersion,
         createdAt: a.createdAt.toISOString(),
         createdBy: a.createdBy,
       })),
