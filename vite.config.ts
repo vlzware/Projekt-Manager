@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
+import { build as esbuildBuild } from 'esbuild';
 import path from 'path';
 
 /**
@@ -21,8 +22,74 @@ function stripTestAttributes(): Plugin {
   };
 }
 
+/**
+ * Bundle the Service Worker entry (`src/sw/index.ts`) to `dist/sw.js`
+ * via esbuild. The SW must be a single file — browsers don't resolve
+ * ES module imports inside a classic worker, and a `type: 'module'`
+ * worker has weaker browser coverage than we want for the push surface.
+ *
+ * Build mode: `closeBundle` runs after Vite's main bundle completes,
+ * so the artifact lands alongside `dist/index.html` and the asset map.
+ *
+ * Dev mode: a middleware re-bundles on every `GET /sw.js` request
+ * (esbuild is fast enough that HMR-style re-build is cheaper than
+ * caching invalidation logic).
+ *
+ * Sourcemaps: kept on (private repo, helps debug push + decrypt paths).
+ */
+function buildServiceWorker(): Plugin {
+  const esbuildOptions = {
+    entryPoints: [path.resolve(__dirname, 'src/sw/index.ts')],
+    bundle: true,
+    format: 'iife',
+    target: 'es2022',
+    platform: 'browser',
+    minify: true,
+    sourcemap: true,
+  } as const;
+
+  return {
+    name: 'build-service-worker',
+    // No `apply` — both serve and build need this plugin. The per-mode
+    // logic lives in `configureServer` (dev) and `closeBundle` (build);
+    // the unused hook in the wrong mode is a no-op.
+    configureServer(server) {
+      server.middlewares.use('/sw.js', async (req, res, next) => {
+        // Connect strips the mount prefix from `req.url`. The exact
+        // `/sw.js` request leaves `req.url === '/'`; anything deeper
+        // (e.g. a hypothetical `/sw.js/foo`) would not be ours.
+        if (req.method !== 'GET' || req.url !== '/') return next();
+        try {
+          const result = await esbuildBuild({
+            ...esbuildOptions,
+            write: false,
+          });
+          const file = result.outputFiles?.[0];
+          if (!file) {
+            res.statusCode = 500;
+            res.end('SW bundle produced no output');
+            return;
+          }
+          res.setHeader('content-type', 'application/javascript; charset=utf-8');
+          res.setHeader('cache-control', 'no-cache');
+          res.end(file.text);
+        } catch (err) {
+          res.statusCode = 500;
+          res.end(`SW bundle failed: ${(err as Error).message}`);
+        }
+      });
+    },
+    async closeBundle() {
+      await esbuildBuild({
+        ...esbuildOptions,
+        outfile: path.resolve(__dirname, 'dist/sw.js'),
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), stripTestAttributes()],
+  plugins: [react(), stripTestAttributes(), buildServiceWorker()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

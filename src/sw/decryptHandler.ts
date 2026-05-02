@@ -49,9 +49,10 @@
  * function (no DOM coupling) and keeps the test seam mockable.
  *
  * Pure-handler scope: this module is the URL-routed function the SW
- * runtime calls; it does NOT install fetch listeners. The SW bundling
- * story (integrating with the existing notification SW at `public/sw.js`)
- * is a downstream concern.
+ * runtime calls; it does NOT install fetch listeners. The fetch-event
+ * registration and integration with the push handlers live in
+ * `src/sw/index.ts` (bundled to `dist/sw.js` by the
+ * `buildServiceWorker` Vite plugin).
  */
 
 import { decryptBlob, decodeDekMaterial } from '@/domain/clientEncryption';

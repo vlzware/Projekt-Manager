@@ -3,8 +3,6 @@
  *
  * Responsibilities (spec ui/behavior.md §9.8, ui/index.md §8.7.2):
  *   - Feature detection (`serviceWorker` + `PushManager`).
- *   - Lazy service-worker registration on a user-initiated action. The
- *     worker is NEVER registered on app boot — spec §9.8 forbids it.
  *   - `Notification.requestPermission()` is called ONLY from inside a
  *     user-click handler (spec §9.8 "Auto-request on page load is
  *     forbidden"). This module exposes primitives; the caller is
@@ -12,6 +10,13 @@
  *   - Subscribe / unsubscribe against the browser's push manager and
  *     forward the result to the self-scope server endpoints
  *     (api.md §14.2.10).
+ *
+ * Service Worker registration: eager at SPA boot (`src/main.tsx`).
+ * The SW intercepts `/encrypted-storage/*` requests for binary
+ * attachment decryption (ADR-0024) and must be active before any
+ * `<img src="/encrypted-storage/...">` renders. Spec §9.8's "forbidden
+ * on page load" rule applies to the OS permission prompt, not to
+ * `register()`, which is silent.
  *
  * VAPID public-key source: `GET /api/push/vapid-public-key`
  * (api.md §14.2.10) at subscribe time. The server derives the public
@@ -98,18 +103,18 @@ function arrayBufferToBase64Url(buffer: ArrayBuffer): string {
 }
 
 /**
- * Register the service worker if it is not already registered, and
- * return the `ServiceWorkerRegistration` handle. No-op on re-entry:
- * `navigator.serviceWorker.register()` is idempotent by spec — a second
- * call with the same script URL resolves to the existing registration.
+ * Resolve the active Service Worker registration. The SW is registered
+ * eagerly at SPA boot (`src/main.tsx`) because it intercepts
+ * `/encrypted-storage/*` requests for binary attachment decryption
+ * (ADR-0024). This function awaits `navigator.serviceWorker.ready`,
+ * which resolves with the active registration once the worker has
+ * progressed past `installing`.
  *
- * MUST be called from a user-click handler (spec §9.8).
+ * Safe to call from a user-click handler — `ready` resolves immediately
+ * if the worker is already active.
  */
 export async function ensureServiceWorker(): Promise<ServiceWorkerRegistration> {
-  const registration = await navigator.serviceWorker.register(SERVICE_WORKER_PATH);
-  // Wait for the worker to be ready so a subsequent `pushManager.subscribe`
-  // call always sees an active service worker.
-  return navigator.serviceWorker.ready.then(() => registration);
+  return navigator.serviceWorker.ready;
 }
 
 /**

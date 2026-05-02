@@ -97,7 +97,7 @@ Server generates the 32-byte DEK at init via `crypto.randomBytes(32)`, wraps it 
 - New `tmpfs` mount on the `app` service in `docker-compose.yml`, modeled on the `backup` service's drill-key mount.
 - New env var `BINARY_AGE_RECIPIENT` and corresponding entry in `.env.production.example` / `secrets.manifest.txt` (CI drift gate at `scripts/check-env-drift.sh` enforces presence).
 - New ops script `scripts/binary-key/load-binary-key.sh` modeled on `scripts/backup/load-drill-key.sh`.
-- New service-worker bundle in `public/` (or equivalent build output) handling the synthetic-origin decrypt path.
+- New service-worker bundle at `dist/sw.js` (built by the `buildServiceWorker` Vite plugin from `src/sw/index.ts`) handling the synthetic-origin decrypt path alongside the existing push surface.
 - New API endpoint: `POST /api/projects/:id/attachments/bulk-fetch` (replaces today's `bulk-download` route — breaking change). The spec extends the existing `GET /api/projects/:id/attachments/:attId/download-url` endpoint to return `{ url, expiresAt, dekMaterial }` so the SW makes one round trip per blob rather than two (this collapses the originally-envisioned `/dek` companion endpoint into `download-url`). AC-212, AC-216, AC-221, AC-241 rewritten / added in the spec delta to match.
 - **Security audit required** under [CONTRIBUTING.md §Security audit](../../CONTRIBUTING.md#security-audit): new long-lived encryption keys, new tmpfs private-key handling, a new on-the-wire crypto protocol, and a new service-worker decrypt path all meet the trigger.
 
@@ -105,7 +105,7 @@ Server generates the 32-byte DEK at init via `crypto.randomBytes(32)`, wraps it 
 
 Three implementation-blocking questions are settled in design but not yet validated in code:
 
-1. **Service Worker decrypt correctness** — synthetic-origin interception, DEK fetch sequencing, lifecycle across page reloads, and interaction with the existing notification SW (`public/sw.js`) need a working spike before AC text is final.
+1. **Service Worker decrypt correctness** — synthetic-origin interception and DEK fetch sequencing now run through `src/sw/decryptHandler.ts` bundled into `dist/sw.js` alongside the push handlers. AC-243 e2e (`attachment-upload.spec.ts`) is the integration check.
 2. **Streaming-zip memory budget under load** — the streaming-generator family of libraries (`client-zip` and similar) need a measured peak-resident-set verification against the 20-file / 20-MB cap on a representative low-end mobile, not just an analytic argument.
 3. **Two-paste operator ergonomics** — the boot-probe failure mode is documented, but the post-reboot recovery flow (which paste comes first, what error surfaces if the operator pastes the wrong identity into the wrong loader) needs to be exercised end-to-end.
 
