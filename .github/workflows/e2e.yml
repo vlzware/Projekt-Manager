@@ -94,6 +94,12 @@ jobs:
 
       - run: npm ci
 
+      # `age` is required by playwright.config.ts, which generates a
+      # per-run binary identity via `age-keygen` before spawning the
+      # webServer (ADR-0024). Not preinstalled on ubuntu-latest.
+      - name: Install apt prerequisites
+        run: sudo apt-get update && sudo apt-get install -y age
+
       # MinIO runs as a docker container started from the runner (not a
       # service container) because GitHub service containers cannot
       # override `command`, and minio/minio needs `server /data` as its

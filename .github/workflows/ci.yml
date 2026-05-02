@@ -40,10 +40,13 @@ jobs:
 
       - run: npm ci
 
-      # Needed by scripts/check-theme-tokens.sh. ubuntu-latest does not
-      # preinstall ripgrep; without it the check silently no-ops.
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      # ripgrep — needed by scripts/check-theme-tokens.sh; without it
+      # the check silently no-ops. age — needed by src/test/integration-
+      # setup.ts, which generates a per-fork binary identity via
+      # `age-keygen` before vitest's integration suite runs (ADR-0024).
+      # Neither is preinstalled on ubuntu-latest.
+      - name: Install apt prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ripgrep age
 
       - name: Audit dependencies
         run: |
