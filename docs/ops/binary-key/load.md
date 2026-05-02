@@ -16,7 +16,7 @@ The **deploy auto-prompt** in `scripts/deploy.sh` is the intended trigger in nor
 
 `scripts/binary-key/load-binary-key.sh` writes the identity to a tmpfs mount the `app` container reads from, and never anywhere else. The script mirrors [`scripts/backup/load-drill-key.sh`](../../../scripts/backup/load-drill-key.sh) byte-for-byte at the invariants — same prompt, same `read -s` paste, same `age-keygen -y` round-trip, same recipient match — with `BINARY_AGE_RECIPIENT` and `/run/binary-key/identity` swapped in.
 
-**Location:** `scripts/binary-key/load-binary-key.sh` in the repo. The image build copies it to `/usr/local/bin/load-binary-key` (no `.sh`) — that is the only path the operator ever invokes, via `docker exec` into the running app container. The tmpfs target inside the container is `/run/binary-key/identity` (file mode 0400, owned by root; the tmpfs mount itself is mode 0700 uid 0).
+**Location:** `scripts/binary-key/load-binary-key.sh` in the repo. The image build copies it to `/usr/local/bin/load-binary-key` (no `.sh`) — that is the only path the operator ever invokes, via `docker exec` into the running app container. The tmpfs target inside the container is `/run/binary-key/identity` (file mode 0400, owned by the in-container `app` user (UID 1001); the tmpfs mount itself is mode 0700 uid 1001 gid 1001). Both the boot probe (read) and the loader (write) run as `app` — the tmpfs ownership matches so neither side needs a `docker exec -u 0` privilege override.
 
 You are about to write private key material into RAM on the VPS; this is cleared on reboot or on container recreation, and can be overwritten by rerunning the script.
 
@@ -31,7 +31,7 @@ You are about to write private key material into RAM on the VPS; this is cleared
    - Validates the destination is a tmpfs mount (refuses to write otherwise — protects against a docker-compose regression that drops the `tmpfs:` directive).
    - Validates the pasted material parses as an `age` identity by round-tripping through `age-keygen -y`.
    - Compares the derived public recipient against `BINARY_AGE_RECIPIENT` from the container env. Mismatch = operator pasted the wrong key (probably the backup drill identity); the script wipes the partial write and exits non-zero.
-   - Writes the identity to `/run/binary-key/identity` (tmpfs, mode 0400, root-owned).
+   - Writes the identity to `/run/binary-key/identity` (tmpfs, mode 0400, owned by the in-container `app` user, UID 1001).
    - Zeros its own buffer before exit.
 
 4. Verify the key is loaded without exposing it:

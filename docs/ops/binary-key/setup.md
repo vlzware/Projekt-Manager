@@ -30,7 +30,7 @@ Verify the compose definition before generating the key — a missing tmpfs dire
 grep -A2 'binary-key' /opt/projekt-manager/docker-compose.yml
 ```
 
-Expected: a `tmpfs:` entry under `services.app` matching the pattern from the backup service (`/run/binary-key:mode=0700,uid=0,gid=0`), and a `BINARY_AGE_RECIPIENT` reference under `services.app.environment`. If either is missing, the compose file regressed — fix before proceeding.
+Expected: a `tmpfs:` entry under `services.app` of the form `/run/binary-key:mode=0700,uid=1001,gid=1001` (uid/gid match the `app` user pinned in the Dockerfile so the boot probe can read and the loader can write without a privilege override), and a `BINARY_AGE_RECIPIENT` reference under `services.app.environment`. If either is missing, the compose file regressed — fix before proceeding.
 
 ## 2. Generate the age key pair
 

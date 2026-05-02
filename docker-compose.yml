@@ -26,9 +26,11 @@ services:
       # Operator-loaded binary `age` identity (ADR-0024). load-binary-key.sh
       # asserts this mount is tmpfs before writing the private identity;
       # the boot probe (assertBinaryIdentityLoaded) reads it back before
-      # the app accepts requests. Mode 0700 mirrors the backup drill-key
-      # mount on the backup service.
-      - /run/binary-key:mode=0700,uid=0,gid=0
+      # the app accepts requests. uid/gid 1001 matches the `app` user
+      # pinned in the Dockerfile — both the boot probe (read) and the
+      # loader script (write) run as `app`, so the tmpfs must be owned
+      # by that uid. Mode 0700 keeps it unreadable to any other uid.
+      - /run/binary-key:mode=0700,uid=1001,gid=1001
     mem_limit: 512m
     cpus: 1.0
     environment:

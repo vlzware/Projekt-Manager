@@ -64,13 +64,13 @@ ERROR: /run/binary-key is not a tmpfs mount.
 
 Cause: a `docker-compose.yml` regression dropped or renamed the `tmpfs:` directive on the `app` service. Writing the identity to a non-tmpfs path would persist it to disk — the script refuses on principle.
 
-Fix: inspect and restore the directive on the `app` service. Reference shape (mirrors the backup service's drill-key mount):
+Fix: inspect and restore the directive on the `app` service. Reference shape (uid/gid 1001 match the `app` user pinned in the Dockerfile — the boot probe and the loader both run as `app` and need to read/write the tmpfs):
 
 ```yaml
 services:
   app:
     tmpfs:
-      - /run/binary-key:mode=0700,uid=0,gid=0
+      - /run/binary-key:mode=0700,uid=1001,gid=1001
 ```
 
 After the edit, redeploy and retry the paste. If the directive is intact in the file but the mount isn't taking effect, see [docs/ops/backup/drills.md § Loading](../backup/drills.md#loading-the-drill-key-on-the-vps) note about tmpfs stacking on `/run` — the same class of issue applies here.
