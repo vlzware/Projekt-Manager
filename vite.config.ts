@@ -41,12 +41,12 @@ function buildServiceWorker(): Plugin {
   const esbuildOptions = {
     entryPoints: [path.resolve(__dirname, 'src/sw/index.ts')],
     bundle: true,
-    format: 'iife',
-    target: 'es2022',
-    platform: 'browser',
+    format: 'iife' as const,
+    target: 'es2022' as const,
+    platform: 'browser' as const,
     minify: true,
     sourcemap: true,
-  } as const;
+  };
 
   return {
     name: 'build-service-worker',
@@ -56,21 +56,35 @@ function buildServiceWorker(): Plugin {
     configureServer(server) {
       server.middlewares.use('/sw.js', async (req, res, next) => {
         // Connect strips the mount prefix from `req.url`. The exact
-        // `/sw.js` request leaves `req.url === '/'`; anything deeper
-        // (e.g. a hypothetical `/sw.js/foo`) would not be ours.
-        if (req.method !== 'GET' || req.url !== '/') return next();
+        // `/sw.js` request leaves `req.url === '/'`; the sourcemap
+        // sibling `/sw.js.map` arrives as `/.map`. Anything deeper
+        // (e.g. a hypothetical `/sw.js/foo`) is not ours.
+        if (req.method !== 'GET') return next();
+        const wantMap = req.url === '/.map';
+        if (req.url !== '/' && !wantMap) return next();
         try {
           const result = await esbuildBuild({
             ...esbuildOptions,
+            // `outfile` (not written because `write: false`) gives
+            // esbuild a path context so it splits the bundle into a
+            // separate `.js` and `.js.map` instead of inlining the
+            // sourcemap as a data URI; the middleware can then serve
+            // each on its own URL.
+            outfile: path.resolve(__dirname, 'dist/sw.js'),
             write: false,
           });
-          const file = result.outputFiles?.[0];
+          const file = wantMap
+            ? result.outputFiles?.find((f) => f.path.endsWith('.map'))
+            : result.outputFiles?.find((f) => !f.path.endsWith('.map'));
           if (!file) {
             res.statusCode = 500;
             res.end('SW bundle produced no output');
             return;
           }
-          res.setHeader('content-type', 'application/javascript; charset=utf-8');
+          res.setHeader(
+            'content-type',
+            wantMap ? 'application/json; charset=utf-8' : 'application/javascript; charset=utf-8',
+          );
           res.setHeader('cache-control', 'no-cache');
           res.end(file.text);
         } catch (err) {
@@ -102,6 +116,11 @@ export default defineConfig({
   // in Playwright's auth setup (`e2e/auth.setup.ts`).
   optimizeDeps: {
     entries: ['index.html'],
+  },
+  // Sourcemaps for the main React bundle (private repo, helps debug
+  // push + decrypt paths). Mirrors the SW esbuild sourcemap policy.
+  build: {
+    sourcemap: true,
   },
   server: {
     // Listen on all interfaces so the dev server is reachable via the
