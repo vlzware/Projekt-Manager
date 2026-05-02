@@ -304,6 +304,33 @@ fi
 echo "Reloading Caddy config..."
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --force
 
+# --- Binary-key reload (operator-loaded; ADR-0024 boot probe) --------
+# Container recreation wipes the tmpfs at /run/binary-key. The app boot
+# probe (assertBinaryIdentityLoaded) refuses to start the container
+# until the identity lands — so the failure mode is HARD DOWN, not a
+# silent stale-badge like the backup case below. Fold the paste into
+# the deploy session for the same reason: same TTY the operator used
+# to decrypt secrets.env.age above, no AC weakening (load-binary-key
+# still reads over restricted-mode stdin and writes only to tmpfs).
+#
+# Skip when the tmpfs is still warm (compose-only changes that didn't
+# recreate the app container).
+if docker exec projekt-manager-app-1 test -s /run/binary-key/identity 2>/dev/null; then
+  echo "Binary identity already in tmpfs — skipping reload."
+else
+  echo
+  echo "==> Loading binary identity (operator paste; ADR-0024 tmpfs-only)"
+  # `-it` allocates a pseudo-TTY so load-binary-key's `read -s` actually
+  # suppresses echo. A missed paste keeps the app DOWN — the boot probe
+  # refuses to start without the identity — so the warning is louder
+  # than the backup-side equivalent below.
+  if ! docker exec -it projekt-manager-app-1 load-binary-key; then
+    echo "ERROR: binary identity not loaded — the app will REFUSE TO START until you run:" >&2
+    echo "       docker exec -it projekt-manager-app-1 load-binary-key" >&2
+    echo "       (boot probe is fail-closed; no degraded mode — see ADR-0024)" >&2
+  fi
+fi
+
 # --- Drill-key reload (operator-loaded; AC-175 tmpfs-only) -----------
 # Container recreation wipes the tmpfs at /run/drill-key. Until the
 # operator re-pastes the age private identity, every Tier 2 drill tick

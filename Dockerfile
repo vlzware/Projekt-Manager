@@ -26,7 +26,16 @@ COPY --from=build /app/src/server/db/migrations ./dist/server/db/migrations
 # `age` binary — required by KeyEnvelopeService at every download-url /
 # bulk-fetch unwrap (ADR-0024). The boot probe reads age-keygen at
 # startup; both must be on PATH before the process forks them.
-RUN apk add --no-cache age
+# `findmnt` is used by load-binary-key.sh's tmpfs-invariant check;
+# without it the script falls back to /proc/mounts parsing.
+RUN apk add --no-cache age findmnt
+
+# Operator helper: load the binary `age` private identity into tmpfs
+# (ADR-0024 §Operator workflow). Mirrors how Dockerfile.backup installs
+# load-drill-key — script lives in repo as *.sh, container path drops
+# the suffix so the runbook command stays short.
+COPY scripts/binary-key/load-binary-key.sh /usr/local/bin/load-binary-key
+RUN chmod +x /usr/local/bin/load-binary-key
 
 RUN addgroup -S app && adduser -S app -G app \
  && chown -R app:app /app

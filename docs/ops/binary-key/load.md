@@ -14,7 +14,7 @@ The **deploy auto-prompt** in `scripts/deploy.sh` is the intended trigger in nor
 
 ## The paste
 
-`scripts/binary-key/load-binary-key.sh` writes the identity to a tmpfs mount the `app` container reads from, and never anywhere else. The script mirrors [`scripts/backup/load-drill-key.sh`](../../../scripts/backup/load-drill-key.sh) byte-for-byte at the invariants — same prompt, same `read -s` paste, same `age-keygen -y` round-trip, same recipient match — with `BINARY_AGE_RECIPIENT` and `/run/binary-key/identity` swapped in. (At the time of writing, the file `scripts/binary-key/load-binary-key.sh` is not yet present in the tree; the runbook's contract is what the script implements when it lands.)
+`scripts/binary-key/load-binary-key.sh` writes the identity to a tmpfs mount the `app` container reads from, and never anywhere else. The script mirrors [`scripts/backup/load-drill-key.sh`](../../../scripts/backup/load-drill-key.sh) byte-for-byte at the invariants — same prompt, same `read -s` paste, same `age-keygen -y` round-trip, same recipient match — with `BINARY_AGE_RECIPIENT` and `/run/binary-key/identity` swapped in.
 
 **Location:** `scripts/binary-key/load-binary-key.sh` in the repo. The image build copies it to `/usr/local/bin/load-binary-key` (no `.sh`) — that is the only path the operator ever invokes, via `docker exec` into the running app container. The tmpfs target inside the container is `/run/binary-key/identity` (file mode 0400, owned by root; the tmpfs mount itself is mode 0700 uid 0).
 
