@@ -27,7 +27,7 @@ You are about to write private key material into RAM on the VPS; this is cleared
    sudo -u deploy docker exec -it projekt-manager-app-1 load-binary-key
    ```
 
-3. The script prompts with `read -s` ("Paste age identity, end with Ctrl-D:"). Paste the clipboard contents, press Enter, then Ctrl-D. The script:
+3. The script prompts with `read -s` ("Paste age identity, finish with Ctrl-D:"). Paste the clipboard contents, press Enter, then Ctrl-D. The script:
    - Validates the destination is a tmpfs mount (refuses to write otherwise — protects against a docker-compose regression that drops the `tmpfs:` directive).
    - Validates the pasted material parses as an `age` identity by round-tripping through `age-keygen -y`.
    - Compares the derived public recipient against `BINARY_AGE_RECIPIENT` from the container env. Mismatch = operator pasted the wrong key (probably the backup drill identity); the script wipes the partial write and exits non-zero.
