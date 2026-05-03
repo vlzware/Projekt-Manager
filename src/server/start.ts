@@ -31,6 +31,7 @@ import { deleteExpiredSessions } from './repositories/session.js';
 import { startSessionReaper } from './session-reaper.js';
 import { startAuditRetentionScheduler } from './audit-retention-scheduler.js';
 import { startAttachmentOrphanReaperScheduler } from './attachment-orphan-reaper-scheduler.js';
+import { startAttachmentHiddenReaperScheduler } from './attachment-hidden-reaper-scheduler.js';
 import { setOperationalLogger as setAuditPublisherLogger } from './services/audit-publisher.js';
 import { AUDIT_RETENTION } from '../config/auditRetention.js';
 import { ATTACHMENT_CONFIG } from '../config/attachmentConfig.js';
@@ -244,10 +245,23 @@ async function start(): Promise<void> {
     },
   });
 
-  // (Pre-e2e bulk-download temp-zip reaper retired under ADR-0024 —
-  // bulk assembly is browser-side streaming-zip; the server never
-  // produces a `bulk-downloads/` artifact, so there is nothing to
-  // sweep.)
+  // Attachment hidden reaper (AC-246 / data-model.md §6.12). Hard-deletes
+  // hidden rows past the TTL together with their audit row via mutate().
+  // No storage dependency — bytes are the bucket lifecycle's concern
+  // (ADR-0022). Default cadence is hourly because the action it takes
+  // is on a 2-day window; sub-hourly sweeps would be wasted.
+  const hiddenReaper = startAttachmentHiddenReaperScheduler({
+    db,
+    intervalMinutes:
+      env.ATTACHMENT_HIDDEN_REAPER_INTERVAL_MINUTES ??
+      ATTACHMENT_CONFIG.hiddenReaperIntervalMinutes,
+    ttlMinutes:
+      env.ATTACHMENT_HIDDEN_REAPER_TTL_MINUTES ?? ATTACHMENT_CONFIG.hiddenReaperTtlMinutes,
+    logger: {
+      info: (ctx, event) => console.log(event, ctx),
+      error: (ctx, event) => console.error(event, ctx),
+    },
+  });
 
   const app = buildApp({ logger: true, db });
 
@@ -313,7 +327,12 @@ async function start(): Promise<void> {
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.on(signal, async () => {
       // Wait for any in-flight sweep so pool.end() isn't called under its feet.
-      await Promise.all([reaper.stop(), auditRetention.stop(), attachmentReaper.stop()]);
+      await Promise.all([
+        reaper.stop(),
+        auditRetention.stop(),
+        attachmentReaper.stop(),
+        hiddenReaper.stop(),
+      ]);
       await app.close();
       await pool.end();
       process.exit(0);

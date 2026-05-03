@@ -373,4 +373,40 @@ export async function deleteOrphans(db: Database, cutoffTime: Date): Promise<Att
     .returning();
 }
 
+/**
+ * List rows eligible for the hidden reaper (data-model.md §6.12): rows
+ * at `status = 'hidden'` whose age past `hiddenAt` exceeds the TTL.
+ *
+ * Read outside the per-row transaction so the reaper can iterate one-
+ * mutate-per-row without holding a long-lived lock; the per-row CAS in
+ * `deleteHiddenForReap` re-asserts `status = 'hidden'` at delete time
+ * to fence a concurrent restore that landed between this read and the
+ * delete.
+ */
+export async function findHiddenForReap(db: Database, cutoffTime: Date): Promise<AttachmentRow[]> {
+  return db
+    .select()
+    .from(attachments)
+    .where(and(eq(attachments.status, 'hidden'), lt(attachments.hiddenAt, cutoffTime)));
+}
+
+/**
+ * CAS DELETE inside the per-row `mutate()` transaction. The
+ * `status = 'hidden'` predicate guards against a concurrent restore
+ * that flipped the row to `ready` after `findHiddenForReap` snapshot
+ * it. Returns the deleted row on success, or `undefined` on CAS-loss
+ * — the caller throws a sentinel so the surrounding `mutate()`
+ * transaction rolls back the audit insert.
+ */
+export async function deleteHiddenForReap(
+  tx: MutatingDatabase,
+  id: string,
+): Promise<AttachmentRow | undefined> {
+  const rows = await tx
+    .delete(attachments)
+    .where(and(eq(attachments.id, id), eq(attachments.status, 'hidden')))
+    .returning();
+  return rows[0];
+}
+
 export type { AttachmentStatus };

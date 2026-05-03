@@ -547,6 +547,17 @@ export const STRINGS = {
       `Wiederherstellen nicht möglich: Anhang ${id} hat keine version_id (Datenintegritätsproblem).`,
     restoreMissingThumbVersionId: (id: string) =>
       `Wiederherstellen nicht möglich: Anhang ${id} hat keine thumb_version_id (Datenintegritätsproblem).`,
+    /**
+     * Surfaces when the row is still at `status='hidden'` but the
+     * source object version is no longer recoverable from object storage
+     * — the bucket lifecycle reaper (ADR-0022) reaped the bytes ahead of
+     * the row reaper. A bounded race window per data-model.md §6.12;
+     * 410 GONE is the right code because the bytes are permanently gone,
+     * not "retry might work". The row reaper closes the window on its
+     * next tick.
+     */
+    restoreBytesGone: (id: string) =>
+      `Wiederherstellen nicht möglich: die Datei für Anhang ${id} wurde vom Speicher endgültig entfernt.`,
 
     // Download actions
     download: 'Herunterladen',

@@ -520,9 +520,11 @@ export const attachments = pgTable(
     wrappedDekVersion: smallint('wrapped_dek_version').notNull(),
     /**
      * Set when the attachment is moved to the Papierkorb (status =
-     * 'hidden'). Null while live or pending. Bucket lifecycle reaps the
-     * underlying noncurrent versions after L days from this timestamp;
-     * the row itself persists so restore is auditable.
+     * 'hidden'). Null while live or pending. The scheduled hidden reaper
+     * (data-model.md §6.12) hard-deletes the row once `now() - hiddenAt
+     * > L`; the bucket lifecycle reaps the underlying noncurrent versions
+     * on the same window. Both are keyed off `L` so the row never
+     * outlives recoverability.
      */
     hiddenAt: timestamp('hidden_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

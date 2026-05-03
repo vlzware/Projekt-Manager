@@ -64,7 +64,7 @@ Displays every `status = 'ready'` attachment with `kind = 'binary'` (PDF, DOCX) 
 
 ### 8.15.6 Soft-Hide
 
-The delete affordance is a soft-hide: the row flips to `status = 'hidden'` and the file moves to the project's Papierkorb (§8.15.10). The Papierkorb is bounded — a hidden row is reaped after the configured hide-to-delete window `L` **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) and is then permanently destroyed.
+The delete affordance is a soft-hide: the row flips to `status = 'hidden'` and the file moves to the project's Papierkorb (§8.15.10). The Papierkorb is bounded — once a hidden row's age past `hiddenAt` exceeds the configured hide-to-delete window `L` **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)), the row is hard-deleted by the hidden reaper ([data-model.md §6.12](../data-model.md#612-attachment-hidden-reaper)) and the underlying noncurrent versions are reaped by the bucket lifecycle on the same window — both keyed off `L` so the row never outlives recoverability.
 
 - Owner, office: any attachment on the project.
 - Worker: own attachments only, within the configured self-delete grace window **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)). Outside that window the delete control is hidden; the server rejects with `403 NOT_PERMITTED` as the authoritative gate ([api.md §14.2.11](../api.md#14211-attachments)).
@@ -109,7 +109,7 @@ The role → capability mapping (which role holds `attachment:read`, `attachment
 
 ### 8.15.10 Papierkorb Tab
 
-Per-project trash surface listing rows soft-hidden via §8.15.6. Bounded by the configured hide-to-delete window `L` **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) — a hidden row past that window is reaped by the storage lifecycle and is no longer recoverable.
+Per-project trash surface listing rows soft-hidden via §8.15.6. Bounded by the configured hide-to-delete window `L` **[C]** ([architecture.md §12.2](../architecture.md#122-company-configurable-settings)) — once a hidden row's age past `hiddenAt` exceeds `L`, the row is hard-deleted by the hidden reaper ([data-model.md §6.12](../data-model.md#612-attachment-hidden-reaper)) and the underlying noncurrent versions are reaped by the bucket lifecycle on the same window. After `L`, the row no longer appears in the Papierkorb listing — the listing therefore reflects only restorable items.
 
 - **Visibility.** Tab is shown only to callers with `attachment:trash` (owner / office under the default matrix). The tab badge carries the trash row count. Server-side authorization remains authoritative: a forbidden caller hitting the API directly receives `403 NOT_PERMITTED` ([AC-235](../verification.md#1526-attachments)).
 - **Render states.** `loading` while the initial fetch is in flight, `forbidden` (`403`) for defense-in-depth on direct API calls that bypass tab visibility, `error` with a German message and an `Erneut versuchen` action ([behavior.md §9.5](behavior.md#95-asynchronous-mutation-behavior)), `ready` rendering the list (possibly empty).

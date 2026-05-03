@@ -16,6 +16,7 @@ export type ErrorCode =
   | 'CONFLICT'
   | 'IDEMPOTENCY_CONFLICT'
   | 'NOT_FOUND'
+  | 'GONE'
   | 'RATE_LIMITED'
   | 'SCHEMA_VERSION_MISMATCH'
   | 'TARGET_NOT_EMPTY'
@@ -159,6 +160,17 @@ export function extractSqlState(err: unknown): string | null {
 
 export function notFound(entity: string = STRINGS.entities.resource): AppError {
   return new AppError('NOT_FOUND', STRINGS.errors.notFound(entity), 404);
+}
+
+/**
+ * The target resource existed but is permanently unavailable; retry won't
+ * help. Distinct from 404 (no representation, may have never existed) and
+ * 409 (transient conflict, refetch+retry might resolve). Used when the
+ * Papierkorb row is present but the source bytes were lifecycle-reaped
+ * ahead of the row reaper (data-model.md §6.12 race window).
+ */
+export function gone(message: string): AppError {
+  return new AppError('GONE', message, 410);
 }
 
 export function rateLimited(): AppError {
