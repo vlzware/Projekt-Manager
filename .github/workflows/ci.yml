@@ -5,6 +5,14 @@ on:
     branches: [main, 'iteration/**']
   pull_request:
     branches: [main, 'iteration/**']
+  # Manual escape hatch for building/publishing images on a feature
+  # branch so it can be deployed to the VPS via scripts/deploy.sh
+  # without first merging to main. CLI-only by design — the GH UI
+  # "Run workflow" button only surfaces workflows from the default
+  # branch, so for now invoke as:
+  #   gh workflow run ci.yml --ref <branch>
+  # Mirrors the same pattern used by .github/workflows/e2e.yml.
+  workflow_dispatch:
 
 jobs:
   check:
@@ -352,7 +360,10 @@ jobs:
   # that fails tests, lint, or type-check.
   # ---------------------------------------------------------------
   build-and-push:
-    if: github.event_name == 'push'
+    # `push` covers main/iteration auto-builds (the original gate);
+    # `workflow_dispatch` covers operator-triggered feature-branch
+    # builds for VPS testing (see the trigger block above).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: check
     runs-on: ubuntu-latest
     permissions:
