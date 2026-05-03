@@ -17,19 +17,26 @@ Symptoms that appear during or right after [setup.md §4](setup.md#4-first-deplo
 
 ## App refuses to start
 
-The boot probe is the most common failure surface — by design ([ADR-0024 §Decision "Boot probe"](../../adr/0024-binary-attachment-e2e-encryption.md#decision)). When you see the container in a restart loop right after a reboot or a deploy:
+The boot probe is the most common failure surface — by design ([ADR-0024 §Decision "Boot probe"](../../adr/0024-binary-attachment-e2e-encryption.md#decision)). The probe waits up to 5 minutes for the identity file to appear before giving up; during that window the container is **alive but not serving** (no listener on `:3000`). Past the 5-minute timeout the app exits 1, docker restarts the container per `restart: unless-stopped`, and the wait window starts over — slow restart loop, ~5 min per cycle.
 
 ```bash
 sudo -u deploy docker logs projekt-manager-app-1 --tail=50
 ```
 
-Expected log line on a clean boot-probe failure:
+Expected progress log line during the wait:
 
 ```
-binary identity not loaded at /run/binary-key/identity — refusing to start
+binary-identity probe: waiting up to 300s for /run/binary-key/identity (paste via load-binary-key)
+binary-identity probe: still waiting for /run/binary-key/identity (30s elapsed, 270s remaining)
 ```
 
-**Fix:** load the identity per [load.md](load.md). The container restart loop continues until the identity lands; once loaded, the next health-poll tick flips the container to healthy.
+Expected log line after the timeout (or on a hard failure — perms drift, malformed paste, recipient mismatch):
+
+```
+Refusing to start: binary-identity probe failed (ADR-0024) — binary `age` identity not loaded: file at BINARY_AGE_IDENTITY_PATH is absent. ... (probe waited 300s for the file to appear)
+```
+
+**Fix:** load the identity per [load.md](load.md). The next poll tick (≤2s) picks it up and the boot continues.
 
 If the log shows a different error class (e.g., `tmpfs not mounted`), see § Recipient mismatch / tmpfs missing below.
 

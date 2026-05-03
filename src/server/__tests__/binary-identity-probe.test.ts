@@ -27,6 +27,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import os from 'node:os';
@@ -35,6 +36,16 @@ import {
   assertBinaryIdentityLoaded,
   type BinaryIdentitySnapshot,
 } from '../storage/binaryIdentity.js';
+
+/**
+ * Tests for the orchestrator pass `waitTimeoutMs: 0` (or a small
+ * value) to opt out of the production 5-minute wait window — the
+ * production behavior is exercised by the dedicated wait/timeout
+ * tests further down. Tests also pass `progressLogIntervalMs: 0` to
+ * suppress the "still waiting" progress log lines so test output
+ * stays clean.
+ */
+const FAIL_FAST_OPTIONS = { waitTimeoutMs: 0, progressLogIntervalMs: 0 } as const;
 
 // ---------------------------------------------------------------------
 // evaluateBinaryIdentity — pure validator over a structured snapshot.
@@ -164,6 +175,7 @@ describe('AC-239: binary-identity boot probe — orchestration', () => {
         assertBinaryIdentityLoaded({
           identityPath: filePath,
           configuredRecipient: 'age1xyz',
+          ...FAIL_FAST_OPTIONS,
         }),
       ).rejects.toThrow(/Refusing to start/);
     });
@@ -179,6 +191,9 @@ describe('AC-239: binary-identity boot probe — orchestration', () => {
         // the next test. The split is the right shape: a perms drift
         // on a non-root operator account is the production-realistic
         // case the probe targets.)
+        //
+        // No FAIL_FAST_OPTIONS needed — `fileExists=true` triggers
+        // the orchestrator's hard-failure-no-wait branch.
         await expect(
           assertBinaryIdentityLoaded({
             identityPath: filePath,
@@ -194,6 +209,7 @@ describe('AC-239: binary-identity boot probe — orchestration', () => {
   it('throws when the file content fails the `age-keygen -y` round-trip (malformed identity)', async () => {
     await withTempIdentity(async (filePath) => {
       writeFileSync(filePath, 'this-is-not-an-age-identity\n', { mode: 0o400 });
+      // Hard failure → no wait needed.
       await expect(
         assertBinaryIdentityLoaded({
           identityPath: filePath,
@@ -210,6 +226,7 @@ describe('AC-239: binary-identity boot probe — orchestration', () => {
       // Configure with a *different* recipient so the round-trip output
       // mismatches. This is the "operator pasted the backup identity into
       // the binary loader" path documented in load.md / troubleshooting.md.
+      // Hard failure → no wait needed.
       const wrongRecipient = 'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
       await expect(
         assertBinaryIdentityLoaded({
@@ -248,6 +265,7 @@ describe('AC-239: binary-identity boot probe — orchestration', () => {
         await assertBinaryIdentityLoaded({
           identityPath: filePath,
           configuredRecipient: 'age1xyz',
+          ...FAIL_FAST_OPTIONS,
         });
         throw new Error('expected throw');
       } catch (err) {
@@ -258,6 +276,167 @@ describe('AC-239: binary-identity boot probe — orchestration', () => {
         // generic message would mask which probe failed at boot.
         expect(msg).toMatch(/binary-identity/i);
       }
+    });
+  });
+});
+
+// ---------------------------------------------------------------------
+// assertBinaryIdentityLoaded — bounded wait for absent-file arm.
+//
+// The production probe waits up to 5 minutes for the operator paste
+// to land before declaring boot failure (see binaryIdentity.ts
+// DEFAULT_WAIT_TIMEOUT_MS for rationale). Crash-restart loop the
+// immediate-throw version produced under `restart: unless-stopped`
+// killed the deploy script's docker-exec'd `load-binary-key`
+// mid-`read` — regression observed 2026-05-03.
+// ---------------------------------------------------------------------
+
+describe('binary-identity boot probe — bounded wait for absent file', () => {
+  function withTempDir<T>(body: (dirPath: string) => Promise<T> | T): Promise<T> {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'binary-identity-wait-'));
+    return Promise.resolve(body(dir)).finally(() => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup
+      }
+    });
+  }
+
+  function freshAgeIdentity(): { identity: string; recipient: string } {
+    const identity = execFileSync('age-keygen', { encoding: 'utf-8' }).trim();
+    const recipient = execFileSync('age-keygen', ['-y'], {
+      input: identity,
+      encoding: 'utf-8',
+    }).trim();
+    return { identity, recipient };
+  }
+
+  it('returns once the identity file appears mid-wait', async () => {
+    await withTempDir(async (dir) => {
+      const filePath = path.join(dir, 'identity');
+      const { identity, recipient } = freshAgeIdentity();
+
+      // Land the file 100ms in — well inside the 2s timeout.
+      const writeAfterMs = 100;
+      const writeTimer = setTimeout(() => {
+        // Fire-and-forget; if the write fails, the probe times out
+        // and the test fails with a clear timeout error.
+        void writeFile(filePath, identity + '\n', { mode: 0o400 });
+      }, writeAfterMs);
+
+      try {
+        await assertBinaryIdentityLoaded({
+          identityPath: filePath,
+          configuredRecipient: recipient,
+          waitTimeoutMs: 2_000,
+          pollIntervalMs: 25,
+          progressLogIntervalMs: 0,
+        });
+      } finally {
+        clearTimeout(writeTimer);
+      }
+    });
+  });
+
+  it('throws after the timeout when the file never appears', async () => {
+    await withTempDir(async (dir) => {
+      const filePath = path.join(dir, 'identity'); // never created
+      const start = Date.now();
+      await expect(
+        assertBinaryIdentityLoaded({
+          identityPath: filePath,
+          configuredRecipient: 'age1xyz',
+          waitTimeoutMs: 200,
+          pollIntervalMs: 25,
+          progressLogIntervalMs: 0,
+        }),
+      ).rejects.toThrow(/Refusing to start.*absent/s);
+      const elapsed = Date.now() - start;
+      // Asserts we actually waited (≥ timeout) and didn't loop
+      // pathologically beyond it. Generous upper bound to absorb
+      // CI scheduling jitter without flaking.
+      expect(elapsed).toBeGreaterThanOrEqual(200);
+      expect(elapsed).toBeLessThan(2_000);
+    });
+  });
+
+  it('does not wait when the file is present but malformed', async () => {
+    await withTempDir(async (dir) => {
+      const filePath = path.join(dir, 'identity');
+      writeFileSync(filePath, 'not-an-age-identity\n', { mode: 0o400 });
+
+      const start = Date.now();
+      await expect(
+        assertBinaryIdentityLoaded({
+          identityPath: filePath,
+          configuredRecipient: 'age1xyz',
+          // Even with a generous timeout, fileExists=true should short-
+          // circuit straight to throw — perms / malformed / mismatch
+          // never benefit from the wait window.
+          waitTimeoutMs: 30_000,
+          pollIntervalMs: 25,
+          progressLogIntervalMs: 0,
+        }),
+      ).rejects.toThrow(/Refusing to start/);
+      const elapsed = Date.now() - start;
+      // Should be near-instant — well under any meaningful fraction
+      // of the timeout. Tolerance picked to absorb CPU jitter on CI.
+      expect(elapsed).toBeLessThan(500);
+    });
+  });
+
+  it('does not wait when the file is present but recipient mismatches', async () => {
+    await withTempDir(async (dir) => {
+      const filePath = path.join(dir, 'identity');
+      const { identity } = freshAgeIdentity();
+      writeFileSync(filePath, identity + '\n', { mode: 0o400 });
+
+      const start = Date.now();
+      await expect(
+        assertBinaryIdentityLoaded({
+          identityPath: filePath,
+          configuredRecipient: 'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq',
+          waitTimeoutMs: 30_000,
+          pollIntervalMs: 25,
+          progressLogIntervalMs: 0,
+        }),
+      ).rejects.toThrow(/Refusing to start.*recipient/);
+      expect(Date.now() - start).toBeLessThan(500);
+    });
+  });
+
+  it('emits an initial "waiting" log line and timeout suffix on failure', async () => {
+    await withTempDir(async (dir) => {
+      const filePath = path.join(dir, 'identity'); // never created
+      const captured: string[] = [];
+
+      try {
+        await assertBinaryIdentityLoaded({
+          identityPath: filePath,
+          configuredRecipient: 'age1xyz',
+          waitTimeoutMs: 1_500,
+          pollIntervalMs: 50,
+          // Force a progress log within the test window so we can
+          // assert both the initial "waiting" line and at least one
+          // periodic "still waiting" follow-up.
+          progressLogIntervalMs: 500,
+          logger: { info: (msg): void => void captured.push(msg) },
+        });
+      } catch (err) {
+        // Expected — the file never appeared. Assert the message
+        // names the probe + the elapsed wait so an operator log can
+        // distinguish "probe never started" from "operator didn't
+        // paste in time".
+        const msg = (err as Error).message;
+        expect(msg).toMatch(/binary-identity/);
+        expect(msg).toMatch(/probe waited \d+s/);
+      }
+
+      // Initial "waiting up to N s" line + at least one periodic
+      // "still waiting" follow-up.
+      expect(captured.some((m) => /waiting up to \d+s/.test(m))).toBe(true);
+      expect(captured.some((m) => /still waiting/.test(m))).toBe(true);
     });
   });
 });

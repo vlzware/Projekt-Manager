@@ -289,12 +289,21 @@ docker compose --profile backup up -d
 
 # --- Binary-key reload (operator-loaded; ADR-0024 boot probe) --------
 # Container recreation wipes the tmpfs at /run/binary-key. The app boot
-# probe (assertBinaryIdentityLoaded) refuses to start the container
-# until the identity lands — so the failure mode is HARD DOWN. This
-# block runs BEFORE the smoke probe: without the paste, the app crash-
-# loops and smoke-app-health would fail with 30 × ECONNREFUSED, masking
-# the real cause and aborting the deploy before the operator ever sees
-# the prompt. Sequence: compose up → paste binary key → smoke gate.
+# probe (assertBinaryIdentityLoaded) waits up to 5 minutes for the
+# identity file to appear before declaring boot failure (see
+# binaryIdentity.ts DEFAULT_WAIT_TIMEOUT_MS) — the immediate-throw
+# version combined with `restart: unless-stopped` produced a crash-
+# restart loop that killed this docker-exec'd loader mid-`read`
+# (regression observed 2026-05-03 in the 148-binary-e2e deploy).
+#
+# We still prompt for the paste here rather than relying on the
+# probe's wait window alone: (a) the paste is an operational
+# acknowledgment, not just a file-write — the operator confirms they
+# are present and the right keypair is loaded — and (b) the smoke
+# probe (60s) downstream needs to start AFTER the paste lands so
+# its window measures "did the app start?" rather than "did the
+# operator paste in time?". Sequence: compose up → operator paste →
+# smoke gate → caddy reload.
 #
 # The drill-key block (further down) runs AFTER the smoke probe because
 # its container has no boot gate — backups serve in degraded mode if
@@ -308,9 +317,10 @@ else
   echo
   echo "==> Loading binary identity (operator paste; ADR-0024 tmpfs-only)"
   # `-it` allocates a pseudo-TTY so load-binary-key's `read -s` actually
-  # suppresses echo. A missed paste keeps the app DOWN — the boot probe
-  # is fail-closed, no degraded mode — so we abort the deploy rather
-  # than pretend "verified" downstream.
+  # suppresses echo. A missed paste keeps the app DOWN — the boot
+  # probe is fail-closed (it eventually throws on timeout, no degraded
+  # mode) — so we abort the deploy rather than pretend "verified"
+  # downstream.
   if ! docker exec -it projekt-manager-app-1 load-binary-key; then
     echo "ERROR: binary identity not loaded — aborting deploy." >&2
     echo "       The app boot probe is fail-closed (ADR-0024); without the" >&2

@@ -168,38 +168,56 @@ export function evaluateBinaryIdentity(snapshot: BinaryIdentitySnapshot): Binary
   return failures.length === 0 ? { ok: true } : { ok: false, failures };
 }
 
-export interface AssertBinaryIdentityOptions {
-  identityPath: string;
-  configuredRecipient: string;
-}
+/**
+ * Default upper bound on how long `assertBinaryIdentityLoaded` waits
+ * for the absent identity file to appear before treating its absence
+ * as a hard failure. 5 minutes — well within ADR-0024's "operator
+ * reachable within minutes" assumption, and far longer than the
+ * crash-restart cadence (~10-15s/iteration) the immediate-throw
+ * version produced when paired with `restart: unless-stopped`. The
+ * loop+restart combo killed the deploy script's `docker exec`'d
+ * `load-binary-key` mid-`read` (regression observed 2026-05-03 in
+ * the 148-binary-e2e deploy).
+ */
+export const DEFAULT_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
 
 /**
- * Orchestrator. Reads the file at `identityPath`, runs `age-keygen -y`
- * to derive the public recipient, builds a `BinaryIdentitySnapshot`,
- * delegates to `evaluateBinaryIdentity`, and throws an aggregated error
- * on any failure.
- *
- * The error message includes the `binary-identity` event identifier so
- * the boot site's catch handler can log+exit with one payload. Mirrors
- * the "Refusing to start: ..." message shape from
- * `assertStorageBucketSafe`.
+ * Default poll cadence while waiting. `fs.access` on a tmpfs is
+ * cheap; 2s is fast enough that the app boots promptly after the
+ * operator paste lands and slow enough to keep noise out of strace.
  */
-export async function assertBinaryIdentityLoaded(
-  options: AssertBinaryIdentityOptions,
-): Promise<void> {
-  const { identityPath, configuredRecipient } = options;
+export const DEFAULT_POLL_INTERVAL_MS = 2_000;
 
-  // Stage 1: existence + readability via fs.access. Two separate probes
-  // (F_OK then R_OK) so the snapshot can distinguish "missing" from
-  // "perms drift" — the operator diagnostics differ.
+/**
+ * Default cadence for "still waiting" progress log lines. Operators
+ * see steady progress in `docker logs` without flooding the log
+ * surface; 30s strikes the balance.
+ */
+export const DEFAULT_PROGRESS_LOG_INTERVAL_MS = 30_000;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Build a fresh `BinaryIdentitySnapshot` by inspecting the
+ * filesystem. Extracted from the orchestrator so the wait loop can
+ * re-run it cheaply per tick without re-reading the constant
+ * `configuredRecipient` from anywhere.
+ */
+async function captureSnapshot(
+  identityPath: string,
+  configuredRecipient: string,
+): Promise<BinaryIdentitySnapshot> {
+  // Two separate probes (F_OK then R_OK) so the snapshot can
+  // distinguish "missing" from "perms drift" — the operator
+  // diagnostics differ.
   let fileExists = false;
   let fileReadable = false;
   try {
     await access(identityPath, fsConstants.F_OK);
     fileExists = true;
   } catch {
-    // Fall through with fileExists=false; the validator reports the
-    // absent-file failure.
+    // Fall through with fileExists=false; the validator reports
+    // the absent-file failure.
   }
 
   if (fileExists) {
@@ -211,47 +229,170 @@ export async function assertBinaryIdentityLoaded(
     }
   }
 
-  // Stage 2: round-trip via age-keygen -y. Only attempted if we can
-  // actually read the file — otherwise derivedRecipient stays null and
-  // the validator surfaces the file-level failure instead of a noisy
+  // Round-trip via age-keygen -y is only attempted when the file is
+  // actually readable — otherwise derivedRecipient stays null and the
+  // validator surfaces the file-level failure instead of a noisy
   // "age-keygen rejected: ENOENT" stack.
   let derivedRecipient: string | null = null;
   if (fileExists && fileReadable) {
     try {
       const content = await readFile(identityPath, 'utf-8');
-      // Pipe content via stdin. The drill-key loader passes the file path
-      // as argv to `age-keygen -y`; piping via stdin keeps the secret
-      // material out of `ps`/argv surface and matches what the
-      // integration-setup.ts harness already uses for its keypair derivation.
+      // Pipe content via stdin. The drill-key loader passes the file
+      // path as argv to `age-keygen -y`; piping via stdin keeps the
+      // secret material out of `ps`/argv surface and matches what
+      // integration-setup.ts already uses for its keypair derivation.
       derivedRecipient = await runAgeKeygenY(content);
     } catch {
       // readFile failed despite R_OK passing earlier — treat as a
-      // round-trip failure so the validator surfaces a recognizable arm.
+      // round-trip failure so the validator surfaces a recognizable
+      // arm.
       derivedRecipient = null;
     }
   }
 
-  const snapshot: BinaryIdentitySnapshot = {
-    fileExists,
-    fileReadable,
-    derivedRecipient,
+  return { fileExists, fileReadable, derivedRecipient, configuredRecipient };
+}
+
+export interface AssertBinaryIdentityOptions {
+  identityPath: string;
+  configuredRecipient: string;
+  /**
+   * Maximum time to wait for the identity file to appear when its
+   * absence is the *only* outstanding failure. Default:
+   * {@link DEFAULT_WAIT_TIMEOUT_MS} (5 minutes). Set to `0` for the
+   * original fail-fast behavior — used by tests to exercise the
+   * absent-file arm without paying for the wait window.
+   *
+   * Hard failures — perms drift, malformed identity, recipient
+   * mismatch — throw immediately regardless of this value: those
+   * arms cannot fix themselves with time, and waiting just delays
+   * the operator's diagnostic.
+   */
+  waitTimeoutMs?: number;
+  /**
+   * Interval between filesystem polls while waiting. Default:
+   * {@link DEFAULT_POLL_INTERVAL_MS} (2 seconds).
+   */
+  pollIntervalMs?: number;
+  /**
+   * Interval between "still waiting" progress log lines. Default:
+   * {@link DEFAULT_PROGRESS_LOG_INTERVAL_MS} (30 seconds). Set to
+   * `0` to disable progress logs entirely (used by tests to keep
+   * test output clean).
+   */
+  progressLogIntervalMs?: number;
+  /**
+   * Logger sink for progress lines. Defaults to bare `console.log`.
+   * Tests pass a no-op or capturing logger.
+   */
+  logger?: { info: (msg: string) => void };
+}
+
+/**
+ * Orchestrator. Polls the identity file at `identityPath` for up to
+ * `waitTimeoutMs`; on each tick, builds a `BinaryIdentitySnapshot`
+ * and delegates to `evaluateBinaryIdentity`. Returns silently on the
+ * first ok verdict. Throws an aggregated error when:
+ *   - the snapshot reports any HARD failure (file present but
+ *     unreadable, malformed, or recipient mismatch) — those throw
+ *     immediately, no wait, since they need operator action not
+ *     time;
+ *   - the wait window elapses with the file still absent — the
+ *     timeout case carries the elapsed-seconds in the message tail
+ *     so the operator log distinguishes "you didn't paste" from
+ *     "the identity was wrong".
+ *
+ * The error message includes the `binary-identity` event identifier
+ * so the boot site's catch handler can log+exit with one payload.
+ * Mirrors the "Refusing to start: ..." message shape from
+ * `assertStorageBucketSafe`.
+ */
+export async function assertBinaryIdentityLoaded(
+  options: AssertBinaryIdentityOptions,
+): Promise<void> {
+  const {
+    identityPath,
     configuredRecipient,
+    waitTimeoutMs = DEFAULT_WAIT_TIMEOUT_MS,
+    pollIntervalMs = DEFAULT_POLL_INTERVAL_MS,
+    progressLogIntervalMs = DEFAULT_PROGRESS_LOG_INTERVAL_MS,
+    logger = { info: (msg: string): void => console.log(msg) },
+  } = options;
+
+  const startTime = Date.now();
+  const waitDeadline = startTime + waitTimeoutMs;
+  let nextProgressLogAt = startTime + progressLogIntervalMs;
+  let initialWaitLogEmitted = false;
+  let timedOut = false;
+  // Initialized to a sentinel so TS knows the variable is defined at
+  // the throw site below; the first loop iteration overwrites it
+  // before any break path is reached. (Reachable only via an
+  // implementation bug — preserved as a defensive log line rather
+  // than an exception so a future regression surfaces in operator
+  // logs instead of bash's generic stack trace.)
+  let lastNonOkVerdict: { ok: false; failures: string[] } = {
+    ok: false,
+    failures: ['internal: binary-identity probe loop exited before recording a verdict'],
   };
 
-  const verdict = evaluateBinaryIdentity(snapshot);
-  if (verdict.ok) {
-    return;
+  while (true) {
+    const snapshot = await captureSnapshot(identityPath, configuredRecipient);
+    const verdict = evaluateBinaryIdentity(snapshot);
+    if (verdict.ok) {
+      return;
+    }
+    lastNonOkVerdict = verdict;
+
+    // Hard failures don't fix themselves with time — surface
+    // immediately so the operator sees the diagnostic now, not after
+    // a five-minute wait. Only the absent-file arm benefits from
+    // the wait window.
+    if (snapshot.fileExists) {
+      break;
+    }
+
+    if (Date.now() >= waitDeadline) {
+      timedOut = true;
+      break;
+    }
+
+    if (!initialWaitLogEmitted) {
+      const timeoutSec = Math.floor(waitTimeoutMs / 1000);
+      logger.info(
+        `${PROBE_EVENT_ID} probe: waiting up to ${timeoutSec}s for ${identityPath} ` +
+          `(paste via load-binary-key)`,
+      );
+      initialWaitLogEmitted = true;
+    } else if (progressLogIntervalMs > 0 && Date.now() >= nextProgressLogAt) {
+      const elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+      const remainingSec = Math.max(0, Math.floor((waitDeadline - Date.now()) / 1000));
+      logger.info(
+        `${PROBE_EVENT_ID} probe: still waiting for ${identityPath} ` +
+          `(${elapsedSec}s elapsed, ${remainingSec}s remaining)`,
+      );
+      nextProgressLogAt = Date.now() + progressLogIntervalMs;
+    }
+
+    await sleep(pollIntervalMs);
   }
 
   // Aggregated throw — same character as `assertStorageBucketSafe`'s
   // message. The first failure is inlined into the header so the
-  // primary diagnostic ("recipient mismatch", "file absent", etc.) sits
-  // on the same line as "Refusing to start" — operator-grep ergonomics,
-  // and it lets dotall-less regex assertions in callers / tests still
-  // match. Subsequent failures (when present) are bulleted below.
-  // The `binary-identity` event token is load-bearing: tests pin it,
-  // and it routes the failure in a multi-probe boot log surface.
-  const [first, ...rest] = verdict.failures;
+  // primary diagnostic ("recipient mismatch", "file absent", etc.)
+  // sits on the same line as "Refusing to start" — operator-grep
+  // ergonomics, and it lets dotall-less regex assertions in callers
+  // / tests still match. Subsequent failures (when present) are
+  // bulleted below. The `binary-identity` event token is
+  // load-bearing: tests pin it, and it routes the failure in a
+  // multi-probe boot log surface.
+  const failures = lastNonOkVerdict.failures.slice();
+  if (timedOut) {
+    const waitedSec = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+    if (waitedSec > 0 && failures.length > 0) {
+      failures[0] = `${failures[0]} (probe waited ${waitedSec}s for the file to appear)`;
+    }
+  }
+  const [first, ...rest] = failures;
   const tail = rest.length === 0 ? '' : `\n${rest.map((f) => `  - ${f}`).join('\n')}`;
   throw new Error(
     `Refusing to start: ${PROBE_EVENT_ID} probe failed (ADR-0024) — ${first}${tail}\n` +
