@@ -105,13 +105,13 @@ async function seedPendingAt(
   await db.execute(sql`
     INSERT INTO attachments
       (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-       original_key, thumb_key, has_thumbnail, created_at)
+       original_key, thumb_key, has_thumbnail, wrapped_dek_version, created_at)
     VALUES (${id}, ${projectId}, 'pending',
             ${withThumb ? 'photo' : 'binary'},
             ${withThumb ? 'foto' : 'sonstiges'},
             ${'seed-' + id.slice(0, 6)},
             ${withThumb ? 'image/jpeg' : 'application/pdf'},
-            1024, ${originalKey}, ${thumbKey}, ${withThumb},
+            1024, ${originalKey}, ${thumbKey}, ${withThumb}, 1,
             ${createdAt.toISOString()})
   `);
   return { id, originalKey, thumbKey };
@@ -119,13 +119,21 @@ async function seedPendingAt(
 
 async function seedReadyAt(db: Database, projectId: string, createdAt: Date): Promise<string> {
   const id = crypto.randomUUID();
+  // ADR-0024: ready rows must carry a wrapped DEK + ciphertext size.
+  // This reaper test only checks that ready rows are NOT swept, so a
+  // synthetic envelope satisfies the CHECK without exercising unwrap.
+  const wrappedDek = Buffer.alloc(192, 0x33).toString('base64');
   await db.execute(sql`
     INSERT INTO attachments
       (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-       original_key, thumb_key, has_thumbnail, created_at)
+       ciphertext_size_bytes,
+       original_key, thumb_key, has_thumbnail,
+       wrapped_dek, wrapped_thumb_dek, wrapped_dek_version, created_at)
     VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
             ${'ready-' + id.slice(0, 6)}, 'application/pdf', 1024,
+            1088,
             ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
+            ${wrappedDek}, NULL, 1,
             ${createdAt.toISOString()})
   `);
   return id;

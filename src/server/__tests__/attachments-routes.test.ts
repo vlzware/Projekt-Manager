@@ -1,36 +1,57 @@
 /**
- * API integration tests — attachment route surface (issue #108).
+ * API integration tests — attachment route surface (issue #108, #148).
  *
  * Pins the HTTP contract for every endpoint on
  * `/api/projects/:id/attachments/...` against the spec in api.md §14.2.11
  * and the error paths in §14.4.1.
  *
  * AC coverage in this file:
- *   - AC-211: init — presigned-PUT signed-header pins + validation
- *             rejects on MIME / label / size / fileName.
- *   - AC-212: complete — HEAD-verify state machine, 409 on pending→ready
- *             conflict (double ack, size/mime mismatch), 404 when the
- *             reaper has already removed the row.
- *   - AC-216: bulk download — 20-file / 20 MB caps, BULK_LIMIT_EXCEEDED,
- *             cross-project id rejection, pending-in-batch rejection.
+ *   - AC-245: init — presigned-PUT signed-header pins (ciphertext shape
+ *             under ADR-0024) + validation rejects on MIME / label /
+ *             size / fileName / dekMaterial / ciphertextSizeBytes /
+ *             ciphertextContentMd5.
+ *   - AC-212: complete — HEAD-verify state machine against ciphertext
+ *             metadata (size against `ciphertextSizeBytes`, sentinel
+ *             content-type), 409 on mismatch / double ack, 404 when
+ *             the reaper has already removed the row.
+ *   - AC-216: bulk-fetch — per-file payloads (presigned GETs + DEK
+ *             material), 20-file / 20 MB plaintext caps,
+ *             BULK_LIMIT_EXCEEDED, cross-project id rejection, pending-
+ *             or-hidden in batch rejection. Replaces the retired
+ *             bulk-download zip path (ADR-0024).
  *   - AC-225: upload-failure error envelope categories (maps to the
  *             client banner's "Erneut versuchen" surface).
+ *   - AC-241: download-url — `{ url, expiresAt, dekMaterial }` shape,
+ *             dekMaterial is the unwrapped DEK (32 bytes after
+ *             base64-decode), thumbnail-on-non-photo rejection,
+ *             unknown-variant rejection, hidden-row 404. Server never
+ *             persists the unwrapped DEK.
+ *   - AC-244 (server side): per-row unwrap-failure surfaces as 422
+ *             with code `DEK_UNWRAP_FAILED`. The SW translates the
+ *             code to the placeholder render path; the route-level
+ *             surface is what this file pins.
  *
  * Storage: the test harness points at the real MinIO endpoint
  * (`startApp()` → `validateEnvRuntime()`). Direct-storage seeding uses the
  * pattern in backup.test.ts. MinIO is never mocked (CONTRIBUTING.md
  * §Testing "Integration prerequisites").
+ *
+ * Under ADR-0024 every PUT happens against ciphertext bytes, so the
+ * test fixtures synthesize opaque ciphertext (random bytes) rather
+ * than JPEG/PDF magic — see `ciphertextBuffer()` below.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'drizzle-orm';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { startApp, stopApp, login, authGet, authPost, authDelete } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import { createStorageClient } from '../storage/client.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
 import { AttachmentService } from '../services/AttachmentService.js';
+import { KeyEnvelopeService } from '../services/KeyEnvelopeService.js';
 import type { AuthUser } from '../middleware/auth.js';
 import { binaryInitBody } from '../../test/fixtures/attachmentInit.js';
 import { STRINGS } from '../../config/strings.js';
@@ -48,23 +69,91 @@ const year = new Date().getFullYear();
 const STUB_MD5_BASE64 = '1B2M2Y8AsgTpgAmY7PhCfg=='; // MD5("") — shape-valid placeholder
 
 /**
+ * Generate a fresh 32-byte DEK encoded as base64. Mirrors what the
+ * browser produces via `crypto.getRandomValues(new Uint8Array(32))`
+ * before calling init. The server validates the length-after-decode
+ * at the route layer per AC-245.
+ */
+function freshDekMaterial(): string {
+  return crypto.randomBytes(32).toString('base64');
+}
+
+/**
+ * Synthesize an opaque ciphertext-shaped buffer of `length` bytes.
+ * Under ADR-0024 the bytes the browser PUTs are AES-256-GCM ciphertext
+ * with a leading nonce — random bytes are the canonical test fixture
+ * (real ciphertext is computationally indistinguishable from random).
+ */
+function ciphertextBuffer(length: number): Buffer {
+  return crypto.randomBytes(length);
+}
+
+/**
+ * Wrap a fresh 32-byte DEK against the per-fork test binary identity
+ * (see `src/test/integration-setup.ts` — `BINARY_AGE_RECIPIENT` /
+ * `BINARY_AGE_IDENTITY_PATH` are exported there). Returns `{ dek,
+ * wrappedBase64 }` so tests that need to compare unwrapped output
+ * against the input DEK (AC-241 "different DEKs") have both halves.
+ *
+ * Direct DB seeds use the base64 envelope on `wrapped_dek` so the
+ * route's per-request unwrap succeeds. Synthetic Buffer.alloc envelopes
+ * fail at AEAD verification under any real KeyEnvelopeService impl —
+ * happy-path tests must wrap a real DEK.
+ *
+ * Reads `process.env` directly because the env zod schema does not yet
+ * carry `BINARY_AGE_*` (implementer agent extends it in step 5). Once
+ * the schema lands, this helper can collapse to `getEnv()`.
+ */
+async function wrapFreshDek(): Promise<{ dek: Buffer; wrappedBase64: string }> {
+  const recipient = process.env.BINARY_AGE_RECIPIENT;
+  const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+  if (!recipient || !identityPath) {
+    throw new Error(
+      'wrapFreshDek: BINARY_AGE_RECIPIENT / BINARY_AGE_IDENTITY_PATH not configured. ' +
+        'Per-fork identity is set in src/test/integration-setup.ts — verify it ran before this import.',
+    );
+  }
+  const identity = readFileSync(identityPath, 'utf-8').trim();
+  const service = new KeyEnvelopeService({ recipient, identity });
+  const dek = crypto.randomBytes(32);
+  const envelope = await service.wrap(dek);
+  return { dek, wrappedBase64: Buffer.from(envelope).toString('base64') };
+}
+
+/**
  * Minimal photo-mime init payload used by every happy-path test. The
  * server fixes `originalKey` / `thumbKey` — clients never send them.
- * `contentMd5` / `thumbContentMd5` are RFC 1864 base64 of the body MD5
- * — pinned into the presigned PUT signature so a body whose hash
- * differs is rejected at upload time (`BadDigest`).
+ *
+ * Under ADR-0024 the init body carries:
+ *   - plaintext `mimeType`, `fileName`, `sizeBytes`, `label`,
+ *     `hasThumbnail` (the row metadata; storage never sees these on
+ *     the wire),
+ *   - per-blob `dekMaterial` (base64 of 32 random bytes),
+ *   - per-blob `ciphertextSizeBytes` + `ciphertextContentMd5` — the
+ *     server signs these into the presigned PUT.
+ *
+ * The plaintext `contentMd5` field from the pre-e2e shape is GONE —
+ * what the client computes and the server signs is the *ciphertext*
+ * MD5, not the plaintext one.
  */
 function photoInit(projectId: string) {
   return {
     projectId,
     fileName: `test-${crypto.randomUUID().slice(0, 8)}.jpg`,
     mimeType: 'image/jpeg',
-    sizeBytes: 120_000,
-    contentMd5: STUB_MD5_BASE64,
+    sizeBytes: 120_000, // plaintext — for the per-file cap + export envelope
     label: 'foto' as const,
     hasThumbnail: true,
-    thumbSizeBytes: 8_000,
-    thumbContentMd5: STUB_MD5_BASE64,
+    thumbSizeBytes: 8_000, // plaintext thumb size
+    // Ciphertext shape: the per-blob DEK + ciphertext size/MD5. The
+    // server wraps the DEK and signs the PUT against the ciphertext
+    // size / MD5 / sentinel content-type.
+    dekMaterial: freshDekMaterial(),
+    ciphertextSizeBytes: 120_064,
+    ciphertextContentMd5: STUB_MD5_BASE64,
+    thumbDekMaterial: freshDekMaterial(),
+    ciphertextThumbSizeBytes: 8_064,
+    ciphertextThumbContentMd5: STUB_MD5_BASE64,
   };
 }
 
@@ -121,15 +210,14 @@ describe('Attachment routes — integration (issue #108)', () => {
   });
 
   // -------------------------------------------------------------------
-  // AC-211 — Init validates inputs and returns a signed presigned PUT.
+  // AC-245 — Init validates inputs and returns a signed presigned PUT
+  // bound to the *ciphertext* triplet (sentinel content-type, ciphertext
+  // size, ciphertext MD5) per ADR-0024.
   // -------------------------------------------------------------------
-  describe('AC-211: init validation + presigned-PUT signature', () => {
+  describe('AC-245: init validation + presigned-PUT signature', () => {
     it('returns 201 with a pending row and two presigned PUT descriptors for a photo', async () => {
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/init`,
-        photoInit(projectId),
-      );
+      const init = photoInit(projectId);
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, init);
       expect(res.statusCode).toBe(201);
       const body = res.json();
       expect(body.attachment).toBeDefined();
@@ -138,11 +226,21 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(body.attachment.projectId).toBe(projectId);
       expect(body.attachment.kind).toBe('photo');
       expect(body.attachment.label).toBe('foto');
+      // Plaintext mimeType lives on the row (drives the download
+      // Content-Disposition + the kind classification). Storage never
+      // sees this value on the wire.
       expect(body.attachment.mimeType).toBe('image/jpeg');
       // The server fixes the key — clients never supply one.
       expect(typeof body.attachment.originalKey).toBe('string');
       expect(body.attachment.originalKey.length).toBeGreaterThan(0);
       expect(typeof body.attachment.thumbKey).toBe('string');
+      // Wrapped envelopes are NEVER returned in any response surface
+      // (data-model.md §5.13 "Wrapped envelope is server-handed-back",
+      // api.md §14.2.11 design notes). The wrapping happened server-
+      // side; the column is on the row but is stripped from every
+      // response.
+      expect(body.attachment.wrappedDek).toBeUndefined();
+      expect(body.attachment.wrappedThumbDek).toBeUndefined();
       // Uploader expansion: createdBy is `{ id, displayName }` so the
       // frontend doesn't need a privileged user-directory fetch (#125).
       expect(body.attachment.createdBy).toMatchObject({
@@ -156,14 +254,20 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(body.originalUpload.headers).not.toBeNull();
       expect(typeof body.originalUpload.expiresAt).toBe('string');
       // Three signed headers — Content-Type, Content-Length, Content-MD5
-      // — every PUT must echo verbatim.
-      expect(body.originalUpload.headers['Content-Type']).toBe('image/jpeg');
-      expect(body.originalUpload.headers['Content-Length']).toBe('120000');
-      expect(body.originalUpload.headers['Content-MD5']).toBe(STUB_MD5_BASE64);
+      // — every PUT must echo verbatim. Under e2e:
+      //   Content-Type   == application/octet-stream (sentinel; the
+      //                     row's plaintext mimeType is NOT signed)
+      //   Content-Length == ciphertextSizeBytes (NOT plaintext sizeBytes)
+      //   Content-MD5    == ciphertextContentMd5 (NOT a plaintext MD5)
+      expect(body.originalUpload.headers['Content-Type']).toBe('application/octet-stream');
+      expect(body.originalUpload.headers['Content-Length']).toBe(String(init.ciphertextSizeBytes));
+      expect(body.originalUpload.headers['Content-MD5']).toBe(init.ciphertextContentMd5);
       expect(body.thumbnailUpload).toBeDefined();
-      expect(body.thumbnailUpload.headers['Content-Type']).toBe('image/webp');
-      expect(body.thumbnailUpload.headers['Content-Length']).toBe('8000');
-      expect(body.thumbnailUpload.headers['Content-MD5']).toBe(STUB_MD5_BASE64);
+      expect(body.thumbnailUpload.headers['Content-Type']).toBe('application/octet-stream');
+      expect(body.thumbnailUpload.headers['Content-Length']).toBe(
+        String(init.ciphertextThumbSizeBytes),
+      );
+      expect(body.thumbnailUpload.headers['Content-MD5']).toBe(init.ciphertextThumbContentMd5);
     });
 
     it('returns exactly one descriptor (no thumbnail) for a non-photo MIME', async () => {
@@ -171,15 +275,20 @@ describe('Attachment routes — integration (issue #108)', () => {
         fileName: 'vertrag.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 50_000,
-        contentMd5: STUB_MD5_BASE64,
         label: 'rechnung',
         hasThumbnail: false,
+        dekMaterial: freshDekMaterial(),
+        ciphertextSizeBytes: 50_064,
+        ciphertextContentMd5: STUB_MD5_BASE64,
       });
       expect(res.statusCode).toBe(201);
       const body = res.json();
       expect(body.attachment.kind).toBe('binary');
       expect(body.attachment.thumbKey).toBeNull();
       expect(body.thumbnailUpload).toBeUndefined();
+      // Sentinel content-type still — even on a non-photo init.
+      expect(body.originalUpload.headers['Content-Type']).toBe('application/octet-stream');
+      expect(body.originalUpload.headers['Content-Length']).toBe('50064');
     });
 
     it('pins the presigned PUT URL to the exact originalKey issued on the row', async () => {
@@ -205,11 +314,77 @@ describe('Attachment routes — integration (issue #108)', () => {
       }
     });
 
-    it('rejects a missing/malformed contentMd5 with 422 VALIDATION_ERROR (no row)', async () => {
+    it('persists wrappedDek (and wrappedThumbDek) on the row but NEVER returns it', async () => {
+      // Bridges AC-245 and AC-240: init wraps the supplied DEK
+      // material against the operator's binary recipient and
+      // persists the envelope on the row, but the response strips
+      // it. A regression that surfaced the wrapped envelope on the
+      // init response would let any caller bypass the SW-mediated
+      // download flow and could in some configurations leak the
+      // wrapped material into client logs.
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        photoInit(projectId),
+      );
+      expect(res.statusCode).toBe(201);
+      const attId = res.json().attachment.id as string;
+
+      // Response strip
+      expect(res.json().attachment.wrappedDek).toBeUndefined();
+      expect(res.json().attachment.wrappedThumbDek).toBeUndefined();
+
+      // Row persistence — the column is populated on the row.
+      const { db, pool } = createDatabase();
+      try {
+        const rows = await db.execute(
+          sql`SELECT wrapped_dek, wrapped_thumb_dek FROM attachments WHERE id = ${attId}`,
+        );
+        const row = rows.rows[0] as {
+          wrapped_dek: string | null;
+          wrapped_thumb_dek: string | null;
+        };
+        expect(row.wrapped_dek).not.toBeNull();
+        expect((row.wrapped_dek as string).length).toBeGreaterThan(0);
+        expect(row.wrapped_thumb_dek).not.toBeNull();
+      } finally {
+        await pool.end();
+      }
+    });
+
+    it('persists wrappedDekVersion = 1 alongside the wrapped envelopes (ADR-0024 envelope-format discriminator)', async () => {
+      // AC-245 — current iteration writes envelope-format version 1 on
+      // every init. The column is NOT NULL with no DB default; the
+      // service layer is the single writer. A regression that omitted
+      // the version, defaulted it at the DB level, or wrote a
+      // different value would either fail the insert outright (NOT NULL
+      // breach) or land a row that later trips the unwrap-time
+      // validation (AC-244 envelope-format unknown branch).
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        photoInit(projectId),
+      );
+      expect(res.statusCode).toBe(201);
+      const attId = res.json().attachment.id as string;
+
+      const { db, pool } = createDatabase();
+      try {
+        const rows = await db.execute(
+          sql`SELECT wrapped_dek_version FROM attachments WHERE id = ${attId}`,
+        );
+        const row = rows.rows[0] as { wrapped_dek_version: number };
+        expect(row.wrapped_dek_version).toBe(1);
+      } finally {
+        await pool.end();
+      }
+    });
+
+    it('rejects a missing/malformed ciphertextContentMd5 with 422 VALIDATION_ERROR (no row)', async () => {
       const before = await countAttachmentRows();
       const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
         ...photoInit(projectId),
-        contentMd5: 'not-a-base64-md5',
+        ciphertextContentMd5: 'not-a-base64-md5',
       });
       // JSON-schema pattern fires before service-level checks; the gate
       // produces 422 either way.
@@ -217,9 +392,95 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(await countAttachmentRows()).toBe(before);
     });
 
-    it('rejects hasThumbnail=true with no thumbContentMd5 with 422 (no row)', async () => {
+    it('rejects hasThumbnail=true with no ciphertextThumbContentMd5 with 422 (no row)', async () => {
       const before = await countAttachmentRows();
-      const { thumbContentMd5: _omit, ...payload } = photoInit(projectId);
+      const { ciphertextThumbContentMd5: _omit, ...payload } = photoInit(projectId);
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        payload,
+      );
+      expect(res.statusCode).toBe(422);
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
+    it('rejects ciphertextSizeBytes that is non-positive with 422 (no row)', async () => {
+      const before = await countAttachmentRows();
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInit(projectId),
+        ciphertextSizeBytes: 0,
+      });
+      expect(res.statusCode).toBe(422);
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
+    it('rejects ciphertextThumbSizeBytes that is non-positive with 422 (no row)', async () => {
+      const before = await countAttachmentRows();
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInit(projectId),
+        ciphertextThumbSizeBytes: 0,
+      });
+      expect(res.statusCode).toBe(422);
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
+    it('rejects ciphertextThumbSizeBytes exceeding the per-thumb cap with 422 VALIDATION_ERROR (no row)', async () => {
+      // AC-245: per-thumb cap. Default cap is 200 KiB
+      // (architecture.md §12.2 / ATTACHMENT_CONFIG.perThumbCapBytes).
+      // 1 MiB is comfortably above any deployment-tuned value.
+      // Mirrors the per-file cap arm above — the rejection source is
+      // the cap validator, surfaced as the same German message
+      // (uploadFileTooLarge) so the UI banner can render the
+      // size-cap copy without parsing the message.
+      const before = await countAttachmentRows();
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInit(projectId),
+        ciphertextThumbSizeBytes: 1 * 1024 * 1024,
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+      expect(res.json().message).toBe(STRINGS.attachments.uploadFileTooLarge);
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
+    it('rejects malformed dekMaterial (not 32 bytes after base64-decode) with 422 (no row)', async () => {
+      // The spec pins the validation post-decode: 31 bytes or 33
+      // bytes of base64-decoded material both fail. Use a 16-byte
+      // payload so the decoded length is unambiguously wrong even
+      // if the base64 padding character count varies.
+      const before = await countAttachmentRows();
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInit(projectId),
+        dekMaterial: Buffer.alloc(16, 0x42).toString('base64'),
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
+    it('rejects dekMaterial that is not valid base64 with 422 (no row)', async () => {
+      const before = await countAttachmentRows();
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInit(projectId),
+        dekMaterial: '@@@-not-base64-@@@',
+      });
+      expect(res.statusCode).toBe(422);
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
+    it('rejects hasThumbnail=true with malformed thumbDekMaterial with 422 (no row)', async () => {
+      const before = await countAttachmentRows();
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInit(projectId),
+        thumbDekMaterial: Buffer.alloc(16, 0x42).toString('base64'),
+      });
+      expect(res.statusCode).toBe(422);
+      expect(await countAttachmentRows()).toBe(before);
+    });
+
+    it('rejects hasThumbnail=true with no thumbDekMaterial with 422 (no row)', async () => {
+      const before = await countAttachmentRows();
+      const { thumbDekMaterial: _omit, ...payload } = photoInit(projectId);
       const res = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/init`,
@@ -350,27 +611,44 @@ describe('Attachment routes — integration (issue #108)', () => {
   });
 
   // -------------------------------------------------------------------
-  // AC-212 — complete() state machine.
+  // AC-212 — complete() state machine — pending → ready with HEAD
+  //          verify against ciphertext metadata (ADR-0024 / api.md
+  //          §14.2.11). The pre-e2e `startsWith('image/')` thumbnail
+  //          carve-out is gone: every blob is opaque ciphertext under
+  //          the sentinel `application/octet-stream` content-type.
   // -------------------------------------------------------------------
-  describe('AC-212: complete state machine — pending → ready with HEAD verify', () => {
+  describe('AC-212: complete state machine — pending → ready with HEAD verify against ciphertext metadata', () => {
     /**
-     * Seed a pending row and put matching bytes under its storage keys
-     * so a complete() call's HEAD verification succeeds. Returns the
-     * attachment id.
+     * Seed a pending row and put matching ciphertext bytes under its
+     * storage keys so a complete() call's HEAD verification succeeds.
+     * Returns the attachment id.
+     *
+     * Uploads carry `application/octet-stream` (the sentinel) so HEAD
+     * reports it back. A regression that uploaded with a real MIME
+     * (image/jpeg, image/webp, etc.) would still trip the size match
+     * but fail the content-type assertion at complete-time.
      */
     async function seedPendingWithBackingBytes(): Promise<string> {
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/init`,
-        photoInit(projectId),
-      );
+      const init = photoInit(projectId);
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, init);
       expect(res.statusCode).toBe(201);
       const body = res.json();
       const s = storage();
-      // 120 bytes of `0xff` — arbitrary but matches sizeBytes above.
-      const payload = Buffer.alloc(120_000, 0xff);
-      await s.upload(body.attachment.originalKey, payload, 'image/jpeg');
-      await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
+      // Bytes match the row's persisted `ciphertextSizeBytes` /
+      // `ciphertextThumbSizeBytes` so HEAD passes the size check.
+      // Both blobs carry the sentinel content-type so HEAD passes
+      // the content-type check (no `startsWith('image/')` carve-out
+      // under e2e).
+      await s.upload(
+        body.attachment.originalKey,
+        ciphertextBuffer(init.ciphertextSizeBytes),
+        'application/octet-stream',
+      );
+      await s.upload(
+        body.attachment.thumbKey,
+        ciphertextBuffer(init.ciphertextThumbSizeBytes),
+        'application/octet-stream',
+      );
       return body.attachment.id;
     }
 
@@ -428,15 +706,15 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(status).toBe('pending');
     });
 
-    it('returns 409 CONFLICT when the stored size differs from the declared sizeBytes', async () => {
+    it('returns 409 CONFLICT when the stored size differs from the declared ciphertextSizeBytes', async () => {
       // AC-212 / spec §14.2.11 error paths: complete verifies the
-      // HEAD-reported size against the row's DECLARED size, not just the
-      // global cap. A size-substitution upload — e.g. 2 MB bytes under
-      // a key whose row claims 100 B — must land as 409 even if the
-      // actual size is within the global cap.
+      // HEAD-reported size against the row's DECLARED `ciphertextSizeBytes`,
+      // NOT plaintext sizeBytes. A ciphertext-size-substitution upload
+      // — bytes under a key whose row claims 1KB but the actual stored
+      // ciphertext is 2 MB — must land as 409.
       const initRes = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
         ...photoInit(projectId),
-        sizeBytes: 100,
+        ciphertextSizeBytes: 1024,
       });
       expect(initRes.statusCode).toBe(201);
       const body = initRes.json();
@@ -444,10 +722,14 @@ describe('Attachment routes — integration (issue #108)', () => {
       // Upload 2 MB under the issued key (note: the presigned PUT
       // would reject this via the signed `Content-Length` header; we
       // bypass that by direct-storage upload to exercise the
-      // complete-side guard). HEAD reports 2 MB, row says 100 →
-      // declared-size mismatch → 409.
-      await s.upload(body.attachment.originalKey, Buffer.alloc(2 * 1024 * 1024, 1), 'image/jpeg');
-      await s.upload(body.attachment.thumbKey, Buffer.from('t'), 'image/webp');
+      // complete-side guard). HEAD reports 2 MB, row says 1024 →
+      // declared-ciphertext-size mismatch → 409.
+      await s.upload(
+        body.attachment.originalKey,
+        ciphertextBuffer(2 * 1024 * 1024),
+        'application/octet-stream',
+      );
+      await s.upload(body.attachment.thumbKey, ciphertextBuffer(8064), 'application/octet-stream');
 
       const res = await authPost(
         ownerToken,
@@ -457,33 +739,43 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(res.json().code).toBe('CONFLICT');
     });
 
-    it('returns 409 CONFLICT when the stored size matches the row but exceeds the global cap (defence in depth)', async () => {
-      // Normal init rejects sizeBytes > cap up-front, so this branch is
-      // only reachable if the cap dropped between init and complete.
-      // Seed a pending row directly with an over-cap `size_bytes`
-      // matching the bytes we'll upload, then call complete() — the
-      // global-cap guard (in addition to the declared-size guard) must
-      // fire.
+    it('returns 409 CONFLICT when the stored ciphertext size matches the row but the plaintext exceeds the global cap (defence in depth)', async () => {
+      // Normal init rejects plaintext sizeBytes > cap up-front, so
+      // this branch is only reachable if the cap dropped between init
+      // and complete. Seed a pending row directly with an over-cap
+      // plaintext `size_bytes` (and a matching `ciphertext_size_bytes`
+      // that the bytes will satisfy), then call complete() — the
+      // global-cap guard on plaintext (in addition to the declared-
+      // ciphertext-size guard) must fire.
       const attId = crypto.randomUUID();
       const originalKey = `attachments/${projectId}/${attId}.orig`;
       const thumbKey = `attachments/${projectId}/${attId}.thumb`;
-      const oversize = 2 * 1024 * 1024;
+      const plaintextOversize = 2 * 1024 * 1024;
+      const ciphertextOversize = 2 * 1024 * 1024 + 64;
+      // Synthetic envelopes — `complete` rejects on the per-file plaintext
+      // cap before the unwrap pipeline ever runs on this row.
+      const wrappedDek = Buffer.alloc(192, 0).toString('base64');
+      const wrappedThumb = Buffer.alloc(192, 1).toString('base64');
       const { db, pool } = createDatabase();
       try {
         await db.execute(sql`
           INSERT INTO attachments
             (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-             original_key, thumb_key, has_thumbnail)
+             ciphertext_size_bytes, ciphertext_thumb_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
           VALUES (${attId}, ${projectId}, 'pending', 'photo', 'foto',
-                  'oversize.jpg', 'image/jpeg', ${oversize},
-                  ${originalKey}, ${thumbKey}, TRUE)
+                  'oversize.jpg', 'image/jpeg', ${plaintextOversize},
+                  ${ciphertextOversize}, 1024,
+                  ${originalKey}, ${thumbKey}, TRUE,
+                  ${wrappedDek}, ${wrappedThumb}, 1)
         `);
       } finally {
         await pool.end();
       }
       const s = storage();
-      await s.upload(originalKey, Buffer.alloc(oversize, 3), 'image/jpeg');
-      await s.upload(thumbKey, Buffer.from('t'), 'image/webp');
+      await s.upload(originalKey, ciphertextBuffer(ciphertextOversize), 'application/octet-stream');
+      await s.upload(thumbKey, ciphertextBuffer(1024), 'application/octet-stream');
 
       const res = await authPost(
         ownerToken,
@@ -493,19 +785,69 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(res.json().code).toBe('CONFLICT');
     });
 
-    it('returns 409 CONFLICT when content-type mismatches the row', async () => {
+    it('returns 409 CONFLICT when stored content-type is not the sentinel application/octet-stream (e.g. uploader sent image/jpeg)', async () => {
+      // The sentinel is the entire content-type contract under e2e —
+      // ANY non-sentinel value fails at HEAD. The pre-e2e
+      // `startsWith('image/')` carve-out for thumbnails is GONE; both
+      // blobs must be `application/octet-stream`.
+      const init = photoInit(projectId);
       const initRes = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/init`,
-        photoInit(projectId),
+        init,
       );
       expect(initRes.statusCode).toBe(201);
       const body = initRes.json();
       const s = storage();
-      // Upload under the issued key but with a wrong content-type —
-      // HEAD returns the mismatching type, complete must reject.
-      await s.upload(body.attachment.originalKey, Buffer.alloc(120_000, 2), 'application/pdf');
-      await s.upload(body.attachment.thumbKey, Buffer.from('t'), 'image/webp');
+      // Upload with the *plaintext* MIME (image/jpeg) — HEAD reports
+      // it back, complete must reject because the sentinel is what
+      // the row's contract expects under e2e.
+      await s.upload(
+        body.attachment.originalKey,
+        ciphertextBuffer(init.ciphertextSizeBytes),
+        'image/jpeg',
+      );
+      await s.upload(
+        body.attachment.thumbKey,
+        ciphertextBuffer(init.ciphertextThumbSizeBytes),
+        'application/octet-stream',
+      );
+
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${body.attachment.id}/complete`,
+      );
+      expect(res.statusCode).toBe(409);
+      expect(res.json().code).toBe('CONFLICT');
+    });
+
+    it('returns 409 CONFLICT when stored thumbnail content-type is not the sentinel (no startsWith image/ carve-out under e2e)', async () => {
+      // The pre-e2e contract allowed thumbnails to be any
+      // `image/<x>` (the gallery rendered them via a real Content-Type).
+      // Under e2e thumbnails are ciphertext too — sentinel only.
+      // Pin the absence of the carve-out: thumbnail with image/webp
+      // must fail at complete-time, just like the original-side arm
+      // above.
+      const init = photoInit(projectId);
+      const initRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        init,
+      );
+      expect(initRes.statusCode).toBe(201);
+      const body = initRes.json();
+      const s = storage();
+      await s.upload(
+        body.attachment.originalKey,
+        ciphertextBuffer(init.ciphertextSizeBytes),
+        'application/octet-stream',
+      );
+      // Pre-e2e legitimate; under e2e a regression smell.
+      await s.upload(
+        body.attachment.thumbKey,
+        ciphertextBuffer(init.ciphertextThumbSizeBytes),
+        'image/webp',
+      );
 
       const res = await authPost(
         ownerToken,
@@ -589,10 +931,22 @@ describe('Attachment routes — integration (issue #108)', () => {
       const body = initRes.json();
       const attId = body.attachment.id;
 
-      // Bytes land in storage (HEAD would otherwise miss and surface 409).
+      // Ciphertext lands in storage with the sentinel content-type
+      // (HEAD would otherwise miss and surface 409 before the archive
+      // gate fires). The actual bytes are irrelevant — the archive
+      // gate kills the request before HEAD verification anyway.
       const s = storage();
-      await s.upload(body.attachment.originalKey, Buffer.alloc(120_000, 0xff), 'image/jpeg');
-      await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
+      const init = photoInit(raceProjectId); // re-derive the ciphertext sizes
+      await s.upload(
+        body.attachment.originalKey,
+        ciphertextBuffer(init.ciphertextSizeBytes),
+        'application/octet-stream',
+      );
+      await s.upload(
+        body.attachment.thumbKey,
+        ciphertextBuffer(init.ciphertextThumbSizeBytes),
+        'application/octet-stream',
+      );
 
       // Archive lands between init and complete.
       const archiveRes = await authDelete(ownerToken, `/api/projects/${raceProjectId}`);
@@ -612,21 +966,20 @@ describe('Attachment routes — integration (issue #108)', () => {
   });
 
   // -------------------------------------------------------------------
-  // AC-216 — Bulk download caps.
+  // AC-216 — bulk-fetch — per-file payload + caps. Replaces the retired
+  // bulk-download zip path (ADR-0024). The browser receives per-file
+  // presigned-GETs + DEK material and assembles the streaming zip
+  // locally; the server never archives ciphertext.
   // -------------------------------------------------------------------
-  describe('AC-216: bulk-download caps — 20 files / 20 MB', () => {
+  describe('AC-216: bulk-fetch per-file payload + caps', () => {
     it('rejects a batch of 21 ids with 422 BULK_LIMIT_EXCEEDED (limits field present)', async () => {
-      // We need 21 valid ready-state ids on the project for this arm;
-      // building them through real uploads is slow. The server must
-      // validate the COUNT before resolving ids, so 21 arbitrary uuids
-      // is sufficient — the count check fires first per the spec
-      // ("exceeding either cap is rejected").
+      // The server must validate the COUNT before resolving ids, so
+      // 21 arbitrary uuids is sufficient — the count check fires
+      // first per the spec ("exceeding either cap is rejected").
       const fakeIds = Array.from({ length: 21 }, () => crypto.randomUUID());
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/bulk-download`,
-        { attachmentIds: fakeIds },
-      );
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: fakeIds,
+      });
       expect(res.statusCode).toBe(422);
       const body = res.json();
       expect(body.code).toBe('BULK_LIMIT_EXCEEDED');
@@ -636,22 +989,20 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(typeof limits.maxBytes).toBe('number');
     });
 
-    it('rejects a batch whose summed sizeBytes exceeds 20 MB with BULK_LIMIT_EXCEEDED', async () => {
-      // Seed three ready rows each 8 MB = 24 MB total, under the 20-file
-      // cap but over the 20 MB bytes cap. Direct-DB insert because
-      // uploading 24 MB three times through the real flow is wasteful
-      // for a validation test — we only need the rows to exist and be
-      // ready.
+    it('rejects a batch whose summed plaintext sizeBytes exceeds 20 MB with BULK_LIMIT_EXCEEDED', async () => {
+      // Seed three ready rows each 8 MB plaintext = 24 MB total,
+      // under the 20-file cap but over the 20-MB plaintext bytes cap.
+      // The cap is on PLAINTEXT bytes (not ciphertext) because the
+      // user-visible quantity is plaintext — that's what they
+      // ultimately decrypt and download.
       const ids = await seedReadyAttachments(projectId, [
         { sizeBytes: 8 * 1024 * 1024 },
         { sizeBytes: 8 * 1024 * 1024 },
         { sizeBytes: 8 * 1024 * 1024 },
       ]);
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/bulk-download`,
-        { attachmentIds: ids },
-      );
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: ids,
+      });
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('BULK_LIMIT_EXCEEDED');
     });
@@ -667,16 +1018,14 @@ describe('Attachment routes — integration (issue #108)', () => {
       })();
       const [primaryId] = await seedReadyAttachments(projectId, [{ sizeBytes: 100 }]);
       const [otherId] = await seedReadyAttachments(otherProjectId, [{ sizeBytes: 100 }]);
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/bulk-download`,
-        { attachmentIds: [primaryId, otherId] },
-      );
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: [primaryId, otherId],
+      });
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('VALIDATION_ERROR');
     });
 
-    it('rejects with 422 VALIDATION_ERROR when any id references a pending row', async () => {
+    it('rejects with 422 VALIDATION_ERROR when any id references a pending row (whole batch rejected)', async () => {
       const initRes = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/init`,
@@ -684,70 +1033,227 @@ describe('Attachment routes — integration (issue #108)', () => {
       );
       expect(initRes.statusCode).toBe(201);
       const pendingId = initRes.json().attachment.id;
+      const [readyId] = await seedReadyAttachments(projectId, [{ sizeBytes: 100 }]);
 
       const res = await authPost(
         ownerToken,
-        `/api/projects/${projectId}/attachments/bulk-download`,
-        { attachmentIds: [pendingId] },
+        `/api/projects/${projectId}/attachments/bulk-fetch`,
+        // Mix in one ready row to pin the "no partial-serve" contract:
+        // the whole batch must be rejected when any id is non-ready.
+        { attachmentIds: [readyId, pendingId] },
       );
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('VALIDATION_ERROR');
     });
 
-    it('returns 200 with a presigned URL that resolves to a real zip containing the requested entries', async () => {
-      // Real bytes behind the two ready rows so archiver has something
-      // to stream. Filenames chosen to exercise the no-collision path;
-      // the duplicate-filename disambiguation is covered by the next arm.
-      // Content-type is whitelisted (`application/pdf`) because the
-      // attachments table has a CHECK constraint on mime_type — the
-      // happy-path row must satisfy it.
-      const bytesA = Buffer.from('alpha-contents-alpha-contents-alpha', 'utf-8');
-      const bytesB = Buffer.from('bravo-1234-bravo-1234-bravo-1234', 'utf-8');
-      const ids = await seedReadyAttachmentsWithBytes(projectId, [
-        { bytes: bytesA, filename: 'alpha.pdf', mimeType: 'application/pdf' },
-        { bytes: bytesB, filename: 'bravo.pdf', mimeType: 'application/pdf' },
-      ]);
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/bulk-download`,
-        { attachmentIds: ids },
-      );
-      expect(res.statusCode).toBe(200);
-      const body = res.json();
-      expect(typeof body.url).toBe('string');
-      expect(typeof body.expiresAt).toBe('string');
-
-      // Follow the presigned URL — the whole point of AC-221 is that the
-      // bytes do not transit the app. The URL must resolve to a real
-      // zip whose entries match the requested filenames.
-      const zipBuffer = await fetchBytesFromUrl(body.url);
-      const entries = await listZipEntries(zipBuffer);
-      expect(entries).toContain('alpha.pdf');
-      expect(entries).toContain('bravo.pdf');
-      expect(entries).toHaveLength(2);
+    it('rejects with 422 VALIDATION_ERROR when any id references a hidden row', async () => {
+      // Symmetric to the pending-in-batch arm — hidden rows carry
+      // a delete marker on the current version, so a fetched
+      // ciphertext would be a 404 from storage. Reject before the
+      // SW sees the broken row.
+      const attId = await seedHiddenAttachment(projectId, {
+        versionId: 'fake-version-id',
+        thumbVersionId: null,
+        hasThumbnail: false,
+      });
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: [attId],
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
     });
 
-    it('disambiguates duplicate filenames within a single zip', async () => {
-      // Two rows sharing `doc.pdf` — archiver would otherwise emit two
-      // identically-named entries, which Windows Explorer + many zip
-      // viewers refuse to open. The service appends a short-id suffix
-      // before the extension.
-      const ids = await seedReadyAttachmentsWithBytes(projectId, [
-        { bytes: Buffer.from('first-copy'), filename: 'doc.pdf', mimeType: 'application/pdf' },
-        { bytes: Buffer.from('second-copy'), filename: 'doc.pdf', mimeType: 'application/pdf' },
+    it('returns 200 with a per-file payload list — order preserved, DEK material is 32 bytes', async () => {
+      // Three rows: one binary (no thumb), two photos (with thumbs).
+      // The response must carry one entry per id, in the order of
+      // the request (api.md §14.2.11 "in the order requested").
+      const [binId] = await seedReadyAttachments(projectId, [
+        { sizeBytes: 1000, kind: 'binary', mimeType: 'application/pdf', label: 'rechnung' },
       ]);
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/bulk-download`,
-        { attachmentIds: ids },
-      );
+      const photoIds = await seedReadyAttachments(projectId, [
+        { sizeBytes: 2000, kind: 'photo', mimeType: 'image/jpeg', label: 'foto' },
+        { sizeBytes: 3000, kind: 'photo', mimeType: 'image/png', label: 'foto' },
+      ]);
+
+      const requested = [photoIds[1], binId, photoIds[0]]; // arbitrary mix
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: requested,
+      });
       expect(res.statusCode).toBe(200);
-      const zipBuffer = await fetchBytesFromUrl(res.json().url);
-      const entries = await listZipEntries(zipBuffer);
-      expect(entries).toHaveLength(2);
-      expect(entries).toContain('doc.pdf');
-      // The second copy is renamed with a short-id suffix: ` (xxxxxxxx).pdf`.
-      expect(entries.some((n) => /doc \([0-9a-f]{8}\)\.pdf/.test(n))).toBe(true);
+      // api.md §14.2.11 pins the response as `{ data: BulkFetchEntry[] }` —
+      // assert the wrapper shape directly, no fallback paths.
+      const body = res.json() as { data: Array<Record<string, unknown>> };
+      const entries = body.data;
+      expect(Array.isArray(entries)).toBe(true);
+      expect(entries).toHaveLength(3);
+
+      // Order preserved: the entries must align with `requested`
+      // index-for-index. A regression that re-sorted by createdAt
+      // (or any other stable order) would trip here even though the
+      // SET equality would pass.
+      expect((entries as Array<{ attachmentId: string }>).map((e) => e.attachmentId)).toEqual(
+        requested,
+      );
+
+      for (const entry of entries as Array<{
+        attachmentId: string;
+        originalUrl: string;
+        originalDekMaterial: string;
+        ciphertextSizeBytes: number;
+        thumbUrl?: string;
+        thumbDekMaterial?: string;
+        ciphertextThumbSizeBytes?: number;
+      }>) {
+        expect(typeof entry.originalUrl).toBe('string');
+        expect(typeof entry.originalDekMaterial).toBe('string');
+        // 32 bytes after base64-decode — the AES-256-GCM key shape.
+        expect(Buffer.from(entry.originalDekMaterial, 'base64').length).toBe(32);
+        expect(typeof entry.ciphertextSizeBytes).toBe('number');
+        expect(entry.ciphertextSizeBytes).toBeGreaterThan(0);
+      }
+
+      // Photos additionally carry the thumbnail triple; binary entries
+      // do not. Find them by id and pin per-shape.
+      const photoEntry0 = (
+        entries as Array<{
+          attachmentId: string;
+          thumbUrl?: string;
+          thumbDekMaterial?: string;
+          ciphertextThumbSizeBytes?: number;
+        }>
+      ).find((e) => e.attachmentId === photoIds[0])!;
+      expect(typeof photoEntry0.thumbUrl).toBe('string');
+      expect(typeof photoEntry0.thumbDekMaterial).toBe('string');
+      expect(Buffer.from(photoEntry0.thumbDekMaterial!, 'base64').length).toBe(32);
+      expect(typeof photoEntry0.ciphertextThumbSizeBytes).toBe('number');
+
+      const binEntry = (
+        entries as Array<{
+          attachmentId: string;
+          thumbUrl?: string;
+          thumbDekMaterial?: string;
+          ciphertextThumbSizeBytes?: number;
+        }>
+      ).find((e) => e.attachmentId === binId)!;
+      // For non-photo rows the thumbnail fields are omitted (undefined)
+      // or null — both shapes are admissible per the spec design note
+      // "null for non-photo".
+      expect(binEntry.thumbUrl == null).toBe(true);
+      expect(binEntry.thumbDekMaterial == null).toBe(true);
+      expect(binEntry.ciphertextThumbSizeBytes == null).toBe(true);
+    });
+
+    it('does NOT return wrappedDek / wrappedThumbDek in the bulk-fetch response (wrapped envelope confidentiality boundary)', async () => {
+      // api.md §14.2.11 design note "Wrapped-envelope confidentiality
+      // boundary" — only the *unwrapped* DEK leaves the server, never
+      // the wrapped envelope. A regression that surfaced the wrapped
+      // bytes alongside the URL would let any caller bypass the
+      // server-side unwrap path.
+      const ids = await seedReadyAttachments(projectId, [
+        { sizeBytes: 100, kind: 'photo', mimeType: 'image/jpeg', label: 'foto' },
+      ]);
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: ids,
+      });
+      expect(res.statusCode).toBe(200);
+      const text = res.body; // raw text body — covers both top-level
+      // and nested-under-data shapes
+      expect(text).not.toContain('wrappedDek');
+      expect(text).not.toContain('wrappedThumbDek');
+      expect(text).not.toContain('wrapped_dek');
+      expect(text).not.toContain('wrapped_thumb_dek');
+    });
+
+    it('rejects duplicate ids in the request body with 422 VALIDATION_ERROR (no partial-serve)', async () => {
+      // Server-side dedup would silently collapse the response to
+      // fewer entries than requested, breaking the SW's index-aligned
+      // progress accounting. Surface duplicates as a distinct
+      // validation error so the UI can show a clear message.
+      const [readyId] = await seedReadyAttachments(projectId, [{ sizeBytes: 100 }]);
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: [readyId, readyId, readyId],
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+    });
+
+    it('returns 500 SERVER_ERROR when an envelope in the batch cannot be unwrapped (defense-in-depth)', async () => {
+      // api.md §14.2.11 error paths: any unwrap failure in a bulk-fetch
+      // batch surfaces as 500 SERVER_ERROR (defense-in-depth — the
+      // boot probe blocks startup without the binary identity, so this
+      // should never be reachable). The single documented per-row 422
+      // surface is `download-url`, not bulk. Driving this requires a
+      // ready row with a corrupt envelope.
+      const attId = crypto.randomUUID();
+      const corrupted = Buffer.from(
+        'this-is-not-a-valid-age-envelope-' + crypto.randomUUID(),
+      ).toString('base64');
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'corrupt-bulk.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${corrupted}, NULL, 1)
+        `);
+      } finally {
+        await pool.end();
+      }
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: [attId],
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.json().code).toBe('SERVER_ERROR');
+    });
+
+    it('returns 500 SERVER_ERROR on a row whose wrappedDekVersion is unknown (envelope-format guard)', async () => {
+      // Bulk-fetch counterpart to the download-url v=2 test below.
+      // The unwrap-time format-discriminator gate (ADR-0024 / AC-244)
+      // must fire BEFORE `age` is invoked so a future format never
+      // silently decodes under the v1 parser. api.md §14.2.11 surfaces
+      // any bulk-fetch unwrap failure as 500 SERVER_ERROR; the per-row
+      // 422 surface is `download-url` only. Direct DB seed so the
+      // synthetic version travels exactly as a corrupted import row would.
+      const recipient = process.env.BINARY_AGE_RECIPIENT;
+      const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+      if (!recipient || !identityPath) {
+        throw new Error('binary identity env vars not configured for test fork');
+      }
+      const identity = readFileSync(identityPath, 'utf-8').trim();
+      const service = new KeyEnvelopeService({ recipient, identity });
+      const dek = crypto.randomBytes(32);
+      const wrappedBytes = await service.wrap(dek);
+      const wrappedBase64 = Buffer.from(wrappedBytes).toString('base64');
+
+      const attId = crypto.randomUUID();
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'future-format-bulk.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${wrappedBase64}, NULL, 2)
+        `);
+      } finally {
+        await pool.end();
+      }
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/bulk-fetch`, {
+        attachmentIds: [attId],
+      });
+      expect(res.statusCode).toBe(500);
+      expect(res.json().code).toBe('SERVER_ERROR');
     });
   });
 
@@ -815,17 +1321,27 @@ describe('Attachment routes — integration (issue #108)', () => {
   // -------------------------------------------------------------------
   describe('Papierkorb — soft-hide round-trip', () => {
     async function seedReadyAttachment(): Promise<string> {
+      const init = photoInit(projectId);
       const initRes = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/init`,
-        photoInit(projectId),
+        init,
       );
       expect(initRes.statusCode).toBe(201);
       const body = initRes.json();
       const s = storage();
-      const payload = Buffer.alloc(120_000, 0xff);
-      await s.upload(body.attachment.originalKey, payload, 'image/jpeg');
-      await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
+      // Ciphertext-shaped uploads under the sentinel content-type
+      // so HEAD verification at complete-time passes (AC-212).
+      await s.upload(
+        body.attachment.originalKey,
+        ciphertextBuffer(init.ciphertextSizeBytes),
+        'application/octet-stream',
+      );
+      await s.upload(
+        body.attachment.thumbKey,
+        ciphertextBuffer(init.ciphertextThumbSizeBytes),
+        'application/octet-stream',
+      );
       const completeRes = await authPost(
         ownerToken,
         `/api/projects/${projectId}/attachments/${body.attachment.id}/complete`,
@@ -869,7 +1385,10 @@ describe('Attachment routes — integration (issue #108)', () => {
         ownerToken,
         `/api/projects/${projectId}/attachments/${attId}/restore`,
       );
-      expect(restoreRes.statusCode).toBe(200);
+      expect({ statusCode: restoreRes.statusCode, body: restoreRes.json() }).toEqual({
+        statusCode: 200,
+        body: expect.objectContaining({ status: 'ready' }),
+      });
       const restored = restoreRes.json() as Attachment;
       expect(restored.status).toBe('ready');
       expect(restored.hiddenAt).toBeNull();
@@ -1067,25 +1586,39 @@ describe('Attachment routes — integration (issue #108)', () => {
       // Seed a hidden row directly on the soon-to-be-archived project
       // so we don't depend on the upload pipeline's archive race.
       // version_id matches a real storage version we put in the bucket.
+      // The bytes here are opaque ciphertext under the sentinel
+      // content-type so the row's persisted `ciphertextSizeBytes`
+      // matches what HEAD would observe (defensive — restore today
+      // does not re-HEAD, but a future regression that did would not
+      // be caught by a 'application/pdf'-shaped object).
       const archAttId = crypto.randomUUID();
       const originalKey = `attachments/${archProjectId}/${archAttId}.orig`;
       const s = storage();
-      const putRes = await s.upload(originalKey, Buffer.from('arch-bytes'), 'application/pdf');
+      const ciphertext = ciphertextBuffer(74);
+      const putRes = await s.upload(originalKey, ciphertext, 'application/octet-stream');
       expect(putRes).toBeDefined();
       // Read back the version-id of what we just put — this becomes the
       // source for copyFromVersion.
       const head = await s.headObject(originalKey);
       expect(head.versionId).toBeDefined();
+      // Synthetic envelope — restore copyFromVersion does not unwrap; the
+      // archive-restore arm verifies the row flips back to ready, not
+      // that the bytes can be decrypted afterwards.
+      const wrappedDek = Buffer.alloc(192, 0x42).toString('base64');
       const { db, pool } = createDatabase();
       try {
         await db.execute(sql`
           INSERT INTO attachments
             (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
              original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version,
              version_id, thumb_version_id, hidden_at)
           VALUES (${archAttId}, ${archProjectId}, 'hidden', 'binary', 'sonstiges',
                   'arch-doc.pdf', 'application/pdf', 10,
+                  ${ciphertext.length},
                   ${originalKey}, NULL, FALSE,
+                  ${wrappedDek}, NULL, 1,
                   ${head.versionId!}, NULL, NOW())
         `);
       } finally {
@@ -1238,7 +1771,12 @@ describe('Attachment routes — integration (issue #108)', () => {
       // wiring uses the real storage client.
       const { db: serviceDb, pool: servicePool } = createDatabase();
       try {
-        const service = new AttachmentService({ db: serviceDb, storage: flakyStorage });
+        const service = new AttachmentService({
+          db: serviceDb,
+          storage: flakyStorage,
+          binaryAgeRecipient: process.env.BINARY_AGE_RECIPIENT ?? '',
+          binaryAgeIdentityPath: process.env.BINARY_AGE_IDENTITY_PATH ?? '',
+        });
         const owner: AuthUser = {
           id: ownerId,
           username: SEED_USERS.owner.username,
@@ -1268,11 +1806,163 @@ describe('Attachment routes — integration (issue #108)', () => {
   });
 
   // -------------------------------------------------------------------
-  // Download URL surface — validation arms.
-  // (Happy-path scoping lives in attachments-scope.test.ts.)
+  // AC-241 — Download-URL endpoint shape: `{ url, expiresAt, dekMaterial }`.
+  // The server unwraps `wrappedDek` (or `wrappedThumbDek` for
+  // `variant=thumbnail`) per request using the operator's binary `age`
+  // identity; the unwrapped DEK is never persisted server-side. Auth
+  // happens at the scope layer (attachments-scope.test.ts).
   // -------------------------------------------------------------------
-  describe('download-url — validation branches', () => {
-    it('rejects an unknown variant with 422 VALIDATION_ERROR', async () => {
+  describe('AC-241: download-url returns presigned URL + unwrapped DEK', () => {
+    it('returns { url, expiresAt, dekMaterial } for variant=original', async () => {
+      const [id] = await seedReadyAttachments(projectId, [
+        { sizeBytes: 100, kind: 'photo', mimeType: 'image/jpeg', label: 'foto' },
+      ]);
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${id}/download-url?variant=original`,
+      );
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(typeof body.url).toBe('string');
+      expect(typeof body.expiresAt).toBe('string');
+      expect(typeof body.dekMaterial).toBe('string');
+      // 32 bytes after base64-decode — the AES-256-GCM key shape.
+      const decoded = Buffer.from(body.dekMaterial, 'base64');
+      expect(decoded.length).toBe(32);
+      // Wrapped envelope is NEVER on the response — confidentiality
+      // boundary per api.md §14.2.11. A regression that surfaced the
+      // wrapped form alongside the unwrapped one would be a valid
+      // 200 by status but wrong by shape.
+      expect(body.wrappedDek).toBeUndefined();
+      expect(body.wrappedThumbDek).toBeUndefined();
+    });
+
+    it('returns { url, expiresAt, dekMaterial } for variant=thumbnail (using wrappedThumbDek) — end-to-end DEK fidelity', async () => {
+      // End-to-end fidelity arm — drives init→complete→download-url
+      // with two CLIENT-SUPPLIED DEKs. The route must return exactly
+      // those bytes back via download-url for the matching variant
+      // (original → originalDek, thumbnail → thumbDek). A regression
+      // that swapped the two columns, or returned a constant DEK for
+      // both variants, would surface here as a byte-equality failure.
+      //
+      // Seed-driven shape-only tests can't catch the column-swap
+      // regression because the seed itself doesn't pin which 32-byte
+      // value belongs to which variant.
+      const originalDek = crypto.randomBytes(32);
+      const thumbDek = crypto.randomBytes(32);
+      // Sanity floor — they were freshly generated, so they MUST differ.
+      // A regression in `randomBytes` would invalidate the variant-fidelity
+      // assertion below (both DEKs equal → byte-equality on either variant
+      // would pass tautologically), so check up-front.
+      expect(originalDek.equals(thumbDek)).toBe(false);
+
+      const initBody = {
+        ...photoInit(projectId),
+        dekMaterial: originalDek.toString('base64'),
+        thumbDekMaterial: thumbDek.toString('base64'),
+      };
+      const initRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/init`,
+        initBody,
+      );
+      expect(initRes.statusCode).toBe(201);
+      const body = initRes.json();
+      const attId = body.attachment.id as string;
+
+      // PUT ciphertext bytes under the issued keys so complete()'s HEAD
+      // verify passes. Sentinel content-type per the e2e contract.
+      const s = storage();
+      await s.upload(
+        body.attachment.originalKey,
+        ciphertextBuffer(initBody.ciphertextSizeBytes),
+        'application/octet-stream',
+      );
+      await s.upload(
+        body.attachment.thumbKey,
+        ciphertextBuffer(initBody.ciphertextThumbSizeBytes),
+        'application/octet-stream',
+      );
+
+      const completeRes = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/complete`,
+      );
+      expect(completeRes.statusCode).toBe(200);
+
+      const original = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=original`,
+      );
+      const thumb = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=thumbnail`,
+      );
+      expect(original.statusCode).toBe(200);
+      expect(thumb.statusCode).toBe(200);
+
+      const originalReturned = Buffer.from(original.json().dekMaterial, 'base64');
+      const thumbReturned = Buffer.from(thumb.json().dekMaterial, 'base64');
+
+      // Both have the AES-256-GCM shape.
+      expect(originalReturned.length).toBe(32);
+      expect(thumbReturned.length).toBe(32);
+
+      // Variant fidelity — the route returns the column matching the
+      // requested variant. A regression that swapped columns or
+      // returned a constant DEK for both would fail at byte equality.
+      expect(originalReturned.equals(originalDek)).toBe(true);
+      expect(thumbReturned.equals(thumbDek)).toBe(true);
+
+      // And consequently the two variants surface different DEKs —
+      // api.md §14.2.11 "thumbnails are independent ciphertext objects
+      // with their own DEKs". This is now provable from the explicit
+      // input DEKs, not just the seed shape.
+      expect(originalReturned.equals(thumbReturned)).toBe(false);
+    });
+
+    it('does NOT persist the unwrapped DEK server-side (no caller-visible state change after the call)', async () => {
+      // The unwrapped DEK is computed per-request from the row's
+      // wrappedDek and the in-memory binary identity; the row's
+      // post-call shape is byte-identical to its pre-call shape.
+      // A regression that cached the unwrapped DEK on the row (e.g.
+      // for performance) would leak the entire crypto perimeter on
+      // a DB-only adversary.
+      const [id] = await seedReadyAttachments(projectId, [
+        { sizeBytes: 100, kind: 'photo', mimeType: 'image/jpeg', label: 'foto' },
+      ]);
+      const before = await fetchAttachmentRowSnapshot(id);
+      await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${id}/download-url?variant=original`,
+      );
+      const after = await fetchAttachmentRowSnapshot(id);
+      // Wrapped envelopes unchanged.
+      expect(after.wrappedDek).toBe(before.wrappedDek);
+      expect(after.wrappedThumbDek).toBe(before.wrappedThumbDek);
+      // No new unwrapped-DEK column appeared.
+      expect(after.unwrappedDek).toBeUndefined();
+    });
+
+    it('returns 404 NOT_FOUND for a hidden row (status not addressable through download-url)', async () => {
+      // Hidden rows have a delete marker on the bucket's current
+      // version — issuing a presigned GET would resolve to 404 from
+      // storage. Mirror that at the route level so the SW sees a
+      // consistent 404 from the app.
+      const id = await seedHiddenAttachment(projectId, {
+        versionId: 'fake-version-id',
+        thumbVersionId: null,
+        hasThumbnail: false,
+      });
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${id}/download-url?variant=original`,
+      );
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('NOT_FOUND');
+    });
+
+    it('returns 422 VALIDATION_ERROR for an unknown variant', async () => {
       const [id] = await seedReadyAttachments(projectId, [{ sizeBytes: 100 }]);
       const res = await authGet(
         ownerToken,
@@ -1282,7 +1972,7 @@ describe('Attachment routes — integration (issue #108)', () => {
       expect(res.json().code).toBe('VALIDATION_ERROR');
     });
 
-    it('rejects thumbnail requests on a non-photo row with 422 VALIDATION_ERROR', async () => {
+    it('returns 422 VALIDATION_ERROR for variant=thumbnail on a non-photo row', async () => {
       const [id] = await seedReadyAttachments(projectId, [
         { sizeBytes: 100, kind: 'binary', mimeType: 'application/pdf', label: 'rechnung' },
       ]);
@@ -1296,10 +1986,10 @@ describe('Attachment routes — integration (issue #108)', () => {
 
     // -----------------------------------------------------------------
     // Pending-row invisibility. `listByProject` only surfaces ready
-    // rows; `issueDownloadUrl` must mirror that, or a
-    // caller could fetch a presigned GET for partially-uploaded bytes
-    // before the HEAD-verify gate ran. 404 matches the reaper-removed
-    // branch from the caller's point of view.
+    // rows; `issueDownloadUrl` must mirror that, or a caller could
+    // fetch a presigned GET for partially-uploaded bytes before the
+    // HEAD-verify gate ran. 404 matches the reaper-removed branch
+    // from the caller's point of view.
     // -----------------------------------------------------------------
     it('returns 404 NOT_FOUND when variant=original and the row is pending', async () => {
       const initRes = await authPost(
@@ -1331,6 +2021,206 @@ describe('Attachment routes — integration (issue #108)', () => {
       );
       expect(res.statusCode).toBe(404);
       expect(res.json().code).toBe('NOT_FOUND');
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // AC-244 (server side) — per-row DEK_UNWRAP_FAILED on download-url.
+  //
+  // Per api.md §14.2.11 download-url error paths: a per-row envelope
+  // unwrap failure (corrupt envelope, recipient-mismatch from a
+  // partial key rotation, or any other unwrap-side failure) returns
+  // `422 VALIDATION_ERROR` with `code = DEK_UNWRAP_FAILED`. The SW
+  // translates the code into the "Schlüssel nicht verfügbar"
+  // placeholder render path (AC-244 component-tier coverage in
+  // `BinaryList.test.tsx` / `PhotoGallery.test.tsx`).
+  //
+  // Driving this server-side requires a row whose `wrappedDek` cannot
+  // be unwrapped by the loaded binary identity. We seed a row with a
+  // wrapped envelope of garbage bytes — the unwrap call against ANY
+  // identity must fail, regardless of which keypair the test environment
+  // loaded. (Recipient-mismatch via a different keypair is the other
+  // test path; this byte-corruption arm is provider-agnostic.)
+  // -------------------------------------------------------------------
+  describe('AC-244 server side: DEK_UNWRAP_FAILED on download-url for an unwrappable row', () => {
+    it('returns 422 with code DEK_UNWRAP_FAILED when wrappedDek is byte-corrupt', async () => {
+      // Seed a ready row directly with a `wrappedDek` that is NOT a
+      // valid `age` envelope. The unwrap pipeline rejects, the route
+      // surfaces the row-scoped failure as 422 with the documented
+      // code.
+      const attId = crypto.randomUUID();
+      const corrupted = Buffer.from(
+        'this-is-not-a-valid-age-envelope-' + crypto.randomUUID(),
+      ).toString('base64');
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'corrupt-envelope.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${corrupted}, NULL, 1)
+        `);
+      } finally {
+        await pool.end();
+      }
+
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=original`,
+      );
+      // Spec pins 422 with code DEK_UNWRAP_FAILED — the SW's branch
+      // discriminator. A 500 here would mean the route swallowed the
+      // unwrap failure into a generic surface, depriving the SW of
+      // the placeholder branch and degrading every other row in the
+      // list (the SW would treat it as a wholesale identity-not-loaded
+      // case and refuse to render anything).
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('DEK_UNWRAP_FAILED');
+    });
+
+    it('returns 422 with code DEK_UNWRAP_FAILED for variant=thumbnail when wrappedThumbDek is byte-corrupt', async () => {
+      // Symmetric arm — thumbnail-side envelope corruption surfaces
+      // the same code so the SW handles original / thumbnail with
+      // one branch.
+      const attId = crypto.randomUUID();
+      // Synthetic envelopes — this arm intentionally exercises the
+      // unwrap-failure branch on the THUMBNAIL path. The original
+      // envelope's wrap quality is irrelevant: variant=thumbnail
+      // unwraps `wrapped_thumb_dek`, which is the corrupt one here.
+      const validOrig = Buffer.alloc(192, 0).toString('base64');
+      const corruptThumb = Buffer.from('not-an-age-envelope').toString('base64');
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes, ciphertext_thumb_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'photo', 'foto',
+                  'corrupt-thumb.jpg', 'image/jpeg', 5000,
+                  5064, 1064,
+                  ${`attachments/${projectId}/${attId}.orig`},
+                  ${`attachments/${projectId}/${attId}.thumb`}, TRUE,
+                  ${validOrig}, ${corruptThumb}, 1)
+        `);
+      } finally {
+        await pool.end();
+      }
+
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=thumbnail`,
+      );
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('DEK_UNWRAP_FAILED');
+    });
+
+    it('returns 422 with code DEK_UNWRAP_FAILED on a row whose wrappedDekVersion is unknown (envelope-format guard)', async () => {
+      // Pin the unwrap-time format-discriminator gate (ADR-0024 / AC-244).
+      // A row with a real-shaped envelope but a wrapped_dek_version other
+      // than 1 must NOT silently unwrap with the current parser — the
+      // service must refuse before invoking `age` so the operator can
+      // identify rows on a legacy or future format. Direct DB seed so the
+      // synthetic version travels exactly as a corrupted bulk-import row
+      // would.
+      const recipient = process.env.BINARY_AGE_RECIPIENT;
+      const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+      if (!recipient || !identityPath) {
+        throw new Error('binary identity env vars not configured for test fork');
+      }
+      const identity = readFileSync(identityPath, 'utf-8').trim();
+      const service = new KeyEnvelopeService({ recipient, identity });
+      const dek = crypto.randomBytes(32);
+      const wrappedBytes = await service.wrap(dek);
+      const wrappedBase64 = Buffer.from(wrappedBytes).toString('base64');
+
+      const attId = crypto.randomUUID();
+      const { db, pool } = createDatabase();
+      try {
+        // Seed a v=2 row — the envelope itself is a valid `age` envelope
+        // for the loaded recipient, but the column says "format 2" and
+        // the unwrap path must refuse to interpret its bytes under the
+        // v1 parser. A regression that ignored the version column would
+        // happily decrypt and surface the DEK.
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'future-format.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${wrappedBase64}, NULL, 2)
+        `);
+      } finally {
+        await pool.end();
+      }
+
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=original`,
+      );
+      // Same surface as a corrupt envelope — the SW renders the
+      // "Schlüssel nicht verfügbar" placeholder for both classes
+      // (operator condition vs. row data integrity); 422 with the
+      // DEK_UNWRAP_FAILED code keeps the SW branch single.
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('DEK_UNWRAP_FAILED');
+    });
+
+    it('successfully unwraps a row whose wrappedDekVersion = 1 (happy-path control)', async () => {
+      // Companion to the unknown-version arm above — pins that the
+      // version=1 path remains the working one. Without this control,
+      // the unknown-version test could pass for the wrong reason (the
+      // unwrap failing for any seed-related cause). Here we wrap a real
+      // DEK and assert the route returns it.
+      const recipient = process.env.BINARY_AGE_RECIPIENT;
+      const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+      if (!recipient || !identityPath) {
+        throw new Error('binary identity env vars not configured for test fork');
+      }
+      const identity = readFileSync(identityPath, 'utf-8').trim();
+      const service = new KeyEnvelopeService({ recipient, identity });
+      const dek = crypto.randomBytes(32);
+      const wrappedBytes = await service.wrap(dek);
+      const wrappedBase64 = Buffer.from(wrappedBytes).toString('base64');
+
+      const attId = crypto.randomUUID();
+      const { db, pool } = createDatabase();
+      try {
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             ciphertext_size_bytes,
+             original_key, thumb_key, has_thumbnail,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${attId}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                  'v1-row.pdf', 'application/pdf', 1000,
+                  1064,
+                  ${`attachments/${projectId}/${attId}.orig`}, NULL, FALSE,
+                  ${wrappedBase64}, NULL, 1)
+        `);
+      } finally {
+        await pool.end();
+      }
+
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${attId}/download-url?variant=original`,
+      );
+      expect(res.statusCode).toBe(200);
+      const returned = Buffer.from(res.json().dekMaterial as string, 'base64');
+      // Byte-equality — the route returned exactly the DEK we wrapped.
+      expect(returned.equals(dek)).toBe(true);
     });
   });
 
@@ -1412,9 +2302,11 @@ describe('Attachment routes — integration (issue #108)', () => {
         fileName: 'Angebot Müller.pdf',
         mimeType: 'application/pdf',
         sizeBytes: 100,
-        contentMd5: STUB_MD5_BASE64,
         label: 'angebot',
         hasThumbnail: false,
+        dekMaterial: freshDekMaterial(),
+        ciphertextSizeBytes: 164,
+        ciphertextContentMd5: STUB_MD5_BASE64,
       });
       expect(initRes.statusCode).toBe(201);
       expect(initRes.json().attachment.fileName).toBe('Angebot Müller.pdf');
@@ -1495,11 +2387,63 @@ async function fetchAttachmentVersions(
 }
 
 /**
+ * Read the wrapped envelopes (and any unwrapped-DEK column the
+ * implementation might have introduced) for a single attachment row.
+ * Used by the AC-241 "no server-side persistence of the unwrapped
+ * DEK" arm to compare the row before-and-after a download-url call.
+ *
+ * The `unwrappedDek` field is keyed off a hypothetical column that
+ * MUST NOT exist (a regression that introduced one would surface it
+ * here as a defined value instead of `undefined`).
+ */
+async function fetchAttachmentRowSnapshot(id: string): Promise<{
+  wrappedDek: string | null;
+  wrappedThumbDek: string | null;
+  unwrappedDek: string | undefined;
+}> {
+  const { db, pool } = createDatabase();
+  try {
+    const res = await db.execute(sql`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_name = 'attachments'
+    `);
+    const columns = (res.rows as { column_name: string }[]).map((r) => r.column_name);
+    const hasUnwrapped = columns.includes('unwrapped_dek');
+
+    const row = await db.execute(
+      sql`SELECT wrapped_dek, wrapped_thumb_dek FROM attachments WHERE id = ${id}`,
+    );
+    const data = row.rows[0] as
+      | { wrapped_dek: string | null; wrapped_thumb_dek: string | null }
+      | undefined;
+    return {
+      wrappedDek: data?.wrapped_dek ?? null,
+      wrappedThumbDek: data?.wrapped_thumb_dek ?? null,
+      // `undefined` if no such column exists. A regression that added
+      // a server-side cache of the unwrapped DEK on the row would
+      // surface as a non-undefined value here.
+      unwrappedDek: hasUnwrapped ? '<column-present>' : undefined,
+    };
+  } finally {
+    await pool.end();
+  }
+}
+
+/**
  * Insert one row directly in `hidden` state with explicit version_id
  * shape so the integrity-error arms can exercise the unrestorable-row
  * branches. The route-driven path always commits non-null version_ids,
  * so DB-level seeding is the only way to land the regression shape
  * these tests pin.
+ *
+ * The wrapped envelope is intentionally synthetic (Buffer.alloc) — every
+ * caller of this helper hits a pre-unwrap rejection branch:
+ *   - `download-url` on hidden returns 404 before touching the envelope,
+ *   - `bulk-fetch` rejects hidden ids at the status check before unwrap,
+ *   - `restore` integrity errors fire on `version_id` shape before unwrap,
+ *   - Papierkorb listing on archived projects doesn't unwrap.
+ * A real wrap would burn an `age-keygen` round trip per hidden seed for
+ * no behaviour coverage.
  */
 async function seedHiddenAttachment(
   projectId: string,
@@ -1514,14 +2458,21 @@ async function seedHiddenAttachment(
     const filename = `hidden-${id.slice(0, 6)}.${spec.hasThumbnail ? 'jpg' : 'pdf'}`;
     const originalKey = `attachments/${projectId}/${id}.orig`;
     const thumbKey = spec.hasThumbnail ? `attachments/${projectId}/${id}.thumb` : null;
+    // Synthetic envelope — no caller of this helper reaches the unwrap.
+    const wrappedDek = Buffer.alloc(192, 0x33).toString('base64');
+    const wrappedThumbDek = spec.hasThumbnail ? Buffer.alloc(192, 0x44).toString('base64') : null;
     await db.execute(sql`
       INSERT INTO attachments
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+         ciphertext_size_bytes, ciphertext_thumb_size_bytes,
          original_key, thumb_key, has_thumbnail,
+         wrapped_dek, wrapped_thumb_dek, wrapped_dek_version,
          version_id, thumb_version_id, hidden_at)
       VALUES (${id}, ${projectId}, 'hidden', ${kind}, ${label},
               ${filename}, ${mimeType}, 100,
+              164, ${spec.hasThumbnail ? 164 : null},
               ${originalKey}, ${thumbKey}, ${spec.hasThumbnail},
+              ${wrappedDek}, ${wrappedThumbDek}, 1,
               ${spec.versionId}, ${spec.thumbVersionId}, NOW())
     `);
     return id;
@@ -1539,9 +2490,21 @@ interface SeedReadySpec {
 
 /**
  * Insert N `ready` attachment rows directly against the DB so the
- * bulk-download arms have predictable fixtures without going through
- * the init→complete flow. Returns the new ids in order. `__tests__/`
- * is allowlisted for AC-179's architecture check.
+ * bulk-fetch / download-url arms have predictable fixtures without
+ * going through the init→complete flow. Returns the new ids in order.
+ * `__tests__/` is allowlisted for AC-179's architecture check.
+ *
+ * Each row carries a REAL `wrapped_dek` (and `wrapped_thumb_dek` for
+ * photos) — the routes that unwrap on read (`download-url`,
+ * `bulk-fetch`) need an envelope the route's KeyEnvelopeService can
+ * actually unwrap. Synthetic Buffer.alloc envelopes fail at AEAD
+ * verification under any real implementation, which would surface as
+ * `DEK_UNWRAP_FAILED` on every happy-path test (and tautologically
+ * pass the AC-241 "different DEKs" arm regardless of route logic).
+ *
+ * The byte-corruption AC-244 arms keep their own explicit synthetic
+ * envelopes — those tests intentionally exercise the unwrap-failure
+ * branch.
  */
 async function seedReadyAttachments(projectId: string, specs: SeedReadySpec[]): Promise<string[]> {
   const { db, pool } = createDatabase();
@@ -1554,13 +2517,31 @@ async function seedReadyAttachments(projectId: string, specs: SeedReadySpec[]): 
       const label = spec.label ?? 'foto';
       const originalKey = `attachments/${projectId}/${id}.orig`;
       const thumbKey = kind === 'photo' ? `attachments/${projectId}/${id}.thumb` : null;
+      // 16 bytes of nonce + ciphertext + 16 bytes of GCM tag is the
+      // canonical AES-GCM-on-the-wire shape; +64 bytes is a generous
+      // approximation good enough for the per-file cap arms (the
+      // numerical relationship is implementation-defined per the
+      // spec).
+      const ciphertextSize = spec.sizeBytes + 64;
+      const ciphertextThumbSize =
+        kind === 'photo' ? Math.max(64, Math.floor(ciphertextSize / 10)) : null;
+      // Wrap a fresh DEK per row (and a separate one for the thumb on
+      // photos — the original-vs-thumbnail "different DEKs" contract
+      // is real, not synthetic). The KeyEnvelopeService is the same
+      // module the route layer will use to unwrap on read.
+      const orig = await wrapFreshDek();
+      const thumb = kind === 'photo' ? await wrapFreshDek() : null;
       await db.execute(sql`
         INSERT INTO attachments
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-           original_key, thumb_key, has_thumbnail)
+           ciphertext_size_bytes, ciphertext_thumb_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
         VALUES (${id}, ${projectId}, 'ready', ${kind}, ${label},
                 ${'file-' + id.slice(0, 6)}, ${mimeType}, ${spec.sizeBytes},
-                ${originalKey}, ${thumbKey}, ${kind === 'photo'})
+                ${ciphertextSize}, ${ciphertextThumbSize},
+                ${originalKey}, ${thumbKey}, ${kind === 'photo'},
+                ${orig.wrappedBase64}, ${thumb?.wrappedBase64 ?? null}, 1)
       `);
       ids.push(id);
     }
@@ -1580,13 +2561,10 @@ interface SeedReadyWithBytesSpec {
 
 /**
  * Seed `ready` rows AND upload the backing bytes to storage. Used by
- * the bulk-download happy-path arm which follows the presigned URL and
- * verifies the resulting zip's contents — a no-bytes seed can pass the
- * DB validation but the archiver would stream nothing.
- *
- * Extends `seedReadyAttachments` rather than replacing it because most
- * bulk-download arms do not need real bytes (cap-breach, cross-project,
- * pending-in-batch all short-circuit before storage is touched).
+ * arms that follow the presigned-GET URL end-to-end (e.g. the umlaut
+ * Content-Disposition arm). Stored objects carry `application/octet-
+ * stream` (the e2e sentinel) regardless of the row's plaintext MIME
+ * type — that's the on-the-wire shape under ADR-0024.
  */
 async function seedReadyAttachmentsWithBytes(
   projectId: string,
@@ -1602,14 +2580,26 @@ async function seedReadyAttachmentsWithBytes(
       const label = spec.label ?? 'sonstiges';
       const originalKey = `attachments/${projectId}/${id}.orig`;
       const thumbKey = kind === 'photo' ? `attachments/${projectId}/${id}.thumb` : null;
-      await s.upload(originalKey, spec.bytes, spec.mimeType);
+      // Storage object carries the sentinel content-type per ADR-0024
+      // — the row's plaintext MIME stays in the row metadata only.
+      await s.upload(originalKey, spec.bytes, 'application/octet-stream');
+      // Real wraps — `download-url` (the umlaut Content-Disposition
+      // arm) goes through the unwrap pipeline. Synthetic envelopes
+      // would surface as DEK_UNWRAP_FAILED instead of the URL the
+      // arm asserts on.
+      const orig = await wrapFreshDek();
+      const thumb = kind === 'photo' ? await wrapFreshDek() : null;
       await db.execute(sql`
         INSERT INTO attachments
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-           original_key, thumb_key, has_thumbnail)
+           ciphertext_size_bytes, ciphertext_thumb_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
         VALUES (${id}, ${projectId}, 'ready', ${kind}, ${label},
                 ${spec.filename}, ${spec.mimeType}, ${spec.bytes.length},
-                ${originalKey}, ${thumbKey}, ${kind === 'photo'})
+                ${spec.bytes.length}, ${kind === 'photo' ? spec.bytes.length : null},
+                ${originalKey}, ${thumbKey}, ${kind === 'photo'},
+                ${orig.wrappedBase64}, ${thumb?.wrappedBase64 ?? null}, 1)
       `);
       ids.push(id);
     }
@@ -1618,59 +2608,8 @@ async function seedReadyAttachmentsWithBytes(
     await pool.end();
   }
 }
-
-/**
- * Download bytes from a URL. Used to verify the presigned-GET URL
- * resolves to a real zip — the whole point of AC-221 is that the bytes
- * flow direct from storage to client without transiting the app.
- */
-async function fetchBytesFromUrl(url: string): Promise<Buffer> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Fetch failed: ${response.status} ${response.statusText} — ${url}`);
-  }
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
-}
-
-/**
- * List the entry names in a zip buffer. Parses the end-of-central-
- * directory record and the central directory itself, reading only
- * filenames — we do not need entry contents for these assertions.
- *
- * Zero external dependencies: the test file already imports
- * `archiver` only indirectly (via the service); pulling in `yauzl` or
- * `adm-zip` just to list entries would add a test-only dep for two
- * assertions. The parser is ~40 lines and only reads well-defined
- * fixed offsets from the zip spec (APPNOTE.TXT §4.4).
- */
-async function listZipEntries(zip: Buffer): Promise<string[]> {
-  // End of central directory record signature: 0x06054b50, located in
-  // the last 22 bytes (or last 22 + comment bytes; comments rare).
-  const EOCD_SIG = 0x06054b50;
-  const CD_SIG = 0x02014b50;
-  let eocdOffset = -1;
-  for (let i = zip.length - 22; i >= 0; i--) {
-    if (zip.readUInt32LE(i) === EOCD_SIG) {
-      eocdOffset = i;
-      break;
-    }
-  }
-  if (eocdOffset < 0) throw new Error('Not a zip buffer: EOCD record not found');
-  const cdSize = zip.readUInt32LE(eocdOffset + 12);
-  const cdOffset = zip.readUInt32LE(eocdOffset + 16);
-
-  const entries: string[] = [];
-  let cursor = cdOffset;
-  const end = cdOffset + cdSize;
-  while (cursor < end) {
-    if (zip.readUInt32LE(cursor) !== CD_SIG) break;
-    const nameLen = zip.readUInt16LE(cursor + 28);
-    const extraLen = zip.readUInt16LE(cursor + 30);
-    const commentLen = zip.readUInt16LE(cursor + 32);
-    const name = zip.subarray(cursor + 46, cursor + 46 + nameLen).toString('utf-8');
-    entries.push(name);
-    cursor += 46 + nameLen + extraLen + commentLen;
-  }
-  return entries;
-}
+// (The `fetchBytesFromUrl` + `listZipEntries` helpers from the pre-e2e
+// bulk-download arms are gone — bulk-fetch returns per-file URLs +
+// DEK material and the streaming-zip assembly happens client-side
+// per ADR-0024. The file's only `.zip` interaction is at the SW /
+// browser layer.)

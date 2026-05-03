@@ -33,7 +33,7 @@ vi.mock('@/api/client', async (importActual) => {
       completeUpload: vi.fn(),
       delete: vi.fn(),
       downloadUrl: vi.fn(),
-      bulkDownloadUrl: vi.fn(),
+      bulkFetch: vi.fn(),
     },
     authApi: {
       login: vi.fn(),

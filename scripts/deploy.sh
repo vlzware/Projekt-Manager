@@ -75,14 +75,54 @@ fi
 EXPECTED_SHA="$(git rev-parse HEAD)"
 echo "(continuing deploy at $EXPECTED_SHA)"
 
-# Decrypt secrets into the shell env. Process substitution keeps plaintext
-# off disk — `age -d` writes to an anonymous file descriptor that `source`
-# reads and discards. `set -a` auto-exports so the sourced KEY=value lines
-# reach `docker compose` without needing an explicit `export` per var.
+# Pin the exact SHA-tagged image so this deploy is reproducible and a
+# rollback is just re-running with an older SHA. Both `app` and `backup`
+# images are produced by this repo and share APP_IMAGE_TAG — CI pushes
+# them as a pair per commit SHA (see .github/workflows/ci.yml
+# build-and-push job and ADR-0020 §Decision for the backup image).
+#
+# Exported HERE — before any compose invocation in Phase 2 — because
+# the docker-compose.yml `image:` lines for `app` and `backup` use
+# the `${APP_IMAGE_TAG:?…}` gate. Without an early export, even a
+# read-only `compose ps` (used by the baseline-state pre-flight
+# below) trips the gate and exits non-zero — silently, with stderr
+# redirected to /dev/null — bypassing the pre-flight check it was
+# meant to gate. Regression observed 2026-05-03 in the 148-binary-e2e
+# deploy: a baseline-schema mismatch slipped past the guard, hit the
+# in-app baseline-guard at boot, and surfaced as a smoke-probe
+# timeout instead of a clean pre-flight abort.
+export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
+
+# Decrypt secrets into the shell env.
+#
+# Two changes vs. the previous `source <(age -d …)` form:
+#
+# 1. Capture-then-eval instead of process substitution. The old form
+#    ran age and `source` concurrently (age writing to a FIFO that
+#    `source` drained); a 2026-05-03 deploy hit a state where age
+#    exited with `incorrect passphrase` without ever showing the
+#    prompt, and the script silently fell through to the manifest
+#    pre-flight (which then reported every key as missing because
+#    nothing got sourced). The exact age/tty interaction at fault
+#    isn't pinned down, but command substitution runs age to
+#    completion BEFORE bash touches its output, removing the
+#    concurrency from the picture entirely.
+#
+# 2. Capture into a named variable rather than `eval "$(age -d …)"`
+#    inline, so that `set -e` aborts the deploy on age failure. With
+#    `eval "$(cmd)"`, a failing cmd produces empty input and eval
+#    succeeds — the script would still limp into the manifest check
+#    instead of stopping at the real error.
+#
+# Plaintext lives in `SECRETS_PLAINTEXT` for one statement and is
+# unset immediately; never written to disk (same property the old
+# form had).
+SECRETS_PLAINTEXT="$(age -d "$SECRETS_FILE")"
 set -a
 # shellcheck disable=SC1090
-source <(age -d "$SECRETS_FILE")
+eval "$SECRETS_PLAINTEXT"
 set +a
+unset SECRETS_PLAINTEXT
 
 # --- Pre-flight: env/secrets parity check --------------------------------
 # Catch operator-side drift: a new key was added to
@@ -200,19 +240,13 @@ if docker compose ps --status running --services 2>/dev/null | grep -qx db; then
   fi
 fi
 
-# Pin the exact SHA-tagged image so this deploy is reproducible and a
-# rollback is just re-running with an older SHA. `docker compose pull`
-# only pulls services that declare an `image:` — `db`, `storage`, and
-# `caddy` use their own pinned registry images (unchanged). Both `app`
-# and `backup` images are produced by this repo and share APP_IMAGE_TAG
-# — CI pushes them as a pair per commit SHA (see
-# .github/workflows/ci.yml build-and-push job and ADR-0020 §Decision
-# for the backup image).
-export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
-# --profile backup is needed on BOTH `pull` and `up` — without it on
-# pull, the backup service is filtered out of the active set and its
-# image is never fetched ahead of `up -d` (which would then block on a
-# registry round-trip while starting).
+# `docker compose pull` only pulls services that declare an `image:`
+# — `db`, `storage`, and `caddy` use their own pinned registry images
+# (unchanged); `app` and `backup` resolve via APP_IMAGE_TAG (exported
+# in Phase 2 setup above). --profile backup is needed on BOTH `pull`
+# and `up` — without it on pull, the backup service is filtered out
+# of the active set and its image is never fetched ahead of `up -d`
+# (which would then block on a registry round-trip while starting).
 docker compose --profile backup pull app backup
 
 # --- Pre-flight: schema-level env validation + feature manifest ------
@@ -264,6 +298,50 @@ docker compose run --rm --no-deps -T app node /app/dist/server/deploy-preflight-
 # doesn't spin up a cron loop that will log AccessDenied on every
 # scheduled tick. See docs/ops/backup/setup.md §4 and ADR-0020.
 docker compose --profile backup up -d
+
+# --- Binary-key reload (operator-loaded; ADR-0024 boot probe) --------
+# Container recreation wipes the tmpfs at /run/binary-key. The app boot
+# probe (assertBinaryIdentityLoaded) waits up to 5 minutes for the
+# identity file to appear before declaring boot failure (see
+# binaryIdentity.ts DEFAULT_WAIT_TIMEOUT_MS) — the immediate-throw
+# version combined with `restart: unless-stopped` produced a crash-
+# restart loop that killed this docker-exec'd loader mid-`read`
+# (regression observed 2026-05-03 in the 148-binary-e2e deploy).
+#
+# We still prompt for the paste here rather than relying on the
+# probe's wait window alone: (a) the paste is an operational
+# acknowledgment, not just a file-write — the operator confirms they
+# are present and the right keypair is loaded — and (b) the smoke
+# probe (60s) downstream needs to start AFTER the paste lands so
+# its window measures "did the app start?" rather than "did the
+# operator paste in time?". Sequence: compose up → operator paste →
+# smoke gate → caddy reload.
+#
+# The drill-key block (further down) runs AFTER the smoke probe because
+# its container has no boot gate — backups serve in degraded mode if
+# the drill key is missing.
+#
+# Skip when the tmpfs is still warm (compose-only changes that didn't
+# recreate the app container).
+if docker exec projekt-manager-app-1 test -s /run/binary-key/identity 2>/dev/null; then
+  echo "Binary identity already in tmpfs — skipping reload."
+else
+  echo
+  echo "==> Loading binary identity (operator paste; ADR-0024 tmpfs-only)"
+  # `-it` allocates a pseudo-TTY so load-binary-key's `read -s` actually
+  # suppresses echo. A missed paste keeps the app DOWN — the boot
+  # probe is fail-closed (it eventually throws on timeout, no degraded
+  # mode) — so we abort the deploy rather than pretend "verified"
+  # downstream.
+  if ! docker exec -it projekt-manager-app-1 load-binary-key; then
+    echo "ERROR: binary identity not loaded — aborting deploy." >&2
+    echo "       The app boot probe is fail-closed (ADR-0024); without the" >&2
+    echo "       identity the next container start will refuse to serve." >&2
+    echo "       Re-run the deploy after resolving the paste failure, or:" >&2
+    echo "       docker exec -it projekt-manager-app-1 load-binary-key" >&2
+    exit 1
+  fi
+fi
 
 # Smoke test: probe /api/health from inside the app container, bypassing
 # Caddy and the TLS chain. Verifies app + db + storage are reachable

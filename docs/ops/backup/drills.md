@@ -24,7 +24,7 @@ You are about to write private key material into RAM on the VPS; this is cleared
    sudo -u deploy docker exec -it projekt-manager-backup-1 load-drill-key
    ```
 
-3. The script prompts with `read -s` ("Paste age identity, end with Ctrl-D:"). Paste the clipboard contents, press Enter, then Ctrl-D. The script:
+3. The script prompts with `read -s` ("Paste age identity, finish with Ctrl-D:"). Paste the clipboard contents, press Enter, then Ctrl-D. The script:
    - Validates the first line is `# public key: age1...` and that it matches `AGE_RECIPIENT`.
    - Writes the identity to `/run/drill-key/identity` (tmpfs, mode 0400, root-owned).
    - Zeros its own buffer before exit.

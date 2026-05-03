@@ -20,8 +20,11 @@
  *   - `Notification.requestPermission()` is triggered ONLY from the
  *     click handler of the opt-in button (spec §9.8). We do NOT call it
  *     on mount, on user menu open, or on hover.
- *   - `navigator.serviceWorker.register(...)` is called lazily inside
- *     the same click handler — never on boot.
+ *   - The Service Worker is registered eagerly at SPA boot
+ *     (`src/main.tsx`) because it also intercepts
+ *     `/encrypted-storage/*` for binary attachment decryption
+ *     (ADR-0024). This module reads the existing registration via
+ *     `navigator.serviceWorker.ready`.
  */
 
 import { useCallback, useEffect, useState } from 'react';

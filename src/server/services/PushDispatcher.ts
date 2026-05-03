@@ -50,7 +50,8 @@ export interface PushDispatcher {
 
 /**
  * Wire-format payload sent through the push transport (web-push) and
- * read by the service worker (`public/sw.js`). The service worker
+ * read by the service worker (`src/sw/pushHandlers.ts`, bundled into
+ * `dist/sw.js`). The service worker
  * surfaces `title` / `body` / `url` to the user; `eventClass` and
  * `auditEntryId` are diagnostic aids visible in browser devtools and
  * useful for any future click-routing or telemetry.

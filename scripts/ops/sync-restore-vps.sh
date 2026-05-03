@@ -16,10 +16,21 @@
 #
 # Exit codes:
 #   0  success
-#   1  restore failed (app is restarted if it was running)
+#   1  restore failed (backup container is unpaused if it was paused)
 #
-# The trap always starts the app container back on exit, even on failure, to
-# avoid leaving the VPS with a stopped app after a partial sync.
+# The app container is left running throughout. Earlier versions did
+# `docker stop`/`start` to keep psql's DROP/CREATE off open connections,
+# but stopping wipes the operator-loaded binary `age` identity from the
+# /run/binary-key tmpfs (ADR-0024) and the boot probe then waits up to
+# five minutes for an operator paste — the 60 s smoke probe downstream
+# always timed out before that paste could land. We clear the app's
+# pool with `pg_terminate_backend` instead (same pattern the reverse
+# script `sync-vps-to-dev.sh` has used since it landed).
+#
+# The backup container is `pause`d, not stopped, for the same reason:
+# `docker pause` freezes via cgroup freezer so /run/drill-key (AC-175)
+# survives, while still preventing dcron from firing a run-backup.sh
+# tick mid-restore.
 
 set -euo pipefail
 
@@ -31,29 +42,25 @@ DB_CONTAINER="${COMPOSE_PROJECT}-db-1"
 APP_CONTAINER="${COMPOSE_PROJECT}-app-1"
 BACKUP_CONTAINER="${COMPOSE_PROJECT}-backup-1"
 
-# Restart whatever we stopped, even on failure. Without this a failed restore
-# leaves the app down and the operator has to manually `docker start` it.
-was_app_running=0
-was_backup_running=0
-restart_stopped() {
+# Unpause the backup container on any exit. Without this a failed restore
+# would leave it frozen and its dcron silent — drills and scheduled
+# backups would stop firing until the operator manually unpaused.
+was_backup_paused=0
+unpause_paused() {
   rc=$?
-  if [ "$was_app_running" = "1" ]; then
-    docker start "$APP_CONTAINER" >/dev/null 2>&1 || true
-  fi
-  if [ "$was_backup_running" = "1" ]; then
-    docker start "$BACKUP_CONTAINER" >/dev/null 2>&1 || true
+  if [ "$was_backup_paused" = "1" ]; then
+    docker unpause "$BACKUP_CONTAINER" >/dev/null 2>&1 || true
   fi
   exit "$rc"
 }
-trap restart_stopped EXIT
+trap unpause_paused EXIT
 
 running() {
   docker ps --format '{{.Names}}' | grep -qx "$1"
 }
 
 # Read B2 credentials, endpoint, and bucket name from the running app
-# container's env BEFORE we stop it — once stopped, `docker exec printenv`
-# returns nothing. The container is the authoritative source for the live
+# container's env. The container is the authoritative source for the live
 # config (compose interpolates from .env + secrets.env.age into its
 # `environment:` block at startup), so we avoid re-parsing those files and
 # don't need to prompt for the secrets.env.age passphrase here.
@@ -62,19 +69,30 @@ B2_BUCKET=$(docker exec "$APP_CONTAINER" printenv STORAGE_BUCKET)
 B2_KEY=$(docker exec "$APP_CONTAINER" printenv STORAGE_ACCESS_KEY)
 B2_SECRET=$(docker exec "$APP_CONTAINER" printenv STORAGE_SECRET_KEY)
 
-# Stop the app (and backup if active) so psql can drop+recreate tables
-# without fighting open connections. backup is profile-gated so it may not
-# exist.
-if running "$APP_CONTAINER"; then
-  echo "  stopping app..."
-  docker stop "$APP_CONTAINER" >/dev/null
-  was_app_running=1
-fi
+# Pause the backup container if active (profile-gated, may not exist) so
+# its dcron can't fire a run-backup.sh tick mid-restore — pg_dump racing
+# `pg_dump --clean`'s DROP/CREATE statements would either lock-fight or
+# capture stale tables. `docker pause` freezes the container via the
+# cgroup freezer, so /run/drill-key (AC-175) is preserved.
 if running "$BACKUP_CONTAINER"; then
-  echo "  stopping backup..."
-  docker stop "$BACKUP_CONTAINER" >/dev/null
-  was_backup_running=1
+  echo "  pausing backup..."
+  docker pause "$BACKUP_CONTAINER" >/dev/null
+  was_backup_paused=1
 fi
+
+# Drop the app's open connections to projekt_manager BEFORE the restore.
+# `pg_dump --clean` writes DROP TABLE IF EXISTS CASCADE statements that
+# would otherwise lock-fight the app's connection pool. The exclusion
+# of pg_backend_pid() spares this admin connection. node-postgres
+# reconnects transparently when the next request needs a backend, so
+# the brief termination window costs at most a few requests with a
+# transient pool error during the ~10 s restore. Mirrors the same
+# pattern in sync-vps-to-dev.sh.
+echo "  terminating app db connections..."
+docker exec "$DB_CONTAINER" \
+  psql -U pm -d postgres -tAc \
+  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='projekt_manager' AND pid <> pg_backend_pid();" \
+  >/dev/null
 
 # Restore DB. Using `psql` (not pg_restore) because the dump is plain SQL;
 # the orchestrator chose plain format for readability and because the dump
@@ -117,20 +135,21 @@ docker run --rm \
     mc mirror --overwrite --remove --md5 /data "b2/$B2_BUCKET"
   ' >/dev/null
 
-# Start app back. Clear the trap flag first so the trap doesn't double-start
-# after a successful restart.
-echo "  starting app..."
-docker start "$APP_CONTAINER" >/dev/null
-was_app_running=0
-if [ "$was_backup_running" = "1" ]; then
-  docker start "$BACKUP_CONTAINER" >/dev/null
-  was_backup_running=0
+# Unpause backup before the smoke probe so its dcron resumes promptly
+# and any deferred backup ticks fire against the restored DB. Clear
+# the trap flag so the EXIT trap doesn't issue a redundant unpause.
+if [ "$was_backup_paused" = "1" ]; then
+  echo "  unpausing backup..."
+  docker unpause "$BACKUP_CONTAINER" >/dev/null
+  was_backup_paused=0
 fi
 
 # Smoke probe via the SSOT script shipped in $REMOTE_TMP by the
 # orchestrator (sync-dev-to-vps.sh). Same probe CI and deploy use; the
 # script logs per-attempt failure reasons so a 503 from a degraded
-# dependency surfaces without grepping app logs.
+# dependency surfaces without grepping app logs. The app was never
+# stopped, so this verifies the restore didn't corrupt a running app
+# rather than racing a fresh boot probe.
 echo "  waiting for health..."
 if ! bash "$REMOTE_TMP/smoke-app-health.sh" "$APP_CONTAINER" 60; then
   docker logs --tail=40 "$APP_CONTAINER" >&2

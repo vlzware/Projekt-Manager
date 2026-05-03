@@ -23,7 +23,33 @@ COPY --from=build /app/dist ./dist
 # Copy migration SQL files (read at runtime by Drizzle migrator)
 COPY --from=build /app/src/server/db/migrations ./dist/server/db/migrations
 
-RUN addgroup -S app && adduser -S app -G app \
+# `age` binary — required by KeyEnvelopeService at every download-url /
+# bulk-fetch unwrap (ADR-0024). The boot probe reads age-keygen at
+# startup; both must be on PATH before the process forks them.
+# `findmnt` is used by load-binary-key.sh's tmpfs-invariant check;
+# without it the script falls back to /proc/mounts parsing.
+# `bash` is required by load-binary-key.sh's shebang. Alpine's BusyBox
+# `ash` lacks the bash-isms the script relies on (`[[ ]]`, `$'\004'`,
+# `read -d`, `set -o pipefail`); rather than rewrite to POSIX and lose
+# byte-for-byte parity with load-drill-key.sh, install bash like the
+# backup image does (Dockerfile.backup).
+RUN apk add --no-cache age findmnt bash
+
+# Operator helper: load the binary `age` private identity into tmpfs
+# (ADR-0024 §Operator workflow). Mirrors how Dockerfile.backup installs
+# load-drill-key — script lives in repo as *.sh, container path drops
+# the suffix so the runbook command stays short.
+COPY scripts/binary-key/load-binary-key.sh /usr/local/bin/load-binary-key
+RUN chmod +x /usr/local/bin/load-binary-key
+
+# Pinned UID/GID 1001 so the `app` user has a stable, deterministic id
+# across image rebuilds. The compose `app` service tmpfs at
+# /run/binary-key matches `uid=1001,gid=1001` so the boot probe
+# (running as `app`) can read the operator-loaded identity, and
+# `load-binary-key` (also running as `app` via `docker exec`) can write
+# it. UID 1000 is taken by the upstream node:alpine `node` user; 1001
+# leaves room for that without a collision.
+RUN addgroup -g 1001 -S app && adduser -u 1001 -S app -G app \
  && chown -R app:app /app
 
 USER app

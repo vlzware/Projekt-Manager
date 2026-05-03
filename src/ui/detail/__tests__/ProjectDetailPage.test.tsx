@@ -56,7 +56,9 @@ vi.mock('@/api/client', async (importActual) => {
       completeUpload: vi.fn(),
       delete: vi.fn(),
       downloadUrl: vi.fn(),
-      bulkDownloadUrl: vi.fn(),
+      // Per-blob bulk wire shape (api.md §14.2.11) — replaces the
+      // legacy server-side zip-URL endpoint per ADR-0024.
+      bulkFetch: vi.fn(),
     },
     auditApi: {
       list: vi.fn().mockResolvedValue({ ok: true, data: { data: [], nextCursor: null } }),

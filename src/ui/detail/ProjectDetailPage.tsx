@@ -96,7 +96,7 @@ export function ProjectDetailPage() {
   const restoreProject = useProjectManagementStore((s) => s.restoreProject);
   const requestConfirm = useConfirmStore((s) => s.request);
 
-  const requestBulkDownloadUrl = useAttachmentStore((s) => s.requestBulkDownloadUrl);
+  const requestBulkZipBlob = useAttachmentStore((s) => s.requestBulkZipBlob);
   const attachmentsByProject = useAttachmentStore((s) => s.byProject[projectId]);
   const trashCount = useAttachmentStore((s) => s.hiddenByProject[projectId]?.length ?? 0);
   const fetchTrashForProject = useAttachmentStore((s) => s.fetchTrashForProject);
@@ -217,19 +217,26 @@ export function ProjectDetailPage() {
   const handleDownloadAll = async () => {
     const rows = (attachmentsByProject ?? []).filter((a) => a.status === 'ready');
     if (rows.length === 0) return;
-    const url = await requestBulkDownloadUrl(
+    // Store-side: bulk-fetch + decrypt-each + streaming-zip → single
+    // Blob (ADR-0024 § Bulk download). `null` on cap breach / network /
+    // decrypt failure — the store has set the page-banner error; the
+    // click is a no-op here.
+    const blob = await requestBulkZipBlob(
       project.id,
       rows.map((a) => a.id),
     );
-    if (url) {
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = STRINGS.attachments.bulkZipFileName;
-      anchor.rel = 'noopener';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-    }
+    if (!blob) return;
+    const blobUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = blobUrl;
+    anchor.download = STRINGS.attachments.bulkZipFileName;
+    anchor.rel = 'noopener';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    // Release the object URL after the click drains — synchronous
+    // revocation can race the browser's download-pickup on some engines.
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
   };
 
   const readyAttachmentCount = (attachmentsByProject ?? []).filter(

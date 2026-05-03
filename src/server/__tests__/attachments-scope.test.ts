@@ -26,10 +26,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from 'drizzle-orm';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { startApp, stopApp, login, authGet, authPost, authDelete } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { binaryInitBody } from '../../test/fixtures/attachmentInit.js';
 import { createDatabase } from '../db/connection.js';
+import { KeyEnvelopeService } from '../services/KeyEnvelopeService.js';
 
 const year = new Date().getFullYear();
 
@@ -40,17 +42,53 @@ async function projectIdByNumber(ownerToken: string, number: string): Promise<st
   return p.id;
 }
 
+/**
+ * Wrap a fresh 32-byte DEK against the per-fork test binary identity
+ * (set by `src/test/integration-setup.ts`). Real envelope — the
+ * `download-url` arm in this file goes through the route's unwrap
+ * pipeline, so synthetic Buffer.alloc bytes would surface as
+ * DEK_UNWRAP_FAILED instead of the 200 + dekMaterial the AC-217 arm
+ * pins.
+ *
+ * Reads `process.env` directly because the env zod schema does not yet
+ * carry `BINARY_AGE_*` (implementer extends it in step 5).
+ */
+async function wrapFreshDek(): Promise<string> {
+  const recipient = process.env.BINARY_AGE_RECIPIENT;
+  const identityPath = process.env.BINARY_AGE_IDENTITY_PATH;
+  if (!recipient || !identityPath) {
+    throw new Error(
+      'wrapFreshDek: BINARY_AGE_RECIPIENT / BINARY_AGE_IDENTITY_PATH not configured. ' +
+        'Per-fork identity is set in src/test/integration-setup.ts.',
+    );
+  }
+  const identity = readFileSync(identityPath, 'utf-8').trim();
+  const service = new KeyEnvelopeService({ recipient, identity });
+  const dek = crypto.randomBytes(32);
+  const envelope = await service.wrap(dek);
+  return Buffer.from(envelope).toString('base64');
+}
+
 async function seedReadyAttachment(projectId: string, createdBy: string | null): Promise<string> {
   const { db, pool } = createDatabase();
   try {
     const id = crypto.randomUUID();
+    // Real wrapped envelope — the AC-217 download-url arms call into
+    // the route's unwrap pipeline, which validates the envelope via
+    // `KeyEnvelopeService.unwrap`. A synthetic byte sequence would
+    // fail at the AEAD step and surface as DEK_UNWRAP_FAILED.
+    const wrappedDek = await wrapFreshDek();
     await db.execute(sql`
       INSERT INTO attachments
         (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-         original_key, thumb_key, has_thumbnail, created_by)
+         ciphertext_size_bytes,
+         original_key, thumb_key, has_thumbnail,
+         wrapped_dek, wrapped_thumb_dek, wrapped_dek_version, created_by)
       VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
               ${'f-' + id.slice(0, 6)}, 'application/pdf', 100,
-              ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE, ${createdBy})
+              164,
+              ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
+              ${wrappedDek}, NULL, 1, ${createdBy})
     `);
     return id;
   } finally {
@@ -166,6 +204,17 @@ describe('Attachment scope (AC-214, AC-217)', () => {
         `/api/projects/${assignedProjectId}/attachments/${inScopeAttachmentId}/download-url?variant=original`,
       );
       expect(res.statusCode).toBe(200);
+      // The 200 surface carries `{ url, expiresAt, dekMaterial }` per
+      // AC-241 — the SW consumes all three to fetch + decrypt. A
+      // regression that returned the legacy `{ url, expiresAt }` shape
+      // (pre-ADR-0024) would fail here.
+      const body = res.json();
+      expect(typeof body.url).toBe('string');
+      expect(typeof body.expiresAt).toBe('string');
+      expect(typeof body.dekMaterial).toBe('string');
+      // 32 bytes after base64-decode — the AES-256-GCM key shape.
+      const decoded = Buffer.from(body.dekMaterial, 'base64');
+      expect(decoded.length).toBe(32);
     });
 
     it('worker receives 403 NOT_PERMITTED for an attachment on an unassigned project', async () => {
@@ -192,16 +241,23 @@ describe('Attachment scope (AC-214, AC-217)', () => {
       ['office', () => officeToken],
       ['bookkeeper', () => bookkeeperToken],
     ] as const)(
-      '%s receives 200 for any attachment (regression — unscoped)',
+      '%s receives 200 with `dekMaterial` for any attachment (regression — unscoped)',
       async (_label, getToken) => {
         // Out-of-scope for a scoped worker, but the unscoped roles must
         // still see it — that is the AC-217 contract (attachment:read is
-        // unscoped for owner/office/bookkeeper).
+        // unscoped for owner/office/bookkeeper). Under e2e (AC-241) the
+        // returned shape carries `dekMaterial` so the SW can decrypt;
+        // pin the field's presence on the unscoped path so a regression
+        // that exposed the URL but stripped the DEK on a role split
+        // would trip here.
         const res = await authGet(
           getToken(),
           `/api/projects/${unassignedProjectId}/attachments/${outOfScopeAttachmentId}/download-url?variant=original`,
         );
         expect(res.statusCode).toBe(200);
+        const body = res.json();
+        expect(typeof body.dekMaterial).toBe('string');
+        expect(Buffer.from(body.dekMaterial, 'base64').length).toBe(32);
       },
     );
   });

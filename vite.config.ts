@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
+import { build as esbuildBuild } from 'esbuild';
 import path from 'path';
 
 /**
@@ -21,8 +22,88 @@ function stripTestAttributes(): Plugin {
   };
 }
 
+/**
+ * Bundle the Service Worker entry (`src/sw/index.ts`) to `dist/sw.js`
+ * via esbuild. The SW must be a single file — browsers don't resolve
+ * ES module imports inside a classic worker, and a `type: 'module'`
+ * worker has weaker browser coverage than we want for the push surface.
+ *
+ * Build mode: `closeBundle` runs after Vite's main bundle completes,
+ * so the artifact lands alongside `dist/index.html` and the asset map.
+ *
+ * Dev mode: a middleware re-bundles on every `GET /sw.js` request
+ * (esbuild is fast enough that HMR-style re-build is cheaper than
+ * caching invalidation logic).
+ *
+ * Sourcemaps: kept on (private repo, helps debug push + decrypt paths).
+ */
+function buildServiceWorker(): Plugin {
+  const esbuildOptions = {
+    entryPoints: [path.resolve(__dirname, 'src/sw/index.ts')],
+    bundle: true,
+    format: 'iife' as const,
+    target: 'es2022' as const,
+    platform: 'browser' as const,
+    minify: true,
+    sourcemap: true,
+  };
+
+  return {
+    name: 'build-service-worker',
+    // No `apply` — both serve and build need this plugin. The per-mode
+    // logic lives in `configureServer` (dev) and `closeBundle` (build);
+    // the unused hook in the wrong mode is a no-op.
+    configureServer(server) {
+      server.middlewares.use('/sw.js', async (req, res, next) => {
+        // Connect strips the mount prefix from `req.url`. The exact
+        // `/sw.js` request leaves `req.url === '/'`; the sourcemap
+        // sibling `/sw.js.map` arrives as `/.map`. Anything deeper
+        // (e.g. a hypothetical `/sw.js/foo`) is not ours.
+        if (req.method !== 'GET') return next();
+        const wantMap = req.url === '/.map';
+        if (req.url !== '/' && !wantMap) return next();
+        try {
+          const result = await esbuildBuild({
+            ...esbuildOptions,
+            // `outfile` (not written because `write: false`) gives
+            // esbuild a path context so it splits the bundle into a
+            // separate `.js` and `.js.map` instead of inlining the
+            // sourcemap as a data URI; the middleware can then serve
+            // each on its own URL.
+            outfile: path.resolve(__dirname, 'dist/sw.js'),
+            write: false,
+          });
+          const file = wantMap
+            ? result.outputFiles?.find((f) => f.path.endsWith('.map'))
+            : result.outputFiles?.find((f) => !f.path.endsWith('.map'));
+          if (!file) {
+            res.statusCode = 500;
+            res.end('SW bundle produced no output');
+            return;
+          }
+          res.setHeader(
+            'content-type',
+            wantMap ? 'application/json; charset=utf-8' : 'application/javascript; charset=utf-8',
+          );
+          res.setHeader('cache-control', 'no-cache');
+          res.end(file.text);
+        } catch (err) {
+          res.statusCode = 500;
+          res.end(`SW bundle failed: ${(err as Error).message}`);
+        }
+      });
+    },
+    async closeBundle() {
+      await esbuildBuild({
+        ...esbuildOptions,
+        outfile: path.resolve(__dirname, 'dist/sw.js'),
+      });
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [react(), stripTestAttributes()],
+  plugins: [react(), stripTestAttributes(), buildServiceWorker()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -35,6 +116,11 @@ export default defineConfig({
   // in Playwright's auth setup (`e2e/auth.setup.ts`).
   optimizeDeps: {
     entries: ['index.html'],
+  },
+  // Sourcemaps for the main React bundle (private repo, helps debug
+  // push + decrypt paths). Mirrors the SW esbuild sourcemap policy.
+  build: {
+    sourcemap: true,
   },
   server: {
     // Listen on all interfaces so the dev server is reachable via the

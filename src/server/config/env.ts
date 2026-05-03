@@ -136,6 +136,24 @@ export const envSchema = z.object({
    * in Dockerfile.backup so operators don't need to set it. */
   AGE_IDENTITY_PATH: z.string().default('/run/drill-key/identity'),
   // ---------------------------------------------------------------
+  // Binary attachment e2e (ADR-0024 / AC-239). Independent keypair from
+  // the backup AGE_RECIPIENT above — separate rotation cadence and
+  // separate blast radius. The boot-time probe
+  // `assertBinaryIdentityLoaded` refuses to start the app service when
+  // the derived recipient of the tmpfs-loaded identity does not match
+  // BINARY_AGE_RECIPIENT.
+  // ---------------------------------------------------------------
+  /** Public age recipient (X25519) for wrapping per-attachment DEKs.
+   * Optional at the schema layer because the backup-runner CLI shares
+   * `validateEnvRuntime`; `assertAppServerEnv` enforces presence on the
+   * app-server boot path. */
+  BINARY_AGE_RECIPIENT: z.string().optional(),
+  /** Tmpfs-resident path the boot probe reads the operator-loaded
+   * private identity from. Default matches the tmpfs mount declared on
+   * the `app` service in docker-compose.yml — operators that follow the
+   * runbook do not need to set this explicitly. */
+  BINARY_AGE_IDENTITY_PATH: z.string().default('/run/binary-key/identity'),
+  // ---------------------------------------------------------------
   // Web Push / VAPID (architecture.md §11.11). The public key is derived
   // from the private half at startup (P-256 ECDSA — `src/server/config/vapid.ts`),
   // so the operator only maintains the private key. In production,
@@ -345,6 +363,7 @@ type GuardSource = {
   STORAGE_ACCESS_KEY?: string | undefined;
   STORAGE_SECRET_KEY?: string | undefined;
   STORAGE_REGION?: string | undefined;
+  BINARY_AGE_RECIPIENT?: string | undefined;
 };
 
 const ALLOW_INSECURE_HTTP_IN_PROD_MSG =
@@ -397,6 +416,7 @@ function checkAppServerEnv(source: GuardSource): GuardResult {
   if (!source.STORAGE_ACCESS_KEY) missing.push('STORAGE_ACCESS_KEY');
   if (!source.STORAGE_SECRET_KEY) missing.push('STORAGE_SECRET_KEY');
   if (!source.STORAGE_REGION) missing.push('STORAGE_REGION');
+  if (!source.BINARY_AGE_RECIPIENT) missing.push('BINARY_AGE_RECIPIENT');
   return missing.length === 0 ? { ok: true } : { ok: false, message: appServerMissingMsg(missing) };
 }
 

@@ -22,6 +22,7 @@ export type ErrorCode =
   | 'RESTORE_CONFIRMATION_MISMATCH'
   | 'MISSING_USER_REFS'
   | 'BULK_LIMIT_EXCEEDED'
+  | 'DEK_UNWRAP_FAILED'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
@@ -179,4 +180,19 @@ export interface BulkLimitDetails {
 
 export function bulkLimitExceeded(details: BulkLimitDetails): AppError {
   return new AppError('BULK_LIMIT_EXCEEDED', STRINGS.errors.invalidInput, 422, details);
+}
+
+/**
+ * Per-row envelope unwrap failure — ADR-0024 / api.md §14.2.11
+ * download-url error paths. The route returns this on a corrupt
+ * `wrappedDek` (or `wrappedThumbDek` for thumbnail variant), or when
+ * the row's envelope was wrapped to a different recipient than the
+ * currently-loaded binary identity (partial key rotation). The SW
+ * translates the code to the AC-244 "Schlüssel nicht verfügbar"
+ * placeholder render path. A wholesale "identity not loaded" failure
+ * is a different surface (500 SERVER_ERROR — the boot probe blocks
+ * startup, so it should never reach a live request).
+ */
+export function dekUnwrapFailed(): AppError {
+  return new AppError('DEK_UNWRAP_FAILED', STRINGS.errors.invalidInput, 422);
 }

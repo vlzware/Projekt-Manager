@@ -38,7 +38,7 @@
 
 import type { Database, MutatingDatabase } from '../db/connection.js';
 import type { AuditEntityType } from '../db/schema.js';
-import { auditLog } from '../db/schema.js';
+import { auditLog, AUDIT_EXCLUDED_FIELDS } from '../db/schema.js';
 import { dispatch, type AuditLogRow } from './audit-publisher.js';
 import type { AuditAction } from '../../config/auditActionLabels.js';
 
@@ -189,9 +189,20 @@ export async function mutateInTx<T>(
   const domainResult = await spec.run(tx);
   validateAncestor(domainResult);
 
+  // Schema-level audit exclusion: strip every column-name marker
+  // declared in `AUDIT_EXCLUDED_FIELDS` from the `before` / `after`
+  // snapshots before they land in `audit_log.payload`. The marker is
+  // declarative on the column (see `db/schema.ts` `AUDIT_EXCLUDED_FIELDS`)
+  // so a future column rename or a new audited mutation cannot leak
+  // the value — a service callback that accidentally surfaces the
+  // wrapped DEK in `after` (e.g. by spreading a raw row object) gets
+  // it stripped here, not at the call site. Both the camelCase and
+  // snake_case forms of each marked column are stripped (see registry
+  // for rationale). ADR-0024 / data-model.md §5.13 / architecture.md
+  // "Schema-level audit exclusion".
   const payload = {
-    before: domainResult.before ?? {},
-    after: domainResult.after ?? {},
+    before: stripAuditExcluded(domainResult.before ?? {}),
+    after: stripAuditExcluded(domainResult.after ?? {}),
   };
 
   const rows = await tx
@@ -268,6 +279,42 @@ function validateAncestor(spec: {
       'mutate(): ancestorEntityType and ancestorEntityId must be provided together or both omitted',
     );
   }
+}
+
+/**
+ * Recursively strip every `AUDIT_EXCLUDED_FIELDS` member from an
+ * arbitrary value before it lands in `audit_log.payload`. The recursion
+ * defends against a service callback that nests a row mirror inside a
+ * larger `before` / `after` object (e.g. `after: { row: { wrappedDek }
+ * }`); the strip applies to every plain-object descendant, not just the
+ * top level.
+ *
+ * Non-object values (primitives, null) and arrays of primitives pass
+ * through unchanged. Arrays of objects map element-by-element through
+ * the same strip — so a hypothetical batch-write payload that carried
+ * a list of row mirrors stays clean. Class instances (Date, Buffer)
+ * fall through unchanged: they're identity-checked via `toJSON` /
+ * primitive coercion at JSON.stringify time, which doesn't enumerate
+ * their own keys, so a class-instance Date in `after.createdAt` is
+ * unaffected.
+ */
+function stripAuditExcluded(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(stripAuditExcluded);
+  // Class instances — Date, Buffer, etc. — define `toJSON` or are
+  // serialised via their own logic; do not enumerate their keys.
+  // Only strip plain objects (objects whose constructor is Object or
+  // null-prototype objects). Distinguishes safe domain payloads from
+  // wrapper instances that should round-trip verbatim.
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== null && proto !== Object.prototype) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+    if (AUDIT_EXCLUDED_FIELDS.has(key)) continue;
+    out[key] = stripAuditExcluded(v);
+  }
+  return out;
 }
 
 function validateContext(ctx: MutateContext): void {

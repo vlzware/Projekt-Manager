@@ -5,6 +5,28 @@ on:
     branches: [main, 'iteration/**']
   pull_request:
     branches: [main, 'iteration/**']
+  # Manual escape hatch for building/publishing images on a feature
+  # branch so it can be deployed to the VPS via scripts/deploy.sh
+  # without first merging to main. CLI-only by design — the GH UI
+  # "Run workflow" button only surfaces workflows from the default
+  # branch, so for now invoke as:
+  #   gh workflow run ci.yml --ref <branch>
+  # Mirrors the same pattern used by .github/workflows/e2e.yml.
+  workflow_dispatch:
+
+# Dedup overlapping runs on the same branch. Without this, a push to a
+# feature branch with an open PR fires `pull_request` (runs `check`),
+# and a follow-up `gh workflow run` fires `workflow_dispatch` (runs
+# `check` AND `build-and-push`) — paying for `check` twice. The group
+# key normalises across event types: `pull_request.head.ref` is the
+# source branch on PR events, `ref_name` is the short branch name on
+# push/dispatch — both resolve to the same string for the same branch,
+# so the second run cancels the first. Branch protection looks up
+# `check` by name + commit SHA; the surviving run produces the same
+# named status, so PR mergeability is preserved.
+concurrency:
+  group: ci-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -40,10 +62,13 @@ jobs:
 
       - run: npm ci
 
-      # Needed by scripts/check-theme-tokens.sh. ubuntu-latest does not
-      # preinstall ripgrep; without it the check silently no-ops.
-      - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      # ripgrep — needed by scripts/check-theme-tokens.sh; without it
+      # the check silently no-ops. age — needed by src/test/integration-
+      # setup.ts, which generates a per-fork binary identity via
+      # `age-keygen` before vitest's integration suite runs (ADR-0024).
+      # Neither is preinstalled on ubuntu-latest.
+      - name: Install apt prerequisites
+        run: sudo apt-get update && sudo apt-get install -y ripgrep age
 
       - name: Audit dependencies
         run: |
@@ -349,7 +374,10 @@ jobs:
   # that fails tests, lint, or type-check.
   # ---------------------------------------------------------------
   build-and-push:
-    if: github.event_name == 'push'
+    # `push` covers main/iteration auto-builds (the original gate);
+    # `workflow_dispatch` covers operator-triggered feature-branch
+    # builds for VPS testing (see the trigger block above).
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     needs: check
     runs-on: ubuntu-latest
     permissions:
@@ -432,6 +460,16 @@ jobs:
             APP_IMAGE_TAG=${{ steps.tags.outputs.app_image_tag }}
           cache-from: type=gha,scope=backup
           cache-to: type=gha,mode=max,scope=backup
+
+      # `age` on the runner is needed by the smoke step below to mint a
+      # per-run binary `age` keypair before `docker compose up`. The app
+      # boot probe (assertBinaryIdentityLoaded — ADR-0024) refuses to
+      # start without a tmpfs-loaded identity matching
+      # BINARY_AGE_RECIPIENT; the recipient is interpolated into the app
+      # container's env at compose-parse time, so it must exist before
+      # the stack comes up. Same install as the `check` job.
+      - name: Install age (smoke prerequisite)
+        run: sudo apt-get update && sudo apt-get install -y age
 
       # ---------------------------------------------------------------
       # Runtime smoke test — catch bugs that "does it compile?" misses.
@@ -526,6 +564,20 @@ jobs:
           }
           trap cleanup EXIT
 
+          # Per-run binary `age` keypair (ADR-0024). The boot probe
+          # (assertBinaryIdentityLoaded) refuses to start the app
+          # without a tmpfs-loaded identity matching
+          # BINARY_AGE_RECIPIENT, which compose interpolates into the
+          # app container's env at parse time — so the recipient must
+          # exist BEFORE `docker compose up`. Mirrors the per-fork
+          # keypair pattern in src/test/integration-setup.ts and
+          # playwright.config.ts; the private half is loaded into the
+          # app's tmpfs further down (after compose up but before the
+          # boot probe runs — see "Load binary identity" group).
+          BINARY_IDENTITY=$(age-keygen 2>/dev/null)
+          BINARY_RECIPIENT=$(printf '%s' "$BINARY_IDENTITY" | age-keygen -y)
+          export BINARY_AGE_RECIPIENT="$BINARY_RECIPIENT"
+
           echo "::group::Compose up (app stack, no backup yet)"
           # Explicit service list — caddy is skipped because it tries
           # to provision a TLS cert against the fake DOMAIN/token and
@@ -535,6 +587,44 @@ jobs:
           # container would restart-loop. COMPOSE_FILE in env: above
           # picks up the minio overlay automatically.
           docker compose up -d db storage storage-init app
+          echo "::endgroup::"
+
+          echo "::group::Load binary identity via load-binary-key (operator path)"
+          # Invoke the actual operator script — not a tee bypass — so
+          # regressions in the script's runtime environment (missing
+          # bash, missing age-keygen, broken tmpfs-invariant check,
+          # etc.) surface here instead of on first real deploy. The
+          # script reads stdin via `read -r -s -d $'\004'`, which
+          # accepts EOF as a terminator, so piping the identity works
+          # without a literal Ctrl-D byte. No `-t` because GHA has no
+          # TTY; `read -s` is a no-op on non-TTY stdin and the rest of
+          # the script is TTY-agnostic.
+          #
+          # The probe sits behind ~5s of pre-probe boot work (migrate +
+          # bootstrapAdminIfEmpty + validateWorkflowStates +
+          # assertStorageBucketSafe), so a 1s polling exec lands
+          # comfortably ahead. If the app already crashed once before
+          # we land, the next restart re-creates the tmpfs (PID 1 exit
+          # kills the namespace), so we keep retrying until the
+          # loader script actually succeeds AND its write survives.
+          loaded=0
+          last_out=""
+          for i in $(seq 1 30); do
+            if last_out=$(printf '%s' "$BINARY_IDENTITY" | \
+                          docker exec -i projekt-manager-app-1 \
+                          load-binary-key 2>&1); then
+              echo "  $last_out"
+              echo "  loaded via load-binary-key (attempt $i)"
+              loaded=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$loaded" != "1" ]; then
+            echo "::error::load-binary-key did not succeed within 30s"
+            printf '%s\n' "$last_out" >&2
+            exit 1
+          fi
           echo "::endgroup::"
 
           echo "::group::Wait for app readiness (up to 90s)"

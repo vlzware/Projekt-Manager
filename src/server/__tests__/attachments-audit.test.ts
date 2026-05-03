@@ -1,5 +1,5 @@
 /**
- * API integration tests — attachment audit contract (AC-219).
+ * API integration tests — attachment audit contract (AC-219, AC-240).
  *
  * Pins the single-write-path invariant (AC-177, ADR-0021) as it
  * applies to the attachment entity:
@@ -12,6 +12,16 @@
  *     and a payload `before` naming the same fields.
  *   - Complete is a state-machine finalize — it produces NO audit
  *     row. The `attachment:add` entry is the authoritative record.
+ *
+ *   - AC-240: the `wrappedDek` / `wrappedThumbDek` columns MUST NOT
+ *     appear in any `audit_log` `payload` JSON — neither as column
+ *     names ("wrappedDek") nor as the actual envelope bytes for the
+ *     row. Schema-level audit exclusion (ADR-0024 / data-model.md
+ *     §5.13) is the mechanism; this test is the AC-pinned consumer.
+ *     A regression that surfaced the wrapped envelope in audit JSON
+ *     would let a DB-only adversary pair the audit dump with the
+ *     B2 ciphertext to reconstruct plaintext — defeating the entire
+ *     e2e perimeter.
  *
  * Attachment is a first-class member of `AuditEntityType` (data-model.md
  * §5.10), symmetric with `project_worker`. Every attachment audit row
@@ -148,7 +158,10 @@ describe('Attachment audit contract (AC-219)', () => {
     const body = initRes.json();
     const attachmentId = body.attachment.id as string;
 
-    // Stage backing bytes so the HEAD verify succeeds.
+    // Stage backing bytes so the HEAD verify succeeds. Sizes must match
+    // the persisted `ciphertextSizeBytes` / `ciphertextThumbSizeBytes`
+    // (fixture defaults: 120_064 + 8_064) and content-type must be the
+    // sentinel `application/octet-stream` per ADR-0024.
     const env = getEnv();
     const s = createStorageClient({
       endpoint: env.STORAGE_ENDPOINT!,
@@ -156,8 +169,12 @@ describe('Attachment audit contract (AC-219)', () => {
       accessKey: env.STORAGE_ACCESS_KEY!,
       secretKey: env.STORAGE_SECRET_KEY!,
     });
-    await s.upload(body.attachment.originalKey, Buffer.alloc(120_000, 0xff), 'image/jpeg');
-    await s.upload(body.attachment.thumbKey, Buffer.alloc(8_000, 0xaa), 'image/webp');
+    await s.upload(
+      body.attachment.originalKey,
+      Buffer.alloc(120_064, 0xff),
+      'application/octet-stream',
+    );
+    await s.upload(body.attachment.thumbKey, Buffer.alloc(8_064, 0xaa), 'application/octet-stream');
 
     const afterInit = await countAuditRows();
 
@@ -181,14 +198,19 @@ describe('Attachment audit contract (AC-219)', () => {
     // (ADR-0022). Raw SQL is allowlisted under __tests__/.
     const { db, pool } = createDatabase();
     const attachmentId = crypto.randomUUID();
+    const wrappedDekSeed = Buffer.alloc(192, 0x99).toString('base64');
     try {
       await db.execute(sql`
         INSERT INTO attachments
           (id, project_id, status, kind, label, filename, mime_type, size_bytes,
-           original_key, thumb_key, has_thumbnail, created_by)
+           ciphertext_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version, created_by)
         VALUES (${attachmentId}, ${projectId}, 'ready', 'binary', 'angebot',
                 'angebot-2026.pdf', 'application/pdf', 9876,
-                ${`attachments/${projectId}/${attachmentId}.orig`}, NULL, FALSE, NULL)
+                9940,
+                ${`attachments/${projectId}/${attachmentId}.orig`}, NULL, FALSE,
+                ${wrappedDekSeed}, NULL, 1, NULL)
       `);
     } finally {
       await pool.end();
@@ -265,5 +287,204 @@ describe('Attachment audit contract (AC-219)', () => {
     expect(attachmentRow!.entity_type).toBe('attachment');
     expect(customerRow!.entity_type).toBe('customer');
     expect(attachmentRow!.entity_type).not.toBe(customerRow!.entity_type);
+  });
+});
+
+// ---------------------------------------------------------------------
+// AC-240 — schema-level audit exclusion for wrappedDek / wrappedThumbDek
+//
+// Drives the full `attachment:add` (init) → `attachment:hide` (DELETE)
+// → `attachment:restore` flow and asserts each resulting `audit_log`
+// row's `payload` JSON contains NEITHER the column names `wrappedDek` /
+// `wrappedThumbDek` NOR the actual envelope bytes for the row. The
+// schema-level mechanism (declarative column tag) is the implementation
+// — this test is the AC consumer pinning the contract.
+//
+// The seeded row carries fixture wrapped envelopes set via direct INSERT
+// so the test can inspect them on the audit-log read. A regression
+// could leak the bytes either by name (column appears in payload) or by
+// value (the literal envelope bytes appear in some other field). Pin
+// both — a malicious `payload` shape that smuggles the envelope under
+// a different field name would still trip the bytes-by-value branch.
+// ---------------------------------------------------------------------
+
+describe('AC-240: wrapped-DEK columns never appear in audit payloads', () => {
+  let ownerToken: string;
+  let projectId: string;
+
+  const FIXTURE_WRAPPED_DEK = Buffer.from('sentinel-original-envelope-bytes-do-not-leak').toString(
+    'base64',
+  );
+  const FIXTURE_WRAPPED_THUMB_DEK = Buffer.from(
+    'sentinel-thumbnail-envelope-bytes-do-not-leak',
+  ).toString('base64');
+
+  beforeAll(async () => {
+    await startApp();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    projectId = await projectIdByNumber(ownerToken, `${year}-007`);
+  });
+
+  afterAll(async () => {
+    await stopApp();
+  });
+
+  /**
+   * Read every audit_log row for a given entity id and return the
+   * `payload` JSON serialised back to a string — easier to grep for
+   * forbidden tokens than to walk the JSON tree (and it catches both
+   * shape-level and value-level leaks in one pass).
+   */
+  async function fetchAuditPayloadStrings(entityId: string): Promise<string[]> {
+    const { db, pool } = createDatabase();
+    try {
+      const res = await db.execute(
+        sql`SELECT payload FROM audit_log WHERE entity_id = ${entityId} ORDER BY created_at ASC`,
+      );
+      return (res.rows as { payload: unknown }[]).map((r) => JSON.stringify(r.payload));
+    } finally {
+      await pool.end();
+    }
+  }
+
+  /** Assert no audit-log row for `entityId` leaks either by name or by value. */
+  async function assertNoLeak(entityId: string): Promise<void> {
+    const payloads = await fetchAuditPayloadStrings(entityId);
+    expect(payloads.length).toBeGreaterThan(0); // sanity — a write happened
+    for (const p of payloads) {
+      // Column names — direct JSON.stringify-shape leak.
+      expect(p).not.toContain('wrappedDek');
+      expect(p).not.toContain('wrappedThumbDek');
+      // snake_case shape — DB-row mirror leak (a regression that
+      // serialised the row directly would surface the snake_case
+      // form too).
+      expect(p).not.toContain('wrapped_dek');
+      expect(p).not.toContain('wrapped_thumb_dek');
+      // The actual envelope bytes for the row — a smuggled-under-
+      // a-different-name leak still trips here.
+      expect(p).not.toContain(FIXTURE_WRAPPED_DEK);
+      expect(p).not.toContain(FIXTURE_WRAPPED_THUMB_DEK);
+    }
+  }
+
+  it('attachment:add (init) audit row does not carry wrappedDek by name or by bytes', async () => {
+    // Init goes through the route, so the only way to land deterministic
+    // wrapped envelopes onto the row is to pin the column values via DB
+    // touch right after init returns. Easier path: seed a `pending` row
+    // directly with the fixture envelopes, then call the route flow on
+    // a second row whose envelope the server wraps. Here the audit row
+    // for a route-driven init is what AC-240 pins — the route's
+    // wrapping must NOT surface in the audit payload regardless of the
+    // envelope's literal bytes. We pin both shape (no column name) AND
+    // bytes (the post-init row's wrapped_dek must not appear in any
+    // audit row for the entity).
+    const initRes = await authPost(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/init`,
+      binaryInitBody({ fileName: 'audit-init.pdf', sizeBytes: 200 }),
+    );
+    expect(initRes.statusCode).toBe(201);
+    const attachmentId = initRes.json().attachment.id as string;
+
+    // Read the row's actual wrapped envelope post-init for the
+    // bytes-by-value check.
+    const { db, pool } = createDatabase();
+    let actualWrappedDek: string;
+    try {
+      const res = await db.execute(
+        sql`SELECT wrapped_dek FROM attachments WHERE id = ${attachmentId}`,
+      );
+      actualWrappedDek = (res.rows[0] as { wrapped_dek: string }).wrapped_dek;
+    } finally {
+      await pool.end();
+    }
+    expect(actualWrappedDek.length).toBeGreaterThan(0);
+
+    const payloads = await fetchAuditPayloadStrings(attachmentId);
+    expect(payloads.length).toBe(1); // exactly one attachment:add row
+    for (const p of payloads) {
+      expect(p).not.toContain('wrappedDek');
+      expect(p).not.toContain('wrapped_dek');
+      // The literal envelope bytes for THIS row (defence against a
+      // smuggle-under-another-name regression).
+      expect(p).not.toContain(actualWrappedDek);
+    }
+  });
+
+  it('attachment:hide (DELETE) audit row does not carry wrappedDek by name or by bytes', async () => {
+    // Seed a ready row directly with the FIXTURE wrapped envelopes so
+    // the bytes-by-value check has a deterministic target.
+    const attachmentId = crypto.randomUUID();
+    const { db, pool } = createDatabase();
+    try {
+      await db.execute(sql`
+        INSERT INTO attachments
+          (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+           ciphertext_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version, created_by)
+        VALUES (${attachmentId}, ${projectId}, 'ready', 'binary', 'angebot',
+                'audit-hide.pdf', 'application/pdf', 1234,
+                1234,
+                ${`attachments/${projectId}/${attachmentId}.orig`}, NULL, FALSE,
+                ${FIXTURE_WRAPPED_DEK}, NULL, 1, NULL)
+      `);
+    } finally {
+      await pool.end();
+    }
+
+    const res = await authDelete(
+      ownerToken,
+      `/api/projects/${projectId}/attachments/${attachmentId}`,
+    );
+    expect(res.statusCode).toBeLessThan(300);
+
+    await assertNoLeak(attachmentId);
+  });
+
+  it('attachment:restore audit row does not carry wrappedDek by name or by bytes', async () => {
+    // Seed a hidden photo row (so both wrappedDek AND wrappedThumbDek
+    // are populated) with FIXTURE envelopes. Drive restore. Inspect.
+    const attachmentId = crypto.randomUUID();
+    const { db, pool } = createDatabase();
+    try {
+      await db.execute(sql`
+        INSERT INTO attachments
+          (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+           ciphertext_size_bytes, ciphertext_thumb_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version,
+           version_id, thumb_version_id, hidden_at, created_by)
+        VALUES (${attachmentId}, ${projectId}, 'hidden', 'photo', 'foto',
+                'audit-restore.jpg', 'image/jpeg', 5000,
+                5000, 1000,
+                ${`attachments/${projectId}/${attachmentId}.orig`},
+                ${`attachments/${projectId}/${attachmentId}.thumb`}, TRUE,
+                ${FIXTURE_WRAPPED_DEK}, ${FIXTURE_WRAPPED_THUMB_DEK}, 1,
+                'fake-version-id', 'fake-thumb-version-id', NOW(), NULL)
+      `);
+    } finally {
+      await pool.end();
+    }
+
+    // Drive restore. The route may surface a 5xx because the storage
+    // copyFromVersion call fails on the fake version-id; the audit
+    // contract under AC-240 is whether the audit row (if written)
+    // leaks the envelope. If restore fails before the audit write, the
+    // assertion still holds (no audit row, no leak); the failure-mode
+    // assertion lives in attachments-routes.test.ts.
+    await authPost(ownerToken, `/api/projects/${projectId}/attachments/${attachmentId}/restore`);
+
+    // For every audit row that DID land (init wasn't called here, so
+    // we only see hide/restore rows if any committed), assert no leak.
+    const payloads = await fetchAuditPayloadStrings(attachmentId);
+    for (const p of payloads) {
+      expect(p).not.toContain('wrappedDek');
+      expect(p).not.toContain('wrappedThumbDek');
+      expect(p).not.toContain('wrapped_dek');
+      expect(p).not.toContain('wrapped_thumb_dek');
+      expect(p).not.toContain(FIXTURE_WRAPPED_DEK);
+      expect(p).not.toContain(FIXTURE_WRAPPED_THUMB_DEK);
+    }
   });
 });

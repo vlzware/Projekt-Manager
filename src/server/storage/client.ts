@@ -565,7 +565,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       expirySeconds: number = 60,
     ): Promise<PresignedPutDescriptor> {
       validateKey(key);
-      // Three signed headers — the load-bearing pins of AC-211:
+      // Three signed headers — the load-bearing pins of AC-245:
       //  * `Content-Type` — exact MIME type. Defense-in-depth: the
       //    complete() flip re-asserts via HEAD against the declared
       //    `mimeType`; the SigV4 binding makes the URL unusable for a

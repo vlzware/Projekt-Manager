@@ -3,7 +3,7 @@
  * orphan-reaper TTL, worker self-delete grace.
  *
  * All four values are customer-configurable **[C]** per architecture.md
- * §12.2 and pinned by verification.md AC-211/213/215/216. Defaults are
+ * §12.2 and pinned by verification.md AC-245/213/215/216. Defaults are
  * the shipping values documented in the spec; deployments override via
  * the env layer (`src/server/config/env.ts`) and the server resolves at
  * call time.

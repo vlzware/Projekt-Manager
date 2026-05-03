@@ -62,6 +62,28 @@ export interface CreatePendingAttachmentInput {
    */
   thumbSizeBytes: number | null;
   hasThumbnail: boolean;
+  /**
+   * Ciphertext byte count for the original blob — what the server signs
+   * into the presigned PUT's Content-Length and re-asserts at HEAD time
+   * (ADR-0024 / api.md §14.2.11). Distinct from plaintext `sizeBytes`.
+   */
+  ciphertextSizeBytes: number;
+  /** Same for the thumbnail blob; null for non-photo / no-thumb rows. */
+  ciphertextThumbSizeBytes: number | null;
+  /**
+   * Base64 of the operator-`age`-wrapped envelope of the per-blob DEK
+   * for the original ciphertext (ADR-0024). The unwrapped DEK is never
+   * persisted — this column is the entire crypto perimeter on B2.
+   */
+  wrappedDek: string;
+  /** Same for the thumbnail; null for non-photo / no-thumb rows. */
+  wrappedThumbDek: string | null;
+  /**
+   * Envelope-format discriminator (ADR-0024). Shared between
+   * `wrappedDek` and `wrappedThumbDek`. Current value is `1`; the
+   * unwrap path validates this and refuses unknown values.
+   */
+  wrappedDekVersion: number;
   createdBy: string | null;
 }
 
@@ -127,6 +149,11 @@ export async function createPending(
       thumbKey: input.thumbKey,
       thumbSizeBytes: input.thumbSizeBytes,
       hasThumbnail: input.hasThumbnail,
+      ciphertextSizeBytes: input.ciphertextSizeBytes,
+      ciphertextThumbSizeBytes: input.ciphertextThumbSizeBytes,
+      wrappedDek: input.wrappedDek,
+      wrappedThumbDek: input.wrappedThumbDek,
+      wrappedDekVersion: input.wrappedDekVersion,
       createdBy: input.createdBy,
     })
     .returning();

@@ -31,6 +31,31 @@ export const ATTACHMENT_MIME_WHITELIST = [
 
 export type AttachmentMime = (typeof ATTACHMENT_MIME_WHITELIST)[number];
 
+/**
+ * Current wrapped-DEK envelope-format version (ADR-0024). Init writes
+ * this value into the `attachments.wrappedDekVersion` column at every
+ * insert site; the unwrap path validates the stored value against this
+ * constant and throws on any mismatch so legacy / future formats are
+ * never silently fed to the v1 parser. The export envelope carries the
+ * version alongside the wrapped envelopes so post-import rows preserve
+ * the discriminator.
+ *
+ * The set of accepted versions is `{ 1 }` today. A future v2 introduction
+ * widens this set explicitly at every relevant call site — there is no
+ * accept-all fallback by design.
+ */
+export const WRAPPED_DEK_CURRENT_VERSION = 1 as const;
+
+/**
+ * Predicate over the closed set of known envelope-format versions. The
+ * current set is a singleton; widening is a code change at this set, the
+ * unwrap-time guard, and the import-time guard simultaneously so a future
+ * v2 cannot leak past one of them.
+ */
+export function isKnownWrappedDekVersion(version: number): boolean {
+  return version === WRAPPED_DEK_CURRENT_VERSION;
+}
+
 const PHOTO_MIMES: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const LABEL_VALUES: ReadonlySet<string> = new Set(ATTACHMENT_LABELS.map((entry) => entry.value));

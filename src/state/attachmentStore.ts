@@ -19,12 +19,20 @@
  * silent retry").
  */
 
+import { downloadZip } from 'client-zip';
 import SparkMD5 from 'spark-md5';
 import { create } from 'zustand';
 import { attachmentApi, type PresignedUpload } from '@/api/client';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
+import {
+  decodeDekMaterial,
+  decryptBlob,
+  encodeDekMaterial,
+  encryptBlob,
+  generateDek,
+} from '@/domain/clientEncryption';
 import { runImagePipeline, exceedsRawCap, type ProcessedUpload } from '@/domain/imagePipeline';
 import { handleSessionExpired } from './sessionExpired';
 import { useToastStore } from './toastStore';
@@ -124,12 +132,29 @@ interface AttachmentState {
   /** Cancel every in-flight upload for `projectId`. */
   cancelUploadsForProject: (projectId: string) => void;
   hideAttachment: (projectId: string, attachmentId: string) => Promise<void>;
+  /**
+   * Resolve a presigned-GET URL plus the unwrapped DEK for one attachment
+   * variant (ADR-0024 / api.md §14.2.11). Returns the raw `{ url,
+   * dekMaterial }` so callers can fetch + decrypt — typically the SW
+   * decrypt handler. Returns `null` on any failure (NOT_FOUND, missing
+   * permission, network) so the caller renders the "Datei fehlt" placeholder.
+   */
   requestDownloadUrl: (
     projectId: string,
     attachmentId: string,
     variant: 'original' | 'thumbnail',
-  ) => Promise<string | null>;
-  requestBulkDownloadUrl: (projectId: string, attachmentIds: string[]) => Promise<string | null>;
+  ) => Promise<{ url: string; dekMaterial: string } | null>;
+  /**
+   * Bulk-download the requested attachments, decrypt each ciphertext
+   * locally, and assemble a streaming zip in the browser (ADR-0024
+   * §"Bulk download"). Returns the assembled zip as a `Blob` on success
+   * or `null` on cap breach / network error / decrypt failure (the
+   * `error` slot carries a German message for the UI banner).
+   * Peak memory scales with the largest single file, not the whole batch
+   * — `client-zip` consumes the per-entry stream and serialises one file
+   * at a time into the zip output.
+   */
+  requestBulkZipBlob: (projectId: string, attachmentIds: string[]) => Promise<Blob | null>;
   clearError: () => void;
 }
 
@@ -376,35 +401,73 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         return;
       }
 
-      // Step 3 — compute MD5 over each blob. The init route signs the
-      // PUT URLs with `Content-MD5` bound to these exact values; the
-      // storage provider then verifies the body's MD5 against the
-      // signed header on receipt (`BadDigest` on mismatch). MD5 is
-      // also the integrity header B2 demands on every PutObject under
-      // bucket-default Compliance retention (ADR-0022).
+      // Step 3 — encrypt each blob with a fresh per-blob 32-byte AES-256
+      // GCM DEK (ADR-0024 §Encryption). The output bytes — `nonce(12) ||
+      // ct || tag(16)` — are what gets PUT to storage; the plaintext
+      // never leaves the browser. The DEK material is shipped with the
+      // init body so the server can wrap it under the operator's binary
+      // `age` recipient and persist the wrapped envelope on the row.
       const willUploadThumb = hasThumbnail && processed.thumbnail !== null;
-      const originalMd5 = await computeMd5Base64(processed.original);
-      const thumbMd5 = willUploadThumb
-        ? await computeMd5Base64(processed.thumbnail as Blob)
+      const originalDek = generateDek();
+      const originalCiphertext = await encryptBlob(
+        new Uint8Array(await processed.original.arrayBuffer()),
+        originalDek,
+      );
+      // Blob constructor refuses `Uint8Array<ArrayBufferLike>` since TS
+      // 5.x (the type widens to admit `SharedArrayBuffer`-backed views).
+      // Wrap via the underlying buffer slice — runtime is identical, the
+      // narrowing happens at the type boundary.
+      const originalCiphertextBlob = new Blob([originalCiphertext.buffer.slice(0) as ArrayBuffer], {
+        type: 'application/octet-stream',
+      });
+      const thumbDek = willUploadThumb ? generateDek() : null;
+      const thumbCiphertext =
+        willUploadThumb && thumbDek
+          ? await encryptBlob(
+              new Uint8Array(await (processed.thumbnail as Blob).arrayBuffer()),
+              thumbDek,
+            )
+          : null;
+      const thumbCiphertextBlob = thumbCiphertext
+        ? new Blob([thumbCiphertext.buffer.slice(0) as ArrayBuffer], {
+            type: 'application/octet-stream',
+          })
+        : null;
+      if (wasAborted()) return;
+
+      // Step 4 — compute MD5 over each ciphertext. The init route signs
+      // the PUT URLs with `Content-MD5` bound to these exact values; the
+      // storage provider verifies the body's MD5 against the signed
+      // header on receipt (`BadDigest` on mismatch). MD5 is also the
+      // integrity header B2 demands on every PutObject under bucket-
+      // default Compliance retention (ADR-0022). The hash is over
+      // ciphertext bytes — that is what gets PUT.
+      const ciphertextMd5 = await computeMd5Base64(originalCiphertextBlob);
+      const thumbCiphertextMd5 = thumbCiphertextBlob
+        ? await computeMd5Base64(thumbCiphertextBlob)
         : undefined;
       if (wasAborted()) return;
 
-      // Step 4 — init (creates a `pending` row + presigned PUT
-      // descriptors). Sizes + MD5s travel with the request so the
-      // server can sign each PUT with the exact body it commits to.
+      // Step 5 — init (creates a `pending` row + presigned PUT
+      // descriptors). Sizes + MD5s + DEK material travel with the request
+      // so the server can sign each PUT with the exact body it commits to
+      // and wrap each per-blob DEK under the operator's binary identity.
       const initResult = await attachmentApi.initUpload(
         projectId,
         {
           fileName: file.name,
           mimeType: processed.mimeType,
           sizeBytes: processed.sizeBytes,
-          contentMd5: originalMd5,
           label,
           hasThumbnail: willUploadThumb,
-          ...(willUploadThumb && processed.thumbnail
+          dekMaterial: encodeDekMaterial(originalDek),
+          ciphertextSizeBytes: originalCiphertextBlob.size,
+          ciphertextContentMd5: ciphertextMd5,
+          ...(willUploadThumb && thumbDek && thumbCiphertextBlob && thumbCiphertextMd5
             ? {
-                thumbSizeBytes: processed.thumbnail.size,
-                thumbContentMd5: thumbMd5,
+                thumbDekMaterial: encodeDekMaterial(thumbDek),
+                ciphertextThumbSizeBytes: thumbCiphertextBlob.size,
+                ciphertextThumbContentMd5: thumbCiphertextMd5,
               }
             : {}),
         },
@@ -431,8 +494,15 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         sizeBytes: processed.sizeBytes,
       });
 
-      // Step 5 — PUT the original bytes to storage.
-      const originalResp = await putPresigned(initData.originalUpload, processed.original, signal);
+      // Step 6 — PUT the ciphertext bytes for the original to storage.
+      // The presigned URL was signed against `ciphertextSizeBytes` and
+      // `ciphertextContentMd5` from the init body, so the body PUT here
+      // must be the exact ciphertext blob those values describe.
+      const originalResp = await putPresigned(
+        initData.originalUpload,
+        originalCiphertextBlob,
+        signal,
+      );
       if (originalResp.aborted || wasAborted()) return;
       if (!originalResp.ok) {
         markFailed(clientId, STRINGS.errors.mutationFailed, {
@@ -442,9 +512,9 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         return;
       }
 
-      // Step 6 — PUT the thumbnail (when present).
-      if (processed.thumbnail && initData.thumbnailUpload) {
-        const thumbResp = await putPresigned(initData.thumbnailUpload, processed.thumbnail, signal);
+      // Step 7 — PUT the ciphertext thumbnail bytes (when present).
+      if (thumbCiphertextBlob && initData.thumbnailUpload) {
+        const thumbResp = await putPresigned(initData.thumbnailUpload, thumbCiphertextBlob, signal);
         if (thumbResp.aborted || wasAborted()) return;
         if (!thumbResp.ok) {
           markFailed(clientId, STRINGS.errors.mutationFailed, {
@@ -455,7 +525,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         }
       }
 
-      // Step 7 — complete (server verifies bytes via HEAD).
+      // Step 8 — complete (server verifies bytes via HEAD).
       updatePending(clientId, { status: 'completing' });
       const completeResult = await attachmentApi.completeUpload(
         projectId,
@@ -477,7 +547,7 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         return;
       }
 
-      // Step 8 — success. Fire a success toast with the file name (the
+      // Step 9 — success. Fire a success toast with the file name (the
       // pending row is about to be dropped, so grab it before removal),
       // remove the pending entry, sweep any stale failed rows for this
       // project, and refresh the list.
@@ -829,13 +899,20 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         // row" for the caller, so the single null return covers both.
         return null;
       }
-      return result.data.url;
+      // Forward `url` + `dekMaterial` verbatim. The state layer never
+      // touches the DEK — the SW decrypt handler is the only consumer
+      // (ADR-0024). Don't surface `expiresAt` here: the SW reissues a
+      // fresh pair on every intercept, so a TTL hint at this layer
+      // would be ignored.
+      return { url: result.data.url, dekMaterial: result.data.dekMaterial };
     },
 
-    requestBulkDownloadUrl: async (projectId, attachmentIds) => {
+    requestBulkZipBlob: async (projectId, attachmentIds) => {
+      // 1. Bulk-fetch the per-blob descriptors (presigned-GET URL +
+      //    unwrapped DEK + ciphertext byte count, ordered by request).
       let result;
       try {
-        result = await attachmentApi.bulkDownloadUrl(projectId, attachmentIds);
+        result = await attachmentApi.bulkFetch(projectId, attachmentIds);
       } catch {
         set({ error: STRINGS.errors.mutationFailed });
         return null;
@@ -845,10 +922,74 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
           handleSessionExpired();
           return null;
         }
+        // BULK_LIMIT_EXCEEDED, NOT_PERMITTED, NOT_FOUND, validation
+        // failures all collapse here; the German message comes from the
+        // server (or the canonical fallback) so the UI banner picks it
+        // up via the shared `error` slot.
         set({ error: result.error.message || STRINGS.errors.mutationFailed });
         return null;
       }
-      return result.data.url;
+      const entries = result.data.data;
+
+      // 2. Decrypt each ciphertext, wrap as a one-chunk ReadableStream,
+      //    and feed `client-zip` an async-iter of `{ name, input }`.
+      //    Walking `entries` in order preserves the request-order
+      //    contract (AC-216). `client-zip` consumes the iterator one
+      //    file at a time, so peak memory scales with the largest
+      //    in-flight file rather than the whole batch — see ADR-0024
+      //    §"Bulk download". Wrapping the decrypted `Uint8Array` as a
+      //    single-chunk stream (not chunking) is intentional: the per-
+      //    file streaming property is preserved by the zip generator's
+      //    serialisation, and chunking is overkill at the 20-file /
+      //    20-MB cap.
+      const liveAttachments = get().byProject[projectId] ?? [];
+      const fileNameById = new Map(liveAttachments.map((a) => [a.id, a.fileName]));
+
+      async function* zipInputs(): AsyncIterable<{
+        name: string;
+        input: ReadableStream<Uint8Array>;
+      }> {
+        for (const entry of entries) {
+          const ciphertextResp = await fetch(entry.originalUrl);
+          if (!ciphertextResp.ok) {
+            throw new Error(`bulk-fetch GET failed: status=${ciphertextResp.status}`);
+          }
+          const ciphertext = new Uint8Array(await ciphertextResp.arrayBuffer());
+          const dek = decodeDekMaterial(entry.originalDekMaterial);
+          const plaintext = await decryptBlob(ciphertext, dek);
+          // Fall back to the attachment id when the live list cache
+          // doesn't contain a name for this entry (e.g. the user
+          // dispatched bulk-fetch on a stale cache). Filename-collision
+          // dedup is the caller's responsibility per api.md §14.2.11
+          // design notes — `client-zip` happily writes duplicate names.
+          const name = fileNameById.get(entry.attachmentId) ?? entry.attachmentId;
+          yield {
+            name,
+            input: new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(plaintext);
+                controller.close();
+              },
+            }),
+          };
+        }
+      }
+
+      try {
+        return await downloadZip(zipInputs()).blob();
+      } catch (err) {
+        // Decrypt failure or transport error mid-iter — both surface
+        // here. The placeholder copy is the canonical mutation-failed
+        // string; logging the structured cause keeps developer triage
+        // cheap (matches the upload-failure logging discipline).
+        console.warn('[bulk-zip] failed', {
+          projectId,
+          count: attachmentIds.length,
+          details: err instanceof Error ? `${err.name}: ${err.message}` : err,
+        });
+        set({ error: STRINGS.errors.mutationFailed });
+        return null;
+      }
     },
 
     clearError: () => set({ error: null }),

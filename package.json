@@ -50,6 +50,7 @@
     "@uploadcare/image-shrink": "^6.18.4",
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
+    "client-zip": "^2.5.0",
     "date-fns": "^4.1.0",
     "drizzle-orm": "^0.45.2",
     "eruda": "^3.4.3",

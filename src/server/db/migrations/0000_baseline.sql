@@ -17,15 +17,21 @@ CREATE TABLE "attachments" (
 	"thumb_key" text,
 	"thumb_size_bytes" bigint,
 	"has_thumbnail" boolean DEFAULT false NOT NULL,
+	"ciphertext_size_bytes" bigint,
+	"ciphertext_thumb_size_bytes" bigint,
 	"version_id" text,
 	"thumb_version_id" text,
+	"wrapped_dek" text,
+	"wrapped_thumb_dek" text,
+	"wrapped_dek_version" smallint NOT NULL,
 	"hidden_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"created_by" uuid,
 	CONSTRAINT "attachments_valid_status" CHECK ("attachments"."status" IN ('pending', 'ready', 'hidden')),
 	CONSTRAINT "attachments_valid_kind" CHECK ("attachments"."kind" IN ('photo', 'binary')),
 	CONSTRAINT "attachments_valid_label" CHECK ("attachments"."label" IN ('angebot', 'auftragsbestaetigung', 'rechnung', 'aufmass', 'foto', 'sonstiges')),
-	CONSTRAINT "attachments_valid_mime_type" CHECK ("attachments"."mime_type" IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))
+	CONSTRAINT "attachments_valid_mime_type" CHECK ("attachments"."mime_type" IN ('image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')),
+	CONSTRAINT "attachments_wrapped_dek_required_when_ready" CHECK ("attachments"."status" != 'ready' OR ("attachments"."wrapped_dek" IS NOT NULL AND "attachments"."ciphertext_size_bytes" IS NOT NULL))
 );
 --> statement-breakpoint
 CREATE TABLE "audit_log" (
