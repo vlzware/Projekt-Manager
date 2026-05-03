@@ -28,7 +28,12 @@ COPY --from=build /app/src/server/db/migrations ./dist/server/db/migrations
 # startup; both must be on PATH before the process forks them.
 # `findmnt` is used by load-binary-key.sh's tmpfs-invariant check;
 # without it the script falls back to /proc/mounts parsing.
-RUN apk add --no-cache age findmnt
+# `bash` is required by load-binary-key.sh's shebang. Alpine's BusyBox
+# `ash` lacks the bash-isms the script relies on (`[[ ]]`, `$'\004'`,
+# `read -d`, `set -o pipefail`); rather than rewrite to POSIX and lose
+# byte-for-byte parity with load-drill-key.sh, install bash like the
+# backup image does (Dockerfile.backup).
+RUN apk add --no-cache age findmnt bash
 
 # Operator helper: load the binary `age` private identity into tmpfs
 # (ADR-0024 §Operator workflow). Mirrors how Dockerfile.backup installs
