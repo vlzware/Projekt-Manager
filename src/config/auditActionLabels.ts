@@ -43,6 +43,7 @@ export const AUDIT_ACTION_KEYS = [
   'attachment:add',
   'attachment:hide',
   'attachment:restore',
+  'attachment:purge',
 ] as const;
 
 export type AuditActionKey = (typeof AUDIT_ACTION_KEYS)[number];
@@ -77,6 +78,7 @@ export const AUDIT_ACTION_LABELS: Record<AuditActionKey, string> = {
   'attachment:add': 'Datei hinzugefügt',
   'attachment:hide': 'In Papierkorb verschoben',
   'attachment:restore': 'Aus Papierkorb wiederhergestellt',
+  'attachment:purge': 'Aus Papierkorb endgültig gelöscht',
 };
 
 /**
