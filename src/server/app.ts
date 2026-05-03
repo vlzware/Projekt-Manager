@@ -28,8 +28,7 @@ import { noopPushDispatcher, type PushDispatcher } from './services/PushDispatch
 import { WebPushDispatcher } from './services/WebPushDispatcher.js';
 import { getEnv } from './config/env.js';
 import { resolveVapidKeyMaterial, type VapidKeyMaterial } from './config/vapid.js';
-import { AppError, rateLimited, serverError, validationError } from './errors.js';
-import { STRINGS } from '../config/strings.js';
+import { installErrorHandler, installNotFoundHandler } from './error-handler.js';
 
 export interface AppOptions {
   logger?: boolean;
@@ -75,42 +74,12 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     trustProxy: 1,
   });
 
-  // Global error handler — catches unhandled exceptions and wraps them
-  // so internal details (stack traces, table names) never leak to clients.
-  app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof AppError) {
-      return reply.code(error.statusCode).send(error.toResponse());
-    }
-
-    const fastifyErr = error as Error & { statusCode?: number; validation?: unknown[] };
-
-    // Fastify's built-in JSON Schema validator (ajv) throws a FastifyError with
-    // a `validation` array when the request body/params/querystring does not
-    // conform to the route schema. Previously these fell through to serverError()
-    // below, so every 400 Bad Request was rewritten as 500 SERVER_ERROR — hiding
-    // the root cause from the client and tripping 5xx alerting on every malformed
-    // request. Map them to a proper 422 VALIDATION_ERROR with the validation
-    // details preserved so callers can display meaningful field-level feedback.
-    if (fastifyErr.validation) {
-      const err = validationError(STRINGS.errors.invalidInput, fastifyErr.validation);
-      return reply.code(err.statusCode).send(err.toResponse());
-    }
-
-    // @fastify/rate-limit throws a vanilla Error with statusCode 429 when
-    // a limit is exceeded. Without this branch it would fall through to
-    // serverError() below and legitimate rate-limit responses would be
-    // rewritten as 500 SERVER_ERROR — hiding the real reason from the
-    // client and tripping any 5xx alerting. The plugin sets Retry-After
-    // before throwing, so reply.code + send preserves the header.
-    if (fastifyErr.statusCode === 429) {
-      const err = rateLimited();
-      return reply.code(err.statusCode).send(err.toResponse());
-    }
-
-    app.log.error(error);
-    const err = serverError();
-    return reply.code(err.statusCode).send(err.toResponse());
-  });
+  // Global error and 404 handlers — preserve the 4xx HTTP statusCode
+  // native to a failure (transport-layer rejections, validation, etc.)
+  // and only collapse 5xx-or-statusless errors to SERVER_ERROR. See
+  // src/server/error-handler.ts and AC-247 / api.md §14.4.2.
+  installErrorHandler(app);
+  installNotFoundHandler(app);
 
   // Cookie parsing — registered before all other plugins so
   // request.cookies is available in every route and hook.
