@@ -12,10 +12,11 @@ operator workstation                              VPS (over SSH)
     │  mc mirror MinIO → dir │                          │
     │                        ├─ rsync ──►  /tmp/pm-sync-<ts>/
     │                                                   │
-    │                           ssh bash -s ──► stop app+backup
+    │                           ssh bash -s ──► pause backup
+    │                                           pg_terminate_backend (app pool)
     │                                           psql < db.sql
     │                                           mc mirror → B2 bucket
-    │                                           start app+backup
+    │                                           unpause backup
     │                                           /api/health probe
 ```
 
@@ -59,7 +60,7 @@ Overrides via env:
 | ------------ | --------- | ----------------------------------------------- |
 | `SSH_TARGET` | `hetzner` | SSH destination (host alias in `~/.ssh/config`) |
 
-End-to-end typical timing on a small dataset: ~40 seconds. App downtime on the VPS: the stop → restore → start → health-check window, usually 10–20 seconds.
+End-to-end typical timing on a small dataset: ~40 seconds. The app container stays running throughout — at most a few requests during the ~10 s restore see a transient pool error after `pg_terminate_backend` clears the connections; node-postgres reconnects on the next query. The backup container is `docker pause`d for the same window so its dcron can't fire mid-restore (and so its `/run/drill-key` tmpfs survives — `docker stop` would wipe it the same way it wipes the app's binary identity, ADR-0024).
 
 ## What the script does
 
@@ -68,8 +69,8 @@ End-to-end typical timing on a small dataset: ~40 seconds. App downtime on the V
 3. `pg_dump --clean --if-exists --no-owner --no-acl` into `/tmp/pm-sync-<ts>/db.sql`.
 4. `mc mirror --overwrite --remove` local MinIO bucket into `/tmp/pm-sync-<ts>/bucket/`.
 5. `rsync -az` the temp directory to the VPS.
-6. On VPS: read STORAGE\_\* from the running `app` container's env → stop `app` (and `backup` if running) → `psql -v ON_ERROR_STOP=1 < db.sql` → `mc mirror` onto the B2 bucket → start `app` (and `backup`) → poll `/api/health` for 60s.
-7. Trap-based cleanup: restarts stopped containers even on failure; removes `/tmp/pm-sync-<ts>/` on both ends.
+6. On VPS: read STORAGE\_\* from the running `app` container's env → pause `backup` if running → `pg_terminate_backend` on the app's connections to `projekt_manager` → `psql -v ON_ERROR_STOP=1 < db.sql` → `mc mirror` onto the B2 bucket → unpause `backup` → poll `/api/health` for 60s.
+7. Trap-based cleanup: unpauses `backup` even on failure; removes `/tmp/pm-sync-<ts>/` on both ends.
 
 Credentials on both ends are read from the running containers' env: local MinIO via `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` on the `storage` container; VPS B2 via `STORAGE_ACCESS_KEY` / `STORAGE_SECRET_KEY` (and the bucket name + endpoint) on the `app` container. Neither side needs `secrets.env.age` decrypted during the sync.
 
@@ -82,13 +83,13 @@ Untouched: VPS filesystem, `secrets.env.age`, Caddy config, VAPID private key un
 
 ## Failure modes
 
-| Symptom                                    | Cause / Fix                                                                                                                                                       |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema hash mismatch`                     | VPS is on a different commit's schema. Deploy the matching commit first.                                                                                          |
-| `local service 'db' is not running`        | Start the dev stack: `docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init`.                  |
-| `local users table is empty`               | Start the app once (`npm run dev`) so migrations + seed run, then retry.                                                                                          |
-| `health check failed after 60s`            | Check `ssh hetzner 'docker logs --tail=80 projekt-manager-app-1'`. DB restore may have partially applied — inspect tables and re-run.                             |
-| Sync aborts mid-way, app stays down on VPS | The trap starts the app back on exit regardless of failure; confirm with `ssh hetzner 'docker ps'`. If not running, `docker start projekt-manager-app-1` by hand. |
+| Symptom                                    | Cause / Fix                                                                                                                                                                                                                                                         |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema hash mismatch`                     | VPS is on a different commit's schema. Deploy the matching commit first.                                                                                                                                                                                            |
+| `local service 'db' is not running`        | Start the dev stack: `docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init`.                                                                                                                    |
+| `local users table is empty`               | Start the app once (`npm run dev`) so migrations + seed run, then retry.                                                                                                                                                                                            |
+| `health check failed after 60s`            | Check `ssh hetzner 'docker logs --tail=80 projekt-manager-app-1'`. DB restore may have partially applied — inspect tables and re-run.                                                                                                                               |
+| Sync aborts mid-way, `backup` stays paused | The trap unpauses on exit regardless of failure; confirm with `ssh hetzner 'docker ps'` (paused containers show `(Paused)`). If still paused, `docker unpause projekt-manager-backup-1` by hand. The app container is never paused or stopped, so it stays running. |
 
 ## Post-sync checklist
 
