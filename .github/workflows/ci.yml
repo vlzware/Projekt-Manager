@@ -447,6 +447,16 @@ jobs:
           cache-from: type=gha,scope=backup
           cache-to: type=gha,mode=max,scope=backup
 
+      # `age` on the runner is needed by the smoke step below to mint a
+      # per-run binary `age` keypair before `docker compose up`. The app
+      # boot probe (assertBinaryIdentityLoaded — ADR-0024) refuses to
+      # start without a tmpfs-loaded identity matching
+      # BINARY_AGE_RECIPIENT; the recipient is interpolated into the app
+      # container's env at compose-parse time, so it must exist before
+      # the stack comes up. Same install as the `check` job.
+      - name: Install age (smoke prerequisite)
+        run: sudo apt-get update && sudo apt-get install -y age
+
       # ---------------------------------------------------------------
       # Runtime smoke test — catch bugs that "does it compile?" misses.
       #
@@ -540,6 +550,20 @@ jobs:
           }
           trap cleanup EXIT
 
+          # Per-run binary `age` keypair (ADR-0024). The boot probe
+          # (assertBinaryIdentityLoaded) refuses to start the app
+          # without a tmpfs-loaded identity matching
+          # BINARY_AGE_RECIPIENT, which compose interpolates into the
+          # app container's env at parse time — so the recipient must
+          # exist BEFORE `docker compose up`. Mirrors the per-fork
+          # keypair pattern in src/test/integration-setup.ts and
+          # playwright.config.ts; the private half is loaded into the
+          # app's tmpfs further down (after compose up but before the
+          # boot probe runs — see "Load binary identity" group).
+          BINARY_IDENTITY=$(age-keygen 2>/dev/null)
+          BINARY_RECIPIENT=$(printf '%s' "$BINARY_IDENTITY" | age-keygen -y)
+          export BINARY_AGE_RECIPIENT="$BINARY_RECIPIENT"
+
           echo "::group::Compose up (app stack, no backup yet)"
           # Explicit service list — caddy is skipped because it tries
           # to provision a TLS cert against the fake DOMAIN/token and
@@ -549,6 +573,35 @@ jobs:
           # container would restart-loop. COMPOSE_FILE in env: above
           # picks up the minio overlay automatically.
           docker compose up -d db storage storage-init app
+          echo "::endgroup::"
+
+          echo "::group::Load binary identity into app tmpfs"
+          # Pre-load /run/binary-key/identity before assertBinaryIdentityLoaded
+          # runs. The probe sits behind ~5s of pre-probe boot work
+          # (migrate + bootstrapAdminIfEmpty + validateWorkflowStates +
+          # assertStorageBucketSafe), so a 1s polling exec lands
+          # comfortably ahead. Mirrors the operator-paste flow in
+          # scripts/binary-key/load-binary-key.sh, but pre-emptive — no
+          # race against a crash-loop. If the app already crashed once
+          # before we land, the next restart re-creates the tmpfs (PID 1
+          # exit kills the namespace), so we keep retrying until a write
+          # actually succeeds AND survives.
+          loaded=0
+          for i in $(seq 1 30); do
+            if printf '%s' "$BINARY_IDENTITY" | \
+               docker exec -i projekt-manager-app-1 \
+               tee /run/binary-key/identity > /dev/null 2>&1; then
+              docker exec projekt-manager-app-1 chmod 0400 /run/binary-key/identity || true
+              echo "  loaded into tmpfs (attempt $i)"
+              loaded=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$loaded" != "1" ]; then
+            echo "::error::Could not load binary identity into app container tmpfs"
+            exit 1
+          fi
           echo "::endgroup::"
 
           echo "::group::Wait for app readiness (up to 90s)"
