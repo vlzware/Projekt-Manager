@@ -13,8 +13,8 @@ import { fileURLToPath } from 'url';
 import fastifyStatic from '@fastify/static';
 import { sql } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import { STRINGS } from '../config/strings.js';
 import { buildApp } from './app.js';
+import { installNotFoundHandler, installSpaAwareNotFoundHandler } from './error-handler.js';
 import { bootstrapAdminIfEmpty } from './bootstrap.js';
 import {
   assertAppServerEnv,
@@ -301,25 +301,13 @@ async function start(): Promise<void> {
       },
     });
 
-    // SPA fallback: serve index.html for non-API routes
-    app.setNotFoundHandler((req, reply) => {
-      if (!req.url.startsWith('/api')) {
-        return reply.sendFile('index.html');
-      }
-      reply
-        .code(404)
-        .send({ code: 'NOT_FOUND', message: STRINGS.errors.notFound(STRINGS.entities.resource) });
-    });
+    installSpaAwareNotFoundHandler(app);
   } else if (isProduction) {
     throw new Error(
       `dist/ not found at ${distFolder}. Run 'npm run build' before starting in production.`,
     );
   } else {
-    app.setNotFoundHandler((_req, reply) => {
-      reply
-        .code(404)
-        .send({ code: 'NOT_FOUND', message: STRINGS.errors.notFound(STRINGS.entities.resource) });
-    });
+    installNotFoundHandler(app);
   }
 
   // Graceful shutdown — registered before listen to avoid a window

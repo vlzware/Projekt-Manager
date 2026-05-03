@@ -28,7 +28,7 @@ import { noopPushDispatcher, type PushDispatcher } from './services/PushDispatch
 import { WebPushDispatcher } from './services/WebPushDispatcher.js';
 import { getEnv } from './config/env.js';
 import { resolveVapidKeyMaterial, type VapidKeyMaterial } from './config/vapid.js';
-import { installErrorHandler, installNotFoundHandler } from './error-handler.js';
+import { installErrorHandler } from './error-handler.js';
 
 export interface AppOptions {
   logger?: boolean;
@@ -74,12 +74,15 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     trustProxy: 1,
   });
 
-  // Global error and 404 handlers — preserve the 4xx HTTP statusCode
-  // native to a failure (transport-layer rejections, validation, etc.)
-  // and only collapse 5xx-or-statusless errors to SERVER_ERROR. See
+  // Global error handler — preserves 4xx HTTP statusCode and only
+  // collapses 5xx-or-statusless errors to SERVER_ERROR. See
   // src/server/error-handler.ts and AC-247 / api.md §14.4.2.
+  //
+  // The not-found handler is mounted by the caller (start.ts for the
+  // SPA fallback, the unit test directly), because Fastify rejects a
+  // second setNotFoundHandler on the same prefix and start.ts needs
+  // the SPA-vs-/api branch.
   installErrorHandler(app);
-  installNotFoundHandler(app);
 
   // Cookie parsing — registered before all other plugins so
   // request.cookies is available in every route and hook.
