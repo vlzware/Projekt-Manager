@@ -75,6 +75,24 @@ fi
 EXPECTED_SHA="$(git rev-parse HEAD)"
 echo "(continuing deploy at $EXPECTED_SHA)"
 
+# Pin the exact SHA-tagged image so this deploy is reproducible and a
+# rollback is just re-running with an older SHA. Both `app` and `backup`
+# images are produced by this repo and share APP_IMAGE_TAG — CI pushes
+# them as a pair per commit SHA (see .github/workflows/ci.yml
+# build-and-push job and ADR-0020 §Decision for the backup image).
+#
+# Exported HERE — before any compose invocation in Phase 2 — because
+# the docker-compose.yml `image:` lines for `app` and `backup` use
+# the `${APP_IMAGE_TAG:?…}` gate. Without an early export, even a
+# read-only `compose ps` (used by the baseline-state pre-flight
+# below) trips the gate and exits non-zero — silently, with stderr
+# redirected to /dev/null — bypassing the pre-flight check it was
+# meant to gate. Regression observed 2026-05-03 in the 148-binary-e2e
+# deploy: a baseline-schema mismatch slipped past the guard, hit the
+# in-app baseline-guard at boot, and surfaced as a smoke-probe
+# timeout instead of a clean pre-flight abort.
+export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
+
 # Decrypt secrets into the shell env.
 #
 # Two changes vs. the previous `source <(age -d …)` form:
@@ -222,19 +240,13 @@ if docker compose ps --status running --services 2>/dev/null | grep -qx db; then
   fi
 fi
 
-# Pin the exact SHA-tagged image so this deploy is reproducible and a
-# rollback is just re-running with an older SHA. `docker compose pull`
-# only pulls services that declare an `image:` — `db`, `storage`, and
-# `caddy` use their own pinned registry images (unchanged). Both `app`
-# and `backup` images are produced by this repo and share APP_IMAGE_TAG
-# — CI pushes them as a pair per commit SHA (see
-# .github/workflows/ci.yml build-and-push job and ADR-0020 §Decision
-# for the backup image).
-export APP_IMAGE_TAG="sha-$EXPECTED_SHA"
-# --profile backup is needed on BOTH `pull` and `up` — without it on
-# pull, the backup service is filtered out of the active set and its
-# image is never fetched ahead of `up -d` (which would then block on a
-# registry round-trip while starting).
+# `docker compose pull` only pulls services that declare an `image:`
+# — `db`, `storage`, and `caddy` use their own pinned registry images
+# (unchanged); `app` and `backup` resolve via APP_IMAGE_TAG (exported
+# in Phase 2 setup above). --profile backup is needed on BOTH `pull`
+# and `up` — without it on pull, the backup service is filtered out
+# of the active set and its image is never fetched ahead of `up -d`
+# (which would then block on a registry round-trip while starting).
 docker compose --profile backup pull app backup
 
 # --- Pre-flight: schema-level env validation + feature manifest ------
