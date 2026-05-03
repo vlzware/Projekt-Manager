@@ -31,6 +31,7 @@ export const STRINGS = {
     serverError: 'Ein interner Fehler ist aufgetreten.',
     invalidInput: 'Ungültige Eingabe.',
     notFound: (entity: string) => `${entity} nicht gefunden.`,
+    routeNotFound: 'Die angeforderte URL existiert nicht.',
     idempotencyConflict: 'Diese Anfrage-ID wurde bereits mit abweichenden Daten verwendet.',
     schemaVersionMismatch:
       'Die Datenformat-Version der Datei passt nicht zur aktuellen Version des Systems.',

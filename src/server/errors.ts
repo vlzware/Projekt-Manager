@@ -16,6 +16,7 @@ export type ErrorCode =
   | 'CONFLICT'
   | 'IDEMPOTENCY_CONFLICT'
   | 'NOT_FOUND'
+  | 'ROUTE_NOT_FOUND'
   | 'GONE'
   | 'RATE_LIMITED'
   | 'SCHEMA_VERSION_MISMATCH'
@@ -160,6 +161,37 @@ export function extractSqlState(err: unknown): string | null {
 
 export function notFound(entity: string = STRINGS.entities.resource): AppError {
   return new AppError('NOT_FOUND', STRINGS.errors.notFound(entity), 404);
+}
+
+/**
+ * The requested URL has no registered handler. Distinct from `notFound()`
+ * (entity missing on a known endpoint) — see api.md §14.4.1 / AC-247.
+ */
+export function routeNotFound(): AppError {
+  return new AppError('ROUTE_NOT_FOUND', STRINGS.errors.routeNotFound, 404);
+}
+
+/**
+ * Wrap a 4xx-class non-`AppError` (typically a `FastifyError` from the
+ * content-type parser, body-limit, media-type negotiation, or the
+ * not-found handler when it bubbles into `setErrorHandler`) in an
+ * `AppError` that preserves the original statusCode and surfaces a
+ * stable machine-readable code. Returns `null` for non-4xx errors so
+ * the caller falls back to `serverError()`. See api.md §14.4.2 / AC-247.
+ *
+ * Domain `notFound()` errors are `AppError` instances and are handled
+ * upstream of this mapper; a 404 reaching here is therefore route-shaped
+ * (no registered handler) rather than domain-shaped (entity missing).
+ */
+export function mapFastify4xx(
+  err: Error & { statusCode?: number; code?: string },
+): AppError | null {
+  const status = err.statusCode;
+  if (typeof status !== 'number' || status < 400 || status >= 500) return null;
+  if (status === 404 || err.code === 'FST_ERR_NOT_FOUND') {
+    return new AppError('ROUTE_NOT_FOUND', STRINGS.errors.routeNotFound, status);
+  }
+  return new AppError('VALIDATION_ERROR', STRINGS.errors.invalidInput, status);
 }
 
 /**
