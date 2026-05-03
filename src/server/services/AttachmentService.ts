@@ -98,6 +98,7 @@ import {
   bulkLimitExceeded,
   conflict,
   dekUnwrapFailed,
+  gone,
   notFound,
   notPermitted,
   serverError,
@@ -956,12 +957,28 @@ export class AttachmentService {
           // Phase 2 — copy. A failure here throws out of the tx and
           // rolls back Phase 1 (status returns to 'hidden') AND the
           // audit row. The bucket retains only the prior hidden version.
-          const newVersionId =
-            (await this.storage.copyFromVersion(row.originalKey, sourceVersionId)) ?? null;
+          //
+          // The bucket lifecycle (provider-side, ADR-0022) and the row
+          // reaper (app-side, data-model.md §6.12) both fire on the same
+          // `L` window but on independent clocks. A row may briefly
+          // outlive its bytes — the source version is gone from storage
+          // while the row is still at `status='hidden'`. Surface that as
+          // 410 GONE so the user sees a meaningful "permanently
+          // unavailable" message instead of a generic 500.
+          let newVersionId: string | null;
           let newThumbVersionId: string | null = null;
-          if (row.thumbKey && sourceThumbVersionId) {
-            newThumbVersionId =
-              (await this.storage.copyFromVersion(row.thumbKey, sourceThumbVersionId)) ?? null;
+          try {
+            newVersionId =
+              (await this.storage.copyFromVersion(row.originalKey, sourceVersionId)) ?? null;
+            if (row.thumbKey && sourceThumbVersionId) {
+              newThumbVersionId =
+                (await this.storage.copyFromVersion(row.thumbKey, sourceThumbVersionId)) ?? null;
+            }
+          } catch (err) {
+            if (err instanceof StorageObjectNotFoundError) {
+              throw gone(STRINGS.attachments.restoreBytesGone(attachmentId));
+            }
+            throw err;
           }
 
           // Phase 3 — write the freshly-issued version-ids. We hold the

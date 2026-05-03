@@ -220,6 +220,12 @@ export interface StorageClient {
    * versioned, so each PUT — including this server-side copy — produces
    * a fresh version). Used by the Papierkorb restore flow (ADR-0022).
    *
+   * Throws `StorageObjectNotFoundError` when the source version is no
+   * longer recoverable (e.g. the bucket lifecycle reaped it ahead of the
+   * row reaper, the data-model.md §6.12 race). The restore caller maps
+   * this to `410 GONE` so the global handler does not pessimize a real
+   * 4xx into `500 SERVER_ERROR`.
+   *
    * App-key capability dependency (B2): on a bucket with default
    * Compliance Object Lock retention, the running credential MUST hold
    * `writeFileRetentions` (= `s3:PutObjectRetention`). Without it,
@@ -689,14 +695,32 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       // validated by validateKey() against STORAGE_CONFIG.validKeyPattern.
       // Slashes inside the key remain raw — encoding them would change the
       // semantic CopySource path. The SDK URL-encodes the rest.
-      const response = await s3.send(
-        new CopyObjectCommand({
-          Bucket: bucket,
-          Key: key,
-          CopySource: `${bucket}/${key}?versionId=${encodeURIComponent(sourceVersionId)}`,
-        }),
-      );
-      return response.VersionId;
+      try {
+        const response = await s3.send(
+          new CopyObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            CopySource: `${bucket}/${key}?versionId=${encodeURIComponent(sourceVersionId)}`,
+          }),
+        );
+        return response.VersionId;
+      } catch (err) {
+        // Map "the source version is gone" to the typed not-found so the
+        // restore caller can surface a meaningful 4xx instead of bubbling
+        // a raw S3ServiceException through the global handler as 500. This
+        // is the bucket-lifecycle-vs-row-reaper race window from
+        // data-model.md §6.12 (bytes reaped first, row still present).
+        const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+        if (
+          e.name === 'NoSuchKey' ||
+          e.name === 'NoSuchVersion' ||
+          e.name === 'NotFound' ||
+          e.$metadata?.httpStatusCode === 404
+        ) {
+          throw new StorageObjectNotFoundError(key);
+        }
+        throw err;
+      }
     },
 
     async getObject(key: string): Promise<Readable> {

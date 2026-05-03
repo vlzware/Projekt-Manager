@@ -1419,6 +1419,34 @@ describe('Attachment routes — integration (issue #108)', () => {
     });
 
     // -----------------------------------------------------------------
+    // Missing-row restore — pins AC-234's `404 NOT_FOUND` clause for the
+    // post-purge case (e.g. the hidden reaper from §6.12 already removed
+    // the row by the time the user clicks Restore on a stale Papierkorb
+    // listing). 404 over 409: the row is gone forever, retry is futile,
+    // and 409 is reserved for transient conflicts the caller can resolve.
+    // -----------------------------------------------------------------
+    it('restore on a non-existent attachment id returns 404 NOT_FOUND', async () => {
+      const ghost = crypto.randomUUID();
+      const res = await authPost(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${ghost}/restore`,
+      );
+      expect(res.statusCode).toBe(404);
+      expect(res.json().code).toBe('NOT_FOUND');
+    });
+
+    // -----------------------------------------------------------------
+    // Bytes-gone race — covered as a service-level unit test in
+    // `attachments-restore-bytes-gone.test.ts`. The integration shape
+    // requires destroying a specific object version, which the app
+    // (and test) credentials cannot do by design (AC-237 capability
+    // profile). The unit test stubs `copyFromVersion` to throw
+    // `StorageObjectNotFoundError` and asserts the resulting `AppError`
+    // is `410 GONE` — the same mapping the global setErrorHandler turns
+    // into the HTTP response.
+    // -----------------------------------------------------------------
+
+    // -----------------------------------------------------------------
     // CAS-loss atomicity. Two concurrent restores on the same hidden
     // row: one must succeed (200, 'ready'), one must lose
     // the CAS (409). After the dust settles, the row's persisted
