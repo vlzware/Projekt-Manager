@@ -86,21 +86,23 @@ npx web-push generate-vapid-keys --json
 
 Add `VAPID_PRIVATE_KEY=<privateKey>` to `secrets.env.age` (see [manual-deploy.md § Rotate a secret](manual-deploy.md#rotate-a-secret)). Add `VAPID_SUBJECT=mailto:admin@<your-domain>` to the plain `.env` next to `DOMAIN` — it is non-secret. Redeploy. The same probe should then return a real base64url-encoded key, and the subscribe flow lights up.
 
-## `source <(age -d …)` hangs after the passphrase prompt
+## `source <(age -d …)` hangs or reports `incorrect passphrase` with no prompt
 
-**Trap:** `source <(age -d secrets.env.age)` prints the prompt, accepts the passphrase, then hangs indefinitely. The shell never returns. `scripts/deploy.sh` uses this exact form successfully, so the pattern itself is not broken — it just fails in some interactive contexts.
+**Symptom:** `source <(age -d secrets.env.age)` either prints the prompt, accepts the passphrase, then hangs indefinitely, OR errors with `age: error: incorrect passphrase` having never shown a prompt at all (observed 2026-05-03 in `scripts/deploy.sh`).
 
-**Root cause:** Process substitution wires `age`'s stdout to an anonymous FIFO while the passphrase is read from `/dev/tty`. Exact coordination between tty input, FIFO drain, and `source` varies with terminal type, SSH pty allocation, and whether a wrapping process (agent, multiplexer) intercepts the tty. When any step blocks, the pipeline deadlocks and no error surfaces.
+**What we know:** The exact age/tty interaction at fault isn't pinned down. Process substitution runs `age` and the consumer (`source`) concurrently with `age`'s stdout wired to a FIFO; with interactive prompts in the mix, the timing is fragile across terminal type, SSH pty allocation, and whether a wrapping process (agent, multiplexer) intercepts the tty.
 
-**Workaround:** Use command substitution instead — `age` runs to completion before `eval` sees any input, so there is no FIFO to deadlock on:
+**Workaround:** Use command substitution. `age` runs to completion before bash touches its output, so the concurrency is gone. Capture into a variable (rather than `eval "$(age -d …)"` directly) so `set -e` fires on age failure instead of letting the script fall through with empty env:
 
 ```bash
+SECRETS_PLAINTEXT="$(age -d secrets.env.age)"   # set -e exits here on age failure
 set -a
-eval "$(age -d secrets.env.age)"
+eval "$SECRETS_PLAINTEXT"
 set +a
+unset SECRETS_PLAINTEXT
 ```
 
-`set -a` in the calling shell still auto-exports every `KEY=value` assignment, matching the process-substitution form's net effect. Plaintext stays in memory only. Prefer this form for ad-hoc and interactive use; `scripts/deploy.sh` keeps the process-substitution form because it runs in a controlled non-interactive-enough context where the race doesn't trigger.
+`set -a` auto-exports every `KEY=value` assignment, matching the process-substitution form's net effect. Plaintext stays in memory only. `scripts/deploy.sh` uses this form (switched from process substitution after the no-prompt failure on 2026-05-03).
 
 ## `column "<X>" of relation "<T>" does not exist` after a deploy
 

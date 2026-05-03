@@ -75,14 +75,36 @@ fi
 EXPECTED_SHA="$(git rev-parse HEAD)"
 echo "(continuing deploy at $EXPECTED_SHA)"
 
-# Decrypt secrets into the shell env. Process substitution keeps plaintext
-# off disk — `age -d` writes to an anonymous file descriptor that `source`
-# reads and discards. `set -a` auto-exports so the sourced KEY=value lines
-# reach `docker compose` without needing an explicit `export` per var.
+# Decrypt secrets into the shell env.
+#
+# Two changes vs. the previous `source <(age -d …)` form:
+#
+# 1. Capture-then-eval instead of process substitution. The old form
+#    ran age and `source` concurrently (age writing to a FIFO that
+#    `source` drained); a 2026-05-03 deploy hit a state where age
+#    exited with `incorrect passphrase` without ever showing the
+#    prompt, and the script silently fell through to the manifest
+#    pre-flight (which then reported every key as missing because
+#    nothing got sourced). The exact age/tty interaction at fault
+#    isn't pinned down, but command substitution runs age to
+#    completion BEFORE bash touches its output, removing the
+#    concurrency from the picture entirely.
+#
+# 2. Capture into a named variable rather than `eval "$(age -d …)"`
+#    inline, so that `set -e` aborts the deploy on age failure. With
+#    `eval "$(cmd)"`, a failing cmd produces empty input and eval
+#    succeeds — the script would still limp into the manifest check
+#    instead of stopping at the real error.
+#
+# Plaintext lives in `SECRETS_PLAINTEXT` for one statement and is
+# unset immediately; never written to disk (same property the old
+# form had).
+SECRETS_PLAINTEXT="$(age -d "$SECRETS_FILE")"
 set -a
 # shellcheck disable=SC1090
-source <(age -d "$SECRETS_FILE")
+eval "$SECRETS_PLAINTEXT"
 set +a
+unset SECRETS_PLAINTEXT
 
 # --- Pre-flight: env/secrets parity check --------------------------------
 # Catch operator-side drift: a new key was added to
