@@ -26,7 +26,7 @@ A long-lived `age` X25519 key pair whose public recipient (`BINARY_AGE_RECIPIENT
            │ paste after every reboot
            │
 ┌──────────────────────┐
-│  operator workstation │  age private identity, ≥2 off-system custody copies
+│  operator workstation│  age private identity, ≥2 off-system custody copies
 └──────────────────────┘
 ```
 
