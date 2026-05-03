@@ -19,7 +19,12 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import fastifyStatic from '@fastify/static';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildApp } from '../app.js';
+import { installNotFoundHandler, installSpaAwareNotFoundHandler } from '../error-handler.js';
 
 const TINY_BODY_LIMIT = 100;
 
@@ -38,6 +43,10 @@ let errorSpy: ReturnType<typeof vi.spyOn>;
 describe('AC-247 / AT-108 — Global error handler 4xx pass-through', () => {
   beforeAll(async () => {
     app = buildApp({ logger: false, rateLimit: false });
+    // buildApp leaves the not-found handler to the composer (start.ts
+    // mounts an SPA-aware variant); install the API-only one here so
+    // the ROUTE_NOT_FOUND branch is exercised.
+    installNotFoundHandler(app);
     errorSpy = vi.spyOn(app.log, 'error');
 
     // /test/echo — no body schema, so empty-JSON-body and unsupported
@@ -170,5 +179,53 @@ describe('AC-247 / AT-108 — Global error handler 4xx pass-through', () => {
     expect(res.statusCode).toBe(500);
     expect(res.json().code).toBe('SERVER_ERROR');
     expect(errorSpy).toHaveBeenCalled();
+  });
+});
+
+// Production composition (start.ts): buildApp + @fastify/static +
+// installSpaAwareNotFoundHandler. Mirrors the wiring in start.ts
+// closely enough that a regression in any of the three layers — a
+// duplicate setNotFoundHandler in buildApp (the bug that crashed the
+// merge of #160), a wrong /api branch, or a broken SPA fallback —
+// fails this test in <2s instead of the 8-minute push-to-main smoke.
+describe('production composition — SPA-aware not-found handler', () => {
+  let app: FastifyInstance;
+  let distDir: string;
+
+  beforeAll(async () => {
+    distDir = mkdtempSync(join(tmpdir(), 'spa-fallback-test-'));
+    writeFileSync(join(distDir, 'index.html'), '<!doctype html><body>SPA</body>');
+
+    app = buildApp({ logger: false, rateLimit: false });
+    await app.register(fastifyStatic, { root: distDir, wildcard: false });
+    installSpaAwareNotFoundHandler(app);
+    await app.ready();
+  });
+
+  afterAll(async () => {
+    if (app) await app.close();
+    if (distDir) rmSync(distDir, { recursive: true, force: true });
+  });
+
+  it('a follow-on setNotFoundHandler did not throw at app.ready()', () => {
+    // beforeAll already proved this — if buildApp pre-mounted a
+    // not-found handler again, the await app.ready() above would
+    // have rejected with "Not found handler already set …".
+    expect(app.hasRoute).toBeDefined();
+  });
+
+  it('/api/<unknown> → 404 ROUTE_NOT_FOUND (structured AppError shape)', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/this-route-does-not-exist' });
+    expect(res.statusCode).toBe(404);
+    const body = res.json();
+    expect(body.code).toBe('ROUTE_NOT_FOUND');
+    expect(typeof body.message).toBe('string');
+  });
+
+  it('non-/api unrouted path → 200 with the SPA index.html', async () => {
+    const res = await app.inject({ method: 'GET', url: '/projects/some-deep-link' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('SPA');
+    expect(res.headers['content-type']).toMatch(/text\/html/);
   });
 });

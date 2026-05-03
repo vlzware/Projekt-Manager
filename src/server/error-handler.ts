@@ -70,3 +70,20 @@ export function installNotFoundHandler(app: FastifyInstance): void {
     return reply.code(err.statusCode).send(err.toResponse());
   });
 }
+
+/**
+ * Production variant: non-/api URLs fall through to the SPA's
+ * `index.html` so client-side routing handles deep links; /api/*
+ * URLs return the structured ROUTE_NOT_FOUND error. The caller must
+ * register `@fastify/static` before calling — the SPA branch uses
+ * `reply.sendFile`.
+ */
+export function installSpaAwareNotFoundHandler(app: FastifyInstance): void {
+  app.setNotFoundHandler((request, reply) => {
+    if (!request.url.startsWith('/api')) {
+      return reply.sendFile('index.html');
+    }
+    const err = routeNotFound();
+    return reply.code(err.statusCode).send(err.toResponse());
+  });
+}
