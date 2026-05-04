@@ -580,6 +580,50 @@ describe('AC-248: binary-descriptors contract', () => {
       expect(page1.totalCount).toBe(3);
       expect(page1.totalSizeBytes).toBe(100 + 200 + 400);
     });
+
+    it('mid-drain mutation does not leak into pinned totals (stability invariant)', async () => {
+      // Strengthens the snapshot-semantics guarantee: api.md §14.2.4
+      // pins that totals "do not change within the iteration" even
+      // when "a row [is] inserted, deleted, or status-changed during
+      // the iteration". A per-page recompute would silently drift here;
+      // pinning the totals into the cursor on first-page composition is
+      // what keeps them sticky end-to-end.
+      await wipeAttachments();
+      const t = (n: number): Date => new Date(`2026-03-02T00:00:0${n}.000Z`);
+      await seedReadyAttachments(projectAId, [
+        { sizeBytes: 100, fileName: 'm1.pdf', createdAt: t(1) },
+        { sizeBytes: 200, fileName: 'm2.pdf', createdAt: t(2) },
+        { sizeBytes: 400, fileName: 'm3.pdf', createdAt: t(3) },
+      ]);
+      const page1 = (await authGet(ownerToken, '/api/export/binary-descriptors?limit=1').then((r) =>
+        r.json(),
+      )) as DescriptorPage;
+      expect(page1.totalCount).toBe(3);
+      expect(page1.totalSizeBytes).toBe(100 + 200 + 400);
+
+      // Mutate state mid-drain — insert a fourth ready row that, on a
+      // naive per-page recompute, would shift totalCount to 4 and
+      // totalSizeBytes by +800. The cursor-pinned totals must not move.
+      await seedReadyAttachments(projectAId, [
+        { sizeBytes: 800, fileName: 'm4.pdf', createdAt: t(4) },
+      ]);
+
+      const page2 = (await authGet(
+        ownerToken,
+        `/api/export/binary-descriptors?limit=1&after=${encodeURIComponent(page1.nextCursor!)}`,
+      ).then((r) => r.json())) as DescriptorPage;
+      expect(page2.totalCount).toBe(page1.totalCount);
+      expect(page2.totalSizeBytes).toBe(page1.totalSizeBytes);
+
+      // And the same again on page 3 — the pinned values must ride the
+      // entire iteration, not just one cursor hop.
+      const page3 = (await authGet(
+        ownerToken,
+        `/api/export/binary-descriptors?limit=1&after=${encodeURIComponent(page2.nextCursor!)}`,
+      ).then((r) => r.json())) as DescriptorPage;
+      expect(page3.totalCount).toBe(page1.totalCount);
+      expect(page3.totalSizeBytes).toBe(page1.totalSizeBytes);
+    });
   });
 
   // -------------------------------------------------------------------
