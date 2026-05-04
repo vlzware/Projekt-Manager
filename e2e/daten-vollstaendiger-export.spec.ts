@@ -1,6 +1,89 @@
 import { test, expect, type Route } from '@playwright/test';
+import fs from 'node:fs';
 import { STORAGE_STATES } from './storage-states';
 import { clickView } from './nav-helpers';
+
+/**
+ * Pull a fresh AES-256-GCM fixture for one attachment row. Returns the
+ * triple the descriptor surface and the storage URL would normally hand
+ * the client: `dekMaterial` for the descriptor's `originalDekMaterial`,
+ * `ciphertext` (= nonce(12) || aesGcm(plaintext) || authTag(16)) for the
+ * 200-response body, and the original `plaintext` for any byte-equality
+ * assertion the caller wants. Wire shape per ADR-0024 §Encryption.
+ */
+async function makeAesGcmFixture(plaintextString: string): Promise<{
+  plaintext: Uint8Array;
+  ciphertext: Uint8Array;
+  dekMaterial: string;
+}> {
+  const dek = new Uint8Array(32);
+  crypto.getRandomValues(dek);
+  const nonce = new Uint8Array(12);
+  crypto.getRandomValues(nonce);
+  const plaintext = new TextEncoder().encode(plaintextString);
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    dek,
+    { name: 'AES-GCM' },
+    false,
+    ['encrypt'],
+  );
+  const ctWithTag = new Uint8Array(
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, cryptoKey, plaintext),
+  );
+  const ciphertext = new Uint8Array(nonce.byteLength + ctWithTag.byteLength);
+  ciphertext.set(nonce, 0);
+  ciphertext.set(ctWithTag, nonce.byteLength);
+  const dekMaterial = btoa(String.fromCharCode(...dek));
+  return { plaintext, ciphertext, dekMaterial };
+}
+
+/**
+ * Enumerate filenames inside a zip via the central directory. APPNOTE.TXT
+ * §4.3.16 (End-of-Central-Directory Record) + §4.3.12 (Central Directory
+ * File Header). The EOCD record is at the tail of the file (signature
+ * 0x06054b50); it points at the central directory offset and length, and
+ * each CDFH entry there carries the filename. Filenames-only — sizes,
+ * CRCs, and bytes are intentionally not surfaced (the AC-249 / AC-251
+ * arms only need to assert path presence, not byte equality; the unit
+ * test under `src/ui/management/__tests__/data-exchange-export-all-zip.test.ts`
+ * already pins byte-equality at the helper boundary). Throws on a
+ * malformed zip or a missing EOCD signature.
+ */
+function listZipEntries(zip: Buffer): Set<string> {
+  const EOCD_SIG = 0x06054b50;
+  const CDFH_SIG = 0x02014b50;
+  // EOCD is variable-length (trailing comment up to 65535 bytes); scan
+  // backwards from the end for the signature. The fixtures here have no
+  // comment, so the EOCD typically sits in the last 22 bytes.
+  let eocdOff = -1;
+  const minEocd = 22;
+  const maxScanBack = Math.min(zip.length, 22 + 0xffff);
+  for (let i = zip.length - minEocd; i >= zip.length - maxScanBack; i -= 1) {
+    if (zip.readUInt32LE(i) === EOCD_SIG) {
+      eocdOff = i;
+      break;
+    }
+  }
+  if (eocdOff < 0) throw new Error('listZipEntries: EOCD signature not found');
+  const cdSize = zip.readUInt32LE(eocdOff + 12);
+  const cdOff = zip.readUInt32LE(eocdOff + 16);
+  const cdEnd = cdOff + cdSize;
+  const out = new Set<string>();
+  let off = cdOff;
+  while (off < cdEnd) {
+    if (zip.readUInt32LE(off) !== CDFH_SIG) {
+      throw new Error(`listZipEntries: bad central-dir entry at offset ${off}`);
+    }
+    const fnLen = zip.readUInt16LE(off + 28);
+    const extraLen = zip.readUInt16LE(off + 30);
+    const commentLen = zip.readUInt16LE(off + 32);
+    const fnStart = off + 46;
+    out.add(zip.subarray(fnStart, fnStart + fnLen).toString('utf-8'));
+    off = fnStart + fnLen + extraLen + commentLen;
+  }
+  return out;
+}
 
 /**
  * E2E — Vollständiger Export (AC-249 + AC-251).
@@ -231,22 +314,59 @@ test('AC-249: pre-flight + progress + cancel + mobile warning', async ({ page })
   await expect(progress).toBeHidden();
 
   // ---------------------------------------------------------------
-  // Arm 3 — download filename. Re-stage the descriptor route to
-  // return an EMPTY entries set so the helper completes in a couple
-  // of frames and fires a real download. Filename derivation does
-  // not depend on per-entry crypto.
+  // Arm 3 — happy-path download. Re-stage the descriptor route AND
+  // the storage route to deliver ONE fetchable attachment with real
+  // AES-256-GCM ciphertext, so the assembled zip is non-empty. The
+  // filename regex check below was vacuous against `entries: []` — a
+  // regression in the fetch wiring, decrypt path, or zip layout would
+  // still pass it. With one real entry in the zip, the same filename
+  // assertion AND the zip-layout assertions (data.json, manifest.json,
+  // attachment under AC-250's `attachments/<projektnummer>-<projekt-titel>/<attachment-id>-<dateiname>`)
+  // all become load-bearing.
+  //
+  // The storage URL also needs to be unrouted from Arm 1/2's stall.
   // ---------------------------------------------------------------
   await page.context().unroute('**/api/export/binary-descriptors**');
+  await page.context().unroute('https://storage.test/**');
+
+  const armThreeFixture = await makeAesGcmFixture('AC-249-arm3-payload');
+  const armThreeAttachmentId = 'aaaaaaaa-0000-4000-8000-00000000a249';
+  const armThreeProjectNumber = '2026-249';
+  const armThreeProjectTitle = 'Arm3';
+  const armThreeFileName = 'happy.bin';
+  const armThreeStorageUrl = 'https://storage.test/arm3.ct';
+
   await page.context().route('**/api/export/binary-descriptors**', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        entries: [],
+        entries: [
+          {
+            attachmentId: armThreeAttachmentId,
+            projectId: 'p249',
+            projectNumber: armThreeProjectNumber,
+            projectTitle: armThreeProjectTitle,
+            fileName: armThreeFileName,
+            sizeBytes: armThreeFixture.plaintext.byteLength,
+            originalUrl: armThreeStorageUrl,
+            originalDekMaterial: armThreeFixture.dekMaterial,
+            expiresAt: '2099-01-01T00:00:00.000Z',
+          },
+        ],
         nextCursor: null,
-        totalCount: 0,
-        totalSizeBytes: 0,
+        totalCount: 1,
+        totalSizeBytes: armThreeFixture.plaintext.byteLength,
       }),
+    });
+  });
+  await page.context().route(armThreeStorageUrl, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/octet-stream',
+      // Buffer wrap — see the AC-251 arm's note on Playwright's
+      // base64-encode of non-string fulfill bodies.
+      body: Buffer.from(armThreeFixture.ciphertext),
     });
   });
 
@@ -263,6 +383,19 @@ test('AC-249: pre-flight + progress + cancel + mobile warning', async ({ page })
   expect(download.suggestedFilename()).toMatch(
     /^projekt-manager-vollstaendiger-export-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.zip$/,
   );
+
+  // Zip layout: data.json + manifest.json at the root, plus the one
+  // attachment under AC-250's path schema. The unit test pins byte-
+  // equality at the helper boundary — here we only assert the layout
+  // contract surfaces end-to-end through the real download.
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const zipBytes = fs.readFileSync(downloadPath!);
+  const entries = listZipEntries(zipBytes);
+  expect(entries.has('data.json')).toBe(true);
+  expect(entries.has('manifest.json')).toBe(true);
+  const expectedAttachmentPath = `attachments/${armThreeProjectNumber}-${armThreeProjectTitle}/${armThreeAttachmentId}-${armThreeFileName}`;
+  expect(entries.has(expectedAttachmentPath)).toBe(true);
 });
 
 // ---------------------------------------------------------------
@@ -300,34 +433,12 @@ test('AC-251: per-file failure surfaces in post-export summary', async ({ page }
   // entry skips for a different reason). Encrypting under a real DEK
   // makes the "3 Dateien übersprungen" assertion load-bearing.
   //
-  // Wire shape per ADR-0024 §Encryption:
-  //   ciphertext = nonce(12) || aesGcm(plaintext) || authTag(16)
-  // The DEK base64 must match between the descriptor's
+  // Wire shape per ADR-0024 §Encryption — see `makeAesGcmFixture`. The
+  // DEK base64 must match between the descriptor's
   // `originalDekMaterial` and the fixture key — it's threaded through
   // both descriptor responses (first page + re-fetch).
-  //
-  // `crypto.crypto.subtle` is the Node-side WebCrypto handle; the
-  // Playwright test runner is Node, so this is the standard seam for
-  // computing fixture ciphertext outside the page context.
-  const dek = new Uint8Array(32);
-  crypto.getRandomValues(dek);
-  const nonce = new Uint8Array(12);
-  crypto.getRandomValues(nonce);
-  const plaintext = new TextEncoder().encode('fixture-B-recovered');
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    dek,
-    { name: 'AES-GCM' },
-    false,
-    ['encrypt'],
-  );
-  const ctWithTag = new Uint8Array(
-    await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce }, cryptoKey, plaintext),
-  );
-  const bCiphertext = new Uint8Array(nonce.byteLength + ctWithTag.byteLength);
-  bCiphertext.set(nonce, 0);
-  bCiphertext.set(ctWithTag, nonce.byteLength);
-  const bDekMaterial = btoa(String.fromCharCode(...dek));
+  const bFixture = await makeAesGcmFixture('fixture-B-recovered');
+  const { plaintext, ciphertext: bCiphertext, dekMaterial: bDekMaterial } = bFixture;
 
   let descriptorCallCount = 0;
   await page.context().route('**/api/export/binary-descriptors**', async (route: Route) => {
@@ -452,4 +563,18 @@ test('AC-251: per-file failure surfaces in post-export summary', async ({ page }
   // first-page + one re-fetch. A regression that retried twice (or
   // not at all) would surface here.
   expect(descriptorCallCount).toBe(2);
+
+  // Pin which row recovered: the bounded retry must have refreshed
+  // entry (b)'s URL, so `recovers.bin` is in the zip. Skip-count alone
+  // (`3 Dateien übersprungen`) + descriptorCallCount === 2 would still
+  // pass under a regression that retried row (c) instead of (b) and
+  // skipped (b) — same skip total, same retry count, wrong row
+  // recovered. Path-presence in the zip is what locks the row.
+  const downloadPath = await download.path();
+  expect(downloadPath).toBeTruthy();
+  const zipBytes = fs.readFileSync(downloadPath!);
+  const entries = listZipEntries(zipBytes);
+  const bAttachmentPath =
+    'attachments/2026-001-A/bbbbbbbb-0000-4000-8000-000000000002-recovers.bin';
+  expect(entries.has(bAttachmentPath)).toBe(true);
 });
