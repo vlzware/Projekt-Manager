@@ -30,26 +30,19 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { STRINGS } from '@/config/strings';
+import { ATTACHMENT_CONFIG } from '@/config/attachmentConfig';
 import { formatDateOnly } from '@/domain/dateFormat';
+import { useDialogA11y } from '@/ui/common/useDialogA11y';
 import {
   assembleExportAllZip,
   type BinaryDescriptor,
   type DescriptorPage,
   type ExportEnvelope,
 } from './exportAllAsZip';
+import { streamingDownload } from './streamingDownload';
 import styles from './VollstaendigerExportDialog.module.css';
 
-/**
- * Mobile-warning breakpoint for the Vollständiger Export pre-flight
- * copy [C]. Inlined here rather than added to `ATTACHMENT_CONFIG`
- * because the value is purely a UI affordance (no server-side
- * companion, no other surface needs it). 480 px matches the spec's
- * "below the configured mobile-warning breakpoint" intent and the
- * E2E test viewport (`page.setViewportSize({ width: 480, height: 800 })`).
- */
-const MOBILE_WARNING_BREAKPOINT_PX = 480;
-
-const PRELOAD_PAGE_LIMIT = 100;
+const PRELOAD_PAGE_LIMIT = ATTACHMENT_CONFIG.exportAllPerPageDefault;
 
 /**
  * Discriminated union over the dialog's lifecycle phases. The `kind`
@@ -106,10 +99,9 @@ function formatBytes(bytes: number): string {
 
 /**
  * Local-time timestamp for the export filename. Mirrors the
- * `fileTimestamp` helper in `dataExchangeStore.ts`; duplicated here
- * rather than exported from the store because the store helper is
- * private to its module and a util-extraction refactor is out of scope
- * for this work.
+ * `fileTimestamp` helper in `dataExchangeStore.ts`; consolidation of
+ * the two copies (and the BinaryList `triggerDownload`) is tracked in
+ * issue #164.
  */
 function exportTimestamp(d: Date): string {
   const hh = String(d.getHours()).padStart(2, '0');
@@ -159,29 +151,12 @@ function tagAsSkipped(d: BinaryDescriptor): BinaryDescriptor {
   return { ...d, error: 'DEK_UNWRAP_FAILED' };
 }
 
-/**
- * Trigger a browser download for a Blob via a transient anchor.
- * Mirrors the pattern in `BinaryList.triggerDownload` and the
- * `dataExchangeStore.runExport` flow.
- */
-function triggerDownload(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  // Defer revoke a tick — synchronous revoke can race the browser's
-  // download-pickup on some engines (mirrors the other call sites).
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
-
 export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerExportDialogProps) {
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'closed' });
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const abortRef = useRef<AbortController | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const initialFocusRef = useRef<HTMLButtonElement>(null);
 
   // --- Mobile-warning breakpoint detection ---------------------------
   // matchMedia is the canonical pattern for breakpoint reactivity;
@@ -192,7 +167,9 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
   // mid-session.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const mql = window.matchMedia(`(max-width: ${MOBILE_WARNING_BREAKPOINT_PX}px)`);
+    const mql = window.matchMedia(
+      `(max-width: ${ATTACHMENT_CONFIG.exportAllMobileWarningBreakpointPx}px)`,
+    );
     setIsMobile(mql.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mql.addEventListener('change', handler);
@@ -230,30 +207,25 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
     };
   }, [isOpen]);
 
-  // --- Escape closes the preflight dialog. The progress dialog
-  //     intentionally does NOT bind Escape: the cancel flow needs the
-  //     user-visible "Abbrechen" press so partial-download contract is
-  //     unambiguous. ---------------------------------------------------
-  useEffect(() => {
-    if (phase.kind !== 'preflight') return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        handleClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // handleClose is stable enough — it just calls the onClose prop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase.kind]);
-
   const handleClose = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
     setPhase({ kind: 'closed' });
     onClose();
   }, [onClose]);
+
+  // Modal a11y — focus trap, focus restoration, body scroll lock.
+  // Escape closes only on preflight / summary / error: the progress
+  // phase intentionally requires the user-visible "Abbrechen" press
+  // so the partial-download contract is unambiguous.
+  const escapeAllowed =
+    phase.kind === 'preflight' || phase.kind === 'summary' || phase.kind === 'error';
+  useDialogA11y({
+    isOpen,
+    dialogRef,
+    onOpenedFocus: useCallback(() => initialFocusRef.current?.focus(), []),
+    onEscape: escapeAllowed ? handleClose : undefined,
+  });
 
   /**
    * Progress-phase handler. Walks descriptor pages, pre-fetches each
@@ -471,7 +443,14 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
 
     const fetchCiphertext = async (url: string): Promise<Uint8Array> => {
       const cached = ciphertextByUrl.get(url);
-      if (cached) return cached;
+      if (cached) {
+        // Drain after consumption: the helper calls fetchCiphertext at
+        // most once per URL (one yielded entry per pre-fetch), so the
+        // bytes are no longer needed once handed to the assembler. Cap
+        // peak memory at one in-flight ciphertext.
+        ciphertextByUrl.delete(url);
+        return cached;
+      }
       // The helper called for a URL we never pre-fetched — defensive
       // throw rather than silently returning empty bytes. This should
       // not happen given the iterable contract.
@@ -485,16 +464,45 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
         fetchCiphertext,
       });
 
-      // Materialise the streaming zip into a Blob for the
-      // download-anchor pattern. `Response(stream).blob()` is the
-      // canonical way to drain a `ReadableStream<Uint8Array>` into a
-      // Blob without a third-party helper.
-      const blob = await new Response(stream).blob();
+      const filename = `projekt-manager-vollstaendiger-export-${exportTimestamp(new Date())}.zip`;
+
+      // Tap the helper's stream so we know when it's fully drained.
+      // `flush()` fires after the last chunk is pushed downstream — by
+      // then the manifest entry has been emitted and the SW has
+      // received every byte. We resolve `upstreamDone` there and
+      // transition to the summary phase. The browser may still be
+      // writing to disk; the download progress lives in browser chrome.
+      let resolveUpstreamDone: () => void;
+      const upstreamDone = new Promise<void>((res) => {
+        resolveUpstreamDone = res;
+      });
+      const tapped = stream.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            controller.enqueue(chunk);
+          },
+          flush() {
+            resolveUpstreamDone();
+          },
+        }),
+      );
+
+      // Hand the tapped stream to the SW, which intercepts the
+      // synthetic-URL fetch and pipes bytes straight to the browser's
+      // download flow — no whole-zip buffering. Pattern is the same as
+      // Cryptomator Hub Web / Filen / ProtonDrive (`src/sw/streamingDownload.ts`).
+      await streamingDownload({
+        stream: tapped,
+        filename,
+        contentType: 'application/zip',
+      });
+
+      // Wait for the upstream stream to drain — this is what tells us
+      // the export is "done from the user's perspective" (helper
+      // emitted the manifest, SW received every chunk).
+      await upstreamDone;
 
       if (ctrl.signal.aborted) return;
-
-      const filename = `projekt-manager-vollstaendiger-export-${exportTimestamp(new Date())}.zip`;
-      triggerDownload(blob, filename);
 
       setPhase({
         kind: 'summary',
@@ -525,20 +533,26 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
     return (
       <div className={styles.overlay} data-testid="export-all-overlay">
         <div
+          ref={dialogRef}
           className={styles.dialog}
           role="dialog"
           aria-modal="true"
           aria-labelledby="export-all-preflight-title"
+          aria-describedby="export-all-preflight-body"
           data-testid="export-all-preflight"
         >
           <h2 id="export-all-preflight-title" className={styles.title}>
             {STRINGS.dataExchange.exportAllPreflightTitle}
           </h2>
-          <div className={styles.body}>
+          <div id="export-all-preflight-body" className={styles.body}>
             <div className={styles.readoutLine} data-testid="export-all-preflight-count">
               {STRINGS.dataExchange.exportAllPreflightCount(phase.firstPage.totalCount)}
             </div>
-            <div className={styles.readoutLine} data-testid="export-all-preflight-size">
+            <div
+              className={styles.readoutLine}
+              data-testid="export-all-preflight-size"
+              data-bytes-total={phase.firstPage.totalSizeBytes}
+            >
               {STRINGS.dataExchange.exportAllPreflightSize(
                 formatBytes(phase.firstPage.totalSizeBytes),
               )}
@@ -563,6 +577,7 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
               {STRINGS.dataExchange.exportAllPreflightCancel}
             </button>
             <button
+              ref={initialFocusRef}
               type="button"
               className={`${styles.button} ${styles.confirm}`}
               onClick={() => void startExport(phase)}
@@ -580,23 +595,35 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
     return (
       <div className={styles.overlay} data-testid="export-all-overlay">
         <div
+          ref={dialogRef}
           className={styles.dialog}
           role="dialog"
           aria-modal="true"
           aria-labelledby="export-all-progress-title"
+          aria-describedby="export-all-progress-body"
           data-testid="export-all-progress"
         >
           <h2 id="export-all-progress-title" className={styles.title}>
             {STRINGS.dataExchange.exportAllProgressTitle}
           </h2>
-          <div className={styles.body}>
-            <div className={styles.readoutLine} data-testid="export-all-progress-counter">
+          <div id="export-all-progress-body" className={styles.body}>
+            <div
+              className={styles.readoutLine}
+              data-testid="export-all-progress-counter"
+              data-files-total={phase.totalCount}
+              data-files-done={phase.filesDone}
+            >
               {STRINGS.dataExchange.exportAllProgressCounter(phase.filesDone, phase.totalCount)}
             </div>
-            <div className={styles.readoutLine} data-testid="export-all-progress-bytes">
+            <div
+              className={styles.readoutLine}
+              data-testid="export-all-progress-bytes"
+              data-bytes-total={phase.totalSizeBytes}
+              data-bytes-done={phase.bytesDone}
+            >
               {STRINGS.dataExchange.exportAllProgressBytes(
                 formatBytes(phase.bytesDone),
-                `${formatBytes(phase.totalSizeBytes)} (${phase.totalSizeBytes})`,
+                formatBytes(phase.totalSizeBytes),
               )}
             </div>
             <div className={styles.currentFile} data-testid="export-all-progress-current-file">
@@ -605,6 +632,7 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
           </div>
           <div className={styles.actions}>
             <button
+              ref={initialFocusRef}
               type="button"
               className={`${styles.button} ${styles.cancel}`}
               onClick={handleClose}
@@ -622,16 +650,18 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
     return (
       <div className={styles.overlay} data-testid="export-all-overlay">
         <div
+          ref={dialogRef}
           className={styles.dialog}
           role="dialog"
           aria-modal="true"
           aria-labelledby="export-all-summary-title"
+          aria-describedby="export-all-summary-body"
           data-testid="export-all-summary"
         >
           <h2 id="export-all-summary-title" className={styles.title}>
             {STRINGS.dataExchange.exportAllSummaryTitle}
           </h2>
-          <div className={styles.body}>
+          <div id="export-all-summary-body" className={styles.body}>
             <div className={styles.readoutLine} data-testid="export-all-summary-filename">
               {STRINGS.dataExchange.exportAllSummaryFile(phase.filename)}
             </div>
@@ -643,6 +673,7 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
           </div>
           <div className={styles.actions}>
             <button
+              ref={initialFocusRef}
               type="button"
               className={`${styles.button} ${styles.confirm}`}
               onClick={handleClose}
@@ -660,20 +691,23 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
   return (
     <div className={styles.overlay} data-testid="export-all-overlay">
       <div
+        ref={dialogRef}
         className={styles.dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby="export-all-error-title"
+        aria-describedby="export-all-error-body"
         data-testid="export-all-error"
       >
         <h2 id="export-all-error-title" className={styles.title}>
           {STRINGS.dataExchange.exportAllError}
         </h2>
-        <div className={styles.body}>
+        <div id="export-all-error-body" className={styles.body}>
           <div className={styles.readoutLine}>{phase.message}</div>
         </div>
         <div className={styles.actions}>
           <button
+            ref={initialFocusRef}
             type="button"
             className={`${styles.button} ${styles.confirm}`}
             onClick={handleClose}

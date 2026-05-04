@@ -66,6 +66,13 @@ export interface AttachmentConfig {
    * are rejected with `422 VALIDATION_ERROR`. [C]
    */
   exportAllPerPageCeiling: number;
+  /**
+   * Vollständiger Export pre-flight mobile-warning breakpoint (CSS px).
+   * Below this viewport width the dialog renders a non-blocking
+   * "intended for desktop" copy. UI-only [C]; no server companion.
+   * (architecture.md §12.2 / verification.md AC-249.)
+   */
+  exportAllMobileWarningBreakpointPx: number;
 }
 
 /** [C] — defaults pinned by data-model.md §5.13 and architecture.md §12.2. */
@@ -80,4 +87,5 @@ export const ATTACHMENT_CONFIG: AttachmentConfig = {
   hiddenReaperIntervalMinutes: 60,
   exportAllPerPageDefault: 100,
   exportAllPerPageCeiling: 500,
+  exportAllMobileWarningBreakpointPx: 480,
 };

@@ -213,11 +213,13 @@ test('AC-249: pre-flight + progress + cancel + mobile warning', async ({ page })
     String(FIXED_TOTAL_COUNT),
   );
   // Bytes-done / total — the total side shows the upfront
-  // FIXED_TOTAL_BYTES; bytes-done starts at 0. Mirrors the count
-  // readout assertion above — `toContainText` defends against the
-  // tautology where the testid renders but is empty (a missing/zero
-  // total side would still pass `toBeVisible`).
-  await expect(progress.getByTestId('export-all-progress-bytes')).toContainText(
+  // FIXED_TOTAL_BYTES; bytes-done starts at 0. Asserting against
+  // `data-bytes-total` rather than visible text keeps the user-facing
+  // copy free of raw byte counts (`4.29 MB` is what users see, not
+  // `4.29 MB (4500000)`); the data-attribute is the contract surface
+  // for tests, the rendered string is the contract surface for users.
+  await expect(progress.getByTestId('export-all-progress-bytes')).toHaveAttribute(
+    'data-bytes-total',
     String(FIXED_TOTAL_BYTES),
   );
   // Current file — helper drains in cursor order, so the first

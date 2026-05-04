@@ -237,57 +237,78 @@ export class BinaryDescriptorService {
     // the same-shape pagination on other endpoints.
     const conditions = [eq(attachments.status, 'ready')];
     if (cursorPredicate) conditions.push(cursorPredicate);
-    const rawRows = await this.db
-      .select({
-        id: attachments.id,
-        projectId: attachments.projectId,
-        projectNumber: projects.number,
-        projectTitle: projects.title,
-        filename: attachments.filename,
-        sizeBytes: attachments.sizeBytes,
-        originalKey: attachments.originalKey,
-        wrappedDek: attachments.wrappedDek,
-        wrappedDekVersion: attachments.wrappedDekVersion,
-        createdAt: attachments.createdAt,
-      })
-      .from(attachments)
-      .innerJoin(projects, eq(attachments.projectId, projects.id))
-      .where(and(...conditions))
-      .orderBy(asc(attachments.createdAt), asc(attachments.id))
-      .limit(limit + 1);
 
-    const hasMore = rawRows.length > limit;
-    const pageRows = hasMore ? rawRows.slice(0, limit) : rawRows;
+    // Snapshot acquisition: page rows AND (on first page) the totals
+    // aggregate run inside ONE `repeatable read` read-only transaction,
+    // so they observe a single point-in-time. Without the txn wrap, a
+    // concurrent insert / delete between the two SELECTs would let
+    // `totalCount` disagree with what page 1 actually returns. Same
+    // pattern as `ExportService.export`. The unwrap loop runs OUTSIDE
+    // the txn — holding it open across N `age --decrypt` subprocesses
+    // would be a self-inflicted lock-time blow-up.
+    const { pageRows, hasMore, totalCount, totalSizeBytes } = await this.db.transaction(
+      async (tx) => {
+        // Sequential — drizzle runs each tx query on the same pg client,
+        // so Promise.all would trigger pg's "concurrent query"
+        // deprecation. Mirrors the ExportService transaction shape.
+        const rawRows = await tx
+          .select({
+            id: attachments.id,
+            projectId: attachments.projectId,
+            projectNumber: projects.number,
+            projectTitle: projects.title,
+            filename: attachments.filename,
+            sizeBytes: attachments.sizeBytes,
+            originalKey: attachments.originalKey,
+            wrappedDek: attachments.wrappedDek,
+            wrappedDekVersion: attachments.wrappedDekVersion,
+            createdAt: attachments.createdAt,
+          })
+          .from(attachments)
+          .innerJoin(projects, eq(attachments.projectId, projects.id))
+          .where(and(...conditions))
+          .orderBy(asc(attachments.createdAt), asc(attachments.id))
+          .limit(limit + 1);
 
-    // Totals are PINNED at first-page composition and ride the cursor
-    // for the rest of the iteration (api.md §14.2.4 / AC-248 stability
-    // invariant). On the first page (`cursor === null`) we run the
-    // aggregate query once over `status='ready'`; on every subsequent
-    // page we read the totals out of the decoded cursor. This is what
-    // makes the values "do not change within the iteration" even when
-    // rows are inserted, deleted, or status-changed mid-drain.
-    let totalCount: number;
-    let totalSizeBytes: number;
-    if (cursor === null) {
-      const totalsResult = await this.db
-        .select({
-          totalCount: sql<number>`COUNT(*)::int`,
-          totalSizeBytes: sql<number>`COALESCE(SUM(${attachments.sizeBytes}), 0)::bigint`,
-        })
-        .from(attachments)
-        .where(eq(attachments.status, 'ready'));
-      const totals = totalsResult[0] ?? { totalCount: 0, totalSizeBytes: 0 };
-      // SUM of bigint comes back as a string from pg; coerce to number
-      // for the wire shape. The `[C]` per-file cap means total bytes
-      // stay well within Number.MAX_SAFE_INTEGER for any realistic
-      // dataset; the cursor decoder also asserts safe-integer range so
-      // a malformed cursor cannot smuggle in an unsafe value.
-      totalCount = Number(totals.totalCount);
-      totalSizeBytes = Number(totals.totalSizeBytes);
-    } else {
-      totalCount = cursor.totalCount;
-      totalSizeBytes = cursor.totalSizeBytes;
-    }
+        const hasMoreLocal = rawRows.length > limit;
+        const pageRowsLocal = hasMoreLocal ? rawRows.slice(0, limit) : rawRows;
+
+        // Totals are PINNED at first-page composition and ride the
+        // cursor for every subsequent page in the iteration (api.md
+        // §14.2.4 / AC-248 stability invariant). First page → run the
+        // aggregate inside this same snapshot. Subsequent pages → read
+        // totals out of the cursor without a server round-trip.
+        if (cursor === null) {
+          const totalsResult = await tx
+            .select({
+              totalCount: sql<number>`COUNT(*)::int`,
+              totalSizeBytes: sql<number>`COALESCE(SUM(${attachments.sizeBytes}), 0)::bigint`,
+            })
+            .from(attachments)
+            .where(eq(attachments.status, 'ready'));
+          const totals = totalsResult[0] ?? { totalCount: 0, totalSizeBytes: 0 };
+          // SUM of bigint comes back as a string from pg; coerce to
+          // number for the wire shape. The `[C]` per-file cap means
+          // total bytes stay well within Number.MAX_SAFE_INTEGER for
+          // any realistic dataset; the cursor decoder also asserts
+          // safe-integer range so a malformed cursor cannot smuggle in
+          // an unsafe value.
+          return {
+            pageRows: pageRowsLocal,
+            hasMore: hasMoreLocal,
+            totalCount: Number(totals.totalCount),
+            totalSizeBytes: Number(totals.totalSizeBytes),
+          };
+        }
+        return {
+          pageRows: pageRowsLocal,
+          hasMore: hasMoreLocal,
+          totalCount: cursor.totalCount,
+          totalSizeBytes: cursor.totalSizeBytes,
+        };
+      },
+      { isolationLevel: 'repeatable read', accessMode: 'read only' },
+    );
 
     // Per-row unwrap + presigned URL. A `KeyEnvelopeUnwrapError` on the
     // row's envelope (corrupt bytes, recipient mismatch) becomes the
