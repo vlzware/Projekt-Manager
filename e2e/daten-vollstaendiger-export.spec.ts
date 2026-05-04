@@ -412,7 +412,15 @@ test('AC-251: per-file failure surfaces in post-export summary', async ({ page }
     await route.fulfill({
       status: 200,
       contentType: 'application/octet-stream',
-      body: bCiphertext,
+      // Wrap in Buffer: Playwright's client-side fulfill calls
+      // `body.toString("base64")` on non-string truthy bodies (see
+      // playwright-core/lib/client/network.js:304). For a plain
+      // Uint8Array, `.toString('base64')` is inherited from
+      // TypedArray.prototype.toString — it ignores the argument and
+      // returns comma-separated decimals (e.g. "10,232,5,…"), which
+      // corrupts on base64-decode. Buffer's override does the right
+      // thing.
+      body: Buffer.from(bCiphertext),
     });
   });
   // Storage 5xx → skipped.
