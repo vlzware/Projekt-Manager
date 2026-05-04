@@ -30,21 +30,32 @@
  *      entry, deletes it (one-shot), posts
  *      `{type:'streaming-download-served', key}` on the stored port, and
  *      responds with a `Response` built around the transferred stream +
- *      `Content-Disposition` attachment header.
+ *      `Content-Disposition` attachment header. The served-ACK signals
+ *      "iframe fetch arrived and we are about to start serving the
+ *      response" — NOT "the browser has finished saving the file". The
+ *      actual disk write continues asynchronously in the browser's
+ *      download flow.
  *   5. Page receives the served-ACK on `port1` and treats the export as
- *      delivered to the browser's download flow. The actual save-to-disk
- *      continues asynchronously in the browser; cancellation in the page
- *      (e.g. user closes the dialog) propagates through the upstream
- *      stream's cancel handler.
+ *      handed off to the browser's download flow.
+ *
+ * Cancel-before-serve: the page can post
+ * `{type:'unregister-streaming-download', key}` while waiting for the
+ * served-ACK (e.g. user closes the dialog). The SW posts
+ * `{type:'streaming-download-aborted', key}` on the stored port BEFORE
+ * closing it. WHATWG MessagePort semantics: closing the remote endpoint
+ * fires NO event on the local one (`onmessage` simply stops;
+ * `onmessageerror` only fires on serialisation failures). The explicit
+ * abort message is therefore the only reliable in-band signal the page
+ * has that cancel beat the iframe fetch — without it the page would
+ * idle until the 30s ACK timeout.
  *
  * Lifecycle: the SW is normally kept alive while there are controlled
  * clients (the open tab) AND while there are in-flight `fetch` events.
  * If the SW is evicted between `postMessage` and the iframe fetch, the
  * download fails (404 from the handler — the entry isn't there) and the
- * page-side helper surfaces a timeout because the served-ACK never
- * arrives. The page-side timeout is the only authoritative signal that
- * the bridge actually delivered the bytes — without it the dialog could
- * report success while the user got nothing.
+ * page-side helper surfaces a timeout because no served-ACK and no
+ * abort message arrives. The page-side timeout is the backstop for the
+ * SW-eviction case the bridge cannot otherwise observe.
  *
  * Transferable streams: `ReadableStream` is transferable since
  * Chrome 87 / Firefox 113 / Safari 16.4 — universal in modern browsers
@@ -63,10 +74,12 @@ interface PendingStream {
   /**
    * MessagePort the page transferred alongside the stream. The SW posts
    * `{type:'streaming-download-served', key}` on it inside
-   * `handleStreamingDownloadRequest` so the page knows the bridge has
-   * actually started serving. On unregister the port is closed without
-   * an ACK so the page-side waiter rejects rather than hangs out the
-   * timeout.
+   * `handleStreamingDownloadRequest` so the page knows the bridge is
+   * about to start serving the iframe fetch. On unregister the SW posts
+   * `{type:'streaming-download-aborted', key}` BEFORE closing the port
+   * — closing alone fires no event on the page-side endpoint per WHATWG,
+   * so the explicit abort message is the only reliable in-band signal
+   * that cancel beat the iframe fetch.
    */
   port: MessagePort;
 }
@@ -132,10 +145,14 @@ export function handleStreamingDownloadMessage(event: ExtendableMessageEvent): v
   // unregister-streaming-download: best-effort cleanup. If the page
   // already triggered the iframe fetch and the SW served the response,
   // the entry is gone — `delete` on a missing key is a no-op. Otherwise
-  // close the port so the page-side served-ACK waiter rejects promptly
-  // instead of waiting out the timeout.
+  // post an abort message on the stored port BEFORE closing it: WHATWG
+  // MessagePort semantics dictate that closing the remote endpoint
+  // fires no event on the local one, so the page-side waiter would idle
+  // until the 30s ACK timeout without an explicit signal. The page
+  // listener treats the abort message as a clean rejection.
   const stale = pendingStreams.get(data.key);
   if (stale) {
+    stale.port.postMessage({ type: 'streaming-download-aborted', key: data.key });
     stale.port.close();
     pendingStreams.delete(data.key);
   }
@@ -169,11 +186,13 @@ function buildContentDisposition(fileName: string): string {
  * than re-streaming or hanging.
  *
  * Posts `{type:'streaming-download-served', key}` on the registered
- * served-ACK port BEFORE returning the Response. Posting before the
- * return makes the page-side waiter resolve as soon as the SW has
- * committed to serving — even if the upstream stream errors mid-body
- * later, the bridge itself reached the user's browser, which is what
- * the dialog needs to know to promote to "summary".
+ * served-ACK port BEFORE returning the Response. The ACK signals "the
+ * iframe fetch arrived and we are about to start serving" — it does
+ * NOT prove the browser has saved the file. The actual disk write
+ * happens asynchronously in the browser's download flow after the
+ * Response is returned. Posting before the return makes the page-side
+ * waiter resolve as soon as the SW has committed to serving, which is
+ * the strongest signal the bridge protocol can give.
  *
  * Cache-Control is set to `no-store` so neither the browser HTTP cache
  * nor any intermediary stores the synthetic response. Same posture as

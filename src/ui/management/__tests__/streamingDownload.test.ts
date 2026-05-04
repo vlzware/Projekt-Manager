@@ -13,14 +13,16 @@
  *     transition — without confirmed delivery the dialog must NOT
  *     report success (an evicted SW between postMessage and iframe
  *     fetch would leave the user with no file).
- *   - `served` rejects if the SW does not ACK within
- *     `STREAMING_DOWNLOAD_ACK_TIMEOUT_MS`. The timeout is the only
- *     authoritative signal that the bridge failed — there is no other
- *     out-of-band channel.
+ *   - `served` rejects on `{type:'streaming-download-aborted', key}`
+ *     (cancel beat the iframe fetch — the SW posts this before
+ *     closing the port because port closure alone fires no event on
+ *     the page side per WHATWG) or after
+ *     `STREAMING_DOWNLOAD_ACK_TIMEOUT_MS` (the SW-eviction backstop,
+ *     the only failure the protocol cannot signal in-band).
  *   - `unregisterStreamingDownload(key)` posts an unregister message
- *     to the controller; the SW's handler closes the registered port
- *     and drops the registry entry (the SW-side test pins the cleanup
- *     half).
+ *     to the controller; the SW's handler posts the abort message on
+ *     the registered port, closes it, and drops the registry entry
+ *     (the SW-side test pins the cleanup half).
  *
  * Test scaffolding: jsdom does not provide a real
  * `navigator.serviceWorker`. We stub `navigator.serviceWorker` with a
@@ -172,5 +174,36 @@ describe('streamingDownload — served-ACK handshake', () => {
       type: 'unregister-streaming-download',
       key: handle.key,
     });
+  });
+
+  it('served Promise rejects when the SW posts streaming-download-aborted (cancel-before-serve)', async () => {
+    const fake = installFakeController();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close();
+      },
+    });
+
+    const handle = await streamingDownload({
+      stream,
+      filename: 'cancelled.zip',
+      contentType: 'application/zip',
+    });
+
+    // Pull port2 out of the captured transfer list — that's the SW
+    // side of the served-ACK channel. We simulate the SW receiving an
+    // unregister request: it posts the abort message on port2 before
+    // closing it.
+    expect(fake.captured).toHaveLength(1);
+    const [{ ports }] = fake.captured;
+    expect(ports).toHaveLength(1);
+    const swPort = ports[0]!;
+
+    swPort.postMessage({ type: 'streaming-download-aborted', key: handle.key });
+    swPort.close();
+
+    // Page-side `served` rejects promptly (well within the 30s
+    // timeout) — that's the contract that defeats the SW-cancel hang.
+    await expect(handle.served).rejects.toThrow(/aborted before serving/);
   });
 });

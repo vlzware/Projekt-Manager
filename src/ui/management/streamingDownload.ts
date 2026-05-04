@@ -7,11 +7,12 @@
  * stream to the SW under a one-shot key, navigates a hidden iframe to
  * the synthetic URL the SW intercepts, and waits for the SW to ACK that
  * it has started serving the response. The returned Promise resolves
- * once the served-ACK arrives (the bridge actually reached the
- * browser's download flow) and rejects if the ACK does not arrive
- * within `STREAMING_DOWNLOAD_ACK_TIMEOUT_MS` — the canonical "the SW
- * was evicted between postMessage and the iframe fetch" failure mode.
- * The `key` is exposed so callers can call
+ * once the served-ACK arrives — meaning "iframe fetch reached the SW
+ * and the SW is about to return the Response" — and rejects on either
+ * an explicit `streaming-download-aborted` message (the SW saw the
+ * unregister request) or after `STREAMING_DOWNLOAD_ACK_TIMEOUT_MS`
+ * (the SW-eviction backstop, the only path the protocol cannot signal
+ * in-band). The `key` is exposed so callers can call
  * `unregisterStreamingDownload(key)` from a cancel path that runs while
  * the helper is still awaiting the ACK.
  *
@@ -40,14 +41,22 @@ export interface StreamingDownloadInput {
 }
 
 export interface StreamingDownloadHandle {
-  /** Resolves when the SW posts the served-ACK; rejects on timeout / port close. */
+  /**
+   * Resolves when the SW posts `streaming-download-served` (the iframe
+   * fetch reached the SW and it is about to return the Response — NOT
+   * a guarantee the browser has saved the file). Rejects on
+   * `streaming-download-aborted` (cancel beat the iframe fetch), on
+   * timeout (`STREAMING_DOWNLOAD_ACK_TIMEOUT_MS`, the SW-eviction
+   * backstop), or on a `messageerror` (defensive — only fires on
+   * deserialisation failure).
+   */
   served: Promise<void>;
   /**
    * Registry key the SW uses to look up the entry. Caller passes this
    * to `unregisterStreamingDownload` if the dialog is cancelled before
-   * `served` resolves (the SW drops the entry, the page-side `served`
-   * rejects via the closed port — no resource leak, no "phantom file
-   * was saved" report).
+   * `served` resolves: the SW posts `streaming-download-aborted` and
+   * drops the entry, so the page-side `served` rejects promptly rather
+   * than waiting out the timeout.
    */
   key: string;
 }
@@ -74,14 +83,16 @@ export const STREAMING_DOWNLOAD_ACK_TIMEOUT_MS = 30_000;
  * registered yet, the page is in a tab the SW doesn't control, or the
  * runtime doesn't support transferable streams.
  *
- * Returns a handle whose `served` Promise resolves once the SW has
- * confirmed it is serving the iframe fetch. Callers MUST gate any
- * "download succeeded" UI on `served` resolving — until then the bytes
- * may have been enqueued into the transferred stream but never reached
- * the browser's download flow (e.g. SW evicted between postMessage and
- * iframe nav). The `key` field lets callers call
- * `unregisterStreamingDownload` from a cancel path while `served` is
- * still pending.
+ * Returns a handle whose `served` Promise resolves once the SW posts
+ * `streaming-download-served` (the iframe fetch reached the SW and it
+ * is about to return the Response). The ACK does NOT prove the file
+ * was saved — the browser's download flow runs asynchronously after
+ * the Response is returned. Callers gate any "download handed off" UI
+ * on `served` resolving; until then the bytes may have been enqueued
+ * into the transferred stream but never reached the SW (e.g. SW
+ * evicted between postMessage and iframe nav). The `key` field lets
+ * callers call `unregisterStreamingDownload` from a cancel path while
+ * `served` is still pending.
  */
 export async function streamingDownload(
   input: StreamingDownloadInput,
@@ -116,13 +127,16 @@ export async function streamingDownload(
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-  // MessageChannel for the served-ACK. We keep `port1` here (page side)
-  // and transfer `port2` to the SW alongside the stream. The SW posts
-  // `{type:'streaming-download-served', key}` on port2 inside its
-  // fetch handler; we listen on port1 and resolve `served` on receipt.
-  // If the SW closes the port without an ACK (e.g. unregister), `port1`
-  // surfaces a `messageerror`-equivalent close — we treat that as a
-  // rejection so the dialog doesn't hang.
+  // MessageChannel for the served / abort ACK. We keep `port1` here
+  // (page side) and transfer `port2` to the SW alongside the stream.
+  // The SW posts `{type:'streaming-download-served', key}` on port2
+  // inside its fetch handler (the bridge committed to serving), or
+  // `{type:'streaming-download-aborted', key}` if cancel beat the
+  // iframe fetch. WHATWG MessagePort semantics: closing port2 alone
+  // would NOT fire any event on port1 (`onmessage` simply stops;
+  // `onmessageerror` only fires on deserialisation failure), so the SW
+  // sends an explicit message before closing — that is what makes the
+  // page-side waiter fail fast on cancel-before-serve.
   const channel = new MessageChannel();
   const port1 = channel.port1;
 
@@ -144,15 +158,17 @@ export async function streamingDownload(
 
   port1.onmessage = (ev: MessageEvent) => {
     const data = ev.data as { type?: unknown; key?: unknown } | null;
-    if (
-      data !== null &&
-      typeof data === 'object' &&
-      data.type === 'streaming-download-served' &&
-      data.key === key
-    ) {
+    if (data === null || typeof data !== 'object' || data.key !== key) return;
+    if (data.type === 'streaming-download-served') {
       clearTimeout(timeoutId);
       port1.close();
       resolveServed();
+      return;
+    }
+    if (data.type === 'streaming-download-aborted') {
+      clearTimeout(timeoutId);
+      port1.close();
+      rejectServed(new Error('streamingDownload: SW aborted before serving (cancel-before-serve)'));
     }
   };
   // `messageerror` fires when the channel receives a message that
@@ -213,9 +229,9 @@ export async function streamingDownload(
  * Best-effort cleanup if the caller decides to abandon a download
  * after registering the stream — e.g. the user clicks Abbrechen while
  * the page-side helper is still awaiting the SW's served-ACK. The SW
- * drops the registry entry and closes the served-ACK port, which
- * surfaces on the page as the `served` Promise rejecting (cleaned up
- * synchronously on the page-side timeout path too).
+ * posts `streaming-download-aborted` on the served-ACK port and drops
+ * the registry entry; the page-side `served` Promise rejects on
+ * receipt of the abort message rather than waiting out the timeout.
  */
 export function unregisterStreamingDownload(key: string): void {
   navigator.serviceWorker?.controller?.postMessage({

@@ -14,8 +14,14 @@
  *                   already resolved every per-file failure into either
  *                   "yields a fetchable descriptor" or "yields a
  *                   DEK_UNWRAP_FAILED-tagged descriptor (skipped)". Cancel
- *                   aborts the in-flight ciphertext fetch and tears down
- *                   the streaming-zip; the dialog closes immediately.
+ *                   closes the dialog immediately, aborts the in-flight
+ *                   ciphertext fetch, and unregisters the SW-side
+ *                   registry entry if cancel beat the iframe arrival; if
+ *                   the SW is already serving the partial archive that
+ *                   flow runs to completion at the browser level (the
+ *                   user's download manager will show a partial file —
+ *                   AC-249: "Any partially-written download is the
+ *                   user's to discard").
  *   3. summary    — resulting filename + cumulative skipped-row count.
  *                   "X Dateien übersprungen" surfaces whenever the
  *                   cumulative count is ≥ 1, regardless of skip cause.
@@ -257,7 +263,12 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
   const startExport = useCallback(async (preflightSnapshot: PreflightPhase) => {
     // Fresh abort controller for the export run — replaces the one
     // used during preflight (the preflight fetches are already
-    // settled at this point).
+    // settled at this point). `ctrl` is captured in this closure and
+    // doubles as the local identity the `finally` block compares
+    // against `abortRef.current` before nulling. Without the identity
+    // check the OLD run's unwind (e.g. after a 30s ACK timeout) would
+    // null out a NEW run's controller that the user started in the
+    // meantime, turning the new run's Cancel into a no-op.
     const ctrl = new AbortController();
     abortRef.current = ctrl;
 
@@ -477,6 +488,13 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
       throw new Error(`export-all: ciphertext not pre-fetched for url=${url}`);
     };
 
+    // Local key capture — set once `streamingDownload` resolves and
+    // mirrors `pendingStreamingKeyRef.current`. The `finally` block
+    // uses it for an identity check before nulling the global ref, so
+    // a stale unwind (this run's `handle.served` rejecting after the
+    // 30s timeout) cannot clobber a newer run's key that handleClose
+    // would otherwise rely on.
+    let localKey: string | null = null;
     try {
       const stream = assembleExportAllZip({
         envelope: preflightSnapshot.envelope,
@@ -520,7 +538,10 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
         contentType: 'application/zip',
       });
       // Track the key so `handleClose` can unregister the SW-side
-      // entry if the user cancels before the served-ACK arrives.
+      // entry if the user cancels before the served-ACK arrives. The
+      // local capture lets `finally` distinguish "this run's key" from
+      // "a newer run that overwrote the global ref while we awaited".
+      localKey = handle.key;
       pendingStreamingKeyRef.current = handle.key;
 
       // Wait for BOTH the upstream pipe to drain (helper emitted the
@@ -530,7 +551,6 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
       // would leave the user with no file while the dialog cheerfully
       // promoted to "summary".
       await Promise.all([upstreamDone, handle.served]);
-      pendingStreamingKeyRef.current = null;
 
       if (ctrl.signal.aborted) return;
 
@@ -544,12 +564,16 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
       console.warn('[export-all] zip assembly failed', err);
       setPhase({ kind: 'error', message: STRINGS.dataExchange.exportAllError });
     } finally {
-      abortRef.current = null;
-      // Defensive: clear the pending key on any exit path. The success
-      // path already cleared it, but if we error out (including a
-      // rejected `handle.served` from a SW timeout) we don't want a
-      // stale key sitting in the ref for `handleClose` to re-emit.
-      pendingStreamingKeyRef.current = null;
+      // Identity-gate the global-ref clears so a stale unwind of an
+      // older run (e.g. its `handle.served` rejecting on the 30s
+      // timeout long after handleClose) cannot clobber a newer run
+      // that the user started in the meantime. Without these guards
+      // the new run's Cancel becomes a no-op (no controller to abort)
+      // and handleClose skips the unregister (no key to send).
+      if (abortRef.current === ctrl) abortRef.current = null;
+      if (localKey !== null && pendingStreamingKeyRef.current === localKey) {
+        pendingStreamingKeyRef.current = null;
+      }
     }
   }, []);
 

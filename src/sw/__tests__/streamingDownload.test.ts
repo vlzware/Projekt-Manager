@@ -8,9 +8,11 @@
  *
  *   - `handleStreamingDownloadMessage` — `register-streaming-download`
  *     populates the keyed registry (and stores the transferred port);
- *     `unregister-streaming-download` drops the entry and closes the
- *     port so the page-side served-ACK waiter rejects promptly; non-
- *     matching messages are ignored without throw.
+ *     `unregister-streaming-download` posts
+ *     `{type:'streaming-download-aborted', key}` on the registered port
+ *     and closes it so the page-side served-ACK waiter rejects
+ *     promptly (port closure alone fires no event on the page side per
+ *     WHATWG); non-matching messages are ignored without throw.
  *   - `handleStreamingDownloadRequest` — returns 200 with the
  *     registered stream + Content-Disposition for a known key, drops
  *     the entry from the registry (one-shot), returns 404 for an
@@ -344,14 +346,9 @@ describe('handleStreamingDownloadRequest — served-ACK handshake', () => {
     expect(res.status).toBe(404);
   });
 
-  it('unregister closes the registered port so the page-side served-ACK waiter rejects promptly', async () => {
+  it('unregister posts streaming-download-aborted on the registered port AND closes it so the page-side waiter fails fast', async () => {
     const key = 'k-cancel';
     const channel = new MessageChannel();
-    // Capture port1 close via the matching Promise: when port2 is
-    // closed by the SW, port1 stops receiving messages — the most
-    // robust signal in the test environment is to assert that no ACK
-    // arrives AND the registry entry is gone (so a subsequent fetch
-    // returns 404 rather than serving phantom bytes).
     handleStreamingDownloadMessage(
       messageEvent(
         {
@@ -365,24 +362,23 @@ describe('handleStreamingDownloadRequest — served-ACK handshake', () => {
       ),
     );
 
-    let received: unknown = null;
-    channel.port1.onmessage = (ev) => {
-      received = ev.data;
-    };
-    channel.port1.start();
+    // Listen on port1 BEFORE triggering unregister — the SW posts the
+    // abort message synchronously inside the message handler, before
+    // closing port2.
+    const abortPromise = nextPortMessage(channel.port1);
 
     handleStreamingDownloadMessage(messageEvent({ type: 'unregister-streaming-download', key }));
 
-    // No served-ACK should ever land — the handler closed port2
-    // without posting, and the entry is gone from the registry.
-    await new Promise((r) => setTimeout(r, 0));
-    expect(received).toBeNull();
+    const aborted = await abortPromise;
+    expect(aborted).toEqual({ type: 'streaming-download-aborted', key });
 
+    // Registry entry is gone — a subsequent fetch returns 404 rather
+    // than serving phantom bytes. (nextPortMessage already closed
+    // port1 on receipt; port2 was closed by the handler.)
     const res = handleStreamingDownloadRequest(
       new Request(`https://app.local${STREAMING_DOWNLOAD_PREFIX}${key}`),
     );
     expect(res.status).toBe(404);
-    channel.port1.close();
   });
 });
 
