@@ -6,13 +6,7 @@
  *
  *   src/ui/management/exportAllAsZip.ts → assembleExportAllZip
  *
- * The helper does not exist yet — this is the red phase of TDD. The
- * test will fail at module resolution until step 5 lands the file. That
- * is acceptable per the working brief; the contract pinned here is the
- * implementer's target.
- *
- * Assumed helper shape (adapt in step 5 if a cleaner shape emerges,
- * but keep the data-flow direction):
+ * Helper shape:
  *
  *   import { assembleExportAllZip } from '../exportAllAsZip';
  *
@@ -63,8 +57,6 @@
 import { describe, it, expect } from 'vitest';
 import { encryptBlob, generateDek, encodeDekMaterial } from '@/domain/clientEncryption';
 
-// Importing the not-yet-existent helper. Module resolution will fail in
-// the red phase — that is the documented expected mode for this file.
 import { assembleExportAllZip } from '../exportAllAsZip';
 
 /**
@@ -164,10 +156,9 @@ function parseZipEntries(zip: Uint8Array): Map<string, Uint8Array> {
 }
 
 // ---------------------------------------------------------------
-// Local copies of the descriptor / envelope shapes the helper consumes.
-// Pulled inline rather than importing from the spec so a refactor of
-// the type names in the implementation does not silently break this
-// file at compile-time before step 5 has wired the imports.
+// Local copies of the descriptor / envelope shapes the helper consumes —
+// keeps this file self-contained against type-name churn in the
+// implementation.
 // ---------------------------------------------------------------
 interface BinaryDescriptor {
   attachmentId: string;

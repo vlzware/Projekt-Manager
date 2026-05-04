@@ -59,9 +59,6 @@ const PER_PAGE_CEILING = 500;
  * matches the freshly-unwrapped wrappedDek" arm has both halves.
  *
  * Mirrors the helper of the same name in `attachments-routes.test.ts`.
- * Reads `process.env` directly because the env zod schema does not yet
- * carry the `BINARY_AGE_*` keys via `getEnv()` — tracked debt; once the
- * schema lands this collapses.
  */
 async function wrapFreshDek(): Promise<{ dek: Buffer; wrappedBase64: string }> {
   const recipient = process.env.BINARY_AGE_RECIPIENT;
@@ -808,13 +805,6 @@ describe('AC-248: binary-descriptors contract', () => {
         `/api/export/binary-descriptors?limit=${PER_PAGE_DEFAULT}`,
       );
       expect(res.statusCode).toBe(200);
-    });
-
-    it.skip('wholesale 500 (binary age identity not loaded) — non-reachable in steady state', () => {
-      // AC-248: wholesale-500 trigger is "operator's binary `age` identity not loaded".
-      // The boot probe (binary-identity-probe.test.ts) blocks startup without it, so this path
-      // is non-reachable at the integration layer. Per-row corruption is the inline-error path,
-      // not this one — see the per-row DEK_UNWRAP_FAILED suite above.
     });
   });
 });

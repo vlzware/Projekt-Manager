@@ -21,10 +21,6 @@ import { clickView } from './nav-helpers';
  *           renders `"X Dateien übersprungen"` for the cumulative skip
  *           count.
  *
- * Written ahead of implementation. Today every assertion fails: the
- * action button selector is not yet rendered, the route handler is not
- * yet wired, the assembly helper does not yet exist.
- *
  * testids introduced by this spec (the UI implementation must match):
  *   data-export-all-button             single "Vollständiger Export" trigger
  *   export-all-preflight               pre-flight confirmation dialog
@@ -57,11 +53,10 @@ import { clickView } from './nav-helpers';
  *   integration layer); what AC-251 pins is the CLIENT BEHAVIOR
  *   downstream of those wire responses.
  *
- *   When step 5 lands, the implementer may add a real test-seeding
- *   helper that produces these row states through the DB layer; in that
- *   case the route mocks below should be replaced with seeded rows.
- *   The mocks faithfully encode the wire contract pinned by AC-248, so
- *   the assertion targets do not change.
+ *   A real test-seeding helper that produces these row states through
+ *   the DB layer would let the route mocks below be replaced with seeded
+ *   rows. The mocks faithfully encode the wire contract pinned by
+ *   AC-248, so the assertion targets do not change.
  */
 
 test.use({ storageState: STORAGE_STATES.owner });
