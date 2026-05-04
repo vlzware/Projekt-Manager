@@ -69,33 +69,43 @@ import { assembleExportAllZip } from '../exportAllAsZip';
 
 /**
  * Minimal STORE-mode zip parser. `client-zip` (the project's streaming-
- * zip lib) emits STORE-mode entries by default for typed-array inputs,
- * so the local-file-header → entry-bytes layout is trivially walkable.
- * Pulled inline rather than adding a `fflate`/`jszip` dev-dep just to
- * read back what we just wrote.
+ * zip lib) always emits STORE entries for typed-array inputs, but the
+ * sizes are NOT written into the local file header — they are deferred
+ * to a Data Descriptor record after the file bytes (general-purpose bit
+ * flag 0x0008 set; LFH compressed/uncompressed-size fields zeroed).
+ * That is the streaming-mode layout per APPNOTE.TXT §4.3.9. Pulled
+ * inline rather than adding a `fflate`/`jszip` dev-dep just to read
+ * back what we just wrote.
  *
- * Shape per APPNOTE.TXT §4.3.7:
+ * Shape per APPNOTE.TXT §4.3.7 + §4.3.9:
  *   local file header signature: 0x04034b50  (PK\x03\x04)
- *   …, compression method (=0 for STORE), …,
- *   compressed size (== uncompressed for STORE),
+ *   …, general-purpose bit flag (0x0008 = sizes in data descriptor), …,
+ *   compression method (=0 for STORE), …,
+ *   compressed size (0 when bit 3 of flags is set, real value otherwise),
+ *   uncompressed size (same — 0 when streaming),
  *   filename length, extra-field length,
  *   filename bytes, extra-field bytes,
- *   file bytes.
+ *   file bytes,
+ *   [optional: data descriptor signature 0x08074b50, then crc32, compressed
+ *    size, uncompressed size — present iff bit 3 of the flags was set].
  *
- * The central directory at the end is ignored — every entry is recoverable
- * from the local headers alone. A non-STORE entry throws.
+ * The central directory at the end is ignored — every entry is
+ * recoverable from the local headers + data descriptors alone. A
+ * non-STORE entry throws.
  */
 function parseZipEntries(zip: Uint8Array): Map<string, Uint8Array> {
   const out = new Map<string, Uint8Array>();
   const view = new DataView(zip.buffer, zip.byteOffset, zip.byteLength);
   let off = 0;
   const LFH_SIG = 0x04034b50;
+  const DD_SIG = 0x08074b50; // data descriptor (optional preamble)
   while (off + 30 <= zip.byteLength) {
     const sig = view.getUint32(off, true);
     if (sig !== LFH_SIG) break; // hit central directory or end-of-central-dir
+    const flags = view.getUint16(off + 6, true);
     const compressionMethod = view.getUint16(off + 8, true);
-    const compressedSize = view.getUint32(off + 18, true);
-    const uncompressedSize = view.getUint32(off + 22, true);
+    const lfhCompressedSize = view.getUint32(off + 18, true);
+    const lfhUncompressedSize = view.getUint32(off + 22, true);
     const fnLen = view.getUint16(off + 26, true);
     const extraLen = view.getUint16(off + 28, true);
     if (compressionMethod !== 0) {
@@ -103,18 +113,52 @@ function parseZipEntries(zip: Uint8Array): Map<string, Uint8Array> {
         `parseZipEntries: expected STORE (0), got compression method ${compressionMethod}`,
       );
     }
-    if (compressedSize !== uncompressedSize) {
-      throw new Error(
-        `parseZipEntries: STORE entry has compressedSize ${compressedSize} ≠ uncompressedSize ${uncompressedSize}`,
-      );
-    }
     const fnStart = off + 30;
     const fnBytes = zip.subarray(fnStart, fnStart + fnLen);
     const fileName = new TextDecoder('utf-8').decode(fnBytes);
     const dataStart = fnStart + fnLen + extraLen;
-    const data = zip.slice(dataStart, dataStart + compressedSize);
+
+    let entrySize: number;
+    let nextOff: number;
+    if ((flags & 0x0008) !== 0) {
+      // Streaming-mode entry: walk forward to find the data descriptor
+      // signature, which marks the end of the file payload. The
+      // descriptor's signature is technically optional in the spec but
+      // is universally written by streaming zip writers (`client-zip`
+      // included). Bytes between dataStart and the DD_SIG match are the
+      // file payload.
+      let probe = dataStart;
+      const limit = zip.byteLength - 16; // dd is signature + 12 bytes minimum
+      while (probe <= limit) {
+        if (view.getUint32(probe, true) === DD_SIG) {
+          // Cross-check: the descriptor's compressed-size field
+          // (offset +8 from sig) should equal `probe - dataStart`. If
+          // not, the signature was a coincidence inside the payload —
+          // keep scanning. Cheap and effective for ASCII payloads (the
+          // test fixtures); for binary a more robust approach would
+          // walk from the central directory, but we're STORE-only and
+          // the fixtures are tiny.
+          const ddCompressed = view.getUint32(probe + 8, true);
+          if (ddCompressed === probe - dataStart) break;
+        }
+        probe += 1;
+      }
+      entrySize = probe - dataStart;
+      nextOff = probe + 16; // sig (4) + crc (4) + compSize (4) + uncompSize (4)
+    } else {
+      // Sizes in LFH are authoritative.
+      if (lfhCompressedSize !== lfhUncompressedSize) {
+        throw new Error(
+          `parseZipEntries: STORE entry has compressedSize ${lfhCompressedSize} ≠ uncompressedSize ${lfhUncompressedSize}`,
+        );
+      }
+      entrySize = lfhCompressedSize;
+      nextOff = dataStart + entrySize;
+    }
+
+    const data = zip.slice(dataStart, dataStart + entrySize);
     out.set(fileName, data);
-    off = dataStart + compressedSize;
+    off = nextOff;
   }
   return out;
 }
