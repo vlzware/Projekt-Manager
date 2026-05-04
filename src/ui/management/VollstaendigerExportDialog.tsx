@@ -39,7 +39,7 @@ import {
   type DescriptorPage,
   type ExportEnvelope,
 } from './exportAllAsZip';
-import { streamingDownload } from './streamingDownload';
+import { streamingDownload, unregisterStreamingDownload } from './streamingDownload';
 import styles from './VollstaendigerExportDialog.module.css';
 
 const PRELOAD_PAGE_LIMIT = ATTACHMENT_CONFIG.exportAllPerPageDefault;
@@ -155,6 +155,15 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
   const [phase, setPhase] = useState<DialogPhase>({ kind: 'closed' });
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Active streaming-download key while the helper is awaiting the
+  // SW's served-ACK. Set after `streamingDownload` resolves with the
+  // handle, cleared once the ACK arrives (success path) or in
+  // `handleClose` after the unregister fires (cancel-before-serve).
+  // Used by `handleClose` to drop the SW-side registry entry — without
+  // this, a cancel between `postMessage` and the iframe fetch would
+  // leak a one-shot entry until the next download attempt or page
+  // reload.
+  const pendingStreamingKeyRef = useRef<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const initialFocusRef = useRef<HTMLButtonElement>(null);
 
@@ -210,6 +219,17 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
   const handleClose = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
+    // Cancel-before-serve: tell the SW to drop the one-shot registry
+    // entry so it doesn't survive the dialog close. If the SW already
+    // served the bytes, the entry is gone and `delete` on a missing
+    // key is a no-op on the SW side. The helper's served-Promise is
+    // resolved/rejected through the closed port — no extra plumbing
+    // here, the abort/close flow tears down the stream regardless.
+    const pendingKey = pendingStreamingKeyRef.current;
+    if (pendingKey !== null) {
+      unregisterStreamingDownload(pendingKey);
+      pendingStreamingKeyRef.current = null;
+    }
     setPhase({ kind: 'closed' });
     onClose();
   }, [onClose]);
@@ -469,9 +489,12 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
       // Tap the helper's stream so we know when it's fully drained.
       // `flush()` fires after the last chunk is pushed downstream — by
       // then the manifest entry has been emitted and the SW has
-      // received every byte. We resolve `upstreamDone` there and
-      // transition to the summary phase. The browser may still be
-      // writing to disk; the download progress lives in browser chrome.
+      // received every byte. We resolve `upstreamDone` there and use
+      // it as a precondition for summary: the upstream pipe is what
+      // signals "every byte the helper produced was enqueued". The
+      // SW's served-ACK is the second precondition (it proves the
+      // bytes actually reached the browser's download flow rather
+      // than sitting in an evicted-SW registry entry).
       let resolveUpstreamDone: () => void;
       const upstreamDone = new Promise<void>((res) => {
         resolveUpstreamDone = res;
@@ -491,16 +514,23 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
       // synthetic-URL fetch and pipes bytes straight to the browser's
       // download flow — no whole-zip buffering. Pattern is the same as
       // Cryptomator Hub Web / Filen / ProtonDrive (`src/sw/streamingDownload.ts`).
-      await streamingDownload({
+      const handle = await streamingDownload({
         stream: tapped,
         filename,
         contentType: 'application/zip',
       });
+      // Track the key so `handleClose` can unregister the SW-side
+      // entry if the user cancels before the served-ACK arrives.
+      pendingStreamingKeyRef.current = handle.key;
 
-      // Wait for the upstream stream to drain — this is what tells us
-      // the export is "done from the user's perspective" (helper
-      // emitted the manifest, SW received every chunk).
-      await upstreamDone;
+      // Wait for BOTH the upstream pipe to drain (helper emitted the
+      // manifest, every byte enqueued into the transferred stream)
+      // AND the SW's served-ACK (the bridge actually started serving
+      // the iframe fetch). Without the served-ACK, an evicted SW
+      // would leave the user with no file while the dialog cheerfully
+      // promoted to "summary".
+      await Promise.all([upstreamDone, handle.served]);
+      pendingStreamingKeyRef.current = null;
 
       if (ctrl.signal.aborted) return;
 
@@ -515,6 +545,11 @@ export function VollstaendigerExportDialog({ isOpen, onClose }: VollstaendigerEx
       setPhase({ kind: 'error', message: STRINGS.dataExchange.exportAllError });
     } finally {
       abortRef.current = null;
+      // Defensive: clear the pending key on any exit path. The success
+      // path already cleared it, but if we error out (including a
+      // rejected `handle.served` from a SW timeout) we don't want a
+      // stale key sitting in the ref for `handleClose` to re-emit.
+      pendingStreamingKeyRef.current = null;
     }
   }, []);
 

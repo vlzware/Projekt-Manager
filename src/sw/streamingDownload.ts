@@ -2,39 +2,49 @@
  * Service Worker — synthetic-URL streaming download bridge.
  *
  * Browsers cannot save a `ReadableStream<Uint8Array>` straight from JS to
- * disk: `<a download href=…>` requires a URL, and `URL.createObjectURL`
- * only accepts a `Blob` (which buffers the whole archive in memory). The
- * canonical workaround — used in production by Cryptomator Hub Web,
- * Filen, ProtonDrive, and the (now-unmaintained) `streamsaver.js`
- * library — is to register the stream with the page's Service Worker
- * under a one-shot key, then click an anchor pointing at a synthetic
- * URL the SW intercepts. The SW responds with `new Response(stream, …)`
- * and the browser pipes that response straight to disk via its native
- * download flow. Peak memory is bounded by the SW chunk queue plus the
- * in-flight upstream chunk — no whole-zip buffering.
+ * disk: `URL.createObjectURL` only accepts a `Blob` (which buffers the
+ * whole archive in memory), and `<a download href=…>` is captured at the
+ * browser-chrome layer before the network request reaches the SW so the
+ * anchor approach never touches the SW fetch handler. The canonical
+ * workaround — used in production by Cryptomator Hub Web, Filen,
+ * ProtonDrive, and the (now-unmaintained) `streamsaver.js` library — is
+ * to register the stream with the page's Service Worker under a one-shot
+ * key, then navigate a hidden iframe to a synthetic URL the SW
+ * intercepts. The SW responds with `new Response(stream, …)` and the
+ * browser pipes that response straight to disk via its native download
+ * flow. Peak memory is bounded by the SW chunk queue plus the in-flight
+ * upstream chunk — no whole-zip buffering.
  *
  * Flow:
- *   1. Page generates a UUID `key`, calls `navigator.serviceWorker
- *      .controller.postMessage({type:'register-streaming-download', key,
- *      filename, contentType, stream}, [stream])` — the stream is
- *      transferred (not cloned), so the page loses its handle.
- *   2. SW stores the entry in `pendingStreams` keyed by `key` and ACKs.
- *   3. Page clicks `<a download href="/streaming-download/<key>">`.
+ *   1. Page generates a UUID `key` and a `MessageChannel`, calls
+ *      `navigator.serviceWorker.controller.postMessage(
+ *        {type:'register-streaming-download', key, filename, contentType,
+ *         stream},
+ *        [stream, port2])` — the stream is transferred (not cloned), so
+ *      the page loses its handle; `port2` is transferred to the SW so it
+ *      can ACK once the iframe fetch arrives.
+ *   2. SW stores the entry (stream + port) in `pendingStreams` keyed by
+ *      `key`.
+ *   3. Page navigates a hidden iframe to `/streaming-download/<key>`.
  *   4. SW intercepts the fetch (registered in `index.ts`), pulls the
- *      entry, deletes it (one-shot), and responds with a `Response`
- *      built around the transferred stream + `Content-Disposition`
- *      attachment header.
- *   5. Browser pipes the response body to disk; cancellation in the
- *      page (e.g. user closes the dialog) propagates through the
- *      upstream stream's cancel handler.
+ *      entry, deletes it (one-shot), posts
+ *      `{type:'streaming-download-served', key}` on the stored port, and
+ *      responds with a `Response` built around the transferred stream +
+ *      `Content-Disposition` attachment header.
+ *   5. Page receives the served-ACK on `port1` and treats the export as
+ *      delivered to the browser's download flow. The actual save-to-disk
+ *      continues asynchronously in the browser; cancellation in the page
+ *      (e.g. user closes the dialog) propagates through the upstream
+ *      stream's cancel handler.
  *
  * Lifecycle: the SW is normally kept alive while there are controlled
  * clients (the open tab) AND while there are in-flight `fetch` events.
- * If the SW is evicted between `postMessage` and the anchor-click, the
- * download fails (404 from the handler — the entry isn't there). For
- * our single-shot owner-driven workflow this is acceptable; a stale
- * entry survives at most until the next download attempt or page
- * reload, see `pendingStreams.delete` on every fetch.
+ * If the SW is evicted between `postMessage` and the iframe fetch, the
+ * download fails (404 from the handler — the entry isn't there) and the
+ * page-side helper surfaces a timeout because the served-ACK never
+ * arrives. The page-side timeout is the only authoritative signal that
+ * the bridge actually delivered the bytes — without it the dialog could
+ * report success while the user got nothing.
  *
  * Transferable streams: `ReadableStream` is transferable since
  * Chrome 87 / Firefox 113 / Safari 16.4 — universal in modern browsers
@@ -50,14 +60,23 @@ interface PendingStream {
   stream: ReadableStream<Uint8Array>;
   filename: string;
   contentType: string;
+  /**
+   * MessagePort the page transferred alongside the stream. The SW posts
+   * `{type:'streaming-download-served', key}` on it inside
+   * `handleStreamingDownloadRequest` so the page knows the bridge has
+   * actually started serving. On unregister the port is closed without
+   * an ACK so the page-side waiter rejects rather than hangs out the
+   * timeout.
+   */
+  port: MessagePort;
 }
 
 /**
  * One-shot stream registry. Keys are UUIDs minted by the page-side
  * helper; entries are deleted on the first matching fetch (so a single
  * key can never be replayed) and on `unregister` messages (page-side
- * cleanup if the click never happens, e.g. the user cancels before the
- * anchor is appended).
+ * cleanup if the iframe fetch never happens, e.g. the user cancels
+ * before the iframe is appended).
  */
 const pendingStreams = new Map<string, PendingStream>();
 
@@ -95,17 +114,31 @@ export function handleStreamingDownloadMessage(event: ExtendableMessageEvent): v
   if (!isStreamingDownloadMessage(data)) return;
 
   if (data.type === 'register-streaming-download') {
+    // The first transferred port is the served-ACK channel. The
+    // page-side helper always transfers exactly one port; a missing
+    // port is a protocol violation we drop on the floor (don't crash
+    // the SW, but don't register either — without the port the page
+    // would hang waiting for an ACK that never comes).
+    const port = event.ports[0];
+    if (!port) return;
     pendingStreams.set(data.key, {
       stream: data.stream,
       filename: data.filename,
       contentType: data.contentType,
+      port,
     });
     return;
   }
   // unregister-streaming-download: best-effort cleanup. If the page
-  // already clicked the anchor and the SW served the response, the
-  // entry is gone — `delete` on a missing key is a no-op.
-  pendingStreams.delete(data.key);
+  // already triggered the iframe fetch and the SW served the response,
+  // the entry is gone — `delete` on a missing key is a no-op. Otherwise
+  // close the port so the page-side served-ACK waiter rejects promptly
+  // instead of waiting out the timeout.
+  const stale = pendingStreams.get(data.key);
+  if (stale) {
+    stale.port.close();
+    pendingStreams.delete(data.key);
+  }
 }
 
 /**
@@ -135,6 +168,13 @@ function buildContentDisposition(fileName: string): string {
  * (e.g. user-initiated reload of the download tab) returns 404 rather
  * than re-streaming or hanging.
  *
+ * Posts `{type:'streaming-download-served', key}` on the registered
+ * served-ACK port BEFORE returning the Response. Posting before the
+ * return makes the page-side waiter resolve as soon as the SW has
+ * committed to serving — even if the upstream stream errors mid-body
+ * later, the bridge itself reached the user's browser, which is what
+ * the dialog needs to know to promote to "summary".
+ *
  * Cache-Control is set to `no-store` so neither the browser HTTP cache
  * nor any intermediary stores the synthetic response. Same posture as
  * other pages serving sensitive cleartext.
@@ -150,6 +190,12 @@ export function handleStreamingDownloadRequest(request: Request): Response {
     });
   }
   pendingStreams.delete(key);
+
+  // Notify the page that the bridge is serving. Closing the port
+  // afterwards releases both endpoints so neither side leaks a live
+  // MessagePort once the download starts.
+  entry.port.postMessage({ type: 'streaming-download-served', key });
+  entry.port.close();
 
   return new Response(entry.stream, {
     status: 200,
