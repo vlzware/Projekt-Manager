@@ -438,7 +438,7 @@ test('AC-251: per-file failure surfaces in post-export summary', async ({ page }
   // `originalDekMaterial` and the fixture key — it's threaded through
   // both descriptor responses (first page + re-fetch).
   const bFixture = await makeAesGcmFixture('fixture-B-recovered');
-  const { plaintext, ciphertext: bCiphertext, dekMaterial: bDekMaterial } = bFixture;
+  const { ciphertext: bCiphertext, dekMaterial: bDekMaterial } = bFixture;
 
   let descriptorCallCount = 0;
   await page.context().route('**/api/export/binary-descriptors**', async (route: Route) => {
@@ -468,7 +468,7 @@ test('AC-251: per-file failure surfaces in post-export summary', async ({ page }
             projectNumber: '2026-001',
             projectTitle: 'A',
             fileName: 'recovers.bin',
-            sizeBytes: plaintext.byteLength,
+            sizeBytes: bFixture.plaintext.byteLength,
             originalUrl: bUrl,
             // Same DEK on both descriptor calls — the row is the same
             // attachment, only the presigned URL was refreshed.
@@ -500,7 +500,7 @@ test('AC-251: per-file failure surfaces in post-export summary', async ({ page }
         ],
         nextCursor: null,
         totalCount: 4,
-        totalSizeBytes: 100 + plaintext.byteLength + 300 + 400,
+        totalSizeBytes: 100 + bFixture.plaintext.byteLength + 300 + 400,
       }),
     });
   });
