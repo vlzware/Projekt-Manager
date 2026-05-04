@@ -288,16 +288,25 @@ export class BinaryDescriptorService {
             .where(eq(attachments.status, 'ready'));
           const totals = totalsResult[0] ?? { totalCount: 0, totalSizeBytes: 0 };
           // SUM of bigint comes back as a string from pg; coerce to
-          // number for the wire shape. The `[C]` per-file cap means
-          // total bytes stay well within Number.MAX_SAFE_INTEGER for
-          // any realistic dataset; the cursor decoder also asserts
-          // safe-integer range so a malformed cursor cannot smuggle in
-          // an unsafe value.
+          // number for the wire shape. totalSizeBytes is BIGINT in pg;
+          // assert it fits MAX_SAFE_INTEGER. Aggregate ceiling is a
+          // function of [C] perFileCapBytes × max attachment count.
+          // Mirrors the cursor decoder's safe-integer assertion so the
+          // producing site cannot quietly emit values the decoder
+          // would later reject.
+          const totalCountCoerced = Number(totals.totalCount);
+          const totalSizeBytesCoerced = Number(totals.totalSizeBytes);
+          if (
+            !Number.isSafeInteger(totalCountCoerced) ||
+            !Number.isSafeInteger(totalSizeBytesCoerced)
+          ) {
+            throw serverError();
+          }
           return {
             pageRows: pageRowsLocal,
             hasMore: hasMoreLocal,
-            totalCount: Number(totals.totalCount),
-            totalSizeBytes: Number(totals.totalSizeBytes),
+            totalCount: totalCountCoerced,
+            totalSizeBytes: totalSizeBytesCoerced,
           };
         }
         return {
