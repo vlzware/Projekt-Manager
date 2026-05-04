@@ -11,6 +11,8 @@ Self-hosted, full control, fully customized, no BS.
 
 <img src="assets/projekt-manager.png" alt="preview" width="60%"/>
 
+Mobile PWA demo video: [vimeo.com/1186689273](https://vimeo.com/1186689273)
+
 ## Who is this for
 
 _Owner_:
@@ -134,9 +136,12 @@ This project makes heavy use of modern LLMs, mostly Claude Code. A "fully automa
 **Running**:
 
 ```bash
-cp .env.example .env                  # first time only - dev-ready, no edits needed
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init
+# first time only:
+nvm install                           # installs the Node.js version pinned in `.nvmrc`
+cp .env.example .env                  # dev-ready, no edits needed
 npm install
+# run:
+docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init
 npm run dev                           # starts backend + frontend at http://localhost:5173
 ```
 
@@ -197,8 +202,6 @@ _Of course, when handing the installation over, a "Handbuch" will be present._
 **Future improvements**
 
 R2 was enjoyable to fiddle with; however, for the real-user installation I would consider consolidating backups and binaries to B2.
-
-The binaries on B2 are still not e2e encrypted. Even if not as critical as the business data, encryption is definitely the way here as well.
 
 **Next steps**
 
