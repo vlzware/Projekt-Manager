@@ -53,7 +53,7 @@ If the QR scrolls off the terminal before the peer scans it, re-render from the 
 sudo qrencode -t ansiutf8 < /etc/wireguard/peers/<name>.conf
 ```
 
-After the peer confirms connectivity over the VPN:
+After the peer confirms connectivity over the VPN (see [Peer device setup](#peer-device-setup)):
 
 ```bash
 # Verify handshake (expect a recent Unix timestamp)
@@ -66,6 +66,30 @@ sudo shred -u /etc/wireguard/peers/<name>.privkey
 ```
 
 Once the private key is shredded, the QR cannot be regenerated — that's the point. If the peer later loses their device, rotate instead of recover: run the removal script, then `wireguard-add-peer.sh` with a fresh IP.
+
+## Peer device setup
+
+Run by the peer on their own device, once they have the `.conf` (Linux / Windows) or QR (Android) from `wireguard-add-peer.sh`.
+
+### Linux
+
+```bash
+sudo apt install wireguard
+sudo vim /etc/wireguard/wg0.conf   # paste contents of VPS's /etc/wireguard/peers/<peer-name>.conf
+sudo wg-quick up wg0
+```
+
+### Android
+
+Install the WireGuard app → `+` → **Scan from QR code** → scan the QR printed by `wireguard-add-peer.sh`.
+
+### Windows
+
+Download the [official installer](https://download.wireguard.com/windows-client/wireguard-installer.exe) → **Import tunnel(s) from file** → select the `.conf`.
+
+### Verify
+
+Open `https://<domain>` in a browser. App loads → tunnel works. If it hangs or times out, the tunnel is not carrying traffic.
 
 ## Peer removal / rotation
 
