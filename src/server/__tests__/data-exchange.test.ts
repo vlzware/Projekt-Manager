@@ -44,6 +44,9 @@ import {
 import { createDatabase } from '../db/connection.js';
 import { seed } from '../seed.js';
 import type { Database } from '../db/connection.js';
+import { createStorageClient } from '../storage/client.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
+import { getEnv } from '../config/env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(__dirname, '../db/migrations');
@@ -1737,6 +1740,135 @@ describe('Unified Data Exchange', () => {
         // truncate sat inside the rolled-back transaction.
         expect(await countAttachments()).toBe(beforeAttachments);
       } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Issue #163 follow-up: the override path TRUNCATEs the attachments
+  // table but does not, on its own, touch the bytes in the bucket.
+  // The pending-orphan reaper only sweeps `status='pending'` rows; the
+  // bucket lifecycle (per ADR-0022) reaps noncurrent versions only —
+  // so a truncate-without-hide leaves the prior bytes as the current
+  // version of an unreferenced key, never reaped. The fix mirrors the
+  // project-purge cascade (AC-218): collect the keys before the wipe
+  // and hide them after commit so the prior version is demoted to
+  // noncurrent, and lifecycle takes it from there. (See #169 for the
+  // generic orphan sweeper that catches every other path.)
+  // ---------------------------------------------------------------
+  describe('Issue #163 follow-up: override-import hides prior attachment objects', () => {
+    let storage: AttachmentStorageClient;
+
+    beforeAll(() => {
+      const env = getEnv();
+      storage = createStorageClient({
+        endpoint: env.STORAGE_ENDPOINT!,
+        bucket: env.STORAGE_BUCKET,
+        accessKey: env.STORAGE_ACCESS_KEY!,
+        secretKey: env.STORAGE_SECRET_KEY!,
+      });
+    });
+
+    async function objectAbsent(key: string): Promise<boolean> {
+      try {
+        await storage.download(key);
+        return false;
+      } catch {
+        return true;
+      }
+    }
+
+    it('writes a delete marker for every prior attachment object on successful override-import', async () => {
+      const projectsRes = await authGet(ownerToken, '/api/projects?limit=200');
+      const projects = projectsRes.json().data as Array<{ id: string }>;
+      expect(projects.length).toBeGreaterThanOrEqual(1);
+      const projectId = projects[0]!.id;
+
+      // Seed a `ready` row + push real bytes to storage so the
+      // post-call assertion meaningfully distinguishes "object hidden"
+      // from "object never uploaded". Use a deterministic UUID so the
+      // assertion targets a known key.
+      const id = 'aaaaaaaa-1111-4000-8000-000000000169';
+      const originalKey = `attachments/${projectId}/${id}.orig`;
+      const wrappedDek = Buffer.alloc(192, 0x33).toString('base64');
+      await db.execute(sql`
+        INSERT INTO attachments
+          (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+           ciphertext_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+        VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                'leak-fixture.pdf', 'application/pdf', 100,
+                164,
+                ${originalKey}, NULL, FALSE,
+                ${wrappedDek}, NULL, 1)
+      `);
+      await storage.upload(originalKey, Buffer.from('orig-bytes'), 'application/octet-stream');
+
+      // Pre-state sanity: the seeded object is retrievable.
+      expect(await objectAbsent(originalKey)).toBe(false);
+
+      try {
+        const envelope = buildOverrideEnvelope();
+        const body = { ...envelope, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBe(200);
+
+        // The hide call wrote a delete marker — GET without versionId
+        // returns 404. The prior version is now a noncurrent version
+        // and the bucket lifecycle reaps it on its own clock per
+        // ADR-0022.
+        expect(await objectAbsent(originalKey)).toBe(true);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('leaves prior storage objects untouched when the override import is rejected', async () => {
+      const projectsRes = await authGet(ownerToken, '/api/projects?limit=200');
+      const projects = projectsRes.json().data as Array<{ id: string }>;
+      expect(projects.length).toBeGreaterThanOrEqual(1);
+      const projectId = projects[0]!.id;
+
+      // Seed a real uploaded object. A failed override-import must
+      // leave it retrievable — the hide path must NOT fire on the
+      // rollback branch.
+      const id = 'aaaaaaaa-2222-4000-8000-000000000169';
+      const originalKey = `attachments/${projectId}/${id}.orig`;
+      const wrappedDek = Buffer.alloc(192, 0x44).toString('base64');
+      await db.execute(sql`
+        INSERT INTO attachments
+          (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+           ciphertext_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+        VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                'rollback-fixture.pdf', 'application/pdf', 100,
+                164,
+                ${originalKey}, NULL, FALSE,
+                ${wrappedDek}, NULL, 1)
+      `);
+      await storage.upload(originalKey, Buffer.from('rollback'), 'application/octet-stream');
+
+      try {
+        // Force a validation rejection — same trick as the existing
+        // AC-254 atomicity test: a project pointing at a missing
+        // customer in the same envelope.
+        const broken = buildOverrideEnvelope();
+        broken.projects[0]!.customerId = UUID_ZERO;
+        const body = { ...broken, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBeGreaterThanOrEqual(400);
+
+        // No commit ⇒ no hide. The seeded object is still the current
+        // version and remains retrievable.
+        expect(await objectAbsent(originalKey)).toBe(false);
+      } finally {
+        // Manual cleanup: the row + object are still present. Hide
+        // the object directly so the next describe block starts
+        // clean, then reseed (which cascades the row away via FK).
+        await storage.hide(originalKey);
         await reseedAndRelogin();
       }
     });

@@ -375,6 +375,21 @@ export async function listKeysForProject(
 }
 
 /**
+ * Collect every attachment key in the table. Used by the override-import
+ * path so the bytes left over from the prior dataset can be hidden after
+ * the TRUNCATE commits — without this, the orphaned objects sit as
+ * current versions of unreferenced keys and the lifecycle policy
+ * (which only reaps noncurrent versions) leaves them forever.
+ */
+export async function listAllKeys(
+  db: TransactionalDatabase,
+): Promise<Array<{ originalKey: string; thumbKey: string | null }>> {
+  return db
+    .select({ originalKey: attachments.originalKey, thumbKey: attachments.thumbKey })
+    .from(attachments);
+}
+
+/**
  * Delete pending rows older than cutoff directly. Returns the deleted
  * rows (for storage-side cleanup + count). The reaper is allowlisted in
  * `scripts/check-audit-mutations.sh` — rows never entered the domain,

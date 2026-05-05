@@ -31,6 +31,10 @@ import {
   type MissingUserRefsPayload,
   type ValidationIssue,
 } from '../../domain/dataExchange.js';
+import { listAllKeys } from '../repositories/attachment.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
+import { bestEffortHideStorageKeys } from './AttachmentService.js';
+import type { ServiceLogger } from './Logger.js';
 
 /**
  * Within-envelope structural checks — uniqueness of keys that become DB
@@ -228,7 +232,15 @@ function toAssignmentInsert(pw: EnvelopeAssignment) {
 }
 
 export class ImportService {
-  constructor(private db: Database) {}
+  /**
+   * The optional `storage` client is required only for the override
+   * path — `import()` throws if a non-empty target is wiped without one.
+   * Empty-target imports (the seed path) construct without it.
+   */
+  constructor(
+    private db: Database,
+    private storage: AttachmentStorageClient | null = null,
+  ) {}
 
   /**
    * One round-trip to the target `users` table resolves every referenced
@@ -244,7 +256,11 @@ export class ImportService {
     return new Set(rows.map((r) => r.id));
   }
 
-  async import(envelope: Envelope, opts: ImportOptions): Promise<ImportResult | DryRunPreview> {
+  async import(
+    envelope: Envelope,
+    opts: ImportOptions,
+    log?: ServiceLogger,
+  ): Promise<ImportResult | DryRunPreview> {
     if (envelope.schema_version !== SCHEMA_VERSION) {
       throw schemaVersionMismatch(SCHEMA_VERSION, envelope.schema_version);
     }
@@ -319,6 +335,8 @@ export class ImportService {
     const projectRows = envelope.projects.map(toProjectInsert);
     const assignmentRows = envelope.project_workers.map(toAssignmentInsert);
 
+    let keysToHide: Array<{ originalKey: string; thumbKey: string | null }> = [];
+
     await this.db.transaction(async (tx) => {
       // VPN-first deployment (ADR-0008) rules out concurrent restores in
       // practice, so the default READ COMMITTED isolation is sufficient —
@@ -346,6 +364,13 @@ export class ImportService {
         if (typeof typed !== 'string' || !restorePhraseMatches(typed)) {
           throw restoreConfirmationMismatch();
         }
+        if (this.storage === null || log === undefined) {
+          // The override path mutates storage state too — refuse it on
+          // a service constructed without those collaborators rather
+          // than silently leak the prior bytes. Empty-target callers
+          // (e.g. the seed) never reach this branch.
+          throw new Error('ImportService.import: override path requires storage + logger');
+        }
       }
 
       if (opts.override) {
@@ -353,8 +378,19 @@ export class ImportService {
         // `attachments` table is truncated atomically with the
         // customer / project / project-worker wipe so the re-upload
         // pipeline (driven by the orchestrator) lands on an empty
-        // table. Backing B2 objects are left to the orphan reaper
-        // (data-model.md §6.11).
+        // table.
+        //
+        // The storage objects backing the wiped rows are NOT cleaned
+        // up by either reaper: the pending-orphan reaper only sweeps
+        // `status='pending'` rows past TTL, and the bucket lifecycle
+        // rule reaps noncurrent versions only — a TRUNCATE without a
+        // hide call leaves the prior bytes as the *current* version
+        // of an unreferenced key, which lifecycle never reaches
+        // (issue #163 follow-up). Capture the keys before the wipe so
+        // the post-commit hide demotes them to noncurrent and the
+        // existing lifecycle policy reaps them on its own clock.
+        // Mirrors the project-purge cascade pattern (AC-218).
+        keysToHide = await listAllKeys(tx);
         await tx.execute(
           sql`TRUNCATE TABLE attachments, project_workers, projects, customers RESTART IDENTITY CASCADE`,
         );
@@ -370,6 +406,16 @@ export class ImportService {
         await tx.insert(projectWorkers).values(assignmentRows);
       }
     });
+
+    // Post-commit storage cleanup. A failure here does not abort the
+    // import — the rows are already gone; orphaned keys are logged
+    // and operators can sweep them later (see #169). Doing this
+    // outside the tx avoids coupling a non-transactional side effect
+    // to the SQL commit: a rollback after a successful hide cannot be
+    // undone.
+    if (keysToHide.length > 0 && this.storage !== null && log !== undefined) {
+      await bestEffortHideStorageKeys(this.storage, keysToHide, log);
+    }
 
     return {
       schema_version: SCHEMA_VERSION,

@@ -62,7 +62,6 @@ export function dataExchangeRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
     const exportService = new ExportService(db);
-    const importService = new ImportService(db);
     const env = getEnv();
     // Storage client + binary-descriptor service mirror the attachment-
     // route construction (env-derived endpoints, per-request envelope
@@ -77,6 +76,7 @@ export function dataExchangeRoutes(db: Database) {
       secretKey: env.STORAGE_SECRET_KEY!,
       region: env.STORAGE_REGION,
     });
+    const importService = new ImportService(db, storage);
     const binaryDescriptorService = new BinaryDescriptorService({
       db,
       storage,
@@ -173,7 +173,7 @@ export function dataExchangeRoutes(db: Database) {
           override: query.override === 'true',
           confirmationPhrase: typeof rawPhrase === 'string' ? rawPhrase : null,
         };
-        const result = await importService.import(envelope, opts);
+        const result = await importService.import(envelope, opts, request.log);
         return reply.code(200).send(result);
       },
     );
