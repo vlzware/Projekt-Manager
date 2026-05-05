@@ -1,0 +1,174 @@
+/**
+ * Vollständiger Import dialog — file picker, preflight, progress, summary.
+ *
+ * Mirrors `VollstaendigerExportDialog.module.css`. Adds the file-picker
+ * region for the awaiting-file phase and a per-file failure list for
+ * the summary phase.
+ */
+
+.overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(var(--color-overlay-rgb), 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.dialog {
+  background: var(--color-surface-raised);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(var(--color-overlay-rgb), 0.25);
+  max-width: 480px;
+  width: 100%;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  outline: none;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.readoutLine {
+  font-size: 14px;
+  color: var(--color-text);
+}
+
+.mobileWarning {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--color-warning-bg, var(--color-surface-muted));
+  border: 1px solid var(--color-warning-border, var(--color-border));
+  border-radius: 6px;
+  color: var(--color-warning-text, var(--color-text));
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.destructiveNotice {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: var(--color-warning-bg, var(--color-surface-muted));
+  border: 1px solid var(--color-warning-border, var(--color-border));
+  border-radius: 6px;
+  color: var(--color-error-text, var(--color-text));
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.phraseInput {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 14px;
+  background: var(--color-surface-base);
+  color: var(--color-text);
+}
+
+.phraseInput:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.fileInput {
+  font-size: 13px;
+}
+
+.currentFile {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
+.skippedLine {
+  font-size: 14px;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.failureList {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+  max-height: 160px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.failureList li {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
+.failureList li:last-child {
+  border-bottom: none;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.button {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.cancel {
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+}
+
+.cancel:hover {
+  background: var(--color-surface-base);
+}
+
+.confirm {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.confirm:hover {
+  background: var(--color-accent-hover);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}

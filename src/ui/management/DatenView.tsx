@@ -15,6 +15,7 @@ import { RESTORE_CONFIRMATION_PHRASE, restorePhraseMatches } from '@/config/data
 import { usePermission } from '@/hooks/usePermission';
 import { useDataExchangeStore } from '@/state/dataExchangeStore';
 import { VollstaendigerExportDialog } from './VollstaendigerExportDialog';
+import { VollstaendigerImportDialog } from './VollstaendigerImportDialog';
 import styles from './Management.module.css';
 
 export function DatenView() {
@@ -48,6 +49,13 @@ export function DatenView() {
   // `VollstaendigerExportDialog`. Gated by the same `data:export`
   // permission as the JSON-only export above (ui/daten.md §8.11.3).
   const [exportAllOpen, setExportAllOpen] = useState<boolean>(false);
+  // Vollständiger Import dialog open/closed flag (ui/daten.md §8.11.4).
+  // Gated by `data:restore` AND `attachment:write` (the per-attachment
+  // `init` carries the `restore` block); the latter is implicit on the
+  // owner / office roles that hold `data:restore` already, so the gate
+  // collapses to `data:restore` for the surface-hiding decision and the
+  // server stays authoritative.
+  const [importAllOpen, setImportAllOpen] = useState<boolean>(false);
 
   const hasValidationErrors = (preview?.validation_errors.length ?? 0) > 0;
   const requiresPhrase = preview?.target_non_empty === true;
@@ -98,6 +106,16 @@ export function DatenView() {
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>{STRINGS.dataExchange.importHeading}</h3>
           <p className={styles.sectionDescription}>{STRINGS.dataExchange.importDescription}</p>
+
+          <div className={styles.inlineGroup}>
+            <button
+              className={styles.submitButton}
+              onClick={() => setImportAllOpen(true)}
+              data-testid="data-import-all-button"
+            >
+              {STRINGS.dataExchange.importAllAction}
+            </button>
+          </div>
 
           <div className={styles.formGroup}>
             <label className={styles.formLabel}>{STRINGS.ui.uploadFile}</label>
@@ -227,6 +245,16 @@ export function DatenView() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Conditionally mount so each open is a fresh dialog lifecycle —
+          the phrase input + ephemeral runner state reset implicitly via
+          unmount/remount, no setState-in-effect needed. */}
+      {importAllOpen && (
+        <VollstaendigerImportDialog
+          isOpen={importAllOpen}
+          onClose={() => setImportAllOpen(false)}
+        />
       )}
     </div>
   );

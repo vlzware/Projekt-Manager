@@ -343,6 +343,34 @@ export const STRINGS = {
     restoreDestructiveNotice: 'Die bestehenden Daten werden unwiderruflich gelöscht.',
     restorePhrasePrompt: (phrase: string) => `Zur Bestätigung bitte „${phrase}" eingeben:`,
     importSuccessHeading: 'Wiederherstellung erfolgreich.',
+
+    /**
+     * Vollständiger Import — pre-flight, progress, summary copy
+     * (ui/daten.md §8.11.4, AC-259/AC-260). Mirrors the
+     * `exportAll*` keys above so the two dialogs read symmetrically.
+     */
+    importAllAction: 'Vollständiger Import',
+    importAllPickFile: 'Takeout-ZIP auswählen',
+    importAllPreflightTitle: 'Vollständiger Import',
+    importAllPreflightCustomers: (n: number) => `${n} Kunden`,
+    importAllPreflightProjects: (n: number) => `${n} Projekte`,
+    importAllPreflightAssignments: (n: number) => `${n} Zuordnungen`,
+    importAllPreflightAttachmentCount: (n: number) => `${n} Anhänge`,
+    importAllPreflightSize: (formatted: string) => `Gesamtgröße: ${formatted}`,
+    importAllPreflightConfirm: 'Import starten',
+    importAllPreflightCancel: 'Abbrechen',
+    importAllMobileWarning: 'Für Desktop-Nutzung gedacht; Importe können sehr groß sein.',
+    importAllProgressTitle: 'Import läuft',
+    importAllProgressCounter: (done: number, total: number) => `${done} / ${total} Dateien`,
+    importAllProgressBytes: (done: string, total: string) => `${done} / ${total}`,
+    importAllProgressCurrentFile: (name: string) => `Aktuelle Datei: ${name}`,
+    importAllCancel: 'Abbrechen',
+    importAllSummaryTitle: 'Import abgeschlossen',
+    importAllSummaryCommitted: (n: number) => `${n} Anhänge wiederhergestellt`,
+    importAllSummarySkipped: (n: number) => `${n} Anhänge übersprungen`,
+    importAllSummaryClose: 'Schließen',
+    importAllError: 'Import fehlgeschlagen.',
+    importAllValidationFailed: 'ZIP-Datei ungültig oder unvollständig.',
   },
 
   aging: {
