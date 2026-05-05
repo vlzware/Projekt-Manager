@@ -75,7 +75,7 @@ _The above scary statement actually lays the groundwork for decisions and workfl
 The business data is regarded in layers, each of which gets special attention:
 
 1. App level data
-   - Text-based, contains everything but the binaries, eligible for import/export through the UI.
+   - Contains business data and binaries, eligible for import/export through the UI (currently no binaries can be imported this way).
 
 2. DB dumps
    - Automatically exported to R2 at regular intervals - 4 times/daily on weekdays, 1/daily at weekends;
@@ -198,6 +198,8 @@ Also missing is the "Handbuch" - there are two reasons for this:
 - the second is much more interesting - as it turned out during demonstrations, the app _does not need_ a Handbuch, which can fairly be considered a mark of success. The more such a document were needed, the less of a good job we would have done with the UX.
 
 _Of course, when handing the installation over, a "Handbuch" will be present._
+
+The UI-based import feature ("Wiederherstellen") currently only imports the business data, without the binaries.
 
 **Future improvements**
 
