@@ -7,7 +7,7 @@
  */
 
 import { inArray, sql } from 'drizzle-orm';
-import { attachments, customers, projects, projectWorkers, users } from '../db/schema.js';
+import { customers, projects, projectWorkers, users } from '../db/schema.js';
 import type { Database, TransactionalDatabase } from '../db/connection.js';
 import {
   missingUserRefs,
@@ -18,14 +18,12 @@ import {
 } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
 import { restorePhraseMatches } from '../../config/dataExchangeConfig.js';
-import { isKnownWrappedDekVersion } from '../../domain/attachments.js';
 import {
   SCHEMA_VERSION,
   type Envelope,
   type EnvelopeCustomer,
   type EnvelopeProject,
   type EnvelopeAssignment,
-  type EnvelopeAttachment,
   type ImportOptions,
   type ImportResult,
   type DryRunPreview,
@@ -113,24 +111,13 @@ function validateEnvelope(envelope: Envelope): ValidationIssue[] {
     }
   }
 
-  // ADR-0024 envelope-format guard. Refuse rows whose
-  // `wrappedDekVersion` is outside the known set BEFORE insertion —
-  // landing such a row would create a permanently-broken attachment
-  // (every render path surfaces the unwrap-time format failure as
-  // DEK_UNWRAP_FAILED). Loud-fail at import-time gives the operator a
-  // clear signal: the envelope you imported was produced by a
-  // different version of this codebase, and Layer 1 cannot recover it
-  // without a code change. Per-row issue path so the operator knows
-  // which row to investigate.
-  for (let i = 0; i < (envelope.attachments ?? []).length; i++) {
-    const a = envelope.attachments![i]!;
-    if (!isKnownWrappedDekVersion(a.wrappedDekVersion)) {
-      issues.push({
-        path: `attachments[${i}].wrappedDekVersion`,
-        message: `envelope format unknown: ${a.wrappedDekVersion}`,
-      });
-    }
-  }
+  // Issue #163: `/api/import` is text-only post-fix. The envelope
+  // body MUST NOT carry an `attachments` key (rejected at the route
+  // layer with 422 VALIDATION_ERROR — see api.md §14.2.4 and
+  // AC-253). Per-attachment restoration runs through the standard
+  // `init` (with `restore` block) + per-blob PUT + `complete`
+  // pipeline against the importing instance (AC-256), driven by the
+  // client orchestrator.
 
   return issues;
 }
@@ -240,33 +227,6 @@ function toAssignmentInsert(pw: EnvelopeAssignment) {
   return { projectId: pw.projectId, userId: pw.userId };
 }
 
-function toAttachmentInsert(a: EnvelopeAttachment) {
-  return {
-    id: a.id,
-    projectId: a.projectId,
-    status: a.status,
-    kind: a.kind,
-    label: a.label,
-    filename: a.fileName,
-    mimeType: a.mimeType,
-    sizeBytes: a.sizeBytes,
-    // ADR-0024 — wrapped envelopes + format discriminator ride the
-    // envelope so post-import attachments stay decryptable (AC-220).
-    // The version is validated upstream by `validateEnvelope`, so
-    // every row that reaches insert carries a known value.
-    ciphertextSizeBytes: a.ciphertextSizeBytes,
-    ciphertextThumbSizeBytes: a.ciphertextThumbSizeBytes,
-    wrappedDek: a.wrappedDek,
-    wrappedThumbDek: a.wrappedThumbDek,
-    wrappedDekVersion: a.wrappedDekVersion,
-    originalKey: a.originalKey,
-    thumbKey: a.thumbKey,
-    hasThumbnail: a.hasThumbnail,
-    createdAt: new Date(a.createdAt),
-    createdBy: a.createdBy,
-  };
-}
-
 export class ImportService {
   constructor(private db: Database) {}
 
@@ -351,11 +311,13 @@ export class ImportService {
     }
 
     // Pre-map before opening the tx — pure transformation, no reason to hold
-    // a write lock while building the row objects.
+    // a write lock while building the row objects. Issue #163: attachment
+    // rows are NOT inserted here; they are created via the per-attachment
+    // `init` + presigned PUT + `complete` pipeline driven by the client
+    // orchestrator (AC-253).
     const customerRows = envelope.customers.map(toCustomerInsert);
     const projectRows = envelope.projects.map(toProjectInsert);
     const assignmentRows = envelope.project_workers.map(toAssignmentInsert);
-    const attachmentRows = (envelope.attachments ?? []).map(toAttachmentInsert);
 
     await this.db.transaction(async (tx) => {
       // VPN-first deployment (ADR-0008) rules out concurrent restores in
@@ -387,8 +349,12 @@ export class ImportService {
       }
 
       if (opts.override) {
-        // Attachments cascade via FK when projects are dropped, but we
-        // TRUNCATE them explicitly for symmetry with the other tables.
+        // AC-254: the wipe is unconditional under override; the
+        // `attachments` table is truncated atomically with the
+        // customer / project / project-worker wipe so the re-upload
+        // pipeline (driven by the orchestrator) lands on an empty
+        // table. Backing B2 objects are left to the orphan reaper
+        // (data-model.md §6.11).
         await tx.execute(
           sql`TRUNCATE TABLE attachments, project_workers, projects, customers RESTART IDENTITY CASCADE`,
         );
@@ -402,9 +368,6 @@ export class ImportService {
       }
       if (assignmentRows.length > 0) {
         await tx.insert(projectWorkers).values(assignmentRows);
-      }
-      if (attachmentRows.length > 0) {
-        await tx.insert(attachments).values(attachmentRows);
       }
     });
 

@@ -69,6 +69,7 @@ function makeEnvelope(): Envelope {
     customers: [],
     projects: [],
     project_workers: [],
+    attachments: [],
   };
 }
 

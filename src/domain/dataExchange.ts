@@ -11,9 +11,13 @@ import type { Address } from './types';
 
 /**
  * Monotonic envelope-format version. Imports reject any mismatch outright —
- * no format-migration code (ADR-0018).
+ * no format-migration code (ADR-0018). Bumped to `2` when the takeout-zip
+ * restore landed (issue #163): the attachments slot dropped its crypto
+ * fields, opaque storage keys, and ciphertext sizes. Pre-#163 (`v1`)
+ * envelopes are not consumable on the importing instance and are
+ * rejected via SCHEMA_VERSION_MISMATCH.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export interface EnvelopeCustomer {
   id: string;
@@ -56,11 +60,17 @@ export interface EnvelopeAssignment {
  * data-model.md §5.8. Bytes remain storage-owned (ADR-0018); this
  * envelope carries only the metadata row.
  *
- * Under ADR-0024 the wrapped envelope ride the export envelope so
- * attachments restore decryptable post-import (AC-220). The export
- * envelope is therefore sensitive material with the same handling
- * discipline as a DB dump — but the audit-exclusion contract still
- * applies (the wrapped envelopes never appear in `audit_log` payloads).
+ * Under the takeout-zip restore design (issue #163) crypto fields
+ * (`wrappedDek`, `wrappedThumbDek`, `wrappedDekVersion`), opaque
+ * storage keys (`originalKey`, `thumbKey`), and ciphertext sizes
+ * (`ciphertextSizeBytes`, `ciphertextThumbSizeBytes`) are NOT carried
+ * on the envelope: they are not consumable on the importing instance,
+ * and the wrapped envelopes additionally remain inside the exporting
+ * instance's confidentiality boundary (ADR-0024). The client
+ * orchestrator re-uploads each attachment via the standard `init`
+ * (with `restore` block) + presigned PUT + `complete` pipeline — fresh
+ * DEKs are minted in the browser and wrapped under the importing
+ * instance's `BINARY_AGE_RECIPIENT`.
  */
 export interface EnvelopeAttachment {
   id: string;
@@ -71,23 +81,6 @@ export interface EnvelopeAttachment {
   fileName: string;
   mimeType: string;
   sizeBytes: number;
-  /** Ciphertext byte count — ADR-0024 / api.md §14.2.11. */
-  ciphertextSizeBytes: number;
-  /** Ciphertext byte count of the thumbnail; null for non-photo. */
-  ciphertextThumbSizeBytes: number | null;
-  originalKey: string;
-  thumbKey: string | null;
-  hasThumbnail: boolean;
-  /** Base64 of the wrapped envelope of the per-blob DEK for the original. */
-  wrappedDek: string;
-  /** Base64 of the wrapped envelope for the thumbnail; null for non-photo. */
-  wrappedThumbDek: string | null;
-  /**
-   * Wrapped-envelope format discriminator (ADR-0024). Shared between
-   * `wrappedDek` and `wrappedThumbDek`. Import validates against the
-   * known set and refuses unknown values BEFORE inserting the row.
-   */
-  wrappedDekVersion: number;
   createdAt: string;
   createdBy: string | null;
 }
@@ -99,11 +92,13 @@ export interface Envelope {
   projects: EnvelopeProject[];
   project_workers: EnvelopeAssignment[];
   /**
-   * Attachments — every row with `status = 'ready'`. Optional on the
-   * type so legacy fixtures without the field still parse; imports
-   * default to an empty list when absent.
+   * Attachments — every row with `status = 'ready'`. The export emits
+   * the field unconditionally (empty array when no ready rows exist);
+   * `/api/import` rejects bodies that carry an `attachments` key
+   * (issue #163 / AC-253) — the field rides the takeout zip, not the
+   * `/api/import` request body.
    */
-  attachments?: EnvelopeAttachment[];
+  attachments: EnvelopeAttachment[];
 }
 
 export interface ImportOptions {

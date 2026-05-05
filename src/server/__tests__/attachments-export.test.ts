@@ -1,7 +1,8 @@
 /**
- * API integration tests — attachment export envelope (AC-220).
+ * API integration tests — attachment export envelope (AC-220, post-#163).
  *
- * Pins the export-envelope extension from data-model.md §5.8:
+ * Pins the export-envelope extension from data-model.md §5.8 under the
+ * takeout-zip restore design:
  *
  *   interface ExportEnvelope {
  *     schema_version: number;
@@ -9,21 +10,31 @@
  *     customers: Customer[];
  *     projects: Project[];
  *     project_workers: { projectId, userId }[];
- *     attachments: Attachment[];  // status='ready' only
+ *     attachments: EnvelopeAttachment[];  // status='ready' only
+ *   }
+ *
+ *   interface EnvelopeAttachment {
+ *     id, projectId, kind, label, fileName, mimeType, sizeBytes,
+ *     createdAt, createdBy
  *   }
  *
  * Invariants under test:
  *   - Export body carries an `attachments` array.
  *   - Every `status='ready'` row appears.
  *   - `status='pending'` rows are excluded.
- *   - Round-trip (export → import into an empty DB → re-export) preserves
- *     ids on the restored rows — this is the AC-137 "id-preserving
- *     import" semantics extended to attachments.
+ *   - Crypto fields (`wrappedDek`, `wrappedThumbDek`, `wrappedDekVersion`),
+ *     opaque storage keys (`originalKey`, `thumbKey`), and ciphertext
+ *     sizes (`ciphertextSizeBytes`, `ciphertextThumbSizeBytes`) are
+ *     NOT carried on envelope entries — they are not consumable on
+ *     the importing instance and the wrapped envelopes additionally
+ *     remain inside the exporting instance's confidentiality boundary
+ *     (ADR-0024).
  *
- * Bytes stay in storage per ADR-0018 and are NOT part of the envelope;
- * this file does not assert on backing-object presence — a restored
- * row whose bytes are missing renders "Datei fehlt" in the UI, which
- * is covered by AC-224 at the E2E layer.
+ * Bytes stay in storage per ADR-0018 and are NOT part of the envelope.
+ * Per-attachment restoration runs through the `init` (with `restore`
+ * block) + presigned PUT + `complete` pipeline driven by the client
+ * orchestrator on the importing instance; the byte-equality round-trip
+ * lands at the takeout E2E (AC-259).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -95,22 +106,22 @@ async function seedAttachment(spec: AttachmentSeed): Promise<string> {
   }
 }
 
+/**
+ * Wire shape for entries on the export envelope (post-#163,
+ * data-model.md §5.8 / AC-220). The metadata-only descriptor: crypto
+ * fields, opaque storage keys, and ciphertext sizes are off the wire.
+ */
 interface AttachmentInEnvelope {
   id: string;
   projectId: string;
-  status: 'pending' | 'ready';
+  status: 'ready';
   label: string;
   fileName: string;
   mimeType: string;
   sizeBytes: number;
-  ciphertextSizeBytes: number;
-  ciphertextThumbSizeBytes: number | null;
-  originalKey: string;
-  wrappedDek: string;
-  wrappedThumbDek: string | null;
-  /** Envelope-format discriminator — ADR-0024 / AC-220. Currently always 1. */
-  wrappedDekVersion: number;
   kind: 'photo' | 'binary';
+  createdAt: string;
+  createdBy: string | null;
 }
 
 describe('Attachment export envelope (AC-220)', () => {
@@ -186,7 +197,7 @@ describe('Attachment export envelope (AC-220)', () => {
     expect(Array.isArray(env.attachments)).toBe(true);
   });
 
-  it('includes every ready row with all persisted fields', async () => {
+  it('includes every ready row with the documented metadata fields', async () => {
     const res = await authGet(ownerToken, '/api/export');
     expect(res.statusCode).toBe(200);
     const env = res.json() as { attachments: AttachmentInEnvelope[] };
@@ -196,7 +207,7 @@ describe('Attachment export envelope (AC-220)', () => {
     }
 
     // Pin the row-level fidelity — each exported row carries the
-    // documented fields.
+    // documented metadata-only fields (data-model.md §5.8).
     const first = env.attachments.find((a) => a.id === readyIds[0]);
     expect(first).toBeDefined();
     expect(first!.projectId).toBe(projectId);
@@ -204,98 +215,53 @@ describe('Attachment export envelope (AC-220)', () => {
     expect(first!.label).toBe('angebot');
     expect(first!.mimeType).toBe('application/pdf');
     expect(first!.sizeBytes).toBe(111);
-    expect(typeof first!.originalKey).toBe('string');
-    expect(first!.originalKey.length).toBeGreaterThan(0);
+    expect(typeof first!.fileName).toBe('string');
+    expect(typeof first!.createdAt).toBe('string');
   });
 
   // -------------------------------------------------------------------
-  // AC-220 — wrapped envelopes ride the export envelope.
-  //
-  // Without `wrappedDek` (and `wrappedThumbDek` for photos) on the
-  // exported row, the ciphertext on B2 is unrecoverable post-restore —
-  // the wrapped envelope is what the operator-loaded `age` identity
-  // unwraps to recover the per-blob DEK. ADR-0024 makes the export
-  // envelope itself sensitive material as a result; the audit-exclusion
-  // contract (AC-240) still applies — wrapped envelopes never appear
-  // in `audit_log` payloads.
+  // AC-220 (post-#163) — crypto fields, opaque storage keys, and
+  // ciphertext sizes MUST NOT appear on envelope entries. They are not
+  // consumable on the importing instance and the wrapped envelopes
+  // additionally remain inside the exporting instance's confidentiality
+  // boundary. The takeout-zip restore re-uploads attachments via the
+  // standard `init` + presigned PUT + `complete` pipeline (AC-256), so
+  // these fields would be dead weight on the wire and a confidentiality
+  // leak.
   // -------------------------------------------------------------------
-  it('every ready row carries wrappedDek (and wrappedThumbDek for photos)', async () => {
+  it('drops crypto fields, storage keys, and ciphertext sizes from envelope entries', async () => {
     const res = await authGet(ownerToken, '/api/export');
-    const env = res.json() as { attachments: AttachmentInEnvelope[] };
-
-    for (const row of env.attachments) {
-      // Original wrap is mandatory for every ready row regardless of
-      // kind — without it the ciphertext on B2 is junk.
-      expect(typeof row.wrappedDek).toBe('string');
-      expect(row.wrappedDek.length).toBeGreaterThan(0);
-      // Photos additionally carry the thumbnail wrap; binaries set null.
-      if (row.kind === 'photo') {
-        expect(typeof row.wrappedThumbDek).toBe('string');
-        expect((row.wrappedThumbDek as string).length).toBeGreaterThan(0);
-      } else {
-        expect(row.wrappedThumbDek).toBeNull();
-      }
-      // Ciphertext sizes ride too — the row's `ciphertextSizeBytes`
-      // is what HEAD asserts at complete and what the operator needs
-      // to know when reasoning about disk consumption post-restore.
-      expect(row.ciphertextSizeBytes).toBeGreaterThan(0);
-    }
-  });
-
-  it('every ready row carries wrappedDekVersion = 1 (envelope-format discriminator on the export envelope)', async () => {
-    // AC-220 — the discriminator rides the envelope alongside the
-    // wrapped bytes so post-import rows preserve which wrapping format
-    // they were written under. Without this field on the envelope, an
-    // import would have to guess. A regression that omitted the field
-    // would surface as `undefined` here; a regression that wrote a
-    // wrong value (e.g. defaulted to 0) would surface as a non-1 value.
-    const res = await authGet(ownerToken, '/api/export');
-    const env = res.json() as { attachments: AttachmentInEnvelope[] };
+    const env = res.json() as { attachments: Record<string, unknown>[] };
     expect(env.attachments.length).toBeGreaterThan(0);
+
     for (const row of env.attachments) {
-      expect(row.wrappedDekVersion).toBe(1);
+      // Crypto fields — never on the envelope.
+      expect(row.wrappedDek).toBeUndefined();
+      expect(row.wrappedThumbDek).toBeUndefined();
+      expect(row.wrappedDekVersion).toBeUndefined();
+      // Opaque storage keys — local to the exporting instance, dropped.
+      expect(row.originalKey).toBeUndefined();
+      expect(row.thumbKey).toBeUndefined();
+      expect(row.hasThumbnail).toBeUndefined();
+      // Ciphertext sizes — internal to the storage path, dropped.
+      expect(row.ciphertextSizeBytes).toBeUndefined();
+      expect(row.ciphertextThumbSizeBytes).toBeUndefined();
     }
   });
 
-  it('round-trip preserves wrapped envelope bytes byte-for-byte (DB-level read)', async () => {
-    // The export envelope serializes `wrappedDek` as base64 of the
-    // opaque bytes. After import, a re-export must surface byte-
-    // identical strings — anything else means the import-side coercion
-    // (e.g. string → utf-8 → bytea round-trip) is corrupting the
-    // envelope, which would silently lose the only path to the
-    // ciphertext on B2.
-    //
-    // Direct DB read (rather than re-export comparison) so the test
-    // observes what the persistence layer actually stored, not what the
-    // export endpoint chose to surface. The two should match by
-    // construction; a divergence here points at the export-side
-    // serializer drifting from the row.
-    const snapshot = (await authGet(ownerToken, '/api/export')).json();
-    const snapshotById = new Map<string, AttachmentInEnvelope>(
-      (snapshot.attachments as AttachmentInEnvelope[]).map((a) => [a.id, a]),
-    );
-
-    const { db, pool } = createDatabase();
-    try {
-      for (const id of readyIds) {
-        const exported = snapshotById.get(id);
-        expect(exported).toBeDefined();
-        const dbRow = await db.execute(
-          sql`SELECT wrapped_dek, wrapped_thumb_dek FROM attachments WHERE id = ${id}`,
-        );
-        const row = dbRow.rows[0] as {
-          wrapped_dek: string;
-          wrapped_thumb_dek: string | null;
-        };
-        // Byte-for-byte match — a regression that re-encoded the
-        // envelope (e.g. utf-8 ↔ base64 misalignment) would diverge
-        // here.
-        expect(exported!.wrappedDek).toBe(row.wrapped_dek);
-        expect(exported!.wrappedThumbDek ?? null).toBe(row.wrapped_thumb_dek ?? null);
-      }
-    } finally {
-      await pool.end();
-    }
+  it('serialized response carries no crypto field names anywhere', async () => {
+    // Defense-in-depth grep over the serialized JSON. A regression that
+    // re-introduced any of the dropped fields under a nested or aliased
+    // shape (e.g. on the project rows by mistake) would surface here.
+    const res = await authGet(ownerToken, '/api/export');
+    const serialized = res.body;
+    expect(serialized).not.toMatch(/"wrappedDek"\s*:/);
+    expect(serialized).not.toMatch(/"wrappedThumbDek"\s*:/);
+    expect(serialized).not.toMatch(/"wrappedDekVersion"\s*:/);
+    expect(serialized).not.toMatch(/"originalKey"\s*:/);
+    expect(serialized).not.toMatch(/"thumbKey"\s*:/);
+    expect(serialized).not.toMatch(/"ciphertextSizeBytes"\s*:/);
+    expect(serialized).not.toMatch(/"ciphertextThumbSizeBytes"\s*:/);
   });
 
   it('excludes every pending row', async () => {
@@ -311,157 +277,80 @@ describe('Attachment export envelope (AC-220)', () => {
   });
 
   // -------------------------------------------------------------------
-  // AC-220 Part 2 — Import preserves attachment ids + wrapped envelopes
-  // (AC-137 extension — the wrapped envelopes are the post-restore
-  // decryption path; losing them silently strands the ciphertext on B2).
+  // AC-253 (regression-style coverage on the export-driven snapshot
+  // path) — `/api/import` is text-only post-#163. Re-posting an export
+  // snapshot verbatim (which carries `attachments`) is rejected with
+  // `422 VALIDATION_ERROR` and no rows are written. The takeout-zip
+  // restore orchestrator strips the `attachments` key before posting
+  // the text-leg, then drives the per-attachment `init` (with
+  // `restore` block) + presigned PUT + `complete` pipeline.
   // -------------------------------------------------------------------
-  it('import into an empty DB preserves attachment ids and wrapped envelopes (round-trip)', async () => {
-    // Snapshot the current export as the envelope we will restore.
-    const snapshot = (await authGet(ownerToken, '/api/export')).json();
-    const snapshotAttachments = snapshot.attachments as AttachmentInEnvelope[];
-    expect(snapshotAttachments.length).toBeGreaterThan(0);
+  it('rejects re-posting an export snapshot verbatim (attachments key triggers 422)', async () => {
+    const snapshot = (await authGet(ownerToken, '/api/export')).json() as {
+      attachments: AttachmentInEnvelope[];
+    };
+    expect(snapshot.attachments.length).toBeGreaterThan(0);
 
-    // Wipe business data so the import lands on an empty target. The
-    // import endpoint requires an empty target or the destructive
-    // restore confirmation — easier to wipe directly.
-    const { db, pool } = createDatabase();
-    try {
-      await db.execute(
-        sql`TRUNCATE TABLE attachments, project_workers, projects, customers RESTART IDENTITY CASCADE`,
-      );
-    } finally {
-      await pool.end();
-    }
+    // The snapshot is intra-consistent: re-posting it as-is is the
+    // pre-fix replay loop the AC closes. The wire-shape rejection has
+    // to fire BEFORE any state change — otherwise a regression that
+    // dropped the route-level reject + the silent attachment row
+    // insertion (the original silent-loss bug) would slip through here.
+    const before = await countAttachmentsViaDb();
 
-    // Re-login after any session churn. Wipe doesn't touch sessions
-    // directly; kept defensive so this test stays robust under future
-    // changes to wipe semantics.
-    const token = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    const importRes = await authPost(
+      ownerToken,
+      '/api/import',
+      snapshot as unknown as Record<string, unknown>,
+    );
+    expect(importRes.statusCode).toBe(422);
+    expect(importRes.json().code).toBe('VALIDATION_ERROR');
 
-    const importRes = await authPost(token, '/api/import', snapshot);
+    expect(await countAttachmentsViaDb()).toBe(before);
+  });
+
+  // -------------------------------------------------------------------
+  // AC-253 (positive arm) — same snapshot with `attachments` removed
+  // proceeds: the orchestrator's strip-then-post pattern is what the
+  // server expects. Drives the wipe-and-restore branch via override.
+  // -------------------------------------------------------------------
+  it('proceeds when the orchestrator strips `attachments` before posting (text-leg)', async () => {
+    const snapshot = (await authGet(ownerToken, '/api/export')).json() as Record<
+      string,
+      unknown
+    > & { attachments: AttachmentInEnvelope[] };
+    expect(snapshot.attachments.length).toBeGreaterThan(0);
+
+    // Strip the key — mirrors the orchestrator step in
+    // ui/daten.md §8.11.4.
+    const { attachments: _attachmentsStripped, ...textLegBody } = snapshot;
+    void _attachmentsStripped;
+
+    const { EXPECTED_RESTORE_PHRASE } = await import('../../test/seedAssumptions.js');
+    const importRes = await authPost(ownerToken, '/api/import?override=true', {
+      ...textLegBody,
+      confirmation_phrase: EXPECTED_RESTORE_PHRASE,
+    });
     expect(importRes.statusCode).toBe(200);
 
-    const reExport = (await authGet(token, '/api/export')).json();
-    const reAttachments = reExport.attachments as AttachmentInEnvelope[];
-    const reById = new Map(reAttachments.map((a) => [a.id, a]));
-    for (const original of snapshotAttachments) {
-      // Id preservation (AC-137 extension to attachments).
-      const restored = reById.get(original.id);
-      expect(restored).toBeDefined();
-      // Byte-for-byte preservation of the wrapped envelope — without
-      // this the ciphertext on B2 is unrecoverable post-restore.
-      expect(restored!.wrappedDek).toBe(original.wrappedDek);
-      expect(restored!.wrappedThumbDek ?? null).toBe(original.wrappedThumbDek ?? null);
-      // Version discriminator preservation — without it, the post-import
-      // unwrap path cannot validate the format and the row becomes
-      // unaddressable through download-url.
-      expect(restored!.wrappedDekVersion).toBe(original.wrappedDekVersion);
-    }
-  });
-
-  // -------------------------------------------------------------------
-  // AC-220 — Import refuses an envelope row carrying an unknown
-  // wrappedDekVersion. The format discriminator is checked before
-  // insertion: a v=99 row would be unwrap-time-broken anyway, so the
-  // import path refuses it loud (rather than landing a permanently
-  // broken row that surfaces as DEK_UNWRAP_FAILED on every render).
-  // -------------------------------------------------------------------
-  it('rejects an import envelope row whose wrappedDekVersion is unknown (no row inserted)', async () => {
-    // Build a minimal valid envelope that carries one attachment row
-    // with a forged wrappedDekVersion. Wipe + import in one step —
-    // empty target so target_not_empty doesn't gate the call.
-    const { db, pool } = createDatabase();
-    try {
-      await db.execute(
-        sql`TRUNCATE TABLE attachments, project_workers, projects, customers RESTART IDENTITY CASCADE`,
-      );
-    } finally {
-      await pool.end();
-    }
-    const token = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
-
-    const customerId = crypto.randomUUID();
-    const projectIdLocal = crypto.randomUUID();
-    const attachmentId = crypto.randomUUID();
-    const now = new Date().toISOString();
-
-    const envelope = {
-      schema_version: 1,
-      exported_at: now,
-      customers: [
-        {
-          id: customerId,
-          name: 'Import Refusal Probe',
-          phone: null,
-          email: null,
-          address: null,
-          notes: null,
-          createdAt: now,
-          updatedAt: now,
-          createdBy: null,
-          updatedBy: null,
-        },
-      ],
-      projects: [
-        {
-          id: projectIdLocal,
-          number: 'IMP-9001',
-          title: 'Probe',
-          status: 'anfrage',
-          statusChangedAt: now,
-          customerId,
-          plannedStart: null,
-          plannedEnd: null,
-          estimatedValue: null,
-          notes: null,
-          deleted: false,
-          createdAt: now,
-          updatedAt: now,
-          createdBy: null,
-          updatedBy: null,
-        },
-      ],
-      project_workers: [],
-      attachments: [
-        {
-          id: attachmentId,
-          projectId: projectIdLocal,
-          status: 'ready' as const,
-          kind: 'binary' as const,
-          label: 'sonstiges',
-          fileName: 'future-format.pdf',
-          mimeType: 'application/pdf',
-          sizeBytes: 1234,
-          ciphertextSizeBytes: 1298,
-          ciphertextThumbSizeBytes: null,
-          originalKey: `attachments/${projectIdLocal}/${attachmentId}.orig`,
-          thumbKey: null,
-          hasThumbnail: false,
-          wrappedDek: Buffer.from('synthetic-envelope').toString('base64'),
-          wrappedThumbDek: null,
-          // Forged — the import path must refuse this row.
-          wrappedDekVersion: 99,
-          createdAt: now,
-          createdBy: null,
-        },
-      ],
-    };
-
-    const res = await authPost(token, '/api/import', envelope);
-    // Loud refusal — exact code is ImportService's contract; the AC
-    // pins the behaviour ("import refuses, no row inserted") not the
-    // wire shape. Accept any 4xx that signals client-side input
-    // problem.
-    expect(res.statusCode).toBeGreaterThanOrEqual(400);
-    expect(res.statusCode).toBeLessThan(500);
-
-    // No row landed.
-    const { db: db2, pool: pool2 } = createDatabase();
-    try {
-      const rows = await db2.execute(sql`SELECT id FROM attachments WHERE id = ${attachmentId}`);
-      expect(rows.rows).toHaveLength(0);
-    } finally {
-      await pool2.end();
-    }
+    // AC-254: the truncate ran — no attachment rows survive the wipe
+    // (the per-attachment re-upload runs through `init` + PUT +
+    // `complete` post-call, not via the import endpoint).
+    expect(await countAttachmentsViaDb()).toBe(0);
   });
 });
+
+/**
+ * Direct-DB count helper — the API list surface excludes pending /
+ * hidden rows, so the only honest way to assert "no rows survive"
+ * across every status is direct SQL.
+ */
+async function countAttachmentsViaDb(): Promise<number> {
+  const { db, pool } = createDatabase();
+  try {
+    const res = await db.execute<{ c: string }>(sql`SELECT COUNT(*)::text AS c FROM attachments`);
+    return Number(res.rows[0]!.c);
+  } finally {
+    await pool.end();
+  }
+}
