@@ -23,6 +23,7 @@ import {
   validateEnvRuntime,
 } from './config/env.js';
 import { emitFeatureManifest } from './config/features.js';
+import { formatErrorChain } from './format-error-chain.js';
 import { assertBaselineLedgerMatchesFile } from './db/baseline-guard.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
@@ -334,6 +335,6 @@ async function start(): Promise<void> {
 }
 
 start().catch((err) => {
-  console.error('Failed to start server:', err instanceof Error ? err.message : String(err));
+  console.error('Failed to start server:', formatErrorChain(err));
   process.exit(1);
 });
