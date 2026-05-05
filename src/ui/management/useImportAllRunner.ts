@@ -1,17 +1,20 @@
 /**
- * Vollständiger Import — runner hook (issue #163, AC-259/AC-260/AC-261).
+ * Import — runner hook (issue #163, AC-259/AC-260/AC-261).
  *
- * Owns the import state machine the `VollstaendigerImportDialog` renders
- * against. Mirrors `useExportAllRunner.ts` in shape: the hook exposes a
- * discriminated-union `phase`, `start(file, phrase)` / `cancel()`, and
- * keeps the dialog component declarative.
+ * Owns the import state machine the dialog renders against. Mirrors
+ * `useExportAllRunner.ts` in shape: the hook exposes a
+ * discriminated-union `phase`, `start(phrase)` / `cancel()`, and keeps
+ * the dialog component declarative.
+ *
+ * The parent (DatenView) owns the file-picker step and only mounts the
+ * dialog once a file has been selected — the hook receives the file as
+ * input and auto-parses on mount.
  *
  * State machine:
- *   closed
- *      └→ awaiting-file       (dialog open, no zip selected yet)
- *           └→ preflight       (zip parsed + manifest valid; user gates)
- *                └→ progress   (text-leg + per-attachment legs running)
- *                     └→ summary | error
+ *   parsing                   (hook reads + parses zip + dry-runs API)
+ *      └→ preflight           (zip parsed + manifest valid; user gates)
+ *           └→ progress       (text-leg + per-attachment legs running)
+ *                └→ summary | error
  *
  * Concurrency / cancellation:
  *   - The orchestrator is the single async dispatch point. The hook
@@ -52,13 +55,11 @@ import {
   type RestoreBlock,
 } from './importAllFromZip';
 
-export type DialogPhase =
-  | { kind: 'closed' }
-  | { kind: 'awaiting-file' }
-  | PreflightPhase
-  | ProgressPhase
-  | SummaryPhase
-  | ErrorPhase;
+export type DialogPhase = ParsingPhase | PreflightPhase | ProgressPhase | SummaryPhase | ErrorPhase;
+
+export interface ParsingPhase {
+  kind: 'parsing';
+}
 
 export interface PreflightSnapshot {
   envelope: ImportEnvelope;
@@ -247,66 +248,137 @@ async function readFileBytes(file: File): Promise<Uint8Array> {
 }
 
 export interface UseImportAllRunnerInput {
-  isOpen: boolean;
+  /**
+   * The takeout zip to import. The hook reads + parses it on mount and
+   * on file change (rare — parents typically pick once and unmount on
+   * close).
+   */
+  file: File;
 }
 
 export interface UseImportAllRunnerResult {
   phase: DialogPhase;
   /**
-   * Pick a takeout-zip and parse it for the preflight readout. The
-   * runner caches the parsed envelope + manifest so `start` doesn't
-   * re-parse.
-   */
-  pickFile: (file: File) => Promise<void>;
-  /**
    * Begin the import run. Caller passes the typed phrase; the runner
    * passes it to the text-leg POST when `targetNonEmpty` was true.
    */
   start: (phrase: string) => void;
-  /** Cancel any in-flight run; resets phase to closed. */
+  /** Abort any in-flight orchestrator run. The parent unmounts to close. */
   cancel: () => void;
 }
 
 /**
- * Drive the Vollständiger-Import state machine.
+ * Drive the import state machine.
  */
 export function useImportAllRunner(input: UseImportAllRunnerInput): UseImportAllRunnerResult {
-  const { isOpen } = input;
-  const [phase, setPhase] = useState<DialogPhase>({ kind: 'closed' });
+  const { file } = input;
+  const [phase, setPhase] = useState<DialogPhase>({ kind: 'parsing' });
   const abortRef = useRef<AbortController | null>(null);
 
-  // Parsed-zip bag populated by `pickFile` and consumed by `start`.
-  // Holding the parsed bag (entries map + manifest + envelope) — not
-  // the raw zip bytes — means the orchestrator never re-unzips at
-  // commit time. At hundreds-of-MB takeout sizes this is the
-  // difference between one peak inflation and two.
+  // Parsed-zip bag populated by the parse-on-mount effect and consumed
+  // by `start`. Holding the parsed bag (entries map + manifest +
+  // envelope) — not the raw zip bytes — means the orchestrator never
+  // re-unzips at commit time. At hundreds-of-MB takeout sizes this is
+  // the difference between one peak inflation and two.
   const parsedRef = useRef<ParsedTakeoutZip | null>(null);
 
-  // Reset on close.
+  // Parse the zip + dry-run on mount or when `file` changes. The
+  // dialog mounts at `parsing`; this effect transitions to `preflight`
+  // (or `error`) once the async work settles.
   useEffect(() => {
-    if (!isOpen) {
+    let cancelled = false;
+    setPhase({ kind: 'parsing' });
+
+    void (async () => {
+      let bytes: Uint8Array;
+      try {
+        bytes = await readFileBytes(file);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('[import] file read failed', err);
+        setPhase({ kind: 'error', message: STRINGS.dataExchange.importError });
+        return;
+      }
+
+      // Parse + structurally validate ONCE. The bag is held in
+      // `parsedRef` and threaded through `start` to the orchestrator
+      // so the same bytes are never inflated twice — at hundreds-of-MB
+      // takeout sizes that's a peak-memory halving.
+      let bag: ParsedTakeoutZip;
+      try {
+        bag = parseTakeoutZip(bytes);
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('[import] zip parse failed', err);
+        setPhase({
+          kind: 'error',
+          message: STRINGS.dataExchange.importValidationFailed,
+        });
+        return;
+      }
+
+      if (bag.envelope.schema_version !== SCHEMA_VERSION) {
+        if (cancelled) return;
+        setPhase({ kind: 'error', message: STRINGS.errors.schemaVersionMismatch });
+        return;
+      }
+
+      const attachmentCount = (bag.envelope.attachments ?? []).length;
+      const totalBytes = bag.manifest.files
+        .filter((f) => f.attachmentId !== undefined)
+        .reduce((sum, f) => sum + f.sizeBytes, 0);
+
+      // Dry-run the importing instance to learn whether the target is
+      // non-empty (drives the phrase prompt). The runner POSTs the
+      // stripped envelope (no `attachments` key) — the same shape the
+      // orchestrator's text leg sends — so the dry-run preview is
+      // representative of the commit path.
+      let preview: PreviewLite;
+      try {
+        const dryRun = await importAllApi.fetchDryRun(bag.envelope as never);
+        if (cancelled) return;
+        if (!dryRun) {
+          setPhase({ kind: 'error', message: STRINGS.dataExchange.importError });
+          return;
+        }
+        preview = { targetNonEmpty: dryRun.target_non_empty === true };
+      } catch (err) {
+        if (cancelled) return;
+        console.warn('[import] dry-run failed', err);
+        setPhase({ kind: 'error', message: STRINGS.dataExchange.importError });
+        return;
+      }
+
+      if (cancelled) return;
+      parsedRef.current = bag;
+      setPhase({
+        kind: 'preflight',
+        envelope: bag.envelope,
+        attachmentCount,
+        totalBytes,
+        targetNonEmpty: preview.targetNonEmpty,
+      });
+    })();
+
+    return () => {
+      cancelled = true;
       abortRef.current?.abort();
       abortRef.current = null;
       parsedRef.current = null;
-      setPhase({ kind: 'closed' });
-      return;
-    }
-    setPhase({ kind: 'awaiting-file' });
-  }, [isOpen]);
+    };
+  }, [file]);
 
   const cancel = useCallback(() => {
-    // Fire-and-forget abort: signal the orchestrator and tear the
-    // dialog state down immediately so the UI feels responsive. The
-    // orchestrator's rollback walk (DELETE-each-committed-id) settles
-    // in the background after this function returns — its
-    // `Promise.allSettled` is detached from the runner once `signal`
-    // fires.
+    // Fire-and-forget abort: signal the orchestrator so the rollback
+    // walk (DELETE-each-committed-id) starts in the background. The
+    // parent unmounts the dialog after calling cancel — the effect
+    // cleanup will null the refs.
     //
     // Edge case (accepted): if the user cancels mid-run on a target
     // that was non-empty pre-import and re-opens the dialog before
-    // the rollback walk finishes, the `pickFile` dry-run may still
-    // see committed rows from the cancelled run. The window closes
-    // within the time it takes to DELETE each committed id (single
+    // the rollback walk finishes, the next dry-run may still see
+    // committed rows from the cancelled run. The window closes within
+    // the time it takes to DELETE each committed id (single
     // round-trip per id, so usually sub-second for a small batch).
     // Awaiting the rollback here would block the dialog close on a
     // network walk and trade a brittle UX for a correctness fix that
@@ -314,86 +386,6 @@ export function useImportAllRunner(input: UseImportAllRunnerInput): UseImportAll
     // B2 cleanup either way (data-model.md §6.11).
     abortRef.current?.abort();
     abortRef.current = null;
-    parsedRef.current = null;
-    setPhase({ kind: 'closed' });
-  }, []);
-
-  const pickFile = useCallback(async (file: File) => {
-    let bytes: Uint8Array;
-    try {
-      bytes = await readFileBytes(file);
-    } catch (err) {
-      console.warn('[import-all] file read failed', err);
-      setPhase({
-        kind: 'error',
-        message: STRINGS.dataExchange.importAllError,
-      });
-      return;
-    }
-
-    // Parse + structurally validate ONCE. The bag is held in
-    // `parsedRef` and threaded through `start` to the orchestrator so
-    // the same bytes are never inflated twice — at hundreds-of-MB
-    // takeout sizes that's a peak-memory halving.
-    let bag: ParsedTakeoutZip;
-    try {
-      bag = parseTakeoutZip(bytes);
-    } catch (err) {
-      console.warn('[import-all] zip parse failed', err);
-      setPhase({
-        kind: 'error',
-        message: STRINGS.dataExchange.importAllValidationFailed,
-      });
-      return;
-    }
-
-    if (bag.envelope.schema_version !== SCHEMA_VERSION) {
-      setPhase({
-        kind: 'error',
-        message: STRINGS.errors.schemaVersionMismatch,
-      });
-      return;
-    }
-
-    const attachmentCount = (bag.envelope.attachments ?? []).length;
-    const totalBytes = bag.manifest.files
-      .filter((f) => f.attachmentId !== undefined)
-      .reduce((sum, f) => sum + f.sizeBytes, 0);
-
-    // Dry-run the importing instance to learn whether the target is
-    // non-empty (drives the phrase prompt). The runner POSTs the
-    // stripped envelope (no `attachments` key) — the same shape the
-    // orchestrator's text leg sends — so the dry-run preview is
-    // representative of the commit path.
-    let preview: PreviewLite;
-    try {
-      const dryRun = await importAllApi.fetchDryRun(bag.envelope as never);
-      if (!dryRun) {
-        setPhase({
-          kind: 'error',
-          message: STRINGS.dataExchange.importAllError,
-        });
-        return;
-      }
-      preview = { targetNonEmpty: dryRun.target_non_empty === true };
-    } catch (err) {
-      console.warn('[import-all] dry-run failed', err);
-      setPhase({
-        kind: 'error',
-        message: STRINGS.dataExchange.importAllError,
-      });
-      return;
-    }
-
-    parsedRef.current = bag;
-
-    setPhase({
-      kind: 'preflight',
-      envelope: bag.envelope,
-      attachmentCount,
-      totalBytes,
-      targetNonEmpty: preview.targetNonEmpty,
-    });
   }, []);
 
   const start = useCallback((phrase: string) => {
@@ -495,13 +487,13 @@ export function useImportAllRunner(input: UseImportAllRunnerInput): UseImportAll
         });
       } catch (err) {
         if (ctrl.signal.aborted) return;
-        console.warn('[import-all] orchestrator failed', err);
+        console.warn('[import] orchestrator failed', err);
         setPhase({
           kind: 'error',
           message:
             err instanceof Error
-              ? `${STRINGS.dataExchange.importAllError} ${err.message}`
-              : STRINGS.dataExchange.importAllError,
+              ? `${STRINGS.dataExchange.importError} ${err.message}`
+              : STRINGS.dataExchange.importError,
         });
       } finally {
         if (abortRef.current === ctrl) abortRef.current = null;
@@ -509,5 +501,5 @@ export function useImportAllRunner(input: UseImportAllRunnerInput): UseImportAll
     })();
   }, []);
 
-  return { phase, pickFile, start, cancel };
+  return { phase, start, cancel };
 }

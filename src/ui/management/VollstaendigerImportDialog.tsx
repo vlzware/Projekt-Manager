@@ -1,9 +1,9 @@
 /**
- * Vollständiger Import dialog — file picker → preflight → progress →
- * summary (ui/daten.md §8.11.4, AC-259/AC-260).
+ * Import dialog — parsing → preflight → progress → summary
+ * (ui/daten.md §8.11.2, AC-259/AC-260).
  *
  * Five phases:
- *   1. awaiting-file — user picks the takeout zip from the file picker.
+ *   1. parsing       — hook reads + parses zip + dry-runs API. Spinner.
  *   2. preflight     — parsed envelope-counts readout + (when target
  *                      non-empty) destructive-action confirmation
  *                      phrase input. Confirm dispatches the text-leg
@@ -12,6 +12,12 @@
  *                      filename + Abbrechen action.
  *   4. summary       — restored counts + per-file failure list.
  *   5. error         — pre-flight or text-leg rejection surfaces here.
+ *
+ * The parent owns the file-picker step (see DatenView): it triggers a
+ * hidden <input type="file"> from the Import button and only mounts
+ * this dialog once a file has been selected. This file accepts the
+ * file as a prop and threads it to `useImportAllRunner` for the
+ * parse-on-mount flow.
  *
  * Orchestration (state machine, zip parse, dry-run, orchestrator
  * dispatch) lives in `useImportAllRunner`; phase render branches live
@@ -24,16 +30,15 @@ import { ATTACHMENT_CONFIG } from '@/config/attachmentConfig';
 import { useDialogA11y } from '@/ui/common/useDialogA11y';
 import { useImportAllRunner } from './useImportAllRunner';
 import {
-  AwaitingFileView,
   ErrorView,
+  ParsingView,
   PreflightView,
   ProgressView,
   SummaryView,
 } from './VollstaendigerImportDialog.views';
-import styles from './VollstaendigerImportDialog.module.css';
 
 interface VollstaendigerImportDialogProps {
-  isOpen: boolean;
+  file: File;
   onClose: () => void;
 }
 
@@ -43,20 +48,13 @@ function probeIsMobile(): boolean {
     .matches;
 }
 
-export function VollstaendigerImportDialog({ isOpen, onClose }: VollstaendigerImportDialogProps) {
+export function VollstaendigerImportDialog({ file, onClose }: VollstaendigerImportDialogProps) {
   const [isMobile, setIsMobile] = useState<boolean>(probeIsMobile);
   const [phraseInput, setPhraseInput] = useState<string>('');
   const dialogRef = useRef<HTMLDivElement>(null);
   const initialFocusButtonRef = useRef<HTMLButtonElement>(null);
-  const initialFocusInputRef = useRef<HTMLInputElement>(null);
 
-  const { phase, pickFile, start, cancel } = useImportAllRunner({ isOpen });
-
-  // The phrase input is local mount state — the parent conditionally
-  // mounts this dialog on each open, so leftover input from a prior
-  // session unmounts implicitly. No reset-on-prop-change effect needed
-  // (those trip react-hooks/set-state-in-effect for the right reason —
-  // such effects cascade an extra render and obscure the lifecycle).
+  const { phase, start, cancel } = useImportAllRunner({ file });
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -74,38 +72,21 @@ export function VollstaendigerImportDialog({ isOpen, onClose }: VollstaendigerIm
   }, [cancel, onClose]);
 
   const escapeAllowed =
-    phase.kind === 'awaiting-file' ||
+    phase.kind === 'parsing' ||
     phase.kind === 'preflight' ||
     phase.kind === 'summary' ||
     phase.kind === 'error';
   useDialogA11y({
-    isOpen,
+    isOpen: true,
     dialogRef,
     onOpenedFocus: useCallback(() => {
-      // Pick the right initial-focus target per phase. Avoids a stale
-      // ref grab when the dialog mounts in awaiting-file but we ref
-      // the preflight confirm button in the props.
-      if (phase.kind === 'awaiting-file') initialFocusInputRef.current?.focus();
-      else initialFocusButtonRef.current?.focus();
-    }, [phase.kind]),
+      initialFocusButtonRef.current?.focus();
+    }, []),
     onEscape: escapeAllowed ? handleClose : undefined,
   });
 
-  if (!isOpen) return null;
-
-  if (phase.kind === 'closed') {
-    return <div className={styles.overlay} data-testid="import-all-loading" />;
-  }
-
-  if (phase.kind === 'awaiting-file') {
-    return (
-      <AwaitingFileView
-        dialogRef={dialogRef}
-        initialFocusRef={initialFocusInputRef}
-        onFile={(file) => void pickFile(file)}
-        onCancel={handleClose}
-      />
-    );
+  if (phase.kind === 'parsing') {
+    return <ParsingView phase={phase} dialogRef={dialogRef} />;
   }
 
   if (phase.kind === 'preflight') {
@@ -145,7 +126,6 @@ export function VollstaendigerImportDialog({ isOpen, onClose }: VollstaendigerIm
     );
   }
 
-  // phase.kind === 'error'
   return (
     <ErrorView
       phase={phase}

@@ -1014,7 +1014,7 @@ describe('Unified Data Exchange', () => {
         await wipeBusinessData();
 
         // Strip the `attachments` key — mirrors the orchestrator step
-        // in ui/daten.md §8.11.4 / AC-253. Re-posting the envelope
+        // in ui/daten.md §8.11.2 / AC-253. Re-posting the envelope
         // verbatim would now reject with 422 (the fix for the silent-
         // loss bug); the orchestrator pattern is what the contract
         // expects.

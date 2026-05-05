@@ -16,7 +16,6 @@ import { useUIStore } from './uiStore';
 import { useCustomerStore } from './customerStore';
 import { useUserStore } from './userStore';
 import { useProjectManagementStore } from './projectManagementStore';
-import { useDataExchangeStore } from './dataExchangeStore';
 
 interface AuthState {
   authUser: AuthUser | null;
@@ -132,18 +131,6 @@ function clearDownstreamState(): void {
     customers: [],
     loading: false,
     error: null,
-  });
-  useDataExchangeStore.setState({
-    file: null,
-    envelope: null,
-    preview: null,
-    previewError: null,
-    phraseInput: '',
-    importing: false,
-    importResult: null,
-    importError: null,
-    exporting: false,
-    exportError: null,
   });
   // No audit-store reset: the factory-based `createAuditStore()` yields
   // per-component instances (see `src/state/auditStore.ts`), so audit

@@ -322,7 +322,7 @@ describe('Attachment export envelope (AC-220)', () => {
     expect(snapshot.attachments.length).toBeGreaterThan(0);
 
     // Strip the key — mirrors the orchestrator step in
-    // ui/daten.md §8.11.4.
+    // ui/daten.md §8.11.2.
     const { attachments: _attachmentsStripped, ...textLegBody } = snapshot;
     void _attachmentsStripped;
 

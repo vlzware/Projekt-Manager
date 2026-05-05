@@ -27,8 +27,8 @@ import { clickView } from './nav-helpers';
  * testids introduced by this spec (the UI implementation must match,
  * mirroring the export-side naming on `daten-vollstaendiger-export.spec.ts`):
  *
- *   data-import-all-button             single "Vollständiger Import" trigger
- *   import-all-file-input              <input type="file"> for the takeout zip
+ *   data-import-button             single "Import" trigger; opens OS file chooser
+ *   data-import-file-input         hidden <input type="file"> on DatenView
  *   import-all-preflight               pre-flight confirmation dialog
  *   import-all-preflight-attachment-count  attachment count readout
  *   import-all-phrase-input            destructive-action confirmation phrase
@@ -282,7 +282,7 @@ async function vollstaendigerExportZip(page: Page): Promise<Buffer> {
   await clickView(page, 'daten');
   await expect(page.getByTestId('daten-view')).toBeVisible();
 
-  const exportBtn = page.getByTestId('data-export-all-button');
+  const exportBtn = page.getByTestId('data-export-button');
   await expect(exportBtn).toBeVisible();
   const downloadPromise = page.waitForEvent('download', { timeout: 60_000 });
   await exportBtn.click();
@@ -346,16 +346,19 @@ test('AC-259: full takeout roundtrip preserves (id, createdBy, createdAt) and pl
   // -------------------------------------------------------------
   await page.goto('/');
   await clickView(page, 'daten');
-  const importBtn = page.getByTestId('data-import-all-button');
+  const importBtn = page.getByTestId('data-import-button');
   await expect(importBtn).toBeVisible();
-  await importBtn.click();
 
-  // The takeout-zip is selected via the file picker. Persist the bytes
-  // to a temp file so Playwright's setInputFiles has a path to feed.
+  // Click the Import button to fire the OS file picker (DatenView calls
+  // `fileInputRef.current.click()` on press); the chooser-event handshake
+  // lets us feed the takeout-zip without an interactive OS dialog.
   const tmpZipPath = path.join(__dirname, '.tmp-vollstaendiger-import.zip');
   fs.writeFileSync(tmpZipPath, zipBytes);
   try {
-    await page.getByTestId('import-all-file-input').setInputFiles(tmpZipPath);
+    const fileChooserPromise = page.waitForEvent('filechooser');
+    await importBtn.click();
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles(tmpZipPath);
 
     const preflight = page.getByTestId('import-all-preflight');
     await expect(preflight).toBeVisible();

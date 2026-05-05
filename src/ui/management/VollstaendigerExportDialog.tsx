@@ -1,6 +1,6 @@
 /**
  * Vollständiger Export dialog — pre-flight → progress → post-export
- * summary (ui/daten.md §8.11.3, AC-249/AC-251).
+ * summary (ui/daten.md §8.11.1, AC-249/AC-251).
  *
  * Three phases:
  *   1. preflight  — server-computed `totalCount` + `totalSizeBytes`

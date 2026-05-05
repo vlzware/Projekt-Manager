@@ -6,10 +6,16 @@
  * the shared `DialogShell` with its phase-specific body and actions.
  */
 
-import { type ReactNode, type RefObject, type ChangeEvent } from 'react';
+import { type ReactNode, type RefObject } from 'react';
 import { STRINGS } from '@/config/strings';
 import { RESTORE_CONFIRMATION_PHRASE } from '@/config/dataExchangeConfig';
-import type { PreflightPhase, ProgressPhase, SummaryPhase, ErrorPhase } from './useImportAllRunner';
+import type {
+  ParsingPhase,
+  PreflightPhase,
+  ProgressPhase,
+  SummaryPhase,
+  ErrorPhase,
+} from './useImportAllRunner';
 import styles from './VollstaendigerImportDialog.module.css';
 
 /** Decimal-SI byte count formatter. Matches the export-side dialog. */
@@ -55,49 +61,22 @@ function DialogShell(props: DialogShellProps) {
   );
 }
 
-export interface AwaitingFileViewProps {
+export interface ParsingViewProps {
+  phase: ParsingPhase;
   dialogRef: RefObject<HTMLDivElement | null>;
-  initialFocusRef: RefObject<HTMLInputElement | null>;
-  onFile: (file: File) => void;
-  onCancel: () => void;
 }
 
-export function AwaitingFileView(props: AwaitingFileViewProps) {
-  const { dialogRef, initialFocusRef, onFile, onCancel } = props;
-  const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) onFile(f);
-  };
+export function ParsingView(props: ParsingViewProps) {
+  const { dialogRef } = props;
   return (
     <DialogShell
       dialogRef={dialogRef}
-      testId="import-all-awaiting-file"
-      titleId="import-all-awaiting-file-title"
-      bodyId="import-all-awaiting-file-body"
-      title={STRINGS.dataExchange.importAllPreflightTitle}
-      body={
-        <>
-          <div className={styles.readoutLine}>{STRINGS.dataExchange.importAllPickFile}</div>
-          <input
-            ref={initialFocusRef}
-            type="file"
-            accept=".zip,application/zip"
-            onChange={handleChange}
-            className={styles.fileInput}
-            data-testid="import-all-file-input"
-          />
-        </>
-      }
-      actions={
-        <button
-          type="button"
-          className={`${styles.button} ${styles.cancel}`}
-          onClick={onCancel}
-          data-testid="import-all-awaiting-cancel"
-        >
-          {STRINGS.dataExchange.importAllPreflightCancel}
-        </button>
-      }
+      testId="import-parsing"
+      titleId="import-parsing-title"
+      bodyId="import-parsing-body"
+      title={STRINGS.dataExchange.importPreflightTitle}
+      body={<div className={styles.readoutLine}>{STRINGS.dataExchange.importParsing}</div>}
+      actions={null}
     />
   );
 }
@@ -133,27 +112,27 @@ export function PreflightView(props: PreflightViewProps) {
       testId="import-all-preflight"
       titleId="import-all-preflight-title"
       bodyId="import-all-preflight-body"
-      title={STRINGS.dataExchange.importAllPreflightTitle}
+      title={STRINGS.dataExchange.importPreflightTitle}
       body={
         <>
           <div className={styles.readoutLine} data-testid="import-all-preflight-customer-count">
-            {STRINGS.dataExchange.importAllPreflightCustomers(customers)}
+            {STRINGS.dataExchange.importPreflightCustomers(customers)}
           </div>
           <div className={styles.readoutLine} data-testid="import-all-preflight-project-count">
-            {STRINGS.dataExchange.importAllPreflightProjects(projects)}
+            {STRINGS.dataExchange.importPreflightProjects(projects)}
           </div>
           <div className={styles.readoutLine} data-testid="import-all-preflight-assignment-count">
-            {STRINGS.dataExchange.importAllPreflightAssignments(assignments)}
+            {STRINGS.dataExchange.importPreflightAssignments(assignments)}
           </div>
           <div className={styles.readoutLine} data-testid="import-all-preflight-attachment-count">
-            {STRINGS.dataExchange.importAllPreflightAttachmentCount(phase.attachmentCount)}
+            {STRINGS.dataExchange.importPreflightAttachmentCount(phase.attachmentCount)}
           </div>
           <div
             className={styles.readoutLine}
             data-testid="import-all-preflight-size"
             data-bytes-total={phase.totalBytes}
           >
-            {STRINGS.dataExchange.importAllPreflightSize(formatBytes(phase.totalBytes))}
+            {STRINGS.dataExchange.importPreflightSize(formatBytes(phase.totalBytes))}
           </div>
           {phase.targetNonEmpty && (
             <>
@@ -185,7 +164,7 @@ export function PreflightView(props: PreflightViewProps) {
               data-testid="import-all-preflight-mobile-warning"
               role="note"
             >
-              {STRINGS.dataExchange.importAllMobileWarning}
+              {STRINGS.dataExchange.importMobileWarning}
             </div>
           )}
         </>
@@ -198,7 +177,7 @@ export function PreflightView(props: PreflightViewProps) {
             onClick={onCancel}
             data-testid="import-all-preflight-cancel"
           >
-            {STRINGS.dataExchange.importAllPreflightCancel}
+            {STRINGS.dataExchange.importPreflightCancel}
           </button>
           <button
             ref={initialFocusRef}
@@ -207,7 +186,7 @@ export function PreflightView(props: PreflightViewProps) {
             onClick={onConfirm}
             data-testid="import-all-preflight-confirm"
           >
-            {STRINGS.dataExchange.importAllPreflightConfirm}
+            {STRINGS.dataExchange.importPreflightConfirm}
           </button>
         </>
       }
@@ -230,7 +209,7 @@ export function ProgressView(props: ProgressViewProps) {
       testId="import-all-progress"
       titleId="import-all-progress-title"
       bodyId="import-all-progress-body"
-      title={STRINGS.dataExchange.importAllProgressTitle}
+      title={STRINGS.dataExchange.importProgressTitle}
       body={
         <>
           <div
@@ -239,7 +218,7 @@ export function ProgressView(props: ProgressViewProps) {
             data-files-total={phase.totalCount}
             data-files-done={phase.filesDone}
           >
-            {STRINGS.dataExchange.importAllProgressCounter(phase.filesDone, phase.totalCount)}
+            {STRINGS.dataExchange.importProgressCounter(phase.filesDone, phase.totalCount)}
           </div>
           <div
             className={styles.readoutLine}
@@ -247,13 +226,13 @@ export function ProgressView(props: ProgressViewProps) {
             data-bytes-total={phase.totalSizeBytes}
             data-bytes-done={phase.bytesDone}
           >
-            {STRINGS.dataExchange.importAllProgressBytes(
+            {STRINGS.dataExchange.importProgressBytes(
               formatBytes(phase.bytesDone),
               formatBytes(phase.totalSizeBytes),
             )}
           </div>
           <div className={styles.currentFile} data-testid="import-all-progress-current-file">
-            {STRINGS.dataExchange.importAllProgressCurrentFile(phase.currentFile || '—')}
+            {STRINGS.dataExchange.importProgressCurrentFile(phase.currentFile || '—')}
           </div>
         </>
       }
@@ -265,7 +244,7 @@ export function ProgressView(props: ProgressViewProps) {
           onClick={onCancel}
           data-testid="import-all-cancel"
         >
-          {STRINGS.dataExchange.importAllCancel}
+          {STRINGS.dataExchange.importCancel}
         </button>
       }
     />
@@ -287,16 +266,16 @@ export function SummaryView(props: SummaryViewProps) {
       testId="import-all-summary"
       titleId="import-all-summary-title"
       bodyId="import-all-summary-body"
-      title={STRINGS.dataExchange.importAllSummaryTitle}
+      title={STRINGS.dataExchange.importSummaryTitle}
       body={
         <>
           <div className={styles.readoutLine} data-testid="import-all-summary-committed">
-            {STRINGS.dataExchange.importAllSummaryCommitted(phase.committedCount)}
+            {STRINGS.dataExchange.importSummaryCommitted(phase.committedCount)}
           </div>
           {phase.failures.length > 0 && (
             <>
               <div className={styles.skippedLine} data-testid="import-all-summary-skipped">
-                {STRINGS.dataExchange.importAllSummarySkipped(phase.failures.length)}
+                {STRINGS.dataExchange.importSummarySkipped(phase.failures.length)}
               </div>
               <ul className={styles.failureList} data-testid="import-all-summary-failures">
                 {phase.failures.map((f) => (
@@ -317,7 +296,7 @@ export function SummaryView(props: SummaryViewProps) {
           onClick={onClose}
           data-testid="import-all-summary-close"
         >
-          {STRINGS.dataExchange.importAllSummaryClose}
+          {STRINGS.dataExchange.importSummaryClose}
         </button>
       }
     />
@@ -339,7 +318,7 @@ export function ErrorView(props: ErrorViewProps) {
       testId="import-all-error"
       titleId="import-all-error-title"
       bodyId="import-all-error-body"
-      title={STRINGS.dataExchange.importAllError}
+      title={STRINGS.dataExchange.importError}
       body={<div className={styles.readoutLine}>{phase.message}</div>}
       actions={
         <button
@@ -349,7 +328,7 @@ export function ErrorView(props: ErrorViewProps) {
           onClick={onClose}
           data-testid="import-all-error-close"
         >
-          {STRINGS.dataExchange.importAllSummaryClose}
+          {STRINGS.dataExchange.importSummaryClose}
         </button>
       }
     />

@@ -11,7 +11,7 @@
  * (`useImportAllRunner`) only thread progress / cancellation callbacks
  * through.
  *
- * Step layout — per `ui/daten.md §8.11.4`:
+ * Step layout — per `ui/daten.md §8.11.2`:
  *   1. Structural manifest + zip-coverage parity (AC-260) and
  *      `schema_version` pin (AC-262). NO per-file hashing here — the
  *      canonical hash check fires once per entry on read in step 5
@@ -40,7 +40,7 @@
  *      of concurrency / order (AC-261's set-relation pin).
  *   7. Per-file non-fatal failures are recorded but do NOT abort. The
  *      result surfaces them so the dialog can render the
- *      "X Anhänge übersprungen" line (`ui/daten.md §8.11.4` step 7).
+ *      "X Anhänge übersprungen" line (`ui/daten.md §8.11.2` step 7).
  *
  * Concurrency-agnostic rollback (AC-261):
  * Bounded concurrency means entries 1/2/3 may all be inflight when
@@ -555,7 +555,7 @@ export async function importAllFromZip(input: ImportAllInput): Promise<ImportAll
   }
 
   // Attachments envelope ⊆ manifest entries (every attachment row in
-  // `data.json` has a manifest line). Per `ui/daten.md §8.11.4` step 1,
+  // `data.json` has a manifest line). Per `ui/daten.md §8.11.2` step 1,
   // count parity is the load-bearing assertion — a manifest carrying
   // strictly more attachment-tagged entries than the envelope is also
   // a structural break.

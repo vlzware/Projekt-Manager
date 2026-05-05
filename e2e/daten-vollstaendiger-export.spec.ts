@@ -94,7 +94,7 @@ function listZipEntries(zip: Buffer): Set<string> {
  *           readout) → progress dialog (files-done / total, bytes-done /
  *           total, current-file name, "Abbrechen") → cancel halts
  *           in-flight fetch and closes the dialog → resulting zip
- *           filename `projekt-manager-vollstaendiger-export-<TIMESTAMP>.zip`
+ *           filename `projekt-manager-export-<TIMESTAMP>.zip`
  *           → small-viewport non-blocking warning
  *           `"Für Desktop-Nutzung gedacht; Downloads können sehr groß sein."`
  *   AC-251  Per-file failure does not abort the export. Skip causes:
@@ -105,7 +105,7 @@ function listZipEntries(zip: Buffer): Set<string> {
  *           count.
  *
  * testids introduced by this spec (the UI implementation must match):
- *   data-export-all-button             single "Vollständiger Export" trigger
+ *   data-export-button             single "Export" trigger
  *   export-all-preflight               pre-flight confirmation dialog
  *   export-all-preflight-count         attachment-count readout (totalCount)
  *   export-all-preflight-size          aggregate plaintext size (totalSizeBytes)
@@ -235,7 +235,7 @@ test('AC-249: pre-flight + progress + cancel + mobile warning', async ({ page })
   await clickView(page, 'daten');
   await expect(page.getByTestId('daten-view')).toBeVisible();
 
-  const exportAllButton = page.getByTestId('data-export-all-button');
+  const exportAllButton = page.getByTestId('data-export-button');
   await expect(exportAllButton).toBeVisible();
   await exportAllButton.click();
 
@@ -379,9 +379,9 @@ test('AC-249: pre-flight + progress + cancel + mobile warning', async ({ page })
   const download = await downloadPromise;
 
   // AC-249 filename format:
-  //   projekt-manager-vollstaendiger-export-<YYYY-MM-DD>T<HH-mm-ss>.zip
+  //   projekt-manager-export-<YYYY-MM-DD>T<HH-mm-ss>.zip
   expect(download.suggestedFilename()).toMatch(
-    /^projekt-manager-vollstaendiger-export-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.zip$/,
+    /^projekt-manager-export-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.zip$/,
   );
 
   // Zip layout: data.json + manifest.json at the root, plus the one
@@ -538,7 +538,7 @@ test('AC-251: per-file failure surfaces in post-export summary', async ({ page }
 
   await page.goto('/');
   await clickView(page, 'daten');
-  await page.getByTestId('data-export-all-button').click();
+  await page.getByTestId('data-export-button').click();
 
   const preflight = page.getByTestId('export-all-preflight');
   await expect(preflight).toBeVisible();

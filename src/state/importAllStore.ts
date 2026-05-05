@@ -1,6 +1,6 @@
 /**
  * State-layer entry points for Vollständiger Import (issue #163,
- * ui/daten.md §8.11.4).
+ * ui/daten.md §8.11.2).
  *
  * The import orchestrator (`ui/management/importAllFromZip.ts`) and
  * its runner hook live in the UI layer; under the AC-33 boundary,
@@ -191,11 +191,6 @@ async function importDelete(projectId: string, attachmentId: string): Promise<vo
  * State-layer surface the import-runner hook consumes. Exported as a
  * plain `const` so the runner's `useImportAllRunner` doesn't need
  * Zustand wiring — there is no shared mutable state to subscribe to.
- *
- * Result import — no commit-result type leak via `_ImportResult`. The
- * helper functions construct the orchestrator's narrow shapes; the
- * full `ImportResult` lives where the standard restore form already
- * consumes it (`dataExchangeStore`).
  */
 export const importAllApi = {
   postTextLeg,
