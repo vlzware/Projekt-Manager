@@ -310,6 +310,29 @@ export const STRINGS = {
     exportDescription: 'Lädt alle Kunden, Projekte und Zuordnungen als eine JSON-Datei herunter.',
     exportAction: 'Herunterladen',
 
+    /**
+     * Vollständiger Export — pre-flight + progress + summary copy
+     * (ui/daten.md §8.11.3, AC-249/AC-251). German strings pinned here so
+     * the dialog component stays declarative.
+     */
+    exportAllAction: 'Vollständiger Export',
+    exportAllPreflightTitle: 'Vollständiger Export',
+    exportAllPreflightCount: (n: number) => `${n} Anhänge`,
+    exportAllPreflightSize: (formatted: string) => `Gesamtgröße: ${formatted}`,
+    exportAllPreflightConfirm: 'Export starten',
+    exportAllPreflightCancel: 'Abbrechen',
+    exportAllMobileWarning: 'Für Desktop-Nutzung gedacht; Downloads können sehr groß sein.',
+    exportAllProgressTitle: 'Export läuft',
+    exportAllProgressCounter: (done: number, total: number) => `${done} / ${total} Dateien`,
+    exportAllProgressBytes: (done: string, total: string) => `${done} / ${total}`,
+    exportAllProgressCurrentFile: (name: string) => `Aktuelle Datei: ${name}`,
+    exportAllCancel: 'Abbrechen',
+    exportAllSummaryTitle: 'Export abgeschlossen',
+    exportAllSummaryFile: (name: string) => `Datei: ${name}`,
+    exportAllSummarySkipped: (n: number) => `${n} Dateien übersprungen`,
+    exportAllSummaryClose: 'Schließen',
+    exportAllError: 'Export fehlgeschlagen.',
+
     importHeading: 'Wiederherstellen',
     importDescription:
       'Stellt den Datenbestand aus einer zuvor exportierten JSON-Datei wieder her.',

@@ -9,11 +9,12 @@
  * AC-138 still enforces TARGET_NOT_EMPTY when override is absent.
  */
 
-import type { ChangeEvent } from 'react';
+import { useState, type ChangeEvent } from 'react';
 import { STRINGS } from '@/config/strings';
 import { RESTORE_CONFIRMATION_PHRASE, restorePhraseMatches } from '@/config/dataExchangeConfig';
 import { usePermission } from '@/hooks/usePermission';
 import { useDataExchangeStore } from '@/state/dataExchangeStore';
+import { VollstaendigerExportDialog } from './VollstaendigerExportDialog';
 import styles from './Management.module.css';
 
 export function DatenView() {
@@ -42,6 +43,12 @@ export function DatenView() {
     void setFile(picked);
   };
 
+  // Vollständiger Export dialog open/closed flag — orchestrates the
+  // pre-flight → progress → summary state machine inside
+  // `VollstaendigerExportDialog`. Gated by the same `data:export`
+  // permission as the JSON-only export above (ui/daten.md §8.11.3).
+  const [exportAllOpen, setExportAllOpen] = useState<boolean>(false);
+
   const hasValidationErrors = (preview?.validation_errors.length ?? 0) > 0;
   const requiresPhrase = preview?.target_non_empty === true;
   const commitDisabled =
@@ -67,6 +74,13 @@ export function DatenView() {
             >
               {STRINGS.dataExchange.exportAction}
             </button>
+            <button
+              className={styles.submitButton}
+              onClick={() => setExportAllOpen(true)}
+              data-testid="data-export-all-button"
+            >
+              {STRINGS.dataExchange.exportAllAction}
+            </button>
           </div>
 
           {exportError && (
@@ -76,6 +90,8 @@ export function DatenView() {
           )}
         </div>
       )}
+
+      <VollstaendigerExportDialog isOpen={exportAllOpen} onClose={() => setExportAllOpen(false)} />
 
       {/* ---- IMPORT SECTION ---- */}
       {canImport && (
