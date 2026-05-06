@@ -10,6 +10,7 @@ import type { Project, Customer } from '@/domain/types';
 import { projectApi, customerApi } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';
+import { useStorageUsageStore } from './storageUsageStore';
 
 /**
  * Result of `createProject`. Mirrors `CreateCustomerOutcome` — see that
@@ -239,6 +240,12 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
       projects: s.projects.filter((p) => p.id !== id),
     }));
     useProjectStore.getState().fetchProjects();
+    // Defence in depth alongside the SSE roundtrip — the server emits
+    // `storage_usage_changed` post-commit when the purge cascade moved
+    // bytes (AC-270), but if the channel is unhealthy (proxy issue,
+    // dropped reconnect) the actor's Footer badge / DatenView row stays
+    // current via this same-tab refresh. Mirrors attachmentStore.
+    void useStorageUsageStore.getState().refresh();
     return true;
   },
 

@@ -7,7 +7,7 @@
  */
 
 import type { Database } from '../db/connection.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray, or } from 'drizzle-orm';
 import {
   listCustomers as listCustomersRepo,
   getCustomer as getCustomerRepo,
@@ -17,7 +17,7 @@ import {
   getCustomerRow,
   toCustomerResponse,
 } from '../repositories/customer.js';
-import { projects } from '../db/schema.js';
+import { attachments, projects } from '../db/schema.js';
 import { hardDeleteProjectUnchecked } from '../repositories/project.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
 import { STRINGS } from '../../config/strings.js';
@@ -29,6 +29,7 @@ import { isOutOfScope } from '../repositories/scope.js';
 import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
+import { emitStorageUsageChanged } from '../sse/emitters.js';
 
 /**
  * Fields captured in the audit payload for customer writes. Kept as a
@@ -238,6 +239,10 @@ export class CustomerService {
     // active-project probe serialize against concurrent inserts the same
     // way the transitions path does for status drift.
     const collectedAudit: AuditLogRow[] = [];
+    // Tracked across the tx boundary so the post-commit emitter can
+    // gate on whether the cascade actually moved counters (AC-270 —
+    // pending and zero-attachment cases must not emit).
+    let movedBytes = false;
     const ctx = {
       actorKind: 'user' as const,
       actorId: userId,
@@ -276,6 +281,29 @@ export class CustomerService {
         .select()
         .from(projects)
         .where(and(eq(projects.customerId, id), eq(projects.deleted, true)));
+
+      // Probe whether any of the archived projects carry byte-bearing
+      // attachments. Drives `storage_usage_changed` emission post-commit
+      // (AC-270). Run before the cascade fires so the rows are still
+      // present to count; pending rows are excluded — they contribute
+      // zero on every counter, so a customer-delete whose archived
+      // projects had only pending (or no) attachments must not emit.
+      if (archived.length > 0) {
+        const probe = await tx
+          .select({ id: attachments.id })
+          .from(attachments)
+          .where(
+            and(
+              inArray(
+                attachments.projectId,
+                archived.map((row) => row.id),
+              ),
+              or(eq(attachments.status, 'ready'), eq(attachments.status, 'hidden')),
+            ),
+          )
+          .limit(1);
+        movedBytes = probe.length > 0;
+      }
 
       for (const row of archived) {
         const { auditRow } = await mutateInTx(tx, ctx, {
@@ -355,6 +383,15 @@ export class CustomerService {
 
     // Publisher dispatch runs after the transaction commits — AC-183.
     await dispatchAuditRows(collectedAudit);
+
+    // Post-commit storage-usage invalidation (AC-270). The atomic
+    // archived-project purge cascaded each project's attachments away;
+    // observers' Footer badge / DatenView row need to refetch. Skip
+    // when no byte-bearing rows were touched — pending rows or empty
+    // projects do not move the global figure.
+    if (movedBytes) {
+      emitStorageUsageChanged();
+    }
 
     log.info({ customerId: id }, 'customer_deleted');
   }

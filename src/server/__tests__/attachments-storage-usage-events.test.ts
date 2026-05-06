@@ -2,10 +2,9 @@
  * API integration tests — `storage_usage_changed` emission per call site
  * (issue #171, ADR-0025).
  *
- * Pins AC-270 from verification.md §15.28: each of the five v1 emitters
- * sends exactly one `storage_usage_changed` event post-commit to a
- * subscribed `/api/events` connection — and a tx that aborts emits
- * nothing.
+ * Pins AC-270 from verification.md §15.28: each of the v1 emitters sends
+ * exactly one `storage_usage_changed` event post-commit to a subscribed
+ * `/api/events` connection — and a tx that aborts emits nothing.
  *
  * v1 emitters under test (architecture.md §11.13):
  *
@@ -13,11 +12,16 @@
  *   2. AttachmentService.hideAttachment (ready → hidden)
  *   3. AttachmentService.restoreAttachment (hidden → ready)
  *   4. attachment-hidden-reaper (hidden row delete)
+ *   5. ProjectCrudService.purgeProject (FK cascade removes attachments)
+ *   6. CustomerService.deleteCustomer (atomic archived-project purge)
  *
  * The orphan reaper is intentionally NOT in the emitter list — it
  * deletes only `pending` rows, which contribute zero to every counter
  * per data-model.md §5.14, so emission would be a wasted refetch with
- * identical bytes. Pinned by architecture.md §11.13 + AC-270.
+ * identical bytes. Pinned by architecture.md §11.13 + AC-270. The two
+ * cascade emitters (5, 6) gate emission on whether the cascade actually
+ * removed byte-bearing rows for the same reason — purges of empty
+ * projects, or pending-only projects, must stay silent.
  *
  * Failure isolation arm (architecture.md §11.13, AC-270 final clause):
  * a subscriber whose write throws does not break the originating
@@ -232,6 +236,53 @@ async function projectIdAny(ownerToken: string): Promise<string> {
   const active = data.find((p) => p.status !== 'erledigt' && p.status !== 'archiviert');
   if (!active) throw new Error('seed has no active project');
   return active.id;
+}
+
+/**
+ * Resolve any seeded customer id — used as the parent of fresh active
+ * projects in the purge-cascade arms. The customer-delete arms create
+ * their own customer fixtures via `createCustomer` so they can be
+ * deleted atomically with their archived projects without touching
+ * the seed.
+ */
+async function seededCustomerIdAny(ownerToken: string): Promise<string> {
+  const res = await authGet(ownerToken, '/api/customers');
+  const customers = (res.json().customers ?? res.json().data) as Array<{ id: string }>;
+  if (!Array.isArray(customers) || customers.length === 0) {
+    throw new Error('seed has no customers');
+  }
+  return customers[0].id;
+}
+
+async function createActiveProject(ownerToken: string, customerId: string): Promise<string> {
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const res = await authPost(ownerToken, '/api/projects', {
+    number: `EVT-${suffix}`,
+    title: `Storage-event fixture ${suffix}`,
+    customerId,
+  });
+  if (res.statusCode !== 201) {
+    throw new Error(`fixture project create failed ${res.statusCode} ${res.body}`);
+  }
+  return res.json().id as string;
+}
+
+async function archiveProject(ownerToken: string, projectId: string): Promise<void> {
+  const res = await authDelete(ownerToken, `/api/projects/${projectId}`);
+  if (res.statusCode !== 200) {
+    throw new Error(`fixture project archive failed ${res.statusCode} ${res.body}`);
+  }
+}
+
+async function createCustomer(ownerToken: string): Promise<string> {
+  const suffix = crypto.randomUUID().slice(0, 8);
+  const res = await authPost(ownerToken, '/api/customers', {
+    name: `Evt-Cust-${suffix}`,
+  });
+  if (res.statusCode !== 201) {
+    throw new Error(`fixture customer create failed ${res.statusCode} ${res.body}`);
+  }
+  return res.json().id as string;
 }
 
 // ---------------------------------------------------------------------
@@ -495,6 +546,158 @@ describe('storage_usage_changed emission per call site (AC-270)', () => {
           ttlMinutes: 1,
           now,
         });
+
+        await new Promise<void>((r) => setImmediate(r));
+
+        expect(countStorageUsageEvents(conn)).toBe(0);
+      } finally {
+        bus.unsubscribe(conn);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // (5) ProjectCrudService.purgeProject — FK-cascade attachment removal.
+  //
+  // AC-270 requires emission whenever the cascade removes byte-bearing
+  // rows (`ready` or `hidden`), and silence when it removes nothing
+  // counter-moving (zero attachments, or `pending`-only). Three arms
+  // pin the trichotomy.
+  // -------------------------------------------------------------------
+  describe('AC-270: ProjectCrudService.purgeProject (cascade) emits exactly one event when bytes moved', () => {
+    it('a subscribed connection observes one storage_usage_changed event after a purge that cascades a ready attachment', async () => {
+      const bus = await loadBus();
+      const customerId = await seededCustomerIdAny(ownerToken);
+      const projectId = await createActiveProject(ownerToken, customerId);
+      // Seed a ready attachment, then archive — the archive itself does
+      // not move counters (status stays ready, only `projects.deleted`
+      // flips), so subscribing AFTER the archive isolates the purge
+      // event from the seed's complete-emission.
+      await seedReadyAttachment(ownerToken, projectId);
+      await archiveProject(ownerToken, projectId);
+
+      const conn = subscribeFake(bus);
+      try {
+        const purgeRes = await authDelete(ownerToken, `/api/projects/${projectId}/purge`);
+        expect(purgeRes.statusCode).toBe(204);
+
+        await new Promise<void>((r) => setImmediate(r));
+
+        expect(countStorageUsageEvents(conn)).toBe(1);
+      } finally {
+        bus.unsubscribe(conn);
+      }
+    });
+
+    it('a subscribed connection observes zero events after purging a project with no attachments', async () => {
+      const bus = await loadBus();
+      const customerId = await seededCustomerIdAny(ownerToken);
+      const projectId = await createActiveProject(ownerToken, customerId);
+      await archiveProject(ownerToken, projectId);
+
+      const conn = subscribeFake(bus);
+      try {
+        const purgeRes = await authDelete(ownerToken, `/api/projects/${projectId}/purge`);
+        expect(purgeRes.statusCode).toBe(204);
+
+        await new Promise<void>((r) => setImmediate(r));
+
+        // No byte-bearing rows ⇒ no event. Emitting here would force
+        // every observer into an identical refetch.
+        expect(countStorageUsageEvents(conn)).toBe(0);
+      } finally {
+        bus.unsubscribe(conn);
+      }
+    });
+
+    it('a subscribed connection observes zero events after purging a project carrying only pending rows', async () => {
+      const bus = await loadBus();
+      const customerId = await seededCustomerIdAny(ownerToken);
+      const projectId = await createActiveProject(ownerToken, customerId);
+      // Seed a pending row directly — do not flip to ready, otherwise
+      // the complete emission contaminates a later count.
+      const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      await seedPendingBackdated(db, projectId, cutoff);
+      await archiveProject(ownerToken, projectId);
+
+      const conn = subscribeFake(bus);
+      try {
+        const purgeRes = await authDelete(ownerToken, `/api/projects/${projectId}/purge`);
+        expect(purgeRes.statusCode).toBe(204);
+
+        await new Promise<void>((r) => setImmediate(r));
+
+        // Pending rows contribute zero on every counter — purging them
+        // does not move the global figure, so no event must fire.
+        expect(countStorageUsageEvents(conn)).toBe(0);
+      } finally {
+        bus.unsubscribe(conn);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // (6) CustomerService.deleteCustomer — atomic archived-project purge.
+  //
+  // AC-91 says the customer-delete cascade purges every archived project
+  // atomically. AC-270 says a single event fires when at least one of
+  // those projects carried a byte-bearing row, and zero events fire
+  // otherwise (no archived projects, or archived projects had only
+  // pending / no attachments). Fan-in collapses to a single event even
+  // when multiple archived projects are purged atomically — observers
+  // refetch the global figure once per commit, not per project.
+  // -------------------------------------------------------------------
+  describe('AC-270: CustomerService.deleteCustomer (cascade) emits exactly one event when bytes moved', () => {
+    it('a subscribed connection observes one event after deleting a customer whose archived project carried a ready attachment', async () => {
+      const bus = await loadBus();
+      const customerId = await createCustomer(ownerToken);
+      const projectId = await createActiveProject(ownerToken, customerId);
+      await seedReadyAttachment(ownerToken, projectId);
+      await archiveProject(ownerToken, projectId);
+
+      const conn = subscribeFake(bus);
+      try {
+        const delRes = await authDelete(ownerToken, `/api/customers/${customerId}`);
+        expect(delRes.statusCode).toBe(204);
+
+        await new Promise<void>((r) => setImmediate(r));
+
+        expect(countStorageUsageEvents(conn)).toBe(1);
+      } finally {
+        bus.unsubscribe(conn);
+      }
+    });
+
+    it('a subscribed connection observes zero events after deleting a customer with no projects at all', async () => {
+      const bus = await loadBus();
+      const customerId = await createCustomer(ownerToken);
+
+      const conn = subscribeFake(bus);
+      try {
+        const delRes = await authDelete(ownerToken, `/api/customers/${customerId}`);
+        expect(delRes.statusCode).toBe(204);
+
+        await new Promise<void>((r) => setImmediate(r));
+
+        expect(countStorageUsageEvents(conn)).toBe(0);
+      } finally {
+        bus.unsubscribe(conn);
+      }
+    });
+
+    it('a subscribed connection observes zero events when archived projects had no byte-bearing attachments', async () => {
+      const bus = await loadBus();
+      const customerId = await createCustomer(ownerToken);
+      const projectId = await createActiveProject(ownerToken, customerId);
+      // Archive the project without ever attaching anything — the
+      // cascade will remove a project_storage_usage row whose four
+      // counters are all zero, so the global figure does not move.
+      await archiveProject(ownerToken, projectId);
+
+      const conn = subscribeFake(bus);
+      try {
+        const delRes = await authDelete(ownerToken, `/api/customers/${customerId}`);
+        expect(delRes.statusCode).toBe(204);
 
         await new Promise<void>((r) => setImmediate(r));
 
