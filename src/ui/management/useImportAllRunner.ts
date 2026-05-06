@@ -41,6 +41,7 @@ import { encodeDekMaterial, encryptBlob, generateDek } from '@/domain/clientEncr
 import { SCHEMA_VERSION } from '@/domain/dataExchange';
 import { deriveWebpThumbnail } from '@/domain/imagePipeline';
 import { importAllApi } from '@/state/importAllStore';
+import { useStorageUsageStore } from '@/state/storageUsageStore';
 import {
   importAllFromZip,
   parseTakeoutZip,
@@ -485,6 +486,13 @@ export function useImportAllRunner(input: UseImportAllRunnerInput): UseImportAll
           totalAttachments: result.totalAttachments,
           failures: result.failures,
         });
+        // Post-import: every committed attachment moved counters
+        // (pending → ready). One refresh after the orchestrator
+        // settles is enough — the per-attachment SSE broadcasts
+        // reach the same store via the round-trip path.
+        if (result.committedCount > 0) {
+          void useStorageUsageStore.getState().refresh();
+        }
       } catch (err) {
         if (ctrl.signal.aborted) return;
         console.warn('[import] orchestrator failed', err);

@@ -70,7 +70,7 @@ function setAuthRoles(roles: string[]): void {
 beforeEach(() => {
   getGlobalMock.mockReset();
   onSseEventMock.mockClear();
-  useStorageUsageStore.getState().__reset();
+  useStorageUsageStore.getState().__resetForTests();
 });
 
 afterEach(() => {

@@ -29,15 +29,24 @@ interface StorageUsageStore {
   data: StorageUsageDto | null;
   subscribe: () => () => void;
   refresh: () => Promise<void>;
-  __reset: () => void;
+  __resetForTests: () => void;
 }
 
 let subscriberCount = 0;
 let visibilityHandler: (() => void) | null = null;
 let unsubscribeSse: (() => void) | null = null;
+// In-flight epoch — every refetch() captures a snapshot before
+// awaiting and only commits its result if no newer call has started
+// in the meantime. A burst of triggers (mount + visibilitychange +
+// SSE arriving in the same tick) issues N parallel GETs; without
+// this gate the slowest response wins because `setState` blindly
+// overwrites with whichever promise resolves last.
+let refetchEpoch = 0;
 
 async function refetch(): Promise<void> {
+  const epoch = ++refetchEpoch;
   const result = await storageUsageApi.getGlobal();
+  if (epoch !== refetchEpoch) return;
   if (result.ok) {
     useStorageUsageStore.setState({ data: result.data });
   }
@@ -90,9 +99,10 @@ export const useStorageUsageStore = create<StorageUsageStore>((set) => ({
     await refetch();
   },
 
-  __reset: () => {
+  __resetForTests: () => {
     detachListeners();
     subscriberCount = 0;
+    refetchEpoch = 0;
     set({ data: null });
   },
 }));

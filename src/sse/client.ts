@@ -15,8 +15,10 @@
  *   - Lazily created on first `onSseEvent` call; closed when the last
  *     subscriber unsubscribes. The next subscribe rebuilds it. This
  *     keeps the connection cost zero when no UI surface is mounted.
- *   - WHATWG `EventSource` already reconnects with exponential backoff
- *     on transport failure; we do not implement reconnection.
+ *   - WHATWG `EventSource` reconnects on transport failure at the
+ *     implementation-defined reconnection time the spec mandates
+ *     (overridable by the server's `retry:` field, not used here);
+ *     we do not implement reconnection.
  *   - Same-origin only — cookies ride along automatically. Do not
  *     pass `withCredentials: true` (it is for cross-origin only and
  *     causes a CORS preflight that the server is not configured for).

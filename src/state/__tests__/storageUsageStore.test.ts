@@ -94,7 +94,7 @@ beforeEach(() => {
   setVisibility('visible');
   // Reset the singleton store so each test starts from a clean slate.
   // The store's reset hook is part of its public test contract.
-  useStorageUsageStore.getState().__reset();
+  useStorageUsageStore.getState().__resetForTests();
 });
 
 afterEach(() => {
