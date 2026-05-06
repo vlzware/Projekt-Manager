@@ -25,3 +25,4 @@
 | [0021](0021-audit-log-and-notifications-single-write-path.md)               | Audit log and notifications — single write path, publisher-over-audit | Accepted | 2026-04-19 |
 | [0022](0022-binary-storage-b2-compliance-object-lock.md)                    | Binary storage on Backblaze B2 with Compliance Object Lock            | Accepted | 2026-04-22 |
 | [0023](0023-notification-rules-db-stored-closed-event-catalog.md)           | Notification rules as DB-stored configuration with a closed catalog   | Accepted | 2026-04-20 |
+| [0024](0024-binary-attachment-e2e-encryption.md)                            | End-to-end encryption of binary attachments                           | Accepted | 2026-04-30 |

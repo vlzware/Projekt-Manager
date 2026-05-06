@@ -20,13 +20,13 @@ Each class of data has different size, portability, and durability properties, s
 
 ## Layer 1 — Business data (portability, not DR)
 
-Human-triggered JSON export/import via the **Daten** view. Restore-only semantics (empty target → proceed; non-empty → refuse unless confirmed). IDs preserved, single transaction.
+Human-triggered single-zip export/import via the **Daten** view — `data.json` (the unified text envelope) plus every `status='ready'` attachment as a plaintext zip entry, with a `manifest.json` carrying per-entry SHA-256 for offline verification. Restore-only semantics (empty target → proceed; non-empty → refuse unless confirmed). IDs preserved, single transaction for the text leg; the binary leg drives the standard `init` (with `restore` block) → presigned PUT → `complete` pipeline against the importing instance, all browser-orchestrated so the VPS stays out of the plaintext data path per [ADR-0024](docs/adr/0024-binary-attachment-e2e-encryption.md).
 
-- **Rationale and scope:** [ADR-0018](docs/adr/0018-data-persistence-and-recovery-layered-strategy.md)
+- **Rationale and scope:** [ADR-0018](docs/adr/0018-data-persistence-and-recovery-layered-strategy.md) (text + envelope), [ADR-0024](docs/adr/0024-binary-attachment-e2e-encryption.md) (binary leg — same e2e upload pipeline)
 - **API contract:** [spec api.md §14.2.4 — Unified Data Exchange](docs/spec/api.md#1424-unified-data-exchange)
 - **UI:** [spec ui/daten.md — Daten view](docs/spec/ui/daten.md#811-daten-view)
 - **Envelope shape:** [spec data-model.md §5.8](docs/spec/data-model.md#58-export-envelope)
-- **Code:** `src/server/services/{ExportService,ImportService}.ts`
+- **Code:** `src/server/services/{ExportService,ImportService}.ts` (text leg), `src/ui/management/{exportAllAsZip,importAllFromZip}.ts` (browser orchestrators)
 
 Users and sessions are deliberately excluded. Admin bootstrap ([ADR-0010](docs/adr/0010-first-run-admin-bootstrap.md)) handles first-install user creation.
 
@@ -73,7 +73,7 @@ Uploaded files live on Backblaze B2. The app key cannot destroy versions; "delet
 | Provision the Layer 3 B2 bucket + key   | [ops/object-storage-provisioning.md](docs/ops/object-storage-provisioning.md)                                                                           |
 | Provision the Layer 3 binary key        | [ops/binary-key/](docs/ops/binary-key/)                                                                                                                 |
 | See the full Layer 3 design             | [ADR-0022](docs/adr/0022-binary-storage-b2-compliance-object-lock.md) (durability), [ADR-0024](docs/adr/0024-binary-attachment-e2e-encryption.md) (e2e) |
-| Export business data for a peer install | UI → Daten view                                                                                                                                         |
+| Export all data (text + attachments)    | UI → Daten view                                                                                                                                         |
 
 ---
 
