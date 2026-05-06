@@ -107,7 +107,8 @@ CREATE TABLE "project_storage_usage" (
 	"space_ready_bytes" bigint DEFAULT 0 NOT NULL,
 	"space_hidden_bytes" bigint DEFAULT 0 NOT NULL,
 	"ciphertext_ready_bytes" bigint DEFAULT 0 NOT NULL,
-	"ciphertext_hidden_bytes" bigint DEFAULT 0 NOT NULL
+	"ciphertext_hidden_bytes" bigint DEFAULT 0 NOT NULL,
+	CONSTRAINT "project_storage_usage_non_negative" CHECK ("project_storage_usage"."space_ready_bytes" >= 0 AND "project_storage_usage"."space_hidden_bytes" >= 0 AND "project_storage_usage"."ciphertext_ready_bytes" >= 0 AND "project_storage_usage"."ciphertext_hidden_bytes" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "project_workers" (

@@ -591,15 +591,32 @@ export const attachments = pgTable(
  * status bucket (`ready` or `hidden`); `pending` rows contribute to
  * neither.
  */
-export const projectStorageUsage = pgTable('project_storage_usage', {
-  projectId: uuid('project_id')
-    .primaryKey()
-    .references(() => projects.id, { onDelete: 'cascade' }),
-  spaceReadyBytes: bigint('space_ready_bytes', { mode: 'number' }).notNull().default(0),
-  spaceHiddenBytes: bigint('space_hidden_bytes', { mode: 'number' }).notNull().default(0),
-  ciphertextReadyBytes: bigint('ciphertext_ready_bytes', { mode: 'number' }).notNull().default(0),
-  ciphertextHiddenBytes: bigint('ciphertext_hidden_bytes', { mode: 'number' }).notNull().default(0),
-});
+export const projectStorageUsage = pgTable(
+  'project_storage_usage',
+  {
+    projectId: uuid('project_id')
+      .primaryKey()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    spaceReadyBytes: bigint('space_ready_bytes', { mode: 'number' }).notNull().default(0),
+    spaceHiddenBytes: bigint('space_hidden_bytes', { mode: 'number' }).notNull().default(0),
+    ciphertextReadyBytes: bigint('ciphertext_ready_bytes', { mode: 'number' }).notNull().default(0),
+    ciphertextHiddenBytes: bigint('ciphertext_hidden_bytes', { mode: 'number' })
+      .notNull()
+      .default(0),
+  },
+  (table) => [
+    // Tripwire — counters can only grow from the trigger arithmetic
+    // and a divergence (broken trigger replacement, hand-edited row,
+    // status-flip without matching insert) must trip at write time
+    // rather than drift silently. The reconcilability invariant
+    // (verification.md AC-267) is the integration-test backstop;
+    // this CHECK is the row-level one.
+    check(
+      'project_storage_usage_non_negative',
+      sql`${table.spaceReadyBytes} >= 0 AND ${table.spaceHiddenBytes} >= 0 AND ${table.ciphertextReadyBytes} >= 0 AND ${table.ciphertextHiddenBytes} >= 0`,
+    ),
+  ],
+);
 
 // ---------------------------------------------------------------
 // Schema-level audit-payload exclusion (ADR-0024 § Audit-log boundary,
