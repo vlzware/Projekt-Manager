@@ -15,6 +15,7 @@ import { seed } from '../server/seed.js';
 import { deactivateUser as deactivateUserRepo } from '../server/repositories/user.js';
 import { __resetForTests as resetAuditPublisher } from '../server/services/audit-publisher.js';
 import { __resetForTests as resetNotificationPublisher } from '../server/services/notification-publisher.js';
+import { __resetForTests as resetSseBus } from '../server/sse/bus.js';
 import { randomBytes } from 'node:crypto';
 import type { Database } from '../server/db/connection.js';
 import { sessions, users } from '../server/db/schema.js';
@@ -67,8 +68,8 @@ export async function startApp(): Promise<FastifyInstance> {
  *
  * Closing order matters: Fastify first (stops accepting requests and
  * waits for in-flight handlers to finish), reset module-scoped state on
- * the audit + notification publishers so the next `startApp()` wires
- * onto a clean bus, then drain the pg pool.
+ * the audit + notification publishers + SSE bus so the next `startApp()`
+ * wires onto clean buses, then drain the pg pool.
  */
 export async function stopApp(): Promise<void> {
   if (app) {
@@ -76,6 +77,7 @@ export async function stopApp(): Promise<void> {
   }
   resetNotificationPublisher();
   resetAuditPublisher();
+  resetSseBus();
   if (pool) {
     await pool.end();
   }

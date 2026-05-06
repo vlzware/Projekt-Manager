@@ -55,7 +55,6 @@ export function eventsRoutes(db: Database) {
           reply.raw.write(chunk);
         },
       };
-      subscribe(conn);
 
       const heartbeat = setInterval(() => {
         // A failed write here means the socket is gone; the close
@@ -74,12 +73,15 @@ export function eventsRoutes(db: Database) {
         unsubscribe(conn);
       };
       // `close` fires on tab close, navigation, network drop. `error`
-      // covers transport faults that don't trigger a clean close. We
-      // do not detach these listeners because the request object is
-      // garbage-collected once the connection ends — leaving them
-      // attached costs nothing.
+      // covers transport faults that don't trigger a clean close. Both
+      // listeners point at the same idempotent `teardown` —
+      // `clearInterval` and `Set.delete` accept double-invocation.
+      // Listeners are attached BEFORE `subscribe(conn)` so a connection
+      // that aborts in the synchronous gap between the two cannot leave
+      // a subscriber in the bus until the next broadcast retries it.
       request.raw.on('close', teardown);
       request.raw.on('error', teardown);
+      subscribe(conn);
     });
 
     app.route({
