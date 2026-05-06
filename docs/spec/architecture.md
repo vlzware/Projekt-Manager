@@ -243,10 +243,9 @@ In-process bus that fans out typed invalidation events to subscribed SSE connect
 - `AttachmentService.completeUpload` (`pending → ready`)
 - `AttachmentService.hide` (`ready → hidden`)
 - `AttachmentService.restore` (`hidden → ready`)
-- `attachment-orphan-reaper` ([data-model.md §6.11](data-model.md#611-attachment-orphan-reaper)) — `pending` row delete
 - `attachment-hidden-reaper` ([data-model.md §6.12](data-model.md#612-attachment-hidden-reaper)) — `hidden` row delete
 
-The four AttachmentService paths cover every byte-moving mutation reachable through the API surface; the two reapers cover the two scheduled byte-moving paths. Together they emit on every transition that changes a counter in [data-model.md §5.14](data-model.md#514-project-storage-usage). New emitters land alongside new event names without new infra.
+The three AttachmentService paths cover every byte-moving mutation reachable through the API surface; the hidden reaper covers the one scheduled byte-moving path. Together they emit on every transition that changes a counter in [data-model.md §5.14](data-model.md#514-project-storage-usage). The orphan reaper ([data-model.md §6.11](data-model.md#611-attachment-orphan-reaper)) deletes only `pending` rows, which contribute zero to every counter — no event is emitted. New emitters land alongside new event names without new infra.
 
 **Failure isolation.** A throwing subscriber writer (closed socket, slow consumer) does not affect other subscribers — the bus catches per-subscriber failures, logs structured operational output, and removes the failing subscriber. Same posture as [§11.11](#1111-notification-publisher-and-dispatch)'s post-commit handlers; an emission failure never rolls back the originating mutation, which has already committed.
 
