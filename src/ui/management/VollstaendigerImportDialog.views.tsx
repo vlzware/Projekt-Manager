@@ -9,6 +9,7 @@
 import { type ReactNode, type RefObject } from 'react';
 import { STRINGS } from '@/config/strings';
 import { RESTORE_CONFIRMATION_PHRASE } from '@/config/dataExchangeConfig';
+import { formatBytes } from '@/ui/utils/formatBytes';
 import type {
   ParsingPhase,
   PreflightPhase,
@@ -17,14 +18,6 @@ import type {
   ErrorPhase,
 } from './useImportAllRunner';
 import styles from './VollstaendigerImportDialog.module.css';
-
-/** Decimal-SI byte count formatter. Matches the export-side dialog. */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
 
 interface DialogShellProps {
   dialogRef: RefObject<HTMLDivElement | null>;

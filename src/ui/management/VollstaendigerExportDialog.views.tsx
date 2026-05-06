@@ -23,21 +23,9 @@
 
 import { type ReactNode, type RefObject } from 'react';
 import { STRINGS } from '@/config/strings';
+import { formatBytes } from '@/ui/utils/formatBytes';
 import type { PreflightPhase, ProgressPhase, SummaryPhase, ErrorPhase } from './useExportAllRunner';
 import styles from './VollstaendigerExportDialog.module.css';
-
-/**
- * Format a byte count for human display. Decimal SI (KB/MB) — matches
- * what download UIs typically render (Chrome, Firefox both surface
- * decimal byte counts in their downloads UI). Two decimal places at the
- * MB+ tier; integer at B/KB.
- */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
 
 interface DialogShellProps {
   dialogRef: RefObject<HTMLDivElement | null>;
