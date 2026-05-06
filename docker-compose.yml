@@ -125,6 +125,10 @@ services:
       ATTACHMENT_HIDDEN_REAPER_TTL_MINUTES: ${ATTACHMENT_HIDDEN_REAPER_TTL_MINUTES:-}
       ATTACHMENT_HIDDEN_REAPER_INTERVAL_MINUTES: ${ATTACHMENT_HIDDEN_REAPER_INTERVAL_MINUTES:-}
       ATTACHMENT_WORKER_SELF_DELETE_GRACE_MINUTES: ${ATTACHMENT_WORKER_SELF_DELETE_GRACE_MINUTES:-}
+      # Realtime invalidation channel heartbeat (ADR-0025,
+      # api.md §14.2.13). Defaults to 25 s; integration tests override
+      # to drive heartbeat assertions in milliseconds.
+      SSE_HEARTBEAT_INTERVAL_MS: ${SSE_HEARTBEAT_INTERVAL_MS:-}
       # Web Push / VAPID (ADR-0023). Both optional — when unset the
       # server installs a no-op dispatcher and the UI opt-in reports
       # "nicht konfiguriert". VAPID_PRIVATE_KEY is a secret (lives in
