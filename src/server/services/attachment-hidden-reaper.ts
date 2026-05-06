@@ -26,7 +26,7 @@ import type { Database } from '../db/connection.js';
 import type { ServiceLogger } from './Logger.js';
 import { findHiddenForReap, deleteHiddenForReap } from '../repositories/attachment.js';
 import { mutate } from './mutate.js';
-import { broadcast } from '../sse/bus.js';
+import { emitStorageUsageChanged } from '../sse/emitters.js';
 
 const MS_PER_MINUTE = 60 * 1000;
 
@@ -112,7 +112,7 @@ export async function runAttachmentHiddenReaper(
       // (data-model.md §5.14). Broadcast AFTER mutate() resolves so
       // CAS-loss (HiddenReaperRowRaced — caught below) and per-row
       // failures emit nothing (AC-270 emitter list).
-      broadcast('storage_usage_changed');
+      emitStorageUsageChanged();
     } catch (err) {
       if (err instanceof HiddenReaperRowRaced) continue;
       // Real DB / dispatcher fault on this row — log on the error

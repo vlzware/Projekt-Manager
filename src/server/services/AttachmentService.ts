@@ -97,7 +97,7 @@ import {
 } from '../repositories/attachment.js';
 import { getProjectRowById } from '../repositories/project.js';
 import { mutate } from './mutate.js';
-import { broadcast } from '../sse/bus.js';
+import { emitStorageUsageChanged } from '../sse/emitters.js';
 import {
   bulkLimitExceeded,
   conflict,
@@ -812,7 +812,7 @@ export class AttachmentService {
     // counters from 0 to its sizeBytes (data-model.md §5.14). Broadcast
     // AFTER db.transaction resolves so a tx that aborts emits nothing
     // (architecture.md §11.13, AC-270).
-    broadcast('storage_usage_changed');
+    emitStorageUsageChanged();
 
     log.info({ attachmentId, projectId }, 'attachment_ready');
     return toAttachment(updated);
@@ -932,7 +932,7 @@ export class AttachmentService {
     // counters into the hidden bucket (data-model.md §5.14). Broadcast
     // AFTER mutate() resolves; emission inside `run` would leak on a
     // post-mutate fault and pre-empt the abort guarantee (AC-270).
-    broadcast('storage_usage_changed');
+    emitStorageUsageChanged();
 
     log.info({ attachmentId, projectId }, 'attachment_hidden');
   }
@@ -1137,7 +1137,7 @@ export class AttachmentService {
     // back into the ready counters (data-model.md §5.14). Broadcast
     // AFTER mutate() resolves so a tx rollback (storage copy fault,
     // CAS-loss) emits nothing (AC-270).
-    broadcast('storage_usage_changed');
+    emitStorageUsageChanged();
 
     log.info({ attachmentId, projectId }, 'attachment_restored');
     return toAttachment(restored);

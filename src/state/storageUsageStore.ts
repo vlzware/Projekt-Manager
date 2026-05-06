@@ -22,6 +22,7 @@
 
 import { create } from 'zustand';
 import { storageUsageApi, type StorageUsageDto } from '@/api/client';
+import { STORAGE_USAGE_CHANGED } from '@/config/sseEvents';
 import { onSseEvent } from '@/sse/client';
 
 interface StorageUsageStore {
@@ -49,7 +50,7 @@ function attachListeners(): void {
     }
   };
   document.addEventListener('visibilitychange', visibilityHandler);
-  unsubscribeSse = onSseEvent('storage_usage_changed', () => {
+  unsubscribeSse = onSseEvent(STORAGE_USAGE_CHANGED, () => {
     void refetch();
   });
 }
