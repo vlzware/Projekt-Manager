@@ -85,6 +85,16 @@ export interface CreatePendingAttachmentInput {
    */
   wrappedDekVersion: number;
   createdBy: string | null;
+  /**
+   * Optional override for the row's `createdAt` timestamp. Standard
+   * upload init omits this field; the schema default (`now()`) stamps
+   * the row. Issue #163 / AC-256: the takeout-zip restore orchestrator
+   * supplies the source row's original `createdAt` here so the
+   * restored row preserves the audit-time identity. Caller must hold
+   * `data:restore` for this branch (service-layer gate in
+   * `AttachmentService.initUpload`).
+   */
+  createdAt?: Date;
 }
 
 /**
@@ -155,6 +165,10 @@ export async function createPending(
       wrappedThumbDek: input.wrappedThumbDek,
       wrappedDekVersion: input.wrappedDekVersion,
       createdBy: input.createdBy,
+      // Standard init omits createdAt — the column defaults to `now()`.
+      // Issue #163 / AC-256: restore-mode init supplies the source row's
+      // timestamp here.
+      ...(input.createdAt !== undefined ? { createdAt: input.createdAt } : {}),
     })
     .returning();
   return rows[0]!;
@@ -358,6 +372,21 @@ export async function listKeysForProject(
     .select({ originalKey: attachments.originalKey, thumbKey: attachments.thumbKey })
     .from(attachments)
     .where(eq(attachments.projectId, projectId));
+}
+
+/**
+ * Collect every attachment key in the table. Used by the override-import
+ * path so the bytes left over from the prior dataset can be hidden after
+ * the TRUNCATE commits — without this, the orphaned objects sit as
+ * current versions of unreferenced keys and the lifecycle policy
+ * (which only reaps noncurrent versions) leaves them forever.
+ */
+export async function listAllKeys(
+  db: TransactionalDatabase,
+): Promise<Array<{ originalKey: string; thumbKey: string | null }>> {
+  return db
+    .select({ originalKey: attachments.originalKey, thumbKey: attachments.thumbKey })
+    .from(attachments);
 }
 
 /**

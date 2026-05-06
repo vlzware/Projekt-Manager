@@ -1,0 +1,137 @@
+/**
+ * Import dialog — parsing → preflight → progress → summary
+ * (ui/daten.md §8.11.2, AC-259/AC-260).
+ *
+ * Five phases:
+ *   1. parsing       — hook reads + parses zip + dry-runs API. Spinner.
+ *   2. preflight     — parsed envelope-counts readout + (when target
+ *                      non-empty) destructive-action confirmation
+ *                      phrase input. Confirm dispatches the text-leg
+ *                      and per-attachment legs.
+ *   3. progress      — files-done / total + bytes-done / total + current
+ *                      filename + Abbrechen action.
+ *   4. summary       — restored counts + per-file failure list.
+ *   5. error         — pre-flight or text-leg rejection surfaces here.
+ *
+ * The parent owns the file-picker step (see DatenView): it triggers a
+ * hidden <input type="file"> from the Import button and only mounts
+ * this dialog once a file has been selected. This file accepts the
+ * file as a prop and threads it to `useImportAllRunner` for the
+ * parse-on-mount flow.
+ *
+ * Orchestration (state machine, zip parse, dry-run, orchestrator
+ * dispatch) lives in `useImportAllRunner`; phase render branches live
+ * in `VollstaendigerImportDialog.views`. This file is the dialog mount
+ * + a11y wiring.
+ */
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ATTACHMENT_CONFIG } from '@/config/attachmentConfig';
+import { useDialogA11y } from '@/ui/common/useDialogA11y';
+import { useImportAllRunner } from './useImportAllRunner';
+import {
+  ErrorView,
+  ParsingView,
+  PreflightView,
+  ProgressView,
+  SummaryView,
+} from './VollstaendigerImportDialog.views';
+
+interface VollstaendigerImportDialogProps {
+  file: File;
+  onClose: () => void;
+}
+
+function probeIsMobile(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia(`(max-width: ${ATTACHMENT_CONFIG.exportAllMobileWarningBreakpointPx}px)`)
+    .matches;
+}
+
+export function VollstaendigerImportDialog({ file, onClose }: VollstaendigerImportDialogProps) {
+  const [isMobile, setIsMobile] = useState<boolean>(probeIsMobile);
+  const [phraseInput, setPhraseInput] = useState<string>('');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const initialFocusButtonRef = useRef<HTMLButtonElement>(null);
+
+  const { phase, start, cancel } = useImportAllRunner({ file });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mql = window.matchMedia(
+      `(max-width: ${ATTACHMENT_CONFIG.exportAllMobileWarningBreakpointPx}px)`,
+    );
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    cancel();
+    onClose();
+  }, [cancel, onClose]);
+
+  const escapeAllowed =
+    phase.kind === 'parsing' ||
+    phase.kind === 'preflight' ||
+    phase.kind === 'summary' ||
+    phase.kind === 'error';
+  useDialogA11y({
+    isOpen: true,
+    dialogRef,
+    onOpenedFocus: useCallback(() => {
+      initialFocusButtonRef.current?.focus();
+    }, []),
+    onEscape: escapeAllowed ? handleClose : undefined,
+  });
+
+  if (phase.kind === 'parsing') {
+    return <ParsingView phase={phase} dialogRef={dialogRef} />;
+  }
+
+  if (phase.kind === 'preflight') {
+    return (
+      <PreflightView
+        phase={phase}
+        isMobile={isMobile}
+        dialogRef={dialogRef}
+        initialFocusRef={initialFocusButtonRef}
+        phraseInput={phraseInput}
+        onPhraseInputChange={setPhraseInput}
+        onCancel={handleClose}
+        onConfirm={() => start(phraseInput)}
+      />
+    );
+  }
+
+  if (phase.kind === 'progress') {
+    return (
+      <ProgressView
+        phase={phase}
+        dialogRef={dialogRef}
+        initialFocusRef={initialFocusButtonRef}
+        onCancel={handleClose}
+      />
+    );
+  }
+
+  if (phase.kind === 'summary') {
+    return (
+      <SummaryView
+        phase={phase}
+        dialogRef={dialogRef}
+        initialFocusRef={initialFocusButtonRef}
+        onClose={handleClose}
+      />
+    );
+  }
+
+  return (
+    <ErrorView
+      phase={phase}
+      dialogRef={dialogRef}
+      initialFocusRef={initialFocusButtonRef}
+      onClose={handleClose}
+    />
+  );
+}

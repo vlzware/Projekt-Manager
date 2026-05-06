@@ -44,6 +44,9 @@ import {
 import { createDatabase } from '../db/connection.js';
 import { seed } from '../seed.js';
 import type { Database } from '../db/connection.js';
+import { createStorageClient } from '../storage/client.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
+import { getEnv } from '../config/env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(__dirname, '../db/migrations');
@@ -56,8 +59,14 @@ const migrationsFolder = path.resolve(__dirname, '../db/migrations');
  * When `src/server/seed.ts` or data-model.md §5.8 bumps the schema, bump
  * this constant; the import should then reject the old value the next
  * test run, which is exactly the test's purpose.
+ *
+ * Bumped to `2` when the takeout-zip restore landed (issue #163): the
+ * attachments slot dropped its crypto fields, opaque storage keys, and
+ * ciphertext sizes (data-model.md §5.8). Pre-#163 envelopes are not
+ * consumable on the importing instance; the SCHEMA_VERSION_MISMATCH
+ * arm is the documented refusal path.
  */
-const CURRENT_SCHEMA_VERSION = 1;
+const CURRENT_SCHEMA_VERSION = 2;
 
 const UUID_ZERO = '00000000-0000-0000-0000-000000000000';
 
@@ -986,12 +995,19 @@ describe('Unified Data Exchange', () => {
   });
 
   // ---------------------------------------------------------------
-  // AC-141: roundtrip byte-equivalence (modulo exported_at)
+  // AC-141: roundtrip byte-equivalence (modulo exported_at) for the
+  // text-row slice. Issue #163: `/api/import` is text-only post-fix
+  // (AC-253), so the orchestrator strips the envelope's `attachments`
+  // key before posting; per-attachment restoration runs through the
+  // takeout-zip path covered by AC-259. Re-exporting the seeded
+  // dataset after a stripped re-import therefore returns an empty
+  // `attachments` array — matched against the source by construction.
   // ---------------------------------------------------------------
   describe('AC-141: full roundtrip produces byte-identical content', () => {
-    // AC-141: seed → export1 → wipe → import(override) → export2 →
-    // customers/projects/project_workers must match exactly. Only
-    // exported_at may drift between runs.
+    // AC-141 text-row arm: seed → export1 → wipe → import(stripped) →
+    // export2 → customers/projects/project_workers match exactly. The
+    // seed has no attachments to begin with, so the empty `attachments`
+    // arrays compare equal too.
     it('exports → imports → re-exports without drift (exported_at excluded)', async () => {
       const e1Res = await authGet(ownerToken, '/api/export');
       expect(e1Res.statusCode).toBe(200);
@@ -1000,7 +1016,21 @@ describe('Unified Data Exchange', () => {
       try {
         await wipeBusinessData();
 
-        const imp = await authPost(ownerToken, '/api/import', e1);
+        // Strip the `attachments` key — mirrors the orchestrator step
+        // in ui/daten.md §8.11.2 / AC-253. Re-posting the envelope
+        // verbatim would now reject with 422 (the fix for the silent-
+        // loss bug); the orchestrator pattern is what the contract
+        // expects.
+        const { attachments: _attachmentsStripped, ...textLeg } = e1 as ExportEnvelope & {
+          attachments?: unknown;
+        };
+        void _attachmentsStripped;
+
+        const imp = await authPost(
+          ownerToken,
+          '/api/import',
+          textLeg as unknown as Record<string, unknown>,
+        );
         expect(imp.statusCode).toBe(200);
 
         const e2Res = await authGet(ownerToken, '/api/export');
@@ -1493,6 +1523,379 @@ describe('Unified Data Exchange', () => {
       } finally {
         await reseedAndRelogin();
       }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-253: /api/import never inserts attachment rows; an `attachments`
+  // key in the body is rejected with 422 VALIDATION_ERROR. Closes the
+  // silent-loss bug at the wire — the pre-fix path inserted attachment
+  // rows whose wrapped DEKs were unwrappable on the importing instance.
+  // The new contract is text-only; the per-attachment leg of the
+  // takeout-zip restore drives `init` + presigned PUT + `complete`
+  // through the orchestrator (api.md §14.2.4 / api.md §14.2.11).
+  // ---------------------------------------------------------------
+  describe('AC-253: /api/import rejects bodies carrying an `attachments` key', () => {
+    /**
+     * Count `attachments` rows directly. Used to pin the no-write side
+     * of the AC: the rejection must happen before the transaction would
+     * have inserted any row, on every (dry_run × override) combination.
+     */
+    async function countAttachments(): Promise<number> {
+      const r = await pool.query<{ c: string }>(`SELECT COUNT(*)::text AS c FROM attachments`);
+      return Number(r.rows[0]!.c);
+    }
+
+    it.each([
+      ['no flags', '/api/import'],
+      ['dry_run only', '/api/import?dry_run=true'],
+      ['override only', '/api/import?override=true'],
+      ['dry_run and override', '/api/import?dry_run=true&override=true'],
+    ] as const)(
+      'returns 422 VALIDATION_ERROR when the body carries an `attachments` key (%s)',
+      async (_label, url) => {
+        await wipeBusinessData();
+        try {
+          const before = await countAttachments();
+
+          // Envelope is otherwise valid (intra-consistent, current
+          // schema_version) and the attachment row is structurally
+          // complete against the pre-#163 envelope shape — only the
+          // disallowed `attachments` key on the body should drive the
+          // 422. Any current-impl rejection on a different field
+          // (e.g. ADR-0024 `wrappedDekVersion` guard) would mask the
+          // load-bearing AC-253 wire-shape rejection; populating every
+          // documented field defuses that.
+          const envelope = buildFreshEnvelope() as ExportEnvelope & { attachments: unknown[] };
+          envelope.attachments = [
+            {
+              id: uuid('att', 1),
+              projectId: envelope.projects[0]!.id,
+              status: 'ready',
+              kind: 'binary',
+              label: 'sonstiges',
+              fileName: 'noop.pdf',
+              mimeType: 'application/pdf',
+              sizeBytes: 100,
+              ciphertextSizeBytes: 164,
+              ciphertextThumbSizeBytes: null,
+              originalKey: `attachments/${envelope.projects[0]!.id}/${uuid('att', 1)}.orig`,
+              thumbKey: null,
+              hasThumbnail: false,
+              wrappedDek: Buffer.alloc(192, 0x77).toString('base64'),
+              wrappedThumbDek: null,
+              wrappedDekVersion: 1,
+              createdAt: '2026-01-05T00:00:00.000Z',
+              createdBy: null,
+            },
+          ];
+          const body = {
+            ...envelope,
+            confirmation_phrase: EXPECTED_RESTORE_PHRASE,
+          };
+
+          const res = await authPost(ownerToken, url, body);
+          expect(res.statusCode).toBe(422);
+          expect(res.json().code).toBe('VALIDATION_ERROR');
+
+          // No `attachments` row was inserted regardless of flag combo.
+          // The whole point of the wire-shape rejection is that the
+          // transaction never opens.
+          expect(await countAttachments()).toBe(before);
+        } finally {
+          await reseedAndRelogin();
+        }
+      },
+    );
+
+    it('proceeds normally on the same fixture without the `attachments` key', async () => {
+      // Parallel call against the same envelope content with the
+      // disallowed key removed: the request must succeed (200) and
+      // the text rows land. This pins that the rejection above is the
+      // `attachments` key specifically, not some incidental envelope
+      // issue. It also keeps the AC-253 wire contract self-evident
+      // alongside its negative arm.
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        const res = await authPost(ownerToken, '/api/import', envelope);
+        expect(res.statusCode).toBe(200);
+
+        // Customer + project rows landed on the text-only path.
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        const ids = new Set(out.customers.map((c) => c.id));
+        for (const c of envelope.customers) expect(ids.has(c.id)).toBe(true);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-254: /api/import?override=true atomically truncates the
+  // `attachments` table alongside the customer / project / project-
+  // worker wipe. After a successful override-import, the table is
+  // empty regardless of envelope content (envelope `attachments[]`
+  // is rejected at the wire by AC-253; the takeout-zip restore
+  // mechanics re-upload through `init` after this call returns).
+  // ---------------------------------------------------------------
+  describe('AC-254: /api/import?override=true truncates the attachments table', () => {
+    /**
+     * Seed a single `pending` attachment row directly so the truncate
+     * has something to remove. A `pending` row is enough — the AC is
+     * "table is empty after override", not "only ready rows truncated".
+     * The wrapped envelope is synthetic; the import path never reads
+     * it (text-only post-fix).
+     */
+    async function seedAttachmentRow(projectId: string, suffix: string): Promise<string> {
+      // Build a hex-only UUID from the suffix (the suffix is a label,
+      // so map non-hex chars to their hex code-point). Real UUIDs are
+      // hex-only; PG rejects literal letters like `atom1` outright.
+      const hex = Array.from(suffix)
+        .map((c) => c.charCodeAt(0).toString(16))
+        .join('')
+        .padEnd(12, '0')
+        .slice(0, 12);
+      const id = `aaaaaaaa-0000-4000-8000-${hex}`;
+      const wrappedDek = Buffer.alloc(192, 0x77).toString('base64');
+      await db.execute(sql`
+        INSERT INTO attachments
+          (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+           ciphertext_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+        VALUES (${id}, ${projectId}, 'pending', 'binary', 'sonstiges',
+                ${`seeded-${suffix}.pdf`}, 'application/pdf', 100,
+                164,
+                ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
+                ${wrappedDek}, NULL, 1)
+      `);
+      return id;
+    }
+
+    async function countAttachments(): Promise<number> {
+      const r = await pool.query<{ c: string }>(`SELECT COUNT(*)::text AS c FROM attachments`);
+      return Number(r.rows[0]!.c);
+    }
+
+    it('post-call attachments row count is zero after a successful override-import', async () => {
+      // Seed two attachment rows attached to two distinct seeded projects
+      // so the truncate must remove both regardless of project id. The
+      // override envelope refers to FRESH projects (different ids); the
+      // truncate runs unconditionally, not as a "rows whose project is
+      // also being replaced" partial.
+      const projectsRes = await authGet(ownerToken, '/api/projects?limit=200');
+      const projects = projectsRes.json().data as Array<{ id: string }>;
+      expect(projects.length).toBeGreaterThanOrEqual(2);
+      await seedAttachmentRow(projects[0]!.id, 'a01');
+      await seedAttachmentRow(projects[1]!.id, 'b02');
+      expect(await countAttachments()).toBeGreaterThanOrEqual(2);
+
+      try {
+        // Post-fix wire contract: bodies with `attachments` key reject
+        // (AC-253), so the only honest envelope here is text-only. The
+        // load-bearing AC-254 assertion is that the truncate ran AND no
+        // path re-inserted attachment rows — the post-call count is 0.
+        const envelope = buildOverrideEnvelope();
+        const body = { ...envelope, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBe(200);
+
+        // The whole point of AC-254: the table is empty post-call.
+        expect(await countAttachments()).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('truncates atomically inside the same transaction as the customer / project / project-worker wipe', async () => {
+      // Atomicity arm: the truncate must share the same transaction
+      // boundary as the rest of the wipe + restore — a malformed envelope
+      // that triggers a rollback after the truncate would otherwise
+      // leave the attachments table empty while the seed survives.
+      // The AC names this explicitly: "truncates the attachments table
+      // inside the same transaction that wipes existing customer /
+      // project / project-worker rows, atomically with the restore".
+      const projectsRes = await authGet(ownerToken, '/api/projects?limit=200');
+      const projects = projectsRes.json().data as Array<{ id: string }>;
+      const seedProjectId = projects[0]!.id;
+      await seedAttachmentRow(seedProjectId, 'atom1');
+      const beforeAttachments = await countAttachments();
+      expect(beforeAttachments).toBeGreaterThanOrEqual(1);
+
+      try {
+        // Force a rollback by posting a structurally invalid override
+        // envelope (a project pointing at a non-existent customerId in
+        // the same envelope). The whole transaction must abort —
+        // attachments restored to their pre-call state, business rows
+        // unchanged.
+        const broken = buildOverrideEnvelope();
+        broken.projects[0]!.customerId = UUID_ZERO;
+        const body = { ...broken, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBeGreaterThanOrEqual(400);
+
+        // Atomicity: the seeded attachment row survives, because the
+        // truncate sat inside the rolled-back transaction.
+        expect(await countAttachments()).toBe(beforeAttachments);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // Issue #163 follow-up: the override path TRUNCATEs the attachments
+  // table but does not, on its own, touch the bytes in the bucket.
+  // The pending-orphan reaper only sweeps `status='pending'` rows; the
+  // bucket lifecycle (per ADR-0022) reaps noncurrent versions only —
+  // so a truncate-without-hide leaves the prior bytes as the current
+  // version of an unreferenced key, never reaped. The fix mirrors the
+  // project-purge cascade (AC-218): collect the keys before the wipe
+  // and hide them after commit so the prior version is demoted to
+  // noncurrent, and lifecycle takes it from there. (See #169 for the
+  // generic orphan sweeper that catches every other path.)
+  // ---------------------------------------------------------------
+  describe('Issue #163 follow-up: override-import hides prior attachment objects', () => {
+    let storage: AttachmentStorageClient;
+
+    beforeAll(() => {
+      const env = getEnv();
+      storage = createStorageClient({
+        endpoint: env.STORAGE_ENDPOINT!,
+        bucket: env.STORAGE_BUCKET,
+        accessKey: env.STORAGE_ACCESS_KEY!,
+        secretKey: env.STORAGE_SECRET_KEY!,
+      });
+    });
+
+    async function objectAbsent(key: string): Promise<boolean> {
+      try {
+        await storage.download(key);
+        return false;
+      } catch {
+        return true;
+      }
+    }
+
+    it('writes a delete marker for every prior attachment object on successful override-import', async () => {
+      const projectsRes = await authGet(ownerToken, '/api/projects?limit=200');
+      const projects = projectsRes.json().data as Array<{ id: string }>;
+      expect(projects.length).toBeGreaterThanOrEqual(1);
+      const projectId = projects[0]!.id;
+
+      // Seed a `ready` row + push real bytes to storage so the
+      // post-call assertion meaningfully distinguishes "object hidden"
+      // from "object never uploaded". Use a deterministic UUID so the
+      // assertion targets a known key.
+      const id = 'aaaaaaaa-1111-4000-8000-000000000169';
+      const originalKey = `attachments/${projectId}/${id}.orig`;
+      const wrappedDek = Buffer.alloc(192, 0x33).toString('base64');
+      await db.execute(sql`
+        INSERT INTO attachments
+          (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+           ciphertext_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+        VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                'leak-fixture.pdf', 'application/pdf', 100,
+                164,
+                ${originalKey}, NULL, FALSE,
+                ${wrappedDek}, NULL, 1)
+      `);
+      await storage.upload(originalKey, Buffer.from('orig-bytes'), 'application/octet-stream');
+
+      // Pre-state sanity: the seeded object is retrievable.
+      expect(await objectAbsent(originalKey)).toBe(false);
+
+      try {
+        const envelope = buildOverrideEnvelope();
+        const body = { ...envelope, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBe(200);
+
+        // The hide call wrote a delete marker — GET without versionId
+        // returns 404. The prior version is now a noncurrent version
+        // and the bucket lifecycle reaps it on its own clock per
+        // ADR-0022.
+        expect(await objectAbsent(originalKey)).toBe(true);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('leaves prior storage objects untouched when the override import is rejected', async () => {
+      const projectsRes = await authGet(ownerToken, '/api/projects?limit=200');
+      const projects = projectsRes.json().data as Array<{ id: string }>;
+      expect(projects.length).toBeGreaterThanOrEqual(1);
+      const projectId = projects[0]!.id;
+
+      // Seed a real uploaded object. A failed override-import must
+      // leave it retrievable — the hide path must NOT fire on the
+      // rollback branch.
+      const id = 'aaaaaaaa-2222-4000-8000-000000000169';
+      const originalKey = `attachments/${projectId}/${id}.orig`;
+      const wrappedDek = Buffer.alloc(192, 0x44).toString('base64');
+      await db.execute(sql`
+        INSERT INTO attachments
+          (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+           ciphertext_size_bytes,
+           original_key, thumb_key, has_thumbnail,
+           wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+        VALUES (${id}, ${projectId}, 'ready', 'binary', 'sonstiges',
+                'rollback-fixture.pdf', 'application/pdf', 100,
+                164,
+                ${originalKey}, NULL, FALSE,
+                ${wrappedDek}, NULL, 1)
+      `);
+      await storage.upload(originalKey, Buffer.from('rollback'), 'application/octet-stream');
+
+      try {
+        // Force a validation rejection — same trick as the existing
+        // AC-254 atomicity test: a project pointing at a missing
+        // customer in the same envelope.
+        const broken = buildOverrideEnvelope();
+        broken.projects[0]!.customerId = UUID_ZERO;
+        const body = { ...broken, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+        const res = await authPost(ownerToken, '/api/import?override=true', body);
+        expect(res.statusCode).toBeGreaterThanOrEqual(400);
+
+        // No commit ⇒ no hide. The seeded object is still the current
+        // version and remains retrievable.
+        expect(await objectAbsent(originalKey)).toBe(false);
+      } finally {
+        // Manual cleanup: the row + object are still present. Hide
+        // the object directly so the next describe block starts
+        // clean, then reseed (which cascades the row away via FK).
+        await storage.hide(originalKey);
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // AC-262 (server leg): defense-in-depth schema-version rejection on
+  // the legacy restore form. The orchestrator catches this client-side
+  // before dispatching the text-leg (covered by the orchestrator test
+  // in src/ui/management/__tests__/data-exchange-import-orchestrator.test.ts);
+  // a manually-replayed legacy POST with a mismatched schema_version
+  // must still be rejected at the server with `SCHEMA_VERSION_MISMATCH`,
+  // matching the parity AC-136 already pins for the existing form.
+  // ---------------------------------------------------------------
+  describe('AC-262: server-side defense rejects schema_version mismatch on the legacy restore form', () => {
+    it('rejects a legacy restore POST with mismatched schema_version (SCHEMA_VERSION_MISMATCH)', async () => {
+      const envelope = buildOverrideEnvelope();
+      // Drift the schema_version to a value the server cannot consume.
+      // CURRENT_SCHEMA_VERSION + 1 is outside the pinned set; the server
+      // must refuse outright (no migration code per ADR-0018).
+      envelope.schema_version = CURRENT_SCHEMA_VERSION + 1;
+      const body = { ...envelope, confirmation_phrase: EXPECTED_RESTORE_PHRASE };
+
+      const res = await authPost(ownerToken, '/api/import?override=true', body);
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      expect(res.statusCode).toBeLessThan(500);
+      expect(res.json().code).toBe('SCHEMA_VERSION_MISMATCH');
     });
   });
 });

@@ -41,6 +41,7 @@ Business-data layer specifics:
 - **Strict schema versioning**: export writes a monotonic `schema_version`; import rejects any mismatch. **No data-format migration code.** Cross-version imports, if ever needed, get a one-off script at that moment.
 - **Dry-run mode** on import: full validation and preview, no writes.
 - **Users excluded.** Admin bootstrap (ADR-0010) handles user creation on fresh installs. Test seeding uses a direct-DB helper confined to the test layer.
+- **Attachments — metadata-only descriptor on the envelope; bytes round-trip via the takeout zip.** The attachments slot on the export envelope carries identity + reachability fields only (`id`, `projectId`, `kind`, `label`, `fileName`, `mimeType`, `sizeBytes`, `createdAt`, `createdBy`); the wrapped-DEK envelopes, the version discriminator, opaque storage keys, and ciphertext sizes do NOT ride the envelope. Plaintext bytes ride alongside as zip entries in the [Export](../spec/ui/daten.md#8111-export) takeout artifact and are restored by the browser orchestrator running the standard `init` (with `restore` block) + presigned PUT + `complete` pipeline against the importing instance — keeping the VPS out of the bulk-plaintext data path per [ADR-0024](0024-binary-attachment-e2e-encryption.md). The text-leg `/api/import` never inserts attachment rows.
 
 The three layers are **complementary, not substitutes.** App-level export is not DR (omits users, sessions, schema state). `pg_dump` is not portability (encodes postgres internals). Binary durability belongs to storage.
 

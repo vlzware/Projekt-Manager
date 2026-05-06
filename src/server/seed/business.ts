@@ -484,6 +484,10 @@ export function buildBusinessEnvelope(now: Date): Envelope {
     customers: Array.from(customerById.values()),
     projects: Array.from(projectById.values()),
     project_workers: assignments,
+    // Seed business data has no attachments — the seed only mints
+    // text rows. The envelope shape requires the field, so an empty
+    // array is the right shape (issue #163 / data-model.md §5.8).
+    attachments: [],
   };
 }
 

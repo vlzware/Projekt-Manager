@@ -7,7 +7,7 @@
  */
 
 import { inArray, sql } from 'drizzle-orm';
-import { attachments, customers, projects, projectWorkers, users } from '../db/schema.js';
+import { customers, projects, projectWorkers, users } from '../db/schema.js';
 import type { Database, TransactionalDatabase } from '../db/connection.js';
 import {
   missingUserRefs,
@@ -18,14 +18,12 @@ import {
 } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
 import { restorePhraseMatches } from '../../config/dataExchangeConfig.js';
-import { isKnownWrappedDekVersion } from '../../domain/attachments.js';
 import {
   SCHEMA_VERSION,
   type Envelope,
   type EnvelopeCustomer,
   type EnvelopeProject,
   type EnvelopeAssignment,
-  type EnvelopeAttachment,
   type ImportOptions,
   type ImportResult,
   type DryRunPreview,
@@ -33,6 +31,10 @@ import {
   type MissingUserRefsPayload,
   type ValidationIssue,
 } from '../../domain/dataExchange.js';
+import { listAllKeys } from '../repositories/attachment.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
+import { bestEffortHideStorageKeys } from './AttachmentService.js';
+import type { ServiceLogger } from './Logger.js';
 
 /**
  * Within-envelope structural checks — uniqueness of keys that become DB
@@ -113,24 +115,13 @@ function validateEnvelope(envelope: Envelope): ValidationIssue[] {
     }
   }
 
-  // ADR-0024 envelope-format guard. Refuse rows whose
-  // `wrappedDekVersion` is outside the known set BEFORE insertion —
-  // landing such a row would create a permanently-broken attachment
-  // (every render path surfaces the unwrap-time format failure as
-  // DEK_UNWRAP_FAILED). Loud-fail at import-time gives the operator a
-  // clear signal: the envelope you imported was produced by a
-  // different version of this codebase, and Layer 1 cannot recover it
-  // without a code change. Per-row issue path so the operator knows
-  // which row to investigate.
-  for (let i = 0; i < (envelope.attachments ?? []).length; i++) {
-    const a = envelope.attachments![i]!;
-    if (!isKnownWrappedDekVersion(a.wrappedDekVersion)) {
-      issues.push({
-        path: `attachments[${i}].wrappedDekVersion`,
-        message: `envelope format unknown: ${a.wrappedDekVersion}`,
-      });
-    }
-  }
+  // Issue #163: `/api/import` is text-only post-fix. The envelope
+  // body MUST NOT carry an `attachments` key (rejected at the route
+  // layer with 422 VALIDATION_ERROR — see api.md §14.2.4 and
+  // AC-253). Per-attachment restoration runs through the standard
+  // `init` (with `restore` block) + per-blob PUT + `complete`
+  // pipeline against the importing instance (AC-256), driven by the
+  // client orchestrator.
 
   return issues;
 }
@@ -240,35 +231,16 @@ function toAssignmentInsert(pw: EnvelopeAssignment) {
   return { projectId: pw.projectId, userId: pw.userId };
 }
 
-function toAttachmentInsert(a: EnvelopeAttachment) {
-  return {
-    id: a.id,
-    projectId: a.projectId,
-    status: a.status,
-    kind: a.kind,
-    label: a.label,
-    filename: a.fileName,
-    mimeType: a.mimeType,
-    sizeBytes: a.sizeBytes,
-    // ADR-0024 — wrapped envelopes + format discriminator ride the
-    // envelope so post-import attachments stay decryptable (AC-220).
-    // The version is validated upstream by `validateEnvelope`, so
-    // every row that reaches insert carries a known value.
-    ciphertextSizeBytes: a.ciphertextSizeBytes,
-    ciphertextThumbSizeBytes: a.ciphertextThumbSizeBytes,
-    wrappedDek: a.wrappedDek,
-    wrappedThumbDek: a.wrappedThumbDek,
-    wrappedDekVersion: a.wrappedDekVersion,
-    originalKey: a.originalKey,
-    thumbKey: a.thumbKey,
-    hasThumbnail: a.hasThumbnail,
-    createdAt: new Date(a.createdAt),
-    createdBy: a.createdBy,
-  };
-}
-
 export class ImportService {
-  constructor(private db: Database) {}
+  /**
+   * The optional `storage` client is required only for the override
+   * path — `import()` throws if a non-empty target is wiped without one.
+   * Empty-target imports (the seed path) construct without it.
+   */
+  constructor(
+    private db: Database,
+    private storage: AttachmentStorageClient | null = null,
+  ) {}
 
   /**
    * One round-trip to the target `users` table resolves every referenced
@@ -284,7 +256,11 @@ export class ImportService {
     return new Set(rows.map((r) => r.id));
   }
 
-  async import(envelope: Envelope, opts: ImportOptions): Promise<ImportResult | DryRunPreview> {
+  async import(
+    envelope: Envelope,
+    opts: ImportOptions,
+    log?: ServiceLogger,
+  ): Promise<ImportResult | DryRunPreview> {
     if (envelope.schema_version !== SCHEMA_VERSION) {
       throw schemaVersionMismatch(SCHEMA_VERSION, envelope.schema_version);
     }
@@ -351,11 +327,15 @@ export class ImportService {
     }
 
     // Pre-map before opening the tx — pure transformation, no reason to hold
-    // a write lock while building the row objects.
+    // a write lock while building the row objects. Issue #163: attachment
+    // rows are NOT inserted here; they are created via the per-attachment
+    // `init` + presigned PUT + `complete` pipeline driven by the client
+    // orchestrator (AC-253).
     const customerRows = envelope.customers.map(toCustomerInsert);
     const projectRows = envelope.projects.map(toProjectInsert);
     const assignmentRows = envelope.project_workers.map(toAssignmentInsert);
-    const attachmentRows = (envelope.attachments ?? []).map(toAttachmentInsert);
+
+    let keysToHide: Array<{ originalKey: string; thumbKey: string | null }> = [];
 
     await this.db.transaction(async (tx) => {
       // VPN-first deployment (ADR-0008) rules out concurrent restores in
@@ -384,11 +364,33 @@ export class ImportService {
         if (typeof typed !== 'string' || !restorePhraseMatches(typed)) {
           throw restoreConfirmationMismatch();
         }
+        if (this.storage === null || log === undefined) {
+          // The override path mutates storage state too — refuse it on
+          // a service constructed without those collaborators rather
+          // than silently leak the prior bytes. Empty-target callers
+          // (e.g. the seed) never reach this branch.
+          throw new Error('ImportService.import: override path requires storage + logger');
+        }
       }
 
       if (opts.override) {
-        // Attachments cascade via FK when projects are dropped, but we
-        // TRUNCATE them explicitly for symmetry with the other tables.
+        // AC-254: the wipe is unconditional under override; the
+        // `attachments` table is truncated atomically with the
+        // customer / project / project-worker wipe so the re-upload
+        // pipeline (driven by the orchestrator) lands on an empty
+        // table.
+        //
+        // The storage objects backing the wiped rows are NOT cleaned
+        // up by either reaper: the pending-orphan reaper only sweeps
+        // `status='pending'` rows past TTL, and the bucket lifecycle
+        // rule reaps noncurrent versions only — a TRUNCATE without a
+        // hide call leaves the prior bytes as the *current* version
+        // of an unreferenced key, which lifecycle never reaches
+        // (issue #163 follow-up). Capture the keys before the wipe so
+        // the post-commit hide demotes them to noncurrent and the
+        // existing lifecycle policy reaps them on its own clock.
+        // Mirrors the project-purge cascade pattern (AC-218).
+        keysToHide = await listAllKeys(tx);
         await tx.execute(
           sql`TRUNCATE TABLE attachments, project_workers, projects, customers RESTART IDENTITY CASCADE`,
         );
@@ -403,10 +405,17 @@ export class ImportService {
       if (assignmentRows.length > 0) {
         await tx.insert(projectWorkers).values(assignmentRows);
       }
-      if (attachmentRows.length > 0) {
-        await tx.insert(attachments).values(attachmentRows);
-      }
     });
+
+    // Post-commit storage cleanup. A failure here does not abort the
+    // import — the rows are already gone; orphaned keys are logged
+    // and operators can sweep them later (see #169). Doing this
+    // outside the tx avoids coupling a non-transactional side effect
+    // to the SQL commit: a rollback after a successful hide cannot be
+    // undone.
+    if (keysToHide.length > 0 && this.storage !== null && log !== undefined) {
+      await bestEffortHideStorageKeys(this.storage, keysToHide, log);
+    }
 
     return {
       schema_version: SCHEMA_VERSION,

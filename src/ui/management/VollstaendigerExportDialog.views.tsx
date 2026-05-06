@@ -97,20 +97,18 @@ export function PreflightView(props: PreflightViewProps) {
       testId="export-all-preflight"
       titleId="export-all-preflight-title"
       bodyId="export-all-preflight-body"
-      title={STRINGS.dataExchange.exportAllPreflightTitle}
+      title={STRINGS.dataExchange.exportPreflightTitle}
       body={
         <>
           <div className={styles.readoutLine} data-testid="export-all-preflight-count">
-            {STRINGS.dataExchange.exportAllPreflightCount(phase.firstPage.totalCount)}
+            {STRINGS.dataExchange.exportPreflightCount(phase.firstPage.totalCount)}
           </div>
           <div
             className={styles.readoutLine}
             data-testid="export-all-preflight-size"
             data-bytes-total={phase.firstPage.totalSizeBytes}
           >
-            {STRINGS.dataExchange.exportAllPreflightSize(
-              formatBytes(phase.firstPage.totalSizeBytes),
-            )}
+            {STRINGS.dataExchange.exportPreflightSize(formatBytes(phase.firstPage.totalSizeBytes))}
           </div>
           {isMobile && (
             <div
@@ -118,7 +116,7 @@ export function PreflightView(props: PreflightViewProps) {
               data-testid="export-all-preflight-mobile-warning"
               role="note"
             >
-              {STRINGS.dataExchange.exportAllMobileWarning}
+              {STRINGS.dataExchange.exportMobileWarning}
             </div>
           )}
         </>
@@ -131,7 +129,7 @@ export function PreflightView(props: PreflightViewProps) {
             onClick={onCancel}
             data-testid="export-all-preflight-cancel"
           >
-            {STRINGS.dataExchange.exportAllPreflightCancel}
+            {STRINGS.dataExchange.exportPreflightCancel}
           </button>
           <button
             ref={initialFocusRef}
@@ -140,7 +138,7 @@ export function PreflightView(props: PreflightViewProps) {
             onClick={onConfirm}
             data-testid="export-all-preflight-confirm"
           >
-            {STRINGS.dataExchange.exportAllPreflightConfirm}
+            {STRINGS.dataExchange.exportPreflightConfirm}
           </button>
         </>
       }
@@ -163,7 +161,7 @@ export function ProgressView(props: ProgressViewProps) {
       testId="export-all-progress"
       titleId="export-all-progress-title"
       bodyId="export-all-progress-body"
-      title={STRINGS.dataExchange.exportAllProgressTitle}
+      title={STRINGS.dataExchange.exportProgressTitle}
       body={
         <>
           <div
@@ -172,7 +170,7 @@ export function ProgressView(props: ProgressViewProps) {
             data-files-total={phase.totalCount}
             data-files-done={phase.filesDone}
           >
-            {STRINGS.dataExchange.exportAllProgressCounter(phase.filesDone, phase.totalCount)}
+            {STRINGS.dataExchange.exportProgressCounter(phase.filesDone, phase.totalCount)}
           </div>
           <div
             className={styles.readoutLine}
@@ -180,13 +178,13 @@ export function ProgressView(props: ProgressViewProps) {
             data-bytes-total={phase.totalSizeBytes}
             data-bytes-done={phase.bytesDone}
           >
-            {STRINGS.dataExchange.exportAllProgressBytes(
+            {STRINGS.dataExchange.exportProgressBytes(
               formatBytes(phase.bytesDone),
               formatBytes(phase.totalSizeBytes),
             )}
           </div>
           <div className={styles.currentFile} data-testid="export-all-progress-current-file">
-            {STRINGS.dataExchange.exportAllProgressCurrentFile(phase.currentFile || '—')}
+            {STRINGS.dataExchange.exportProgressCurrentFile(phase.currentFile || '—')}
           </div>
         </>
       }
@@ -198,7 +196,7 @@ export function ProgressView(props: ProgressViewProps) {
           onClick={onCancel}
           data-testid="export-all-cancel"
         >
-          {STRINGS.dataExchange.exportAllCancel}
+          {STRINGS.dataExchange.exportCancel}
         </button>
       }
     />
@@ -220,15 +218,15 @@ export function SummaryView(props: SummaryViewProps) {
       testId="export-all-summary"
       titleId="export-all-summary-title"
       bodyId="export-all-summary-body"
-      title={STRINGS.dataExchange.exportAllSummaryTitle}
+      title={STRINGS.dataExchange.exportSummaryTitle}
       body={
         <>
           <div className={styles.readoutLine} data-testid="export-all-summary-filename">
-            {STRINGS.dataExchange.exportAllSummaryFile(phase.filename)}
+            {STRINGS.dataExchange.exportSummaryFile(phase.filename)}
           </div>
           {phase.skippedCount > 0 && (
             <div className={styles.skippedLine} data-testid="export-all-summary-skipped">
-              {STRINGS.dataExchange.exportAllSummarySkipped(phase.skippedCount)}
+              {STRINGS.dataExchange.exportSummarySkipped(phase.skippedCount)}
             </div>
           )}
         </>
@@ -241,7 +239,7 @@ export function SummaryView(props: SummaryViewProps) {
           onClick={onClose}
           data-testid="export-all-summary-close"
         >
-          {STRINGS.dataExchange.exportAllSummaryClose}
+          {STRINGS.dataExchange.exportSummaryClose}
         </button>
       }
     />
@@ -263,7 +261,7 @@ export function ErrorView(props: ErrorViewProps) {
       testId="export-all-error"
       titleId="export-all-error-title"
       bodyId="export-all-error-body"
-      title={STRINGS.dataExchange.exportAllError}
+      title={STRINGS.dataExchange.exportError}
       body={<div className={styles.readoutLine}>{phase.message}</div>}
       actions={
         <button
@@ -273,7 +271,7 @@ export function ErrorView(props: ErrorViewProps) {
           onClick={onClose}
           data-testid="export-all-error-close"
         >
-          {STRINGS.dataExchange.exportAllSummaryClose}
+          {STRINGS.dataExchange.exportSummaryClose}
         </button>
       }
     />

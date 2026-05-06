@@ -20,12 +20,12 @@
  */
 
 import { downloadZip } from 'client-zip';
-import SparkMD5 from 'spark-md5';
 import { create } from 'zustand';
 import { attachmentApi, type PresignedUpload } from '@/api/client';
 import { STRINGS } from '@/config/strings';
 import { ATTACHMENT_PIPELINE } from '@/config/attachmentPipeline';
 import type { Attachment, AttachmentLabel } from '@/domain/types';
+import { computeMd5Base64 } from '@/domain/attachmentChecksum';
 import {
   decodeDekMaterial,
   decryptBlob,
@@ -200,32 +200,6 @@ function newClientId(): string {
     return crypto.randomUUID();
   }
   return 'upload-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-/**
- * Compute the MD5 of a Blob and return it as RFC 1864 base64 (24-char
- * `==`-padded). Streams the blob through `SparkMD5.ArrayBuffer`'s
- * incremental API in 2 MiB chunks so the full bytes never materialize
- * twice in memory — cheap on phones, fast enough that no Web Worker is
- * warranted at our per-file cap.
- */
-async function computeMd5Base64(blob: Blob): Promise<string> {
-  const CHUNK = 2 * 1024 * 1024;
-  const hasher = new SparkMD5.ArrayBuffer();
-  for (let offset = 0; offset < blob.size; offset += CHUNK) {
-    const slice = blob.slice(offset, Math.min(offset + CHUNK, blob.size));
-    const buf = await slice.arrayBuffer();
-    hasher.append(buf);
-  }
-  // SparkMD5 yields the 16-byte digest as a hex string; convert to
-  // base64 by walking pairs of hex chars into bytes. Browsers don't
-  // ship a hex→base64 helper, but `btoa` over a binary string does.
-  const hex = hasher.end();
-  let bin = '';
-  for (let i = 0; i < hex.length; i += 2) {
-    bin += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
-  }
-  return btoa(bin);
 }
 
 /**

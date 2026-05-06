@@ -22,7 +22,19 @@ export type Permission =
   | 'attachment:trash'
   | 'auth:change-password';
 
-export type Role = 'owner' | 'office' | 'worker' | 'bookkeeper';
+export type Role =
+  | 'owner'
+  | 'office'
+  | 'worker'
+  | 'bookkeeper'
+  // Test-only fixture role. Real users never hold this — the seed
+  // never mints it, the auth UI never offers it. It exists so the
+  // integration suite can isolate gate semantics no production role
+  // exercises: AC-255 needs a `data:restore`-only caller, but no
+  // production role holds `data:restore` without `attachment:write`.
+  // Listed here (not in a separate registry) so the role-permission
+  // map stays the single source of truth.
+  | '__test_data_restore_only';
 
 // data:export gates the unified business-data export (api.md §14.2.4).
 // data:restore gates the unified import — owner-only because a restore
@@ -94,11 +106,41 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'auth:change-password',
   ],
   bookkeeper: ['project:read', 'customer:read', 'attachment:read', 'auth:change-password'],
+  // Test-only — see the `Role` union comment above. Empty in
+  // production builds (so a stray DB-direct-write of the role string
+  // grants nothing); the one production-relevant permission is added
+  // by the `TEST_ROLE_PERMISSIONS` overlay below when running under
+  // `NODE_ENV=test`. Splitting prod and test maps this way keeps the
+  // single-`Role`-union, single-source-of-truth shape while ensuring
+  // the role can never accidentally grant `data:restore` outside the
+  // test harness.
+  __test_data_restore_only: [],
 };
+
+/**
+ * Test-only overlay applied when the process is running under Vitest
+ * (`NODE_ENV=test`). The pattern mirrors the existing build-mode
+ * branches at `src/server/start.ts:79` and `src/server/seed.ts:14`,
+ * which key off `process.env.NODE_ENV === 'production'` for safety
+ * checks. Read once at module-load — the integration test harness
+ * sets `NODE_ENV=test` before any module that imports this file is
+ * evaluated.
+ */
+const TEST_ROLE_PERMISSIONS: Partial<Record<Role, readonly Permission[]>> = {
+  __test_data_restore_only: ['data:restore'],
+};
+
+const IS_TEST_BUILD = process.env.NODE_ENV === 'test';
 
 export function hasPermission(roles: string[], permission: Permission): boolean {
   return roles.some((role) => {
-    const perms = ROLE_PERMISSIONS[role as Role];
-    return perms?.includes(permission) ?? false;
+    const role_ = role as Role;
+    const baseline = ROLE_PERMISSIONS[role_];
+    if (baseline?.includes(permission)) return true;
+    if (IS_TEST_BUILD) {
+      const overlay = TEST_ROLE_PERMISSIONS[role_];
+      if (overlay?.includes(permission)) return true;
+    }
+    return false;
   });
 }

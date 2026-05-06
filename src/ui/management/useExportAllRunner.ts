@@ -93,10 +93,9 @@ export interface ErrorPhase {
 }
 
 /**
- * Local-time timestamp for the export filename. Mirrors the
- * `fileTimestamp` helper in `dataExchangeStore.ts`; consolidation of
- * the two copies (and the BinaryList `triggerDownload`) is tracked in
- * issue #164.
+ * Local-time timestamp for the export filename. The `BinaryList`
+ * `triggerDownload` carries a parallel copy; consolidation of the two
+ * is tracked in issue #164.
  */
 function exportTimestamp(d: Date): string {
   const hh = String(d.getHours()).padStart(2, '0');
@@ -211,7 +210,7 @@ export function useExportAllRunner(input: UseExportAllRunnerInput): UseExportAll
       } catch (err) {
         if (ctrl.signal.aborted) return;
         console.warn('[export-all] preflight failed', err);
-        setPhase({ kind: 'error', message: STRINGS.dataExchange.exportAllError });
+        setPhase({ kind: 'error', message: STRINGS.dataExchange.exportError });
       }
     })();
     return () => {
@@ -301,7 +300,7 @@ export function useExportAllRunner(input: UseExportAllRunnerInput): UseExportAll
     // expiry. Yields single-entry pages so the helper's per-entry
     // stream-zip cadence is preserved.
     //
-    // Bounded-retry semantics (AC-251 / ui/daten.md §8.11.3 step 4):
+    // Bounded-retry semantics (AC-251 / ui/daten.md §8.11.1 step 4):
     // The "ONE re-fetch of the affected descriptor page" is per
     // page, not per entry. Once the page has been re-fetched, every
     // entry in that page that still 403s is skipped without another
@@ -486,7 +485,7 @@ export function useExportAllRunner(input: UseExportAllRunnerInput): UseExportAll
           fetchCiphertext,
         });
 
-        const filename = `projekt-manager-vollstaendiger-export-${exportTimestamp(new Date())}.zip`;
+        const filename = `projekt-manager-export-${exportTimestamp(new Date())}.zip`;
 
         // Tap the helper's stream so we know when it's fully drained.
         // `flush()` fires after the last chunk is pushed downstream — by
@@ -546,7 +545,7 @@ export function useExportAllRunner(input: UseExportAllRunnerInput): UseExportAll
       } catch (err) {
         if (ctrl.signal.aborted) return;
         console.warn('[export-all] zip assembly failed', err);
-        setPhase({ kind: 'error', message: STRINGS.dataExchange.exportAllError });
+        setPhase({ kind: 'error', message: STRINGS.dataExchange.exportError });
       } finally {
         // Identity-gate the global-ref clears so a stale unwind of an
         // older run (e.g. its `handle.served` rejecting on the 30s

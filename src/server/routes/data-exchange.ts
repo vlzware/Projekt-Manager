@@ -20,6 +20,23 @@ import { createStorageClient } from '../storage/client.js';
 import { getEnv } from '../config/env.js';
 import type { Envelope, ImportOptions } from '../../domain/dataExchange.js';
 
+/**
+ * Body shape for `POST /api/import`. Issue #163 / AC-253: the endpoint
+ * is text-only post-fix; a body carrying an `attachments` key MUST be
+ * rejected with `422 VALIDATION_ERROR` and no writes occur.
+ *
+ * Listing `attachments` under `properties` with `not: {}` (a schema that
+ * fails for every value) is the load-bearing trick: Fastify's ajv
+ * defaults to `removeAdditional: true`, so a bare
+ * `additionalProperties: false` would silently strip `attachments` rather
+ * than reject — see the parallel comment in
+ * `src/server/__tests__/push-subscriptions.test.ts`. Listing the key
+ * explicitly in `properties` prevents removeAdditional from firing
+ * (the key is no longer "additional"), and `not: {}` ensures any value
+ * of any type fails validation. Other unlisted keys (a stray `foo`)
+ * still get stripped — that is fine; only `attachments` is the
+ * load-bearing wire-shape rejection per AC-253.
+ */
 const ENVELOPE_BODY_SCHEMA = {
   type: 'object',
   required: ['schema_version', 'exported_at', 'customers', 'projects', 'project_workers'],
@@ -29,6 +46,10 @@ const ENVELOPE_BODY_SCHEMA = {
     customers: { type: 'array' },
     projects: { type: 'array' },
     project_workers: { type: 'array' },
+    // AC-253: any `attachments` payload rejects with 422 — the legacy
+    // shape silently inserted attachment rows whose wrapped DEKs were
+    // unwrappable on the importing instance.
+    attachments: { not: {} },
     // AC-160: optional on the dry-run and empty-target paths; required by
     // ImportService when `override=true` commits into a non-empty DB. The
     // maxLength keeps a pathological payload from reaching the service —
@@ -41,7 +62,6 @@ export function dataExchangeRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
     const exportService = new ExportService(db);
-    const importService = new ImportService(db);
     const env = getEnv();
     // Storage client + binary-descriptor service mirror the attachment-
     // route construction (env-derived endpoints, per-request envelope
@@ -56,6 +76,7 @@ export function dataExchangeRoutes(db: Database) {
       secretKey: env.STORAGE_SECRET_KEY!,
       region: env.STORAGE_REGION,
     });
+    const importService = new ImportService(db, storage);
     const binaryDescriptorService = new BinaryDescriptorService({
       db,
       storage,
@@ -152,7 +173,7 @@ export function dataExchangeRoutes(db: Database) {
           override: query.override === 'true',
           confirmationPhrase: typeof rawPhrase === 'string' ? rawPhrase : null,
         };
-        const result = await importService.import(envelope, opts);
+        const result = await importService.import(envelope, opts, request.log);
         return reply.code(200).send(result);
       },
     );

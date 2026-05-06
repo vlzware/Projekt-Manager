@@ -300,49 +300,60 @@ export const STRINGS = {
   },
 
   /**
-   * Unified data-exchange surface (ADR-0018, ui/daten.md §8.11). Strings pinned
-   * here so the Daten view and any future CLI-parity message share one
-   * source. German copy reflects the spec: a single "Herunterladen" action
-   * for export, a two-step upload→commit flow for import.
+   * Data-exchange surface (ADR-0018, ui/daten.md §8.11). The takeout-zip
+   * Export and Import actions are the only user-facing exchange flows;
+   * the text-row endpoints stay as internal building blocks. Strings
+   * pinned here so the Daten view and the dialogs share one source.
    */
   dataExchange: {
     exportHeading: 'Export',
-    exportDescription: 'Lädt alle Kunden, Projekte und Zuordnungen als eine JSON-Datei herunter.',
-    exportAction: 'Herunterladen',
+    exportDescription:
+      'Lädt alle Kunden, Projekte, Zuordnungen und Anhänge als ein ZIP-Archiv herunter.',
+    exportAction: 'Export',
+    exportPreflightTitle: 'Daten exportieren',
+    exportPreflightCount: (n: number) => `${n} Anhänge`,
+    exportPreflightSize: (formatted: string) => `Größe der Anhänge: ${formatted}`,
+    exportPreflightConfirm: 'Export starten',
+    exportPreflightCancel: 'Abbrechen',
+    exportMobileWarning: 'Für Desktop-Nutzung gedacht; Downloads können sehr groß sein.',
+    exportProgressTitle: 'Export läuft',
+    exportProgressCounter: (done: number, total: number) => `${done} / ${total} Dateien`,
+    exportProgressBytes: (done: string, total: string) => `${done} / ${total}`,
+    exportProgressCurrentFile: (name: string) => `Aktuelle Datei: ${name}`,
+    exportCancel: 'Abbrechen',
+    exportSummaryTitle: 'Export abgeschlossen',
+    exportSummaryFile: (name: string) => `Datei: ${name}`,
+    exportSummarySkipped: (n: number) => `${n} Dateien übersprungen`,
+    exportSummaryClose: 'Schließen',
+    exportError: 'Export fehlgeschlagen.',
 
-    /**
-     * Vollständiger Export — pre-flight + progress + summary copy
-     * (ui/daten.md §8.11.3, AC-249/AC-251). German strings pinned here so
-     * the dialog component stays declarative.
-     */
-    exportAllAction: 'Vollständiger Export',
-    exportAllPreflightTitle: 'Vollständiger Export',
-    exportAllPreflightCount: (n: number) => `${n} Anhänge`,
-    exportAllPreflightSize: (formatted: string) => `Gesamtgröße: ${formatted}`,
-    exportAllPreflightConfirm: 'Export starten',
-    exportAllPreflightCancel: 'Abbrechen',
-    exportAllMobileWarning: 'Für Desktop-Nutzung gedacht; Downloads können sehr groß sein.',
-    exportAllProgressTitle: 'Export läuft',
-    exportAllProgressCounter: (done: number, total: number) => `${done} / ${total} Dateien`,
-    exportAllProgressBytes: (done: string, total: string) => `${done} / ${total}`,
-    exportAllProgressCurrentFile: (name: string) => `Aktuelle Datei: ${name}`,
-    exportAllCancel: 'Abbrechen',
-    exportAllSummaryTitle: 'Export abgeschlossen',
-    exportAllSummaryFile: (name: string) => `Datei: ${name}`,
-    exportAllSummarySkipped: (n: number) => `${n} Dateien übersprungen`,
-    exportAllSummaryClose: 'Schließen',
-    exportAllError: 'Export fehlgeschlagen.',
-
-    importHeading: 'Wiederherstellen',
+    importHeading: 'Import',
     importDescription:
-      'Stellt den Datenbestand aus einer zuvor exportierten JSON-Datei wieder her.',
-    importAction: 'Wiederherstellen',
-    projectWorkers: 'Zuordnungen',
-    wouldWriteHeader: 'Anzahl',
-    validationErrorsHeading: 'Validierungsfehler',
+      'Stellt den Datenbestand aus einem zuvor exportierten ZIP-Archiv wieder her.',
+    importAction: 'Import',
+    importPreflightTitle: 'Daten importieren',
+    importPreflightCustomers: (n: number) => `${n} Kunden`,
+    importPreflightProjects: (n: number) => `${n} Projekte`,
+    importPreflightAssignments: (n: number) => `${n} Zuordnungen`,
+    importPreflightAttachmentCount: (n: number) => `${n} Anhänge`,
+    importPreflightSize: (formatted: string) => `Größe der Anhänge: ${formatted}`,
+    importPreflightConfirm: 'Import starten',
+    importPreflightCancel: 'Abbrechen',
+    importMobileWarning: 'Für Desktop-Nutzung gedacht; Importe können sehr groß sein.',
+    importProgressTitle: 'Import läuft',
+    importProgressCounter: (done: number, total: number) => `${done} / ${total} Dateien`,
+    importProgressBytes: (done: string, total: string) => `${done} / ${total}`,
+    importProgressCurrentFile: (name: string) => `Aktuelle Datei: ${name}`,
+    importParsing: 'ZIP-Datei wird geprüft …',
+    importCancel: 'Abbrechen',
+    importSummaryTitle: 'Import abgeschlossen',
+    importSummaryCommitted: (n: number) => `${n} Anhänge wiederhergestellt`,
+    importSummarySkipped: (n: number) => `${n} Anhänge übersprungen`,
+    importSummaryClose: 'Schließen',
+    importError: 'Import fehlgeschlagen.',
+    importValidationFailed: 'ZIP-Datei ungültig oder unvollständig.',
     restoreDestructiveNotice: 'Die bestehenden Daten werden unwiderruflich gelöscht.',
     restorePhrasePrompt: (phrase: string) => `Zur Bestätigung bitte „${phrase}" eingeben:`,
-    importSuccessHeading: 'Wiederherstellung erfolgreich.',
   },
 
   aging: {
