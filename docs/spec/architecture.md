@@ -138,6 +138,8 @@ The deployed system consists of four components:
 
 These components may run on the same provider or on separate providers. The spec does not prescribe hosting vendors, managed services, or container strategies — those are ADR decisions. Network topology is further constrained by [ADR-0008](../adr/0008-vpn-first-network-access.md) (VPN-first access) and by the AC-45 HTTPS-or-nothing rule.
 
+The reverse proxy carries an explicit `flush_interval -1` directive on the `/api/events` upstream so the SSE channel is never buffered ([§11.13](#1113-realtime-invalidation-channel), [api.md §14.2.13](api.md#14213-realtime-events), [ADR-0025](../adr/0025-realtime-ui-invalidation-via-sse.md)).
+
 Any deployed environment must exercise all four components end-to-end. A topology that omits any of them — e.g. an application-only deploy without the reverse proxy or object storage — does not satisfy the deployment contract.
 
 ### 11.7 Continuous Delivery Pipeline
@@ -227,6 +229,36 @@ Each `audit_log` row carries an optional `(ancestorEntityType, ancestorEntityId)
 **Read path.** The compound index `audit_log_ancestor_idx` on `(ancestor_entity_type, ancestor_entity_id, created_at DESC, id DESC)` serves the project-detail query shape — filter by ancestor pair, order by `createdAt DESC, id DESC` (the list endpoint's tiebreaker from [api.md §14.2.8](api.md#1428-audit-log)). The index key mirrors the ORDER BY so a page is served entirely from the index.
 
 **CHECK closure.** `audit_log_ancestor_type_valid` pins `ancestorEntityType` to the same closed `AuditEntityType` set as `entityType`, keeping the two columns in lock-step when a new entity type lands.
+
+### 11.13 Realtime Invalidation Channel
+
+In-process bus that fans out typed invalidation events to subscribed SSE connections so cross-session UI surfaces refetch the read endpoints they already consume. Architectural rationale: [ADR-0025](../adr/0025-realtime-ui-invalidation-via-sse.md) (decision and shape). Same architectural shape as [§11.11](#1111-notification-publisher-and-dispatch)'s in-process publisher per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md), with a distinct subscriber set: SSE connections rather than notification channels. Wire contract is in [api.md §14.2.13](api.md#14213-realtime-events).
+
+**Bus.** A process-local module owns a set of subscribers (one per live `/api/events` connection). `emit(event)` iterates the set and writes the SSE frame to each connection. Single Node process, single tenant — no cross-process fan-out is required for v1.
+
+**Subscription lifecycle.** A subscriber is added when the request handler accepts a `/api/events` connection ([api.md §14.2.13](api.md#14213-realtime-events)) and the response stream is opened. The handler registers a teardown that removes the subscriber on connection close, error, or process shutdown. Unsubscribe is idempotent — a teardown firing twice (e.g. error followed by close) is a no-op on the second call.
+
+**Emission — post-commit, from mutation call sites.** Events are emitted in-process, after the surrounding transaction commits, never inside it (parity with [§11.11](#1111-notification-publisher-and-dispatch)). v1 emitters of `storage_usage_changed`:
+
+- `AttachmentService.completeUpload` (`pending → ready`)
+- `AttachmentService.hide` (`ready → hidden`)
+- `AttachmentService.restore` (`hidden → ready`)
+- `attachment-orphan-reaper` ([data-model.md §6.11](data-model.md#611-attachment-orphan-reaper)) — `pending` row delete
+- `attachment-hidden-reaper` ([data-model.md §6.12](data-model.md#612-attachment-hidden-reaper)) — `hidden` row delete
+
+The four AttachmentService paths cover every byte-moving mutation reachable through the API surface; the two reapers cover the two scheduled byte-moving paths. Together they emit on every transition that changes a counter in [data-model.md §5.14](data-model.md#514-project-storage-usage). New emitters land alongside new event names without new infra.
+
+**Failure isolation.** A throwing subscriber writer (closed socket, slow consumer) does not affect other subscribers — the bus catches per-subscriber failures, logs structured operational output, and removes the failing subscriber. Same posture as [§11.11](#1111-notification-publisher-and-dispatch)'s post-commit handlers; an emission failure never rolls back the originating mutation, which has already committed.
+
+**Heartbeat.** Each connection writes a 25-second comment line (`:` keepalive) to defeat reverse-proxy and browser idle disconnects. Independent per connection; not coordinated across the subscriber set.
+
+**Broadcast posture.** Events fan out to every connected authenticated session. Authorization happens at the consumer endpoints the client refetches, not at the event — the role-leakage tradeoff is recorded in [ADR-0025 §Consequences](../adr/0025-realtime-ui-invalidation-via-sse.md#consequences) and accepted under the project's threat model.
+
+**Reverse-proxy posture.** Caddy auto-flushes responses with `Content-Type: text/event-stream`; an explicit `flush_interval -1` directive on the `/api/events` upstream is the defensive belt-and-suspenders ([§11.6](#116-deployment-topology), [api.md §14.2.13](api.md#14213-realtime-events)). Misconfigure and SSE buffers until the connection closes.
+
+**Known v1 limitation.** Out-of-band SQL writes (admin shell, future migrations, direct trigger-driven mutations not routed through the service layer) do not emit. The PostgreSQL `LISTEN`/`NOTIFY` upgrade path is recorded in [ADR-0025](../adr/0025-realtime-ui-invalidation-via-sse.md) — when the gap becomes load-bearing, triggers `NOTIFY` and the Node process holds a persistent `LISTEN` connection that fans out to the same SSE subscribers.
+
+**Verification.** Bus failure isolation, per-emitter delivery, channel shape, heartbeat, and reconnect are pinned by [§15.28](verification.md#1528-realtime-events).
 
 ---
 
