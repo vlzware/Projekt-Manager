@@ -218,7 +218,13 @@ export const envSchema = z.object({
   // ---------------------------------------------------------------
   SSE_HEARTBEAT_INTERVAL_MS: z.preprocess(
     (v) => (v === '' ? undefined : v),
-    z.coerce.number().int().positive().default(25_000),
+    // Bounds match the spec in architecture.md §12.2:
+    //   1 s — below this the heartbeat floods the socket and stops
+    //         being a keepalive
+    //   600 s — above this the keepalive can't outrun the typical
+    //         reverse-proxy / browser idle-disconnect windows the
+    //         heartbeat exists to defeat
+    z.coerce.number().int().min(1000).max(600_000).default(25_000),
   ),
 });
 

@@ -131,11 +131,11 @@ describe('GET /api/events — SSE route (AC-268, AC-269)', () => {
 
   beforeAll(async () => {
     // The implementer is asked to honor SSE_HEARTBEAT_INTERVAL_MS so
-    // the heartbeat assertion runs in milliseconds rather than >25 s
-    // of wall-clock. Set it BEFORE buildApp() reads env. If the
-    // implementer chose a different injection mechanism, re-route this
-    // here without touching the assertions.
-    process.env.SSE_HEARTBEAT_INTERVAL_MS = '100';
+    // the heartbeat assertion runs in seconds rather than >25 s of
+    // wall-clock. Set it BEFORE buildApp() reads env. The 1000 ms
+    // floor matches the schema's documented lower bound (1 s minimum;
+    // see env.ts and architecture.md §12.2).
+    process.env.SSE_HEARTBEAT_INTERVAL_MS = '1000';
     await startApp();
     app = getApp();
     ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
@@ -272,16 +272,13 @@ describe('GET /api/events — SSE route (AC-268, AC-269)', () => {
   // -------------------------------------------------------------------
   describe('AC-269: heartbeat keepalive', () => {
     it('an idle connection observes a `:` SSE comment line within the configured heartbeat window', async () => {
-      // Per api.md §14.2.13: 25 s default. The implementer is asked to
-      // honor SSE_HEARTBEAT_INTERVAL_MS so this test runs at 100 ms.
-      // If that hook is rejected during code review, the assertion
-      // still holds — but the test will need to extend the read
-      // deadline beyond 25 s and gain the integration-suite "slow"
-      // mark. Keep an eye on the deadline-vs-interval ratio: a 100 ms
-      // interval gets at least one heartbeat in 350 ms with margin.
+      // Per api.md §14.2.13: 25 s default. The schema bounds the
+      // configurable interval at 1 s minimum (env.ts), so the test
+      // cadence is 1 s and the read deadline budget is 1.5 s — a
+      // single heartbeat with margin.
       const { stream } = await injectStream(app, '/api/events', 'GET', `session=${ownerToken}`);
       try {
-        const body = await readWithDeadline(stream, 350);
+        const body = await readWithDeadline(stream, 1500);
         // `:` comment line per WHATWG SSE — the line begins with a
         // colon and is terminated by `\n`. We do NOT pin the comment
         // body (`: keepalive`, `: ping`, empty are all conformant).
