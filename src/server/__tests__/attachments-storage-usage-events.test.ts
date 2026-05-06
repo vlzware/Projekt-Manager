@@ -277,6 +277,46 @@ async function loadHiddenReaper(): Promise<
   return mod.runAttachmentHiddenReaper;
 }
 
+interface OrphanReaperDeps {
+  db: Database;
+  storage: ReturnType<typeof storageClient>;
+  logger: ServiceLogger;
+  ttlMinutes: number;
+  now?: Date;
+}
+
+async function loadOrphanReaper(): Promise<(deps: OrphanReaperDeps) => Promise<void>> {
+  const mod = (await import('../services/attachment-orphan-reaper.js')) as {
+    runAttachmentOrphanReaper: (deps: OrphanReaperDeps) => Promise<void>;
+  };
+  return mod.runAttachmentOrphanReaper;
+}
+
+async function seedPendingBackdated(
+  db: Database,
+  projectId: string,
+  createdAt: Date,
+): Promise<string> {
+  const id = crypto.randomUUID();
+  // Pending rows carry no wrapped_dek (the row flips to ready after
+  // HEAD-verify and version-id capture, which is when the envelope
+  // commits to the row in production paths). Schema allows NULL.
+  await db.execute(sql`
+    INSERT INTO attachments
+      (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+       ciphertext_size_bytes,
+       original_key, thumb_key, has_thumbnail, version_id, created_at,
+       wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+    VALUES (${id}, ${projectId}, 'pending', 'binary', 'sonstiges',
+            ${'oreap-' + id.slice(0, 6)}, 'application/pdf', 2048,
+            NULL,
+            ${`attachments/${projectId}/${id}.orig`}, NULL, FALSE,
+            NULL, ${createdAt.toISOString()},
+            NULL, NULL, 1)
+  `);
+  return id;
+}
+
 // ---------------------------------------------------------------------
 // Tests.
 // ---------------------------------------------------------------------
@@ -419,6 +459,46 @@ describe('storage_usage_changed emission per call site (AC-270)', () => {
         await new Promise<void>((r) => setImmediate(r));
 
         expect(countStorageUsageEvents(conn)).toBe(2);
+      } finally {
+        bus.unsubscribe(conn);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // Orphan reaper — the negative case AC-270 names explicitly:
+  // "The orphan reaper deletes only `pending` rows, which contribute
+  // zero to every counter — no event is emitted."  Without an explicit
+  // assertion, a regression that wires the same hook into the orphan
+  // reaper would pass green.
+  // -------------------------------------------------------------------
+  describe('AC-270: attachment-orphan-reaper (pending delete) emits no event', () => {
+    it('a subscribed connection observes zero storage_usage_changed events after the sweep', async () => {
+      const bus = await loadBus();
+      const runOrphanReaper = await loadOrphanReaper();
+      const projectId = await projectIdAny(ownerToken);
+
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      await seedPendingBackdated(db, projectId, cutoff);
+      await seedPendingBackdated(db, projectId, cutoff);
+
+      const conn = subscribeFake(bus);
+      try {
+        await runOrphanReaper({
+          db,
+          // Real storage client — best-effort `.hide` on the seeded
+          // keys; missing-object errors are tolerated by the reaper
+          // (data-model.md §6.11) and irrelevant to this assertion.
+          storage: storageClient(),
+          logger: { info: vi.fn(), error: vi.fn() } as unknown as ServiceLogger,
+          ttlMinutes: 1,
+          now,
+        });
+
+        await new Promise<void>((r) => setImmediate(r));
+
+        expect(countStorageUsageEvents(conn)).toBe(0);
       } finally {
         bus.unsubscribe(conn);
       }

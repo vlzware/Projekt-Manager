@@ -541,6 +541,27 @@ describe('Project storage usage tracking', () => {
 
       expect(await readUsageRow(db, projectId)).toEqual(before);
     });
+
+    it('a no-op UPDATE (label rename) on a ready row leaves all counters unchanged', async () => {
+      const r = await seedPendingRow(db, projectId, {
+        sizeBytes: 777,
+        ciphertextSizeBytes: 841,
+      });
+      await completeUpload(db, r.id);
+      const before = await readUsageRow(db, projectId);
+      expect(before).not.toBeNull();
+
+      // AC-263 names "a `label` or `filename` rename" — pin the label
+      // arm too so a regression that wires label changes into the
+      // delta computation cannot pass.
+      await db.execute(sql`
+        UPDATE attachments
+        SET label = 'angebot'
+        WHERE id = ${r.id}
+      `);
+
+      expect(await readUsageRow(db, projectId)).toEqual(before);
+    });
   });
 
   // -------------------------------------------------------------------
