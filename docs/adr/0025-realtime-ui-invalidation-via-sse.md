@@ -27,7 +27,7 @@ Shape:
 - **Authentication: existing session cookie.** `EventSource` sends cookies natively; the same session middleware admits or rejects the connection.
 - **Authorization: at the consumer endpoint, not at the event.** Events are broadcast to all authenticated sessions. Event names carry no information beyond "a thing of kind X changed"; sensitive content lives behind the gated read endpoints the client refetches.
 - **Emission: in-process, post-commit, from the mutation call sites.** Out-of-band SQL writes (admin shell, future migrations) are not covered in v1 — flagged as a known gap.
-- **Heartbeat: 25s SSE comment line** to defeat proxy and browser idle disconnects.
+- **Heartbeat: configurable **[C]** SSE comment line (default 25 s; bounded 1 s … 600 s; env `SSE_HEARTBEAT_INTERVAL_MS`)** to defeat proxy and browser idle disconnects.
 - **No `Last-Event-ID` replay.** Events are invalidation hints, not a log; on reconnect the client refetches state.
 - **Reverse proxy: `flush_interval -1`** on the `/api/events` upstream. Caddy auto-flushes responses with `Content-Type: text/event-stream` already; the directive is explicit belt-and-suspenders so the buffering posture is obvious in the config.
 - **Connection model: one EventSource per tab.** No server-side cap (single-tenant per ADR-0001); flag for monitor-and-revisit.
@@ -62,7 +62,7 @@ Cleaner per-route auth at the cost of N TCP connections per tab and per-domain s
 
 - Industry-standard primitive; zero new client dependency (`EventSource` is built-in).
 - One channel scales to future surfaces — new event types ship without new infra.
-- Browser handles auto-reconnect and exponential backoff.
+- Browser handles auto-reconnect at the WHATWG-mandated implementation-defined reconnection time (overridable via the server's `retry:` field, not used here).
 - Server-side cost is small: one held HTTP response per connected tab, no protocol upgrade.
 - Aligns with the post-commit fan-out pattern established by [ADR-0021](0021-audit-log-and-notifications-single-write-path.md)'s in-process publisher — same architectural shape, distinct subscribers.
 
