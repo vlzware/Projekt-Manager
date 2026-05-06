@@ -30,8 +30,15 @@ export default defineConfig({
     },
     projects: [
       {
-        // Unit tests: pure domain functions, config validation.
+        // Unit tests: pure domain functions, config validation, and
+        // state-store tests that don't touch browser globals.
         // No database, no Fastify — safe to run files in parallel.
+        //
+        // The browser-API state-store tests live under the `unit-dom`
+        // project below; node Blob / Stream identity diverges from
+        // jsdom's, which breaks client-zip-driven assertions inside
+        // attachmentStore — so those stores stay on node here while
+        // the DOM-dependent stores get their own jsdom project.
         extends: true,
         test: {
           name: 'unit',
@@ -41,6 +48,15 @@ export default defineConfig({
             'src/domain/__tests__/**/*.test.ts',
             'src/state/__tests__/**/*.test.ts',
           ],
+          exclude: ['src/state/__tests__/storageUsageStore.test.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'unit-dom',
+          environment: 'jsdom',
+          include: ['src/state/__tests__/storageUsageStore.test.ts'],
         },
       },
       {
