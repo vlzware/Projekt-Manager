@@ -66,6 +66,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     BINARY_AGE_IDENTITY_PATH: '/run/binary-key/identity',
     VAPID_PRIVATE_KEY: undefined,
     VAPID_SUBJECT: undefined,
+    SSE_HEARTBEAT_INTERVAL_MS: 25_000,
     ...overrides,
   };
 }
