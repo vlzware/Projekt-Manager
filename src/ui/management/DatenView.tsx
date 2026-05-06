@@ -14,6 +14,7 @@
 import { useRef, useState, type ChangeEvent } from 'react';
 import { STRINGS } from '@/config/strings';
 import { usePermission } from '@/hooks/usePermission';
+import { StorageUsageRow } from './StorageUsageRow';
 import { VollstaendigerExportDialog } from './VollstaendigerExportDialog';
 import { VollstaendigerImportDialog } from './VollstaendigerImportDialog';
 import styles from './Management.module.css';
@@ -43,6 +44,8 @@ export function DatenView() {
 
   return (
     <div className={styles.container} data-testid="daten-view">
+      <StorageUsageRow />
+
       {canExport && (
         <div className={styles.section}>
           <h3 className={styles.sectionTitle}>{STRINGS.dataExchange.exportHeading}</h3>

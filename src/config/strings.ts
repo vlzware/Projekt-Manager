@@ -300,6 +300,18 @@ export const STRINGS = {
   },
 
   /**
+   * Layout chrome strings shared across the app shell. The storage
+   * badge (Footer) and the storage row (DatenView) reference the same
+   * keys so the tooltip wording and the row labels stay in lockstep
+   * (spec ui/index.md §8.1.2, ui/daten.md §8.11.3).
+   */
+  layout: {
+    storageBadgeLabel: 'Daten:',
+    storageBucketReady: 'Sichtbar',
+    storageBucketHidden: 'Im Papierkorb',
+  },
+
+  /**
    * Data-exchange surface (ADR-0018, ui/daten.md §8.11). The takeout-zip
    * Export and Import actions are the only user-facing exchange flows;
    * the text-row endpoints stay as internal building blocks. Strings
