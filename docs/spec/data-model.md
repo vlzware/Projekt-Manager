@@ -430,7 +430,34 @@ Design notes:
 - **Storage keys are opaque.** `originalKey` and `thumbKey` are emitted by the server at init time. Clients treat them as opaque — only the server issues them, and only the server maps them to a download URL (see [api.md §14.2.11](api.md#14211-attachments)).
 - **Ownership.** `createdBy` is set from the session at init time; a client-supplied value is ignored. The single carve-out is the import-mode `restore` block on `init` ([api.md §14.2.11](api.md#14211-attachments)), which pins `id`, `createdBy`, and `createdAt` from the takeout envelope when the caller holds both `data:restore` and `attachment:write`.
 - **Cascade on project hard-delete.** When a project is purged (hard-delete via [api.md §14.2.2](api.md#1422-projects)), all `attachment` rows cascade via FK; the server also issues a best-effort `hide` on the backing objects (delete markers on the versioned bucket — [ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)) so lifecycle reaps them on schedule. Soft-delete (archive) leaves attachments intact.
+- **Lifecycle effects on storage usage.** Every transition above (init pending, complete to ready, user-DELETE to hidden, restore to ready, orphan reaper deletes pending, hidden reaper deletes hidden, project purge cascade) updates the parent project's accumulated storage totals — the per-project four-bucket invariant defined in [§5.14](#514-project-storage-usage). The update is part of the same lifecycle event; no separate write path is observable to callers.
 - **Referential integrity with the export envelope.** Attachment metadata rows round-trip with Layer 1 per [§5.8](#58-export-envelope); plaintext bytes ride alongside the envelope as zip entries in the takeout artifact and are re-uploaded by the browser orchestrator into the importing instance via the standard `init` (with `restore` block) + per-blob PUT + `complete` pipeline ([api.md §14.2.11](api.md#14211-attachments)). Fresh DEKs and fresh wraps are minted on the importing instance; no key material crosses the takeout boundary, and the exporting-instance wrapped envelopes are deliberately kept off the takeout artifact. A row whose backing objects are absent post-restore (orchestrator skipped a per-file failure) is excluded from the photo gallery and from `bulk-fetch` selection; the metadata row stays intact — the mismatch is an operational condition, not a schema error. The exact UI rendering (German label, muted placeholder, disabled download action) lives in the SSOT: see [ui/project-detail.md §8.15.7](ui/project-detail.md#8157-restored-rows-without-backing-bytes).
+
+### 5.14 Project Storage Usage
+
+Each project carries an accumulated, system-maintained view of the byte volume of its attachments. The view is derived state — every value is the sum of `attachment` row fields — and exists so the application can render storage usage as a constant-time read instead of an aggregate over the attachment table. The per-project endpoint and the global roll-up in [api.md §14.2.12](api.md#14212-storage-usage) are the surfaces over this view.
+
+```typescript
+interface ProjectStorageUsage {
+  projectId: string; // references Project.id
+  ready: {
+    plaintext: number; // sum of sizeBytes + thumbSizeBytes (when present) over status = 'ready' rows
+    ciphertext: number; // sum of ciphertextSizeBytes + ciphertextThumbSizeBytes (when present) over status = 'ready' rows
+  };
+  hidden: {
+    plaintext: number; // sum of sizeBytes + thumbSizeBytes (when present) over status = 'hidden' rows
+    ciphertext: number; // sum of ciphertextSizeBytes + ciphertextThumbSizeBytes (when present) over status = 'hidden' rows
+  };
+}
+```
+
+Design notes:
+
+- **Buckets align with attachment status.** `ready` is the live working set (the bytes the user can currently see in the gallery / binary list); `hidden` is the Papierkorb pool — recoverable until the hidden reaper ([§6.12](#612-attachment-hidden-reaper)) consumes the row. `pending` rows are excluded by construction: their backing objects may not exist on object storage yet, and the orphan reaper ([§6.11](#611-attachment-orphan-reaper)) is the only path that finalizes their disposition. Adding pending bytes to a user-facing total would surface uncommitted uploads; adding them to an operator-facing total would tally bytes that may never have been written.
+- **Two byte counts per bucket.** **Plaintext** sums each row's declared `sizeBytes` plus declared `thumbSizeBytes` when `hasThumbnail = true` — the user-facing "what I uploaded" total. **Ciphertext** sums declared `ciphertextSizeBytes` plus declared `ciphertextThumbSizeBytes` when `hasThumbnail = true` — the operator-facing "what is on object storage" total. A photo always contributes both an original and a thumbnail blob ([§5.13](#513-attachment)); a non-photo contributes only the original.
+- **System-maintained invariant.** The four totals are an authoritative invariant of the system, kept in lockstep with attachment lifecycle events (init pending, complete to ready, user-DELETE to hidden, restore to ready, orphan reaper deletes pending, hidden reaper deletes hidden, project purge cascade). The maintenance is automatic — no caller writes the totals; no lifecycle path can advance without the matching update; no missed write site can drift the totals against the underlying rows. The mechanism that delivers this invariant is documented in [`ARCHITECTURE.md § Attachments Module`](../../ARCHITECTURE.md#attachments-module).
+- **Project deletion removes the totals with the project.** Hard-deleting (purging) a project removes the project's storage-usage view alongside the project itself — the usage row does not survive the parent. Soft-delete (archive) is a board-only operation per [§6.9](#69-soft-deletes) and does not touch the row; an archived project retains its accumulated totals (its attachments still exist, see [§5.13](#513-attachment)) and is included in the global roll-up exposed by [api.md §14.2.12](api.md#14212-storage-usage).
+- **Authoritative totals, not a cache.** There is no cache layer; reads return the live totals at the time of the read. Reconciliation of the totals against the underlying attachment aggregate is a separate operational concern and is the subject of follow-up work not in scope here.
 
 ---
 
