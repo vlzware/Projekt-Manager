@@ -163,6 +163,29 @@ test.describe('AC-121: permission-based UI visibility', () => {
       );
       await expect(page.getByTestId('extract-button')).toHaveCount(c.canExtract ? 1 : 0);
 
+      // -- Footer storage badge (AC-271) ---------------------------------
+      // `data:export` gate mirrors the server gate on /api/storage-usage;
+      // worker and bookkeeper see brand text alone. Desktop viewport
+      // (default 1920×1080 in this project) — phones hide the Footer
+      // entirely via the existing footer media query, and that branch
+      // is unobservable without mobile emulation.
+      await expect(page.getByTestId('storage-usage-badge')).toHaveCount(
+        c.canExportData ? 1 : 0,
+      );
+      if (c.canExportData) {
+        // Hover reveals a tooltip carrying the two-bucket plaintext
+        // breakdown — the same labels DatenView §8.11.3 pins inline.
+        // Touch devices have no Footer (and thus no tooltip); the
+        // desktop project covers the visible-on-hover branch.
+        const badge = page.getByTestId('storage-usage-badge');
+        await expect(badge.getByTestId('storage-usage-badge-value')).toBeVisible();
+        await badge.hover();
+        const tooltip = page.getByTestId('storage-usage-badge-tooltip');
+        await expect(tooltip).toBeVisible();
+        await expect(tooltip).toContainText('Sichtbar');
+        await expect(tooltip).toContainText('Im Papierkorb');
+      }
+
       // -- Kanban view: transition controls on cards and detail panel ----
       // Only reachable when Kanban is in the role's nav matrix. Roles
       // without Kanban access (bookkeeper) cannot navigate there at all;
@@ -264,6 +287,18 @@ test.describe('AC-121: permission-based UI visibility', () => {
         await expect(page.getByTestId('data-import-file-input')).toHaveCount(
           c.canRestoreData ? 1 : 0,
         );
+
+        // AC-272 — Speichernutzung row at the top of DatenView. Two
+        // plaintext buckets are inline (mobile-first; no hover). The
+        // negative case (worker, bookkeeper) is implicit in the
+        // `expectViewReachable(daten, false)` above — the view is not
+        // navigable for those roles, so the row's absence is structural.
+        const storageRow = page.getByTestId('daten-storage-row');
+        await expect(storageRow).toBeVisible();
+        await expect(storageRow.getByTestId('daten-storage-row-sichtbar')).toBeVisible();
+        await expect(storageRow.getByTestId('daten-storage-row-papierkorb')).toBeVisible();
+        await expect(storageRow).toContainText('Sichtbar');
+        await expect(storageRow).toContainText('Im Papierkorb');
       }
 
       // -- Benutzer management view (only if user:read) ------------------

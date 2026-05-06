@@ -115,7 +115,7 @@ const STORAGE_STATE = path.resolve(__dirname, 'e2e/.auth/owner.json');
  * that completes before this one starts.
  */
 const MUTATING_TESTS =
-  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange|archive-flows|activity-feed|notification-rules|activity-recipient-scope|push-permission|attachment-upload|papierkorb|daten-vollstaendiger-import/;
+  /kanban-flows|management-flows|import-export-flows|theme-preference|data-exchange|archive-flows|activity-feed|notification-rules|activity-recipient-scope|push-permission|attachment-upload|papierkorb|daten-vollstaendiger-import|storage-usage-multi-user/;
 const DEMO_TESTS = /demo-.*\.spec\.ts/;
 
 export default defineConfig({
