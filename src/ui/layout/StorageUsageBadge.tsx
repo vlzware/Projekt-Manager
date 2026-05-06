@@ -44,6 +44,20 @@ export function StorageUsageBadge() {
     <span className={styles.storageBadge} data-testid="storage-usage-badge" title={tooltip}>
       {STRINGS.layout.storageBadgeLabel}{' '}
       <span data-testid="storage-usage-badge-value">{readyText}</span>
+      {/* DOM tooltip in addition to the native `title` — Playwright
+          asserts a visible-on-hover element with this test-id, while
+          the unit test pins the native `title` attribute. CSS shows
+          this element on `.storageBadge:hover`. Two surfaces with the
+          same content; native tooltip has a delay, this one is
+          instant. */}
+      <span className={styles.storageBadgeTooltip} data-testid="storage-usage-badge-tooltip">
+        <span>
+          {STRINGS.layout.storageBucketReady}: {readyText}
+        </span>
+        <span>
+          {STRINGS.layout.storageBucketHidden}: {hiddenText}
+        </span>
+      </span>
     </span>
   );
 }

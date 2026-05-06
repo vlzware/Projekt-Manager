@@ -21,12 +21,37 @@
 .storageBadge {
   grid-column: 3;
   justify-self: end;
+  position: relative;
   padding: 2px 8px;
   border-radius: 4px;
   background: var(--color-surface-inverse-raised);
   color: var(--color-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.storageBadgeTooltip {
+  /* Hidden by default; shown on badge hover. The native `title`
+     attribute carries the same content for accessibility tooling. */
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--color-surface-inverse-raised);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  z-index: 10;
+}
+
+.storageBadge:hover .storageBadgeTooltip,
+.storageBadge:focus-within .storageBadgeTooltip {
+  display: flex;
 }
 
 /* Hide on phones — the bottom tab bar replaces it as the bottom
