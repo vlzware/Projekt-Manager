@@ -58,7 +58,6 @@ interface SseBusLoggerCall {
 }
 
 interface SseBusLogger {
-  info?: (ctx: Record<string, unknown>, event: string) => void;
   error?: (ctx: Record<string, unknown>, event: string) => void;
 }
 
@@ -228,7 +227,6 @@ describe('SSE bus — subscribe / broadcast / unsubscribe (AC-268, AC-269)', () 
   it('AC-270: bus logs the per-subscriber failure on the error channel', () => {
     const errorCalls: SseBusLoggerCall[] = [];
     const logger: SseBusLogger = {
-      info: () => undefined,
       error: (ctx, event) => {
         errorCalls.push({ ctx, event });
       },
@@ -248,6 +246,27 @@ describe('SSE bus — subscribe / broadcast / unsubscribe (AC-268, AC-269)', () 
     // pinned in §11.13, so we serialize the context and grep.
     expect(errorCalls.length).toBeGreaterThanOrEqual(1);
     expect(JSON.stringify(errorCalls[0])).toContain('subscriber-write-failed');
+  });
+
+  it('AC-270: a throwing logger does not propagate out of broadcast()', () => {
+    // Per architecture.md §11.13 "Failure isolation" — emission
+    // failures cannot affect the originating mutation. A throwing
+    // logger sink (circular ctx, fault inside the configured pino
+    // transport) must be swallowed so a logger fault does not
+    // surface as 5xx to a client whose write succeeded.
+    const logger: SseBusLogger = {
+      error: () => {
+        throw new Error('logger-faulted');
+      },
+    };
+    const bus = createSseBus({ logger });
+    bus.subscribe({
+      write(): void {
+        throw new Error('subscriber-write-failed');
+      },
+    });
+
+    expect(() => bus.broadcast('storage_usage_changed')).not.toThrow();
   });
 
   // §11.13 lifecycle: "The handler registers a teardown that removes

@@ -34,11 +34,11 @@ export interface SseConnection {
 /**
  * Structured logger interface — mirrors the pino-style `(ctx, msg)`
  * signature used elsewhere in the server (notification-publisher,
- * attachment-hidden-reaper, audit-publisher). All methods are optional;
- * a missing method is a no-op.
+ * attachment-hidden-reaper, audit-publisher). The bus only emits on
+ * the error channel today (per-subscriber write failure); a future
+ * info channel would land here when there is something to say.
  */
 export interface SseBusLogger {
-  info?: (ctx: Record<string, unknown>, event: string) => void;
   error?: (ctx: Record<string, unknown>, event: string) => void;
 }
 
@@ -82,10 +82,21 @@ export function createSseBus(opts: CreateSseBusOpts = {}): SseBus {
         } catch (err) {
           subscribers.delete(c);
           const errorHint = err instanceof Error ? err.message : String(err);
-          logger?.error?.(
-            { event: SUBSCRIBER_WRITE_FAILED_EVENT, error_hint: errorHint },
-            SUBSCRIBER_WRITE_FAILED_EVENT,
-          );
+          // Guard the logger call: the bus contract says emission
+          // failures cannot affect the originating mutation, which has
+          // already committed by the time we reach this code. A
+          // throwing logger (circular ctx, fault in the configured
+          // sink) would otherwise propagate out of broadcast() and
+          // surface as 5xx to a client whose write succeeded.
+          try {
+            logger?.error?.(
+              { event: SUBSCRIBER_WRITE_FAILED_EVENT, error_hint: errorHint },
+              SUBSCRIBER_WRITE_FAILED_EVENT,
+            );
+          } catch {
+            // intentionally swallow — same posture as
+            // notification-publisher's post-commit handlers (AC-183)
+          }
         }
       }
     },

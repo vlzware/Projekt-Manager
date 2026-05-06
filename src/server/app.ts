@@ -239,7 +239,6 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     // as registerNotificationPublisher below.
     configureSseBus({
       logger: {
-        info: (ctx, msg) => app.log.info(ctx, msg),
         error: (ctx, msg) => app.log.error(ctx, msg),
       },
     });
