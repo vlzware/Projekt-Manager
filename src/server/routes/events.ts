@@ -1,6 +1,6 @@
 /**
  * Realtime invalidation channel — `GET /api/events` (ADR-0025,
- * api.md §14.2.13, AC-268, AC-269).
+ * api.md §14.2.13, AC-268, AC-269, AC-275).
  *
  * Single multiplexed Server-Sent Events response. The handler accepts
  * an authenticated session, opens an indefinite `text/event-stream`,
@@ -21,12 +21,23 @@
  * `setInterval` (architecture.md §11.13: "Independent per connection;
  * not coordinated across the subscriber set") and `unref()`s the timer
  * so a held connection cannot block process shutdown.
+ *
+ * Session re-validation (AC-275, CWE-613). The `authenticate` preHandler
+ * runs once at connect time. Without re-validation a session that
+ * naturally expires, gets revoked by logout, gets reaped, or whose user
+ * is deactivated mid-stream would keep receiving frames until the client
+ * disconnects on its own. Each heartbeat tick re-runs
+ * `AuthService.isSessionValid(token)` against the cookie token; a
+ * missing, expired, or inactive-user session ends the response.
+ * Detection bound: one heartbeat interval post-revocation. DB cost: one
+ * query per connection per heartbeat — independent of broadcast rate.
  */
 
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware } from '../middleware/auth.js';
 import { subscribe, unsubscribe, type SseConnection } from '../sse/bus.js';
+import { AuthService } from '../services/AuthService.js';
 import { getEnv } from '../config/env.js';
 
 const HEARTBEAT_FRAME = ': keepalive\n\n';
@@ -34,6 +45,7 @@ const HEARTBEAT_FRAME = ': keepalive\n\n';
 export function eventsRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
+    const authService = new AuthService(db);
     const heartbeatIntervalMs = getEnv().SSE_HEARTBEAT_INTERVAL_MS;
 
     app.addHook('preHandler', authenticate);
@@ -50,21 +62,45 @@ export function eventsRoutes(db: Database) {
       // close it on its own when the async handler returns.
       reply.hijack();
 
+      // Token is guaranteed present — `authenticate` rejects a missing
+      // cookie before the handler runs. Captured here so the heartbeat
+      // re-validation does not depend on `request` state surviving.
+      const sessionToken = request.cookies.session!;
+
       const conn: SseConnection = {
         write(chunk: string): void {
           reply.raw.write(chunk);
         },
       };
 
+      // The heartbeat callback inlines its own teardown (clearInterval
+      // on the self-reference + unsubscribe + reply.raw.end()) so the
+      // setInterval handle can be `const`. The connection-close
+      // listener at the bottom uses the same handle for the
+      // tab-closed / network-drop path.
       const heartbeat = setInterval(() => {
-        // A failed write here means the socket is gone; the close
-        // handler below will fire and run the unsubscribe. No need to
-        // double-tear-down on the timer path.
-        try {
-          reply.raw.write(HEARTBEAT_FRAME);
-        } catch {
-          /* socket gone — close handler tears down */
-        }
+        void (async () => {
+          let valid: boolean;
+          try {
+            valid = await authService.isSessionValid(sessionToken);
+          } catch {
+            // Transient DB error — skip this tick and try again on
+            // the next. Disconnecting on a momentary blip would
+            // punish every active subscriber for a backend hiccup.
+            return;
+          }
+          if (!valid) {
+            clearInterval(heartbeat);
+            unsubscribe(conn);
+            reply.raw.end();
+            return;
+          }
+          try {
+            reply.raw.write(HEARTBEAT_FRAME);
+          } catch {
+            /* socket gone — close handler tears down */
+          }
+        })();
       }, heartbeatIntervalMs);
       heartbeat.unref();
 

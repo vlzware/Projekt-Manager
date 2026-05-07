@@ -40,7 +40,16 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import type { Readable } from 'node:stream';
 
-import { startApp, stopApp, login, getApp } from '../../test/api-helpers.js';
+import {
+  startApp,
+  stopApp,
+  login,
+  getApp,
+  revokeSession,
+  expireSession,
+  deactivateUser,
+  createTestUserSession,
+} from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 
 /**
@@ -101,6 +110,34 @@ function readWithDeadline(stream: Readable, ms: number, maxBytes = 4096): Promis
  */
 function closeStream(stream: Readable): void {
   stream.destroy();
+}
+
+/**
+ * Module-level bus accessors — the route subscribes against the
+ * singleton bus, so tests assert subscriber count there. Loaded
+ * dynamically through the same path the AC-268 broadcast arm uses.
+ */
+async function loadBus(): Promise<{ size: () => number }> {
+  const path = '../sse/bus.js';
+  const mod = (await import(/* @vite-ignore */ path)) as { size: () => number };
+  return mod;
+}
+
+/**
+ * Wait until a predicate becomes true, polled at 25 ms. Resolves on
+ * the first truthy poll, or after `ms` if the predicate never holds.
+ * Used by AC-275 to wait for the heartbeat-driven unsubscribe — the
+ * inject() consumer stream does not observe `reply.raw.end()` as a
+ * `end` / `close` event in light-my-request, so the test asserts the
+ * server-side outcome (subscriber removed from the bus) instead.
+ */
+async function waitFor(predicate: () => boolean, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise<void>((r) => setTimeout(r, 25));
+  }
+  return predicate();
 }
 
 /**
@@ -285,6 +322,95 @@ describe('GET /api/events — SSE route (AC-268, AC-269)', () => {
         // A heartbeat that never fires shows up as an empty / event-
         // only body here.
         expect(body).toMatch(/(^|\n):[^\n]*\n/);
+      } finally {
+        closeStream(stream);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // AC-275 — session re-validation on held streams (CWE-613, issue #173).
+  //
+  // The auth preHandler runs once at connect time. Without re-validation
+  // a session that gets deleted (logout / reaper / `deleteSessionsByUserId`),
+  // expires naturally, or whose user is deactivated mid-stream would
+  // keep receiving frames until the client disconnects. The route
+  // re-runs `findSession()` at every heartbeat tick and ends the
+  // response when the session is no longer valid; the test cadence is
+  // 1 s (matching AC-269), so the bound is "stream ends within ~1.5 s
+  // of the invalidating mutation".
+  //
+  // Three arms cover the three independent invalidation modes — the
+  // single re-check covers all three, but the test asserts each path
+  // surfaces correctly so a future fix that only handles one mode (e.g.
+  // hooking the logout call site but not the user-deactivation cascade)
+  // would surface here.
+  //
+  // Each arm logs in / mints a fresh session so the arms cannot
+  // interfere with each other or with the AC-268/269 arms above.
+  // -------------------------------------------------------------------
+  describe('AC-275: session re-validation on held streams', () => {
+    it('removes the subscriber within one heartbeat after the session row is deleted', async () => {
+      // Models logout, the periodic session reaper, and
+      // `UserService.deactivateUser`'s `deleteSessionsByUserId` cascade.
+      const bus = await loadBus();
+      const baseline = bus.size();
+      const token = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
+      const { stream } = await injectStream(app, '/api/events', 'GET', `session=${token}`);
+      try {
+        // Let the connection register before mutating; otherwise the
+        // deletion races with `subscribe()` and the test asserts the
+        // wrong window. A 100 ms wait is generous given the 1 s
+        // heartbeat cadence.
+        await new Promise<void>((r) => setTimeout(r, 100));
+        expect(bus.size()).toBe(baseline + 1);
+        await revokeSession(token);
+        // Heartbeat cadence is 1 s; budget the wait at 2.5 s for one
+        // tick + the async findSession round-trip + scheduling slack.
+        const removed = await waitFor(() => bus.size() === baseline, 2500);
+        expect(removed).toBe(true);
+      } finally {
+        closeStream(stream);
+      }
+    });
+
+    it('removes the subscriber within one heartbeat after the session row expires', async () => {
+      // Models natural expiry (`session.expiresAt < now`). The reaper
+      // would eventually delete the row, but the auth gate triggers the
+      // moment `isSessionExpired()` returns true, which is what the
+      // re-validation checks.
+      const bus = await loadBus();
+      const baseline = bus.size();
+      const token = await login(SEED_USERS.worker2.username, SEED_DEFAULT_PASSWORD);
+      const { stream } = await injectStream(app, '/api/events', 'GET', `session=${token}`);
+      try {
+        await new Promise<void>((r) => setTimeout(r, 100));
+        expect(bus.size()).toBe(baseline + 1);
+        await expireSession(token);
+        const removed = await waitFor(() => bus.size() === baseline, 2500);
+        expect(removed).toBe(true);
+      } finally {
+        closeStream(stream);
+      }
+    });
+
+    it('removes the subscriber within one heartbeat after the user is deactivated', async () => {
+      // Models the admin-lockout path: `users.active = false` while
+      // sessions still exist. The repo-level deactivate flips the flag
+      // without touching the session table — the only signal the held
+      // stream gets is the joined `user.active` column on `findSession()`.
+      // A mint-on-the-fly user keeps this arm independent of seed-user
+      // state across files.
+      const bus = await loadBus();
+      const baseline = bus.size();
+      const { userId, token } = await createTestUserSession({ roles: ['worker'] });
+      const { stream } = await injectStream(app, '/api/events', 'GET', `session=${token}`);
+      try {
+        await new Promise<void>((r) => setTimeout(r, 100));
+        expect(bus.size()).toBe(baseline + 1);
+        await deactivateUser(userId);
+        const removed = await waitFor(() => bus.size() === baseline, 2500);
+        expect(removed).toBe(true);
       } finally {
         closeStream(stream);
       }

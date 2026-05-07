@@ -13,6 +13,8 @@ import { createDatabase } from '../server/db/connection.js';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { seed } from '../server/seed.js';
 import { deactivateUser as deactivateUserRepo } from '../server/repositories/user.js';
+import { deleteSession } from '../server/repositories/session.js';
+import { eq } from 'drizzle-orm';
 import { __resetForTests as resetAuditPublisher } from '../server/services/audit-publisher.js';
 import { __resetForTests as resetNotificationPublisher } from '../server/services/notification-publisher.js';
 import { __resetForTests as resetSseBus } from '../server/sse/bus.js';
@@ -207,6 +209,30 @@ export async function deactivateUser(userId: string): Promise<void> {
   await db.transaction(async (tx) => {
     await deactivateUserRepo(tx, userId, null);
   });
+}
+
+/**
+ * Revoke a session by deleting its row directly. Mirrors what
+ * `AuthService.logout` does on its own session row, what
+ * `UserService.deactivateUser` does to every session of the affected
+ * user, and what `session-reaper` does to expired rows. Used by AC-275
+ * to assert that a held SSE stream observes server-side revocation
+ * within the heartbeat budget.
+ */
+export async function revokeSession(token: string): Promise<void> {
+  await deleteSession(db, token);
+}
+
+/**
+ * Force a session row's `expiresAt` to the past. Models the natural-
+ * expiry path that the auth middleware rejects via `isSessionExpired`
+ * (the session-reaper sweeps these rows asynchronously, but the
+ * auth gate triggers the moment `expiresAt < now`). Used by AC-275 to
+ * exercise the expiry arm without waiting for wall-clock to elapse.
+ */
+export async function expireSession(token: string): Promise<void> {
+  const past = new Date(Date.now() - 60_000);
+  await db.update(sessions).set({ expiresAt: past }).where(eq(sessions.token, token));
 }
 
 /**

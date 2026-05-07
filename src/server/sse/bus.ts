@@ -131,6 +131,16 @@ export function broadcast(eventName: string, payload?: unknown): void {
 }
 
 /**
+ * Module-level subscriber count — same purpose as the per-instance
+ * `size()` exposed on `SseBus`, but reaches the singleton the
+ * `/api/events` route subscribes against. Test-only — nothing in
+ * production reads this.
+ */
+export function size(): number {
+  return singleton.size();
+}
+
+/**
  * Test-only reset — drop the singleton's subscriber set. Mirrors
  * `notification-publisher.__resetForTests`. Production has no reason
  * to call this.

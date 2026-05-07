@@ -20,7 +20,13 @@ import {
   updateSelf as updateSelfRepo,
   toUserResponse,
 } from '../repositories/user.js';
-import { createSession, deleteSession, deleteSessionsByUserId } from '../repositories/session.js';
+import {
+  createSession,
+  deleteSession,
+  deleteSessionsByUserId,
+  findSession,
+} from '../repositories/session.js';
+import { isSessionExpired } from '../../domain/session.js';
 import { hashPassword, verifyPassword } from '../password.js';
 import { checkPasswordPolicy } from '../config/password-policy.js';
 import { STRINGS } from '../../config/strings.js';
@@ -129,6 +135,26 @@ export class AuthService {
       await deleteSession(this.db, token);
     }
     log.info({ userId, ip }, 'logout');
+  }
+
+  /**
+   * Re-validate an in-flight session token. Returns `true` if the session
+   * row still exists, has not expired, and the joined user is still
+   * active — the same three predicates the `authenticate` middleware
+   * checks at request entry. Used by long-lived authenticated streams
+   * (`/api/events`, AC-275) to bound the post-revocation send window:
+   * the auth gate runs once at connect time, so without re-validation a
+   * held connection outlives its session. Architecture-wise the route
+   * cannot import the repositories directly (architecture.md §11.2 —
+   * routes go through services); centralising the predicate here also
+   * keeps it lock-step with the middleware's own definition.
+   */
+  async isSessionValid(token: string): Promise<boolean> {
+    const result = await findSession(this.db, token);
+    if (!result) return false;
+    if (isSessionExpired({ expiresAt: result.session.expiresAt.toISOString() })) return false;
+    if (!result.user.active) return false;
+    return true;
   }
 
   async changePassword(
