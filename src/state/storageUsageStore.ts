@@ -24,6 +24,7 @@ import { create } from 'zustand';
 import { storageUsageApi, type StorageUsageDto } from '@/api/client';
 import { STORAGE_USAGE_CHANGED } from '@/config/sseEvents';
 import { onSseEvent } from '@/sse/client';
+import { handleSessionExpired } from './sessionExpired';
 
 interface StorageUsageStore {
   data: StorageUsageDto | null;
@@ -49,6 +50,19 @@ async function refetch(): Promise<void> {
   if (epoch !== refetchEpoch) return;
   if (result.ok) {
     useStorageUsageStore.setState({ data: result.data });
+    return;
+  }
+  // SSE delivers an invalidation hint, then we refetch — but if the
+  // refetch lands after session expiry (a heartbeat that didn't fire in
+  // time, a tab restored after a long sleep) the prior `data` would
+  // otherwise sit in the badge / DatenView row indefinitely. Delegate
+  // to the shared session-expiry handler — same surface every other
+  // store uses (state/extractionActions.ts, state/attachmentStore.ts).
+  // Non-session-expiry failures (transient 5xx, network blip) leave
+  // `data` as-is; the next mount / visibilitychange / SSE / explicit
+  // refresh() retries.
+  if (result.sessionExpired) {
+    handleSessionExpired();
   }
 }
 

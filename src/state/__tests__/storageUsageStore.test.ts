@@ -69,6 +69,16 @@ vi.mock('@/sse/client', () => ({
   onSseEvent: (name: string, handler: SseHandler) => onSseEventMock(name, handler),
 }));
 
+// Spy on the shared session-expiry handler the store delegates to. The
+// store imports `handleSessionExpired` from `@/state/sessionExpired`,
+// which itself fans out to the auth store; tests don't need the auth
+// store wired up here — only that the handler is invoked when the
+// refetch reports an expired session.
+const handleSessionExpiredMock = vi.fn();
+vi.mock('@/state/sessionExpired', () => ({
+  handleSessionExpired: () => handleSessionExpiredMock(),
+}));
+
 const { useStorageUsageStore } = await import('@/state/storageUsageStore');
 
 function ok<T>(data: T): ApiResult<T> {
@@ -90,6 +100,7 @@ function setVisibility(state: 'visible' | 'hidden'): void {
 beforeEach(() => {
   getGlobalMock.mockReset();
   onSseEventMock.mockClear();
+  handleSessionExpiredMock.mockReset();
   sseHandlers.clear();
   setVisibility('visible');
   // Reset the singleton store so each test starts from a clean slate.
@@ -199,6 +210,67 @@ describe('storageUsageStore — SSE invalidation (AC-271, AC-272)', () => {
 
     await vi.waitFor(() => expect(getGlobalMock).toHaveBeenCalledTimes(2));
     expect(useStorageUsageStore.getState().data).toEqual(makeUsage(4096, 1024));
+
+    unsubscribe();
+  });
+});
+
+describe('storageUsageStore — refetch failure surfacing', () => {
+  // Failure surface for the SSE → refetch path. Without this, an event
+  // arriving after session expiry triggers a refetch that returns a
+  // 401 SESSION_EXPIRED, and the previous `data` lingers in the badge
+  // / DatenView row indefinitely. The store delegates to the shared
+  // session-expiry handler — same surface every other store uses.
+  function expired<T>(): ApiResult<T> {
+    return {
+      ok: false,
+      error: { code: 'SESSION_EXPIRED', message: 'Sitzung abgelaufen.' },
+      category: 'authentication',
+      sessionExpired: true,
+    };
+  }
+
+  function serverError<T>(): ApiResult<T> {
+    return {
+      ok: false,
+      error: { code: 'SERVER_ERROR', message: 'Serverfehler.' },
+      category: 'server_error',
+      sessionExpired: false,
+    };
+  }
+
+  it('delegates to handleSessionExpired when the SSE-driven refetch lands after session expiry', async () => {
+    getGlobalMock.mockResolvedValueOnce(ok(makeUsage(2048, 1024)));
+    const unsubscribe = useStorageUsageStore.getState().subscribe();
+    await vi.waitFor(() => expect(getGlobalMock).toHaveBeenCalledTimes(1));
+    expect(useStorageUsageStore.getState().data).toEqual(makeUsage(2048, 1024));
+
+    getGlobalMock.mockResolvedValueOnce(expired());
+    const handlers = sseHandlers.get('storage_usage_changed');
+    for (const h of handlers!) h();
+
+    await vi.waitFor(() => expect(handleSessionExpiredMock).toHaveBeenCalledTimes(1));
+    // Non-OK result must NOT clobber the prior `data` — the auth store
+    // is responsible for tearing down the session UI; the badge keeps
+    // showing the last good value until the redirect lands.
+    expect(useStorageUsageStore.getState().data).toEqual(makeUsage(2048, 1024));
+
+    unsubscribe();
+  });
+
+  it('does not call handleSessionExpired on non-auth refetch failures', async () => {
+    getGlobalMock.mockResolvedValueOnce(ok(makeUsage(2048, 1024)));
+    const unsubscribe = useStorageUsageStore.getState().subscribe();
+    await vi.waitFor(() => expect(getGlobalMock).toHaveBeenCalledTimes(1));
+
+    getGlobalMock.mockResolvedValueOnce(serverError());
+    const handlers = sseHandlers.get('storage_usage_changed');
+    for (const h of handlers!) h();
+
+    await vi.waitFor(() => expect(getGlobalMock).toHaveBeenCalledTimes(2));
+    expect(handleSessionExpiredMock).not.toHaveBeenCalled();
+    // Transient failure: state stays put; the next trigger retries.
+    expect(useStorageUsageStore.getState().data).toEqual(makeUsage(2048, 1024));
 
     unsubscribe();
   });
