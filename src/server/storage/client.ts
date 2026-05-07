@@ -220,11 +220,16 @@ export interface StorageClient {
    * versioned, so each PUT — including this server-side copy — produces
    * a fresh version). Used by the Papierkorb restore flow (ADR-0022).
    *
-   * Throws `StorageObjectNotFoundError` when the source version is no
-   * longer recoverable (e.g. the bucket lifecycle reaped it ahead of the
-   * row reaper, the data-model.md §6.12 race). The restore caller maps
-   * this to `410 GONE` so the global handler does not pessimize a real
-   * 4xx into `500 SERVER_ERROR`.
+   * Throws `StorageObjectNotFoundError` when the source version is not
+   * addressable: lifecycle reaped (data-model.md §6.12 race), or the
+   * versionId predates a topology change (e.g. dev→VPS sync produced
+   * fresh B2 versionIds the DB doesn't know — see scripts/ops/
+   * sync-restore-vps.sh post-mirror repair). Implementation runs a
+   * versioned HEAD probe before the copy because providers report an
+   * unaddressable version inconsistently — AWS / MinIO surface 404
+   * NoSuchVersion, B2 surfaces 500 InternalError on CopyObject (but
+   * still 4xx on HEAD), so HEAD is the deterministic check. The restore
+   * caller maps this to `410 GONE`.
    *
    * App-key capability dependency (B2): on a bucket with default
    * Compliance Object Lock retention, the running credential MUST hold
@@ -690,6 +695,51 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       if (!sourceVersionId) {
         throw new Error('copyFromVersion: sourceVersionId is required');
       }
+      // Probe the source with a versioned HEAD before issuing the CopyObject.
+      // CopyObject's response when the source version is unaddressable is
+      // provider-inconsistent: AWS / MinIO return 404 NoSuchVersion, but B2
+      // returns the SAME 500 InternalError it uses for genuine outages
+      // (observed shape: `S3ServiceException name=InternalError, Code=
+      // InternalError, httpStatusCode=500` after three internal retries).
+      // The 500-vs-404 collision means we cannot read CopyObject's status
+      // alone to distinguish "bytes are gone" from "provider is down" — so
+      // we run a deterministic probe first. HeadObject with VersionId is
+      // the cheap canonical check across providers; the responses we treat
+      // as "version unaddressable" are:
+      //   * 404 (NoSuchKey / NoSuchVersion / NotFound — AWS, MinIO).
+      //   * 400 — B2 emits this for a malformed VersionId (e.g. a UUID
+      //     left over from a dev→VPS sync's mc-mirror that issued fresh
+      //     B2 versionIds the DB doesn't reflect).
+      //   * 403 — B2 emits this for a structurally valid VersionId that
+      //     points at no object (lifecycle reap, foreign-id collision).
+      // Other 4xx (408, 429, 451, …) and every 5xx bubble — they are
+      // retryable / operator-relevant and must NOT collapse into the
+      // "permanently gone" surface; the global handler turns them into
+      // a 5xx the operator can see in the logs.
+      try {
+        await s3.send(
+          new HeadObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            VersionId: sourceVersionId,
+          }),
+        );
+      } catch (err) {
+        const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+        const status = e.$metadata?.httpStatusCode;
+        if (
+          e.name === 'NoSuchKey' ||
+          e.name === 'NoSuchVersion' ||
+          e.name === 'NotFound' ||
+          status === 400 ||
+          status === 403 ||
+          status === 404
+        ) {
+          throw new StorageObjectNotFoundError(key);
+        }
+        throw err;
+      }
+
       // CopySource format per AWS S3 docs: "<bucket>/<key>?versionId=<vid>".
       // The bucket and version-id are app-controlled; the key is already
       // validated by validateKey() against STORAGE_CONFIG.validKeyPattern.
@@ -705,11 +755,12 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         );
         return response.VersionId;
       } catch (err) {
-        // Map "the source version is gone" to the typed not-found so the
-        // restore caller can surface a meaningful 4xx instead of bubbling
-        // a raw S3ServiceException through the global handler as 500. This
-        // is the bucket-lifecycle-vs-row-reaper race window from
-        // data-model.md §6.12 (bytes reaped first, row still present).
+        // Defensive: a noncurrent version could in principle vanish
+        // between HEAD and CopyObject (lifecycle reap landing on the wire
+        // mid-call). The HEAD already proved the version was addressable,
+        // so the only 4xx fingerprint that's plausible here is a 404 —
+        // narrower than the HEAD probe's catch on purpose. Anything else
+        // bubbles as a genuine fault.
         const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
         if (
           e.name === 'NoSuchKey' ||
