@@ -181,13 +181,13 @@ upload flows) the orphan reaper could not reach. Mirroring them onto
 B2 costs real money: every PutObject locks for R days under Compliance
 Object Lock retention, regardless of any subsequent delete-marker.
 
-Clean the local bucket before syncing:
+Clean the local bucket before syncing — preserves keys referenced by
+attachment rows (live + hidden), deletes only the orphans:
 
-  docker exec ${COMPOSE_PROJECT}-storage-1 sh -c \\
-    'mc alias set local http://localhost:9000 "\$MINIO_ROOT_USER" "\$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && mc rm --recursive --force local/${LOCAL_BUCKET}/'
+  scripts/clean-bucket-orphans.sh           # dry-run: list orphans
+  scripts/clean-bucket-orphans.sh --apply   # delete them
 
-The current-version view goes to zero immediately; noncurrent versions
-reap after R+L days per Object Lock + lifecycle (no extra action needed).
+Noncurrent versions reap after R+L days per Object Lock + lifecycle.
 Then re-run this script.
 ERR
   exit 1
