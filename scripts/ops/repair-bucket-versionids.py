@@ -5,28 +5,29 @@ Repair attachments.{version_id,thumb_version_id} after a bucket mirror.
 After scripts/sync-dev-to-vps.sh runs `mc mirror /data b2/$BUCKET`, every
 key on B2 carries a fresh PUT version with a B2-issued versionId (`4_z…`-
 shaped). The DB rows shipped from dev still hold dev-side MinIO version
-ids (UUID-shaped), so any attempt to copyFromVersion (Papierkorb restore)
-on the VPS would fail — B2 does not recognise the UUID and surfaces it as
-`S3ServiceException InternalError 500` after three internal retries.
+ids (UUID-shaped), so any attempt to GetObject / copyFromVersion on the
+VPS would fail — B2 does not recognise the UUID and surfaces it as
+`S3ServiceException InternalError 500` after three internal retries (or
+410 GONE if the storage layer's HEAD-probe runs first, 961fa9c).
 
 This script walks the bucket once via list_object_versions, builds a map
 of `key -> latest non-delete-marker versionId`, then iterates the
 attachments table and rewrites stale version_ids to point at the freshly
-PUT B2 versions. Rows whose key has no PUT version on B2 (only delete
-markers, or absent entirely) get the version_id set to NULL, so the
-restore endpoint surfaces a 422 `restoreMissingVersionId` instead of 500.
+PUT B2 versions.
 
-The bytes-loss surface this NULL disposition covers is a structural
-property of `mc mirror`, not a corner case. `mc mirror` is not version-
-aware: it only carries CURRENT versions across providers. Any row that
-was hidden on dev BEFORE its `ready` state was ever synced to the VPS
-has no PUT version on B2 — the bytes never crossed. Restore for those
-rows is structurally impossible, regardless of how many syncs run; the
-NULL is the honest signal. Operationally tolerable because the dev side
-remains the source of truth (the bytes are not lost globally, only on
-the VPS replica).
+Hidden rows are pruned post-restore in sync-restore-vps.sh — their bytes
+are stripped by the version-unaware `mc mirror` upstream (it does not
+carry data that sits below a delete marker), and shipping a DB row
+without bytes is data-integrity poison. By the time this script runs,
+the only attachments left are `pending` (no version_id, no bytes —
+skipped) and `ready` (version_id set, bytes mirrored — rewritten).
 
-The script also covers thumb_key + thumb_version_id, since the restore
+A `ready` row whose key has no PUT version on B2 is therefore an anomaly
+(corrupted mirror, file dropped during transfer); the row is left with
+its dev-side UUID version_id and a stderr WARN is emitted. Runtime, the
+storage layer's HEAD-probe surfaces such a row as 410 GONE.
+
+The script also covers thumb_key + thumb_version_id, since the gallery
 flow gates on both versions being addressable (api.md §14.2).
 
 Inputs (env):
@@ -132,12 +133,13 @@ def main() -> int:
     # ------------------------------------------------------------------
     # Phase 2 — iterate DB rows, emit UPDATEs.
     #
-    # Output rules per row:
-    #   * version_id (or thumb_version_id) is NULL in DB → leave alone
-    #     (no restore is attempted; setting another NULL is a no-op).
-    #   * key has a PUT version on B2 → rewrite to that versionId.
-    #   * key has only delete markers, OR is absent from the bucket
-    #     entirely → set NULL so restore returns 422 instead of 500.
+    # Output rules per (key, current_version_id) pair:
+    #   * version_id is NULL in DB (pending row, or thumb on a no-thumb
+    #     row) → skip.
+    #   * key has a PUT version on B2 matching the DB → skip.
+    #   * key has a PUT version on B2 differing from the DB → rewrite.
+    #   * key has no PUT version on B2 → anomaly (mirror dropped a
+    #     ready-row file). Leave the DB row alone, emit stderr WARN.
     # ------------------------------------------------------------------
     rows_touched = 0
     rows_untouched = 0
@@ -146,8 +148,9 @@ def main() -> int:
     def disposition(key: Optional[str], current: Optional[str]) -> tuple[str, Optional[str]]:
         """Return (action, new_value).
 
-        action ∈ {"rewrite", "null", "skip"}.
+        action ∈ {"rewrite", "skip", "anomaly"}.
         new_value carries the SQL literal when action == "rewrite".
+        "anomaly" surfaces a stderr WARN; the caller treats it as skip.
         """
         if not key:
             return ("skip", None)
@@ -155,9 +158,13 @@ def main() -> int:
             return ("skip", None)
         latest = key_to_latest_put.get(key)
         if latest is None:
-            # Key has only markers, OR is missing entirely. Both are
-            # unrestorable; NULL is the right sentinel.
-            return ("null", None)
+            # No PUT version on B2 for this key. Hidden rows are dropped
+            # before this script runs, so anything reaching here is a
+            # `ready` row whose bytes failed to mirror — surface as a
+            # WARN and leave the DB row alone (storage layer's HEAD-
+            # probe will return 410 GONE at runtime, 961fa9c).
+            sys.stderr.write(f"  WARN: no PUT version on B2 for key {key!r} — leaving row unchanged\n")
+            return ("anomaly", None)
         if latest["version_id"] == current:
             # Already pointing at the freshest B2 version — re-runs of
             # this script (or a pre-sync row whose dev versionId
@@ -187,12 +194,8 @@ def main() -> int:
             sets: list[str] = []
             if orig_action == "rewrite":
                 sets.append(f"version_id='{sql_quote(orig_new)}'")
-            elif orig_action == "null":
-                sets.append("version_id=NULL")
             if thumb_action == "rewrite":
                 sets.append(f"thumb_version_id='{sql_quote(thumb_new)}'")
-            elif thumb_action == "null":
-                sets.append("thumb_version_id=NULL")
 
             if not sets:
                 rows_untouched += 1

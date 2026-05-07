@@ -38,6 +38,15 @@
 #     keys not present locally get a delete-marker on B2, original versions
 #     are preserved by Compliance Object Lock per ADR-0022)
 #
+# What does NOT survive the sync:
+#   - Hidden (Papierkorb) attachments. The dev-side bucket dump uses
+#     `mc mirror src /data` which is not version-aware: keys whose current
+#     version is a delete marker yield zero files in the dump. Shipping
+#     the DB row alongside zero bytes would leave an unrestorable row on
+#     the VPS. The VPS-side restore therefore prunes hidden rows after
+#     applying the DB dump (sync-restore-vps.sh) — Papierkorb on the VPS
+#     is empty after every sync. Audit history of those rows is preserved.
+#
 # What does NOT get touched:
 #   - VPS filesystem, secrets, Caddy, backup cron state
 #   - VPS-issued VAPID keys (stored outside the DB — unaffected)
