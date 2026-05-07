@@ -135,6 +135,44 @@ docker run --rm \
     mc mirror --overwrite --remove --md5 /data "b2/$B2_BUCKET"
   ' >/dev/null
 
+# Repair attachments.{version_id,thumb_version_id} so they reference
+# the freshly-PUT B2 versions just produced by `mc mirror`. Without
+# this, every row arrives with a dev-side MinIO version_id (UUID-shaped)
+# that B2 does not recognise — Papierkorb restore would surface as
+# `S3ServiceException InternalError 500` from CopyObject. The Python
+# helper walks list_object_versions once, joins against the attachments
+# table extracted via psql, and emits UPDATE statements; we pipe them
+# straight back into psql.
+#
+# Rows whose key has only delete markers on B2 (typical of a row hidden
+# on dev before its first sync) get version_id NULL — restore returns a
+# clean 422 `restoreMissingVersionId` for those rows instead of 500.
+#
+# Idempotent: re-running converges to the same state.
+echo "  repairing attachments version_ids..."
+ATTACHMENTS_TSV="$REMOTE_TMP/attachments.tsv"
+docker exec "$DB_CONTAINER" \
+  psql -U pm -d projekt_manager -tA -F $'\t' -c "
+    SELECT id,
+           original_key,
+           COALESCE(thumb_key, ''),
+           COALESCE(version_id, ''),
+           COALESCE(thumb_version_id, '')
+      FROM attachments
+  " > "$ATTACHMENTS_TSV"
+REPAIR_SQL="$REMOTE_TMP/repair-versionids.sql"
+B2_ENDPOINT="$B2_ENDPOINT" \
+B2_BUCKET="$B2_BUCKET" \
+B2_KEY="$B2_KEY" \
+B2_SECRET="$B2_SECRET" \
+ATTACHMENTS_TSV="$ATTACHMENTS_TSV" \
+  python3 "$REMOTE_TMP/repair-bucket-versionids.py" > "$REPAIR_SQL"
+if [ -s "$REPAIR_SQL" ]; then
+  docker exec -i "$DB_CONTAINER" \
+    psql -U pm -d projekt_manager -v ON_ERROR_STOP=1 --quiet \
+    < "$REPAIR_SQL" >/dev/null
+fi
+
 # Unpause backup before the smoke probe so its dcron resumes promptly
 # and any deferred backup ticks fire against the restored DB. Clear
 # the trap flag so the EXIT trap doesn't issue a redundant unpause.

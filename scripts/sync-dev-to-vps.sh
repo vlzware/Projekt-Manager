@@ -299,6 +299,11 @@ ssh "$SSH_TARGET" "mkdir -p $REMOTE_TMP"
 # a single file across CI, deploy, and sync — see
 # scripts/smoke-app-health.sh for why.
 cp "$REPO_DIR/scripts/smoke-app-health.sh" "$LOCAL_TMP/smoke-app-health.sh"
+# Ship the bucket-versionId repair helper. The VPS-side restore script
+# runs it after `mc mirror` to rewrite attachment.version_ids to
+# reference the freshly-PUT B2 versions, replacing the dev-side MinIO
+# UUIDs that B2 does not recognise.
+cp "$REPO_DIR/scripts/ops/repair-bucket-versionids.py" "$LOCAL_TMP/repair-bucket-versionids.py"
 # -a preserves perms/times; -z compresses (SQL and metadata compress well).
 # No --delete — REMOTE_TMP is created fresh this run and cleaned up on exit.
 rsync -az "$LOCAL_TMP/" "$SSH_TARGET:$REMOTE_TMP/"
