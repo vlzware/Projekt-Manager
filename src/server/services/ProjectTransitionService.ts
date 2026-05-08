@@ -25,6 +25,7 @@ import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
 import { mutate } from './mutate.js';
 import { projectAuditLabel } from '../../domain/audit.js';
+import { emitProjectChanged } from '../sse/emitters.js';
 
 export class ProjectTransitionService {
   constructor(private db: Database) {}
@@ -75,6 +76,8 @@ export class ProjectTransitionService {
       if (err instanceof ConcurrentModificationError) throw conflict(err.message);
       throw err;
     }
+
+    emitProjectChanged();
 
     await emit(
       'project.transitioned',
@@ -135,6 +138,8 @@ export class ProjectTransitionService {
       if (err instanceof ConcurrentModificationError) throw conflict(err.message);
       throw err;
     }
+
+    emitProjectChanged();
 
     await emit(
       'project.transitioned',

@@ -35,6 +35,7 @@ import { listAllKeys } from '../repositories/attachment.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
 import { bestEffortHideStorageKeys } from './AttachmentService.js';
 import type { ServiceLogger } from './Logger.js';
+import { emitProjectChanged } from '../sse/emitters.js';
 
 /**
  * Within-envelope structural checks — uniqueness of keys that become DB
@@ -406,6 +407,15 @@ export class ImportService {
         await tx.insert(projectWorkers).values(assignmentRows);
       }
     });
+
+    // Post-commit project-list invalidation (AC-276). The override path
+    // replaces the entire project corpus atomically; one coarse signal
+    // is sufficient for every consumer to refetch (architecture.md
+    // §11.13). The dry-run path returned early above and never reaches
+    // here, so no `opts.dryRun` branch is needed.
+    if (opts.override) {
+      emitProjectChanged();
+    }
 
     // Post-commit storage cleanup. A failure here does not abort the
     // import — the rows are already gone; orphaned keys are logged
