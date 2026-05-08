@@ -12,9 +12,12 @@
  *      surface is parked reflects the change.
  *   3. The returned unsubscribe handle removes the listener — a frame
  *      arriving after unsubscribe must not refetch.
- *   4. Repeated `subscribeProjectStoresToSse()` calls do not register
- *      multiple handlers (idempotency — a hot reload or a duplicate
- *      bootstrap must not produce double refetches per event).
+ *   4. Each `subscribeProjectStoresToSse()` call registers an
+ *      independent handler. The owning lifecycle is the auth-gated
+ *      `useEffect` in `App.tsx`: a single subscribe per
+ *      authUser-truthy → unsubscribe per authUser-null transition.
+ *      No singleton dedupe at this layer — that would silently absorb
+ *      a buggy double-call instead of surfacing it.
  *
  * Mocks mirror `storageUsageStore.test.ts` shape: a typed-bus stub
  * exposes the registered handler so tests dispatch through it; the two
@@ -57,15 +60,13 @@ vi.mock('@/state/projectManagementStore', () => ({
   },
 }));
 
-const { subscribeProjectStoresToSse, __resetProjectSseSubscriptionForTests } =
-  await import('@/state/projectSseSubscription');
+const { subscribeProjectStoresToSse } = await import('@/state/projectSseSubscription');
 
 beforeEach(() => {
   onSseEventMock.mockClear();
   projectStoreFetchMock.mockClear();
   projectManagementStoreFetchMock.mockClear();
   sseHandlers.clear();
-  __resetProjectSseSubscriptionForTests();
 });
 
 afterEach(() => {
@@ -114,17 +115,26 @@ describe('projectSseSubscription — wiring (AC-277)', () => {
     expect(projectManagementStoreFetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('is idempotent: repeated subscribe calls register one handler, fan out once per frame', () => {
-    subscribeProjectStoresToSse();
-    subscribeProjectStoresToSse();
-    subscribeProjectStoresToSse();
+  it('subscribe → unsubscribe → subscribe yields a fresh handler each cycle', () => {
+    // Models the auth-gated lifecycle: login → subscribe; logout →
+    // unsubscribe; second login → subscribe again. Each cycle must
+    // register exactly one live handler. A regression that bolted a
+    // singleton back on would cause the second subscribe to no-op and
+    // the page to silently miss frames after a re-login.
+    const unsubscribe1 = subscribeProjectStoresToSse();
+    expect(sseHandlers.get('project_changed')?.size).toBe(1);
 
-    expect(onSseEventMock).toHaveBeenCalledTimes(1);
+    unsubscribe1();
+    expect(sseHandlers.get('project_changed')?.size ?? 0).toBe(0);
 
+    subscribeProjectStoresToSse();
+    expect(sseHandlers.get('project_changed')?.size).toBe(1);
+
+    // Fire once after the second subscribe — both stores must refetch
+    // exactly once. (Three calls total to subscribe; the first cycle
+    // already fired once before unsubscribe, so we expect 2 here.)
     const handlers = sseHandlers.get('project_changed');
-    expect(handlers && handlers.size).toBe(1);
     for (const h of handlers!) h();
-
     expect(projectStoreFetchMock).toHaveBeenCalledTimes(1);
     expect(projectManagementStoreFetchMock).toHaveBeenCalledTimes(1);
   });

@@ -4,6 +4,7 @@ import { Routes, Route, Navigate, useInRouterContext, useLocation } from 'react-
 import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
+import { subscribeProjectStoresToSse } from '@/state/projectSseSubscription';
 import { viewFromPath } from '@/hooks/useRouterNav';
 import { ROUTES, routeByPath, landingPathForUser } from '@/config/routes';
 import { isInsecureConnection } from '@/config/insecureConnection';
@@ -159,6 +160,18 @@ export function App() {
           }
         });
     }
+  }, [authUser]);
+
+  // Cross-cutting `project_changed` SSE subscription (api.md §14.2.13,
+  // ADR-0025, AC-277). Auth-gated: opening `/api/events` before the
+  // session cookie is set yields 401 and the EventSource transitions to
+  // CLOSED with no spec-mandated reconnect — the page would then never
+  // receive frames until a manual reload. The cleanup runs on logout
+  // (authUser → null) so the server-side connection is released
+  // promptly instead of waiting for the heartbeat re-validation tick.
+  useEffect(() => {
+    if (!authUser) return;
+    return subscribeProjectStoresToSse();
   }, [authUser]);
 
   if (authUser) {

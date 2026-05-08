@@ -10,14 +10,18 @@
  *     it, leaking the SSE concern across both slices.
  *   - The channel must be live regardless of which surface is currently
  *     mounted — an always-open observer parked on /projekte is one
- *     scenario; a worker on /kanban is another. A single bootstrap-time
+ *     scenario; a worker on /kanban is another. A single auth-lifetime
  *     subscription beats a per-surface refcount when the lifetime is
- *     "the whole page".
+ *     "the whole authenticated page".
  *
- * Idempotency: the module guards against double-registration so a hot
- * reload (or a stray second bootstrap) does not produce double refetches
- * per event. The first call attaches the handler; subsequent calls
- * return the same unsubscribe handle.
+ * Lifecycle: caller invokes once when `authUser` becomes truthy and runs
+ * the returned unsubscribe when `authUser` becomes null. The auth-gated
+ * `useEffect` in `App.tsx` is the only correct entry point — opening
+ * `/api/events` before the session cookie is set lands on the server's
+ * `authenticate` preHandler with no cookie, returns 401, and per WHATWG
+ * the EventSource transitions to CLOSED with no spec-mandated reconnect.
+ * That is the bug this module's docstring used to describe as "page
+ * lifetime"; auth lifetime is the correct boundary.
  */
 
 import { useProjectStore } from './projectStore';
@@ -25,27 +29,9 @@ import { useProjectManagementStore } from './projectManagementStore';
 import { PROJECT_CHANGED } from '@/config/sseEvents';
 import { onSseEvent } from '@/sse/client';
 
-let unsubscribe: (() => void) | null = null;
-
 export function subscribeProjectStoresToSse(): () => void {
-  if (unsubscribe) return unsubscribe;
-
-  const off = onSseEvent(PROJECT_CHANGED, () => {
+  return onSseEvent(PROJECT_CHANGED, () => {
     void useProjectStore.getState().fetchProjects();
     void useProjectManagementStore.getState().fetchProjects();
   });
-
-  unsubscribe = () => {
-    off();
-    unsubscribe = null;
-  };
-  return unsubscribe;
-}
-
-/** Test-only: tear down the singleton so each test starts clean. */
-export function __resetProjectSseSubscriptionForTests(): void {
-  if (unsubscribe) {
-    unsubscribe();
-  }
-  unsubscribe = null;
 }

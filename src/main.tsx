@@ -6,7 +6,6 @@ import { applyBranding } from './styles/applyBranding';
 import { startThemeRuntime } from './styles/themeRuntime';
 import { initDebugConsole } from './initDebugConsole';
 import { installAttachmentErrorListener } from './sw/installAttachmentErrorListener';
-import { subscribeProjectStoresToSse } from './state/projectSseSubscription';
 import './index.css';
 
 // Order matters: applyBranding populates --brand-accent-* so the theme
@@ -21,13 +20,6 @@ initDebugConsole();
 // requesting `<img>` / `<iframe>` element when the SW decrypt handler
 // emits one of the two pinned codes.
 installAttachmentErrorListener();
-
-// Cross-cutting `project_changed` SSE subscription (api.md §14.2.13,
-// ADR-0025, AC-277). Page-lifetime subscription — both project stores
-// refetch on every frame so any open project surface (kanban,
-// calendar, detail, management list) reflects another session's
-// mutation without manual reload.
-subscribeProjectStoresToSse();
 
 // Eager Service Worker registration. The SW intercepts
 // `/encrypted-storage/*` requests (ADR-0024) and must be active

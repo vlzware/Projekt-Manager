@@ -18,6 +18,25 @@
  * unsubscribe. A second subscriber joining a loaded store does NOT
  * trigger a refetch — Footer + DatenView mounted in the same render
  * pass produce a single network call.
+ *
+ * Auth-gating contract — the SSE attach path inside `attachListeners()`
+ * opens the shared `/api/events` EventSource, which the server's
+ * `authenticate` preHandler rejects with 401 before any session cookie
+ * exists. Per WHATWG the EventSource then transitions to CLOSED and
+ * stops reconnecting; the page would silently miss every frame until
+ * a full reload (the bug shape diagnosed against the #176 deploy).
+ *
+ * The mitigation is two-layer:
+ *   1. Both consumers (`StorageUsageBadge` in `Footer`, `StorageUsageRow`
+ *      in `DatenView`) only mount under the `authUser`-truthy branch
+ *      in `App.tsx`. New consumers MUST keep that placement — pulling
+ *      a `subscribe()` call out of the authenticated tree resurrects
+ *      the bug.
+ *   2. `src/sse/client.ts`'s `ensureSource()` is defensive: a cached
+ *      source in CLOSED state is recreated on the next subscribe and
+ *      every still-tracked DOM listener re-attached. So even a
+ *      mid-stream session revocation that drops the connection is
+ *      self-healing on the next mount cycle.
  */
 
 import { create } from 'zustand';
