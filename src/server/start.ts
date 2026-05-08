@@ -171,6 +171,7 @@ async function start(): Promise<void> {
           createBucketKeyLister(prunerConfig),
           { info: (m) => console.log(m), warn: (m) => console.warn(m) },
           env.STORAGE_BUCKET,
+          env.NODE_ENV,
         );
       }
     }

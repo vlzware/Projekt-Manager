@@ -39,6 +39,7 @@
 import { S3Client, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { sql } from 'drizzle-orm';
 
+import type { Env } from '../config/env.js';
 import type { Database } from '../db/connection.js';
 import type { AttachmentStorageClient } from './client.js';
 
@@ -99,8 +100,9 @@ export async function pruneBucketOrphans(
   listAllBucketKeys: () => Promise<string[]>,
   logger: PruneBucketOrphansLogger,
   bucketLabel: string,
+  nodeEnv: Env['NODE_ENV'],
 ): Promise<PruneBucketOrphansResult> {
-  if (process.env.NODE_ENV === 'production') {
+  if (nodeEnv === 'production') {
     throw new Error(
       'pruneBucketOrphans: refusing to run with NODE_ENV=production. ' +
         'This helper is dev-only — it issues delete-marker writes against the configured bucket.',

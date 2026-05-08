@@ -130,7 +130,14 @@ describe('pruneBucketOrphans', () => {
       .mockResolvedValue([refOrigKey, refThumbKey, orphanKey1, orphanKey2]);
     const logger = makeLogger();
 
-    const result = await pruneBucketOrphans(db, storage, lister, logger, 'test-bucket');
+    const result = await pruneBucketOrphans(
+      db,
+      storage,
+      lister,
+      logger,
+      'test-bucket',
+      'development',
+    );
 
     expect(result).toEqual({
       bucketObjectCount: 4,
@@ -157,7 +164,14 @@ describe('pruneBucketOrphans', () => {
     const storage = makeStorageStub();
     const lister = vi.fn<() => Promise<string[]>>().mockResolvedValue([hiddenOrigKey, orphanKey]);
 
-    const result = await pruneBucketOrphans(db, storage, lister, makeLogger(), 'test-bucket');
+    const result = await pruneBucketOrphans(
+      db,
+      storage,
+      lister,
+      makeLogger(),
+      'test-bucket',
+      'development',
+    );
 
     expect(result.orphanCount).toBe(1);
     expect(result.preservedCount).toBe(1);
@@ -174,7 +188,14 @@ describe('pruneBucketOrphans', () => {
     const lister = vi.fn<() => Promise<string[]>>().mockResolvedValue([refKey]);
     const logger = makeLogger();
 
-    const result = await pruneBucketOrphans(db, storage, lister, logger, 'test-bucket');
+    const result = await pruneBucketOrphans(
+      db,
+      storage,
+      lister,
+      logger,
+      'test-bucket',
+      'development',
+    );
 
     expect(result).toEqual({
       bucketObjectCount: 1,
@@ -191,7 +212,14 @@ describe('pruneBucketOrphans', () => {
     const lister = vi.fn<() => Promise<string[]>>().mockResolvedValue([]);
     const logger = makeLogger();
 
-    const result = await pruneBucketOrphans(db, storage, lister, logger, 'test-bucket');
+    const result = await pruneBucketOrphans(
+      db,
+      storage,
+      lister,
+      logger,
+      'test-bucket',
+      'development',
+    );
 
     expect(result).toEqual({
       bucketObjectCount: 0,
@@ -203,19 +231,13 @@ describe('pruneBucketOrphans', () => {
   });
 
   it('refuses to run with NODE_ENV=production', async () => {
-    const original = process.env.NODE_ENV;
-    process.env.NODE_ENV = 'production';
-    try {
-      const storage = makeStorageStub();
-      const lister = vi.fn<() => Promise<string[]>>().mockResolvedValue([]);
-      await expect(
-        pruneBucketOrphans(db, storage, lister, makeLogger(), 'test-bucket'),
-      ).rejects.toThrow(/NODE_ENV=production/);
-      // Refusal is up-front: lister and storage stay untouched.
-      expect(lister).not.toHaveBeenCalled();
-      expect(storage.hide).not.toHaveBeenCalled();
-    } finally {
-      process.env.NODE_ENV = original;
-    }
+    const storage = makeStorageStub();
+    const lister = vi.fn<() => Promise<string[]>>().mockResolvedValue([]);
+    await expect(
+      pruneBucketOrphans(db, storage, lister, makeLogger(), 'test-bucket', 'production'),
+    ).rejects.toThrow(/NODE_ENV=production/);
+    // Refusal is up-front: lister and storage stay untouched.
+    expect(lister).not.toHaveBeenCalled();
+    expect(storage.hide).not.toHaveBeenCalled();
   });
 });
