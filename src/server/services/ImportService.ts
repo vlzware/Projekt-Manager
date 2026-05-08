@@ -408,14 +408,13 @@ export class ImportService {
       }
     });
 
-    // Post-commit project-list invalidation (AC-276). The override path
-    // replaces the entire project corpus atomically; one coarse signal
-    // is sufficient for every consumer to refetch (architecture.md
-    // §11.13). The dry-run path returned early above and never reaches
-    // here, so no `opts.dryRun` branch is needed.
-    if (opts.override) {
-      emitProjectChanged();
-    }
+    // Post-commit project-list invalidation (AC-276). Both non-dry-run
+    // branches write project rows: override TRUNCATEs and re-inserts
+    // (replacing the corpus); empty-target inserts into empty tables
+    // (establishing the corpus). One coarse signal is sufficient for
+    // every consumer to refetch (architecture.md §11.13). The dry-run
+    // path returned early above and never reaches here.
+    emitProjectChanged();
 
     // Post-commit storage cleanup. A failure here does not abort the
     // import — the rows are already gone; orphaned keys are logged

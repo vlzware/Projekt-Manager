@@ -22,7 +22,9 @@
  *   8. ProjectTransitionService.transitionBackward (-1)
  *   9. ProjectDatesService.updateDates (planned start / end edit)
  *  10. CustomerService.deleteCustomer (cascade with archived projects)
- *  11. ImportService.import (override path, successful bulk-restore)
+ *  11. ImportService.import — non-dry-run, both branches:
+ *      a. override path (TRUNCATE + re-insert into a non-empty target)
+ *      b. empty-target path (insert into empty tables; the seed-equivalent path)
  *
  * Silence cases:
  *   - CustomerService.deleteCustomer with zero archived projects
@@ -309,9 +311,11 @@ async function seededWorkerIdAny(ownerToken: string): Promise<string> {
  * Build a minimal valid envelope distinct from the seed so the
  * override path actually replaces business data. The shape mirrors
  * `buildOverrideEnvelope` in `data-exchange.test.ts`. AC-276 pins
- * exactly one `project_changed` per successful override commit
+ * exactly one `project_changed` per successful non-dry-run commit
  * (architecture.md §11.13: "one coarse signal is sufficient for every
- * consumer to refetch") and zero events per dry-run.
+ * consumer to refetch") and zero events per dry-run. Both non-dry-run
+ * branches reuse this envelope: the override test runs it against a
+ * non-empty target; the empty-target test wipes the tables first.
  */
 const CURRENT_SCHEMA_VERSION = 2;
 
@@ -687,11 +691,10 @@ describe('AC-276: project_changed emission from every project-mutation site', ()
   });
 
   // -------------------------------------------------------------------
-  // (11) ImportService.import — override path, successful bulk-restore.
-  // architecture.md §11.13: "Exactly one `project_changed` is emitted
-  // post-commit per successful import — the entire project corpus is
-  // being replaced; one coarse signal is sufficient for every consumer
-  // to refetch."
+  // (11a) ImportService.import — override path, successful bulk-restore
+  // into a non-empty target. architecture.md §11.13: "Exactly one
+  // `project_changed` is emitted post-commit per successful import —
+  // one coarse signal is sufficient for every consumer to refetch."
   // -------------------------------------------------------------------
   describe('AC-276: ImportService.import (override commit) emits exactly one event', () => {
     it('a subscribed connection observes one project_changed event after a successful override', async () => {
@@ -704,6 +707,40 @@ describe('AC-276: project_changed emission from every project-mutation site', ()
           '/api/import?override=true',
           buildOverrideEnvelope(),
         );
+        expect(res.statusCode).toBe(200);
+
+        await new Promise<void>((r) => setImmediate(r));
+
+        expect(countProjectChanged(conn)).toBe(1);
+      } finally {
+        bus.unsubscribe(conn);
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------
+  // (11b) ImportService.import — empty-target path, successful insert
+  // into empty tables. The empty-target branch writes new project rows
+  // and is observable to any subscriber connected at the time (e.g. an
+  // admin re-importing into a wiped staging DB while the office tab is
+  // open). AC-276 widens to cover this branch alongside override —
+  // both non-dry-run paths emit one signal post-commit.
+  // -------------------------------------------------------------------
+  describe('AC-276: ImportService.import (empty-target commit) emits exactly one event', () => {
+    it('a subscribed connection observes one project_changed event after a successful empty-target import', async () => {
+      const bus = await loadBus();
+
+      // Empty the business tables so the empty-target branch runs —
+      // the import service refuses without `override` when any row
+      // exists. attachments included so the FK cascade has nothing to
+      // hold the truncate back.
+      await db.execute(
+        sql`TRUNCATE TABLE attachments, project_workers, projects, customers RESTART IDENTITY CASCADE`,
+      );
+
+      const conn = subscribeFake(bus);
+      try {
+        const res = await authPost(ownerToken, '/api/import', buildOverrideEnvelope());
         expect(res.statusCode).toBe(200);
 
         await new Promise<void>((r) => setImmediate(r));
