@@ -240,11 +240,7 @@ test.describe('AC-277: project lifecycle propagates from worker / owner mutation
 
     // The office session parks on the project list once for the suite.
     // Subsequent test arms reuse the same page — the SSE channel must
-    // propagate state changes, not a goto / reload. The single exception
-    // is arm #5 (assigned-worker edit), which navigates to /projects/:id
-    // because the management list does not render the worker chip set;
-    // that arm restores the office page to /projekte at teardown so the
-    // next arm reads from the project-list surface.
+    // propagate state changes, not a goto / reload.
     await parkOfficeOnProjectList(officePage);
     // Surface archived rows from the start — the archive / restore arms
     // need them visible to observe the row's presence after each step.
@@ -414,86 +410,39 @@ test.describe('AC-277: project lifecycle propagates from worker / owner mutation
   //
   // Target: `-010` (in_arbeit, seeded with arbeiter2 only). Adding
   // arbeiter1 produces a `project_changed` event per AC-276 (the
-  // assigned-worker-only branch). The office Project Management list's
-  // row text does not currently render the assigned-worker chips
-  // (ProjectManagement.tsx column set is number/title/customer/status/
-  // dates/value), so this arm asserts on the project store re-fetch
-  // landing — visible to the office tab via a fresh GET /api/projects
-  // round-trip surfacing in the network tab. Since we cannot guarantee
-  // a row-text diff for this surface alone, we mirror the AC-273
-  // precedent's `expect.poll` shape against the project DETAIL
-  // surface: open the row, re-read the chip set in the office tab.
-  //
-  // NOTE: this requires the office tab to navigate to the project
-  // detail to observe the chip set. AC-277 explicitly names "any open
-  // project-detail surface" as a covered surface, so the navigation
-  // here exercises the spec's full surface set rather than testing
-  // less than the AC promises.
+  // assigned-worker-only branch). The Project Management list renders
+  // the assigned-worker names inline, so the row-text diff catches the
+  // new worker landing in the office surface — same shape as the
+  // transition / dates / archive arms above.
   // ------------------------------------------------------------------
   test('AC-277: office observer reflects owner assigned-worker edit within 2s', async ({ browser }) => {
     const SUFFIX = '010';
+    const numberRegex = new RegExp(`-${SUFFIX}\\b`);
+    const before = await readProjectRow(officePage, numberRegex);
 
     const ownerContext = await browser.newContext({ storageState: STORAGE_STATES.owner });
-    let projectId: string;
-    let nextWorkerIds: string[];
     try {
       const ownerRequest = ownerContext.request;
       const project = await resolveProjectIdBySuffix(ownerRequest, SUFFIX);
-      projectId = project.id;
-
-      // Office observer opens the detail page so the AssignedWorkerEditor
-      // chip set is the observed surface. This navigation happens BEFORE
-      // the mutation so the SSE frame is what drives the diff.
-      await officePage.goto(`/projects/${projectId}`);
-      await expect(officePage.getByTestId('project-detail-assigned-workers')).toBeVisible();
-      // Snapshot the chip count before the mutation so the poll has a
-      // baseline that does not include the new chip.
-      const beforeChips = await officePage
-        .getByTestId('project-detail-assigned-workers')
-        .locator('[data-testid^="worker-chip-"]')
-        .count();
 
       // Compose the new assigned-worker set: keep current + add
       // arbeiter1. Read the current set off the detail endpoint so the
       // seed-vs-test-mutation history can't drift.
-      const detailResp = await ownerRequest.get(`/api/projects/${projectId}`);
+      const detailResp = await ownerRequest.get(`/api/projects/${project.id}`);
       const detail = (await detailResp.json()) as { assignedWorkers: Array<{ userId: string }> };
       const arbeiter1Id = await resolveUserIdByUsername(ownerRequest, 'arbeiter1');
       const currentIds = new Set(detail.assignedWorkers.map((w) => w.userId));
       currentIds.add(arbeiter1Id);
-      nextWorkerIds = Array.from(currentIds);
 
-      const resp = await ownerRequest.patch(`/api/projects/${projectId}`, {
-        data: { assignedWorkerIds: nextWorkerIds },
+      const resp = await ownerRequest.patch(`/api/projects/${project.id}`, {
+        data: { assignedWorkerIds: Array.from(currentIds) },
       });
       expect(resp.ok(), `assigned-worker patch failed: ${resp.status()} ${await resp.text()}`).toBe(true);
-
-      // Office surface must reflect the new chip count within the AC-277
-      // budget — a passing implementation resolves on the SSE-driven
-      // re-fetch tick. The chip-count gate is monotonic by construction
-      // (we added a worker), so a regression that loses the SSE frame
-      // surfaces as a 2 s timeout, not a flake.
-      await expect
-        .poll(
-          async () =>
-            officePage
-              .getByTestId('project-detail-assigned-workers')
-              .locator('[data-testid^="worker-chip-"]')
-              .count(),
-          {
-            message:
-              'office detail chip set did not reflect owner assigned-worker edit within the AC-277 propagation budget',
-            timeout: SSE_PROPAGATION_TIMEOUT_MS,
-          },
-        )
-        .toBe(beforeChips + 1);
     } finally {
       await ownerContext.close();
     }
 
-    // Restore the office observer to the project list for arm #6.
-    await parkOfficeOnProjectList(officePage);
-    await officePage.getByTestId('project-show-archived-toggle').check();
+    await expectOfficeRowChanges(officePage, numberRegex, before, 'owner assigned-worker edit');
   });
 
   // ------------------------------------------------------------------
