@@ -29,8 +29,8 @@ Fresh DB; baseline applies; live schema = `schema.ts`.
 `down -v` removes both named volumes (`pgdata`, `miniodata`); `npm run dev` migrates + reseeds (`SEED=true` in `.env`):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml down -v
-docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init
+docker compose down -v
+docker compose up -d
 npm run dev
 ```
 

@@ -38,7 +38,7 @@ Pin Docker Engine, CLI, containerd, BuildKit plugin, and Compose plugin to expli
 **Upgrade procedure (lockstep):**
 
 1. Review Docker's release notes for the target version.
-2. Non-production host first: `apt-mark unhold` → install target → `apt-mark hold` → run the full stack (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`) + smoke tests.
+2. Non-production host first: `apt-mark unhold` → install target → `apt-mark hold` → run the full stack (`docker compose up -d`; the dev `.env` sets `COMPOSE_FILE` to merge the dev overlay triple) + smoke tests.
 3. Repeat on remaining hosts, VPS last.
 4. Update this ADR with the new pinned versions and date.
 

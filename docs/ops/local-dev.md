@@ -22,13 +22,15 @@ The `.env.example` defaults are dev-ready: `NODE_ENV=development`, `SEED=true`, 
 
 ```bash
 # Start backing services (Postgres + MinIO)
-docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init
+docker compose up -d
 
 # Run Vite (HMR) + Fastify (tsx watch)
 npm run dev
 ```
 
 Open `http://localhost:5173`. Vite proxies `/api/*` to `http://localhost:3000`.
+
+`COMPOSE_FILE` in `.env.example` declares the dev overlay triple (`docker-compose.yml:docker-compose.minio.yml:docker-compose.dev.yml`), so bare `docker compose` commands pick up the right file set without `-f` flags. The dev overlay's `app` service is profile-gated (`containerised-app`) — bare `up` starts only `db`, `storage`, `storage-init` because the app runs on the host via `npm run dev`. To exercise the prod-shaped Dockerfile build locally, opt in with `docker compose --profile containerised-app up -d`.
 
 ### Seed users
 
@@ -45,10 +47,10 @@ Open `http://localhost:5173`. Vite proxies `/api/*` to `http://localhost:3000`.
 
 ```bash
 # Stop containers, keep data
-docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml down
+docker compose down
 
 # Wipe everything (fresh start, seed re-runs on next start)
-docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml down -v
+docker compose down -v
 ```
 
 ## Re-seed without volume wipe

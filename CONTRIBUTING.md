@@ -46,7 +46,7 @@ The trigger question: **"Does this change affect how the system authenticates, a
 
 **UI Mode gotcha**: pass `--project=<name>` explicitly — `chromium` for read-only specs (including `permission-visibility`), `chromium-mutating` for serial tests that mutate DB state, `smoke` for the unauthenticated boot check. Without an explicit project, the filter defaults hide everything but the `setup` login and the test tree appears empty.
 
-**Integration prerequisites**: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db storage storage-init` — `npm run test` needs Postgres on `:5432` and MinIO on `:9000`; Playwright needs those plus the dev server on `:5173` (auto-started via `webServer`). Close the MCP Chromium browser or limit workers before Playwright runs — the persistent MCP instance plus per-worker Playwright browsers OOM Chrome.
+**Integration prerequisites**: `docker compose up -d` — `npm run test` needs Postgres on `:5432` and MinIO on `:9000`; Playwright needs those plus the dev server on `:5173` (auto-started via `webServer`). The dev `.env` sets `COMPOSE_FILE` so bare compose commands pick up the dev overlay triple. Close the MCP Chromium browser or limit workers before Playwright runs — the persistent MCP instance plus per-worker Playwright browsers OOM Chrome.
 
 **`age` on PATH**: integration setup and Playwright's `webServer` both shell out to `age-keygen` to generate a per-fork/per-run binary identity (ADR-0024). Install via `apt-get install age` (Ubuntu) or `brew install age` (macOS).
 

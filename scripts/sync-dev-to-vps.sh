@@ -112,15 +112,15 @@ echo "[2/10] Local stack check..."
 # exposed ports that the `docker exec` calls below do NOT actually use — but
 # the overlay is also what keeps the developer-facing workflow consistent
 # (see docs/ops/local-dev.md). Asserting it here avoids the footgun of
-# running against a partial stack.
+# running against a partial stack. The dev `.env` sets COMPOSE_FILE so bare
+# `docker compose` picks up the dev overlay triple automatically.
 cd "$REPO_DIR"
-running_services=$(docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml \
-  ps --services --status running 2>/dev/null || true)
+running_services=$(docker compose ps --services --status running 2>/dev/null || true)
 for svc in db storage; do
   if ! echo "$running_services" | grep -qx "$svc"; then
     echo "ERROR: local service '$svc' is not running." >&2
     echo "  Start the dev stack:" >&2
-    echo "    docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init" >&2
+    echo "    docker compose up -d" >&2
     exit 1
   fi
 done
