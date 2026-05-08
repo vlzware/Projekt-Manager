@@ -49,7 +49,7 @@ import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
 import { bestEffortHideStorageKeys } from './AttachmentService.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
-import { emitStorageUsageChanged } from '../sse/emitters.js';
+import { emitProjectChanged, emitStorageUsageChanged } from '../sse/emitters.js';
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
 
@@ -151,6 +151,7 @@ export class ProjectCrudService {
         correlationId,
       );
       log.info({ projectId: project.id }, 'project_created');
+      emitProjectChanged();
       return project;
     } catch (err) {
       const sqlState = extractSqlState(err);
@@ -326,6 +327,7 @@ export class ProjectCrudService {
             correlationId,
           );
           log.info({ projectId: data.id }, 'project_created');
+          emitProjectChanged();
           return inserted;
         } catch (err) {
           // 23503 is customerId FK violation — map before the idempotency
@@ -554,6 +556,7 @@ export class ProjectCrudService {
       await dispatchAuditRows(collected);
 
       log.info({ projectId: id }, 'project_updated');
+      emitProjectChanged();
       return project;
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
@@ -599,6 +602,7 @@ export class ProjectCrudService {
         },
       );
       log.info({ projectId: id }, 'project_archived');
+      emitProjectChanged();
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
       throw err;
@@ -652,6 +656,7 @@ export class ProjectCrudService {
         return toProject(restored, customerRows[0] ?? null, workers);
       });
       log.info({ projectId: id }, 'project_restored');
+      emitProjectChanged();
       return project;
     } catch (err) {
       if (err instanceof ProjectNotFoundError) throw notFound(STRINGS.entities.project);
@@ -708,6 +713,10 @@ export class ProjectCrudService {
         },
       );
       log.info({ projectId: id, actorUserId: userId }, 'project_purged');
+
+      // Post-commit invalidation (AC-276). The project row is gone — every
+      // project list / detail consumer must refetch unconditionally.
+      emitProjectChanged();
 
       // Post-commit invalidation (AC-270). The FK cascade removed every
       // attachment row alongside the project; the per-row delete trigger

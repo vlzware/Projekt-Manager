@@ -139,6 +139,7 @@ export function ProjectManagement() {
             <th>{STRINGS.ui.number}</th>
             <th>{STRINGS.ui.title}</th>
             <th>{STRINGS.ui.customer}</th>
+            <th>{STRINGS.ui.workers}</th>
             <th>{STRINGS.ui.status}</th>
             <th>{STRINGS.ui.dates}</th>
             <th>{STRINGS.ui.value}</th>
@@ -164,6 +165,11 @@ export function ProjectManagement() {
                 <td data-label={STRINGS.ui.number}>{p.number}</td>
                 <td data-label={STRINGS.ui.title}>{p.title}</td>
                 <td data-label={STRINGS.ui.customer}>{p.customer?.name ?? '—'}</td>
+                <td data-label={STRINGS.ui.workers}>
+                  {p.assignedWorkers && p.assignedWorkers.length > 0
+                    ? p.assignedWorkers.map((w) => w.displayName).join(', ')
+                    : '—'}
+                </td>
                 <td data-label={STRINGS.ui.status}>
                   <span className={styles.badge} style={{ backgroundColor: stateColor(p.status) }}>
                     {stateLabel(p.status)}

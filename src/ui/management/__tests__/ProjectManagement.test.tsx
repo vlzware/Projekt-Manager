@@ -112,6 +112,42 @@ function renderWithRouter(ui: ReactElement): ReturnType<typeof render> {
   return render(<MemoryRouter>{ui}</MemoryRouter>);
 }
 
+describe('ProjectManagement — assigned workers column', () => {
+  it('renders comma-separated worker names when assigned, em-dash when empty', async () => {
+    projectListMock.mockResolvedValue(
+      ok({
+        data: [
+          mockProject({
+            id: 'p-with',
+            number: 'P-001',
+            assignedWorkers: [
+              { userId: 'u-w1', displayName: 'Anna Arbeiter' },
+              { userId: 'u-w2', displayName: 'Bernd Bauer' },
+            ],
+          }),
+          mockProject({ id: 'p-without', number: 'P-002', assignedWorkers: [] }),
+        ],
+        total: 2,
+      }),
+    );
+
+    renderWithRouter(<ProjectManagement />);
+
+    // Wait for the rows to land — the store fetches on mount.
+    await screen.findByText('P-001');
+
+    const rowWithWorkers = screen.getByText('P-001').closest('tr')!;
+    expect(rowWithWorkers.textContent).toContain('Anna Arbeiter, Bernd Bauer');
+
+    const rowWithoutWorkers = screen.getByText('P-002').closest('tr')!;
+    // Customer column also renders '—' for the null customer in mockProject;
+    // assert via the column-labelled cell to avoid a false positive on the
+    // customer cell.
+    const workersCell = rowWithoutWorkers.querySelector('td[data-label="Mitarbeiter"]');
+    expect(workersCell?.textContent).toBe('—');
+  });
+});
+
 describe('ProjectManagement — number preflight', () => {
   it('shows "taken" on blur when the number already exists', async () => {
     projectListMock.mockImplementation(async (params?: { search?: string }) => {

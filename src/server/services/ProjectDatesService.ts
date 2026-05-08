@@ -20,6 +20,7 @@ import { emit } from './events.js';
 import type { ServiceLogger } from './Logger.js';
 import { mutate } from './mutate.js';
 import { projectAuditLabel } from '../../domain/audit.js';
+import { emitProjectChanged } from '../sse/emitters.js';
 
 export class ProjectDatesService {
   constructor(private db: Database) {}
@@ -64,6 +65,8 @@ export class ProjectDatesService {
       if (err instanceof DateValidationError) throw validationError(err.message);
       throw err;
     }
+
+    emitProjectChanged();
 
     await emit(
       'project.dates_changed',

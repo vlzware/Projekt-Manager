@@ -29,7 +29,7 @@ import { isOutOfScope } from '../repositories/scope.js';
 import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
-import { emitStorageUsageChanged } from '../sse/emitters.js';
+import { emitProjectChanged, emitStorageUsageChanged } from '../sse/emitters.js';
 
 /**
  * Fields captured in the audit payload for customer writes. Kept as a
@@ -243,6 +243,12 @@ export class CustomerService {
     // gate on whether the cascade actually moved counters (AC-270 —
     // pending and zero-attachment cases must not emit).
     let movedBytes = false;
+    // Tracked across the tx boundary so the post-commit emitter only
+    // fires `project_changed` when the cascade actually purged at least
+    // one archived project (AC-276 — no event for a customer-delete
+    // with zero archived projects, since project rows visible to
+    // subscribers do not change).
+    let purgedArchivedProjects = false;
     const ctx = {
       actorKind: 'user' as const,
       actorId: userId,
@@ -329,6 +335,7 @@ export class CustomerService {
       }
 
       if (archived.length > 0) {
+        purgedArchivedProjects = true;
         log.info(
           { customerId: id, archivedProjectsRemoved: archived.length },
           'archived_projects_purged',
@@ -383,6 +390,14 @@ export class CustomerService {
 
     // Publisher dispatch runs after the transaction commits — AC-183.
     await dispatchAuditRows(collectedAudit);
+
+    // Post-commit project-list invalidation (AC-276). The cascade
+    // purged at least one archived project — observers refetch the
+    // project list once. Skip when the customer had no archived
+    // projects: the rows visible to subscribers did not change.
+    if (purgedArchivedProjects) {
+      emitProjectChanged();
+    }
 
     // Post-commit storage-usage invalidation (AC-270). The atomic
     // archived-project purge cascaded each project's attachments away;

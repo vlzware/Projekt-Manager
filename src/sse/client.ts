@@ -17,8 +17,11 @@
  *     keeps the connection cost zero when no UI surface is mounted.
  *   - WHATWG `EventSource` reconnects on transport failure at the
  *     implementation-defined reconnection time the spec mandates
- *     (overridable by the server's `retry:` field, not used here);
- *     we do not implement reconnection.
+ *     (overridable by the server's `retry:` field, not used here).
+ *     For the residual unrecoverable-close path (a 401 mid-stream
+ *     because a session got revoked, a malformed response, etc.) the
+ *     source enters CLOSED and `ensureSource()` recreates it on the
+ *     next subscribe — see the readyState guard there.
  *   - Same-origin only — cookies ride along automatically. Do not
  *     pass `withCredentials: true` (it is for cross-origin only and
  *     causes a CORS preflight that the server is not configured for).
@@ -31,12 +34,38 @@ const handlersByEvent = new Map<string, Set<() => void>>();
 const listenersByEvent = new Map<string, (e: MessageEvent) => void>();
 
 function ensureSource(): EventSource {
-  if (source) return source;
+  // A cached source in CLOSED state is treated the same as no source:
+  // recreate. WHATWG `EventSource` enters CLOSED on responses the spec
+  // deems unrecoverable (401, 404, malformed Content-Type, ...). The
+  // bootstrap-time 401 case — opening pre-auth — is handled at the
+  // call-site layer via the auth-gated `useEffect` in `App.tsx`; this
+  // guard covers the residual mid-stream-session-revocation path
+  // (heartbeat re-validation kills the response, the auto-reconnect
+  // hits 401 because the cookie is now invalid). Without this, the
+  // next subscriber would `addEventListener` on a dead source and
+  // silently miss every frame until a full page reload.
+  if (source && source.readyState !== EventSource.CLOSED) return source;
+  if (source) {
+    // Belt-and-suspenders — `close()` on a CLOSED source is a no-op
+    // per spec, but explicit teardown documents the intent and tears
+    // down any pending reconnect timer the implementation may hold.
+    source.close();
+    listenersByEvent.clear();
+  }
   source = new EventSource(SSE_URL);
+  // Nullify the cached reference if the freshly-opened source ever
+  // transitions to CLOSED — same self-heal mechanism the readyState
+  // guard above relies on for the next subscribe.
+  source.addEventListener('error', () => {
+    if (source && source.readyState === EventSource.CLOSED) {
+      source = null;
+      listenersByEvent.clear();
+    }
+  });
   // Re-attach DOM listeners to the newly created source for every
   // event name we already track. This handles the
   // close-on-last-unsubscribe → resubscribe sequence within the same
-  // page lifetime.
+  // page lifetime AND the dead-source recreation path above.
   for (const eventName of handlersByEvent.keys()) {
     attachDomListener(source, eventName);
   }
