@@ -4,15 +4,21 @@
  *
  * The caller passes a `ReadableStream<Uint8Array>` (e.g. the body of a
  * streaming zip archive) and a download filename; the helper hands the
- * stream to the SW under a one-shot key, navigates a hidden iframe to
- * the synthetic URL the SW intercepts, and waits for the SW to ACK that
- * it has started serving the response. The returned Promise resolves
- * once the served-ACK arrives — meaning "iframe fetch reached the SW
- * and the SW is about to return the Response" — and rejects on either
- * an explicit `streaming-download-aborted` message (the SW saw the
- * unregister request) or after `STREAMING_DOWNLOAD_ACK_TIMEOUT_MS`
- * (the SW-eviction backstop, the only path the protocol cannot signal
- * in-band). The `key` is exposed so callers can call
+ * stream to the SW under a one-shot key, waits for the SW to ACK that
+ * the registry entry is in place, then navigates a hidden iframe to
+ * the synthetic URL the SW intercepts, and finally waits for the
+ * served-ACK. The two-phase handshake (registered-ACK then served-
+ * ACK) closes a postMessage-vs-fetch ordering race: a fast iframe GET
+ * can otherwise overtake the register message, hit the SW's fetch
+ * handler before the message handler has set the registry entry, and
+ * resolve to 404 — observed in e2e traces as a 30 s hang on the
+ * served-ACK timeout. The returned Promise resolves once the served-
+ * ACK arrives — meaning "iframe fetch reached the SW and the SW is
+ * about to return the Response" — and rejects on either an explicit
+ * `streaming-download-aborted` message (the SW saw the unregister
+ * request) or after `STREAMING_DOWNLOAD_ACK_TIMEOUT_MS` (the SW-
+ * eviction backstop, the only path the protocol cannot signal in-
+ * band). The `key` is exposed so callers can call
  * `unregisterStreamingDownload(key)` from a cancel path that runs while
  * the helper is still awaiting the ACK.
  *
@@ -140,6 +146,13 @@ export async function streamingDownload(
   const channel = new MessageChannel();
   const port1 = channel.port1;
 
+  let resolveRegistered!: () => void;
+  let rejectRegistered!: (err: Error) => void;
+  const registered = new Promise<void>((res, rej) => {
+    resolveRegistered = res;
+    rejectRegistered = rej;
+  });
+
   let resolveServed!: () => void;
   let rejectServed!: (err: Error) => void;
   const served = new Promise<void>((res, rej) => {
@@ -147,18 +160,31 @@ export async function streamingDownload(
     rejectServed = rej;
   });
 
-  // Single-fire timeout. Cleared on resolve / reject so the page-side
-  // listener doesn't hold a phantom timer past the dialog close.
+  // Single-fire timeout covering both the registration ACK and the
+  // served ACK. Cleared on the served resolve / reject so the page-
+  // side listener doesn't hold a phantom timer past the dialog close.
+  // If registration never ACKs, the same timeout fires through to the
+  // registered-side rejection — `streamingDownload` itself throws
+  // before the iframe is ever appended.
   const timeoutId = setTimeout(() => {
     port1.close();
-    rejectServed(
-      new Error(`streamingDownload: SW did not ACK within ${STREAMING_DOWNLOAD_ACK_TIMEOUT_MS} ms`),
+    const err = new Error(
+      `streamingDownload: SW did not ACK within ${STREAMING_DOWNLOAD_ACK_TIMEOUT_MS} ms`,
     );
+    rejectRegistered(err);
+    rejectServed(err);
   }, STREAMING_DOWNLOAD_ACK_TIMEOUT_MS);
 
   port1.onmessage = (ev: MessageEvent) => {
     const data = ev.data as { type?: unknown; key?: unknown } | null;
     if (data === null || typeof data !== 'object' || data.key !== key) return;
+    if (data.type === 'streaming-download-registered') {
+      // Registration confirmed by the SW. Safe to trigger the iframe
+      // fetch — the registry entry is in place, so the synthetic GET
+      // will hit the served branch rather than the 404 branch.
+      resolveRegistered();
+      return;
+    }
     if (data.type === 'streaming-download-served') {
       clearTimeout(timeoutId);
       port1.close();
@@ -168,7 +194,11 @@ export async function streamingDownload(
     if (data.type === 'streaming-download-aborted') {
       clearTimeout(timeoutId);
       port1.close();
-      rejectServed(new Error('streamingDownload: SW aborted before serving (cancel-before-serve)'));
+      const err = new Error('streamingDownload: SW aborted before serving (cancel-before-serve)');
+      // Reject registration too in case cancel beat the registered-ACK
+      // — without this, an `await registered` below would hang.
+      rejectRegistered(err);
+      rejectServed(err);
     }
   };
   // `messageerror` fires when the channel receives a message that
@@ -177,7 +207,9 @@ export async function streamingDownload(
   port1.onmessageerror = () => {
     clearTimeout(timeoutId);
     port1.close();
-    rejectServed(new Error('streamingDownload: SW served-ACK channel error'));
+    const err = new Error('streamingDownload: SW served-ACK channel error');
+    rejectRegistered(err);
+    rejectServed(err);
   };
   // Some implementations require an explicit `start` to begin
   // delivering messages when using the `onmessage` setter pattern.
@@ -200,6 +232,26 @@ export async function streamingDownload(
     },
     [stream as unknown as Transferable, channel.port2],
   );
+
+  // Wait for the SW to ACK that the registry entry is in place BEFORE
+  // appending the iframe. postMessage and fetch dispatch over
+  // different IPC paths to the SW, and a fast iframe fetch can
+  // overtake the register message — Playwright traces under e2e load
+  // showed the iframe GET resolving to 404 ("key not registered") and
+  // the helper waiting out the full 30 s served-ACK timeout. With the
+  // ACK gating the iframe creation, the registry entry exists by the
+  // time the GET arrives.
+  try {
+    await registered;
+  } catch (err) {
+    // The timeout / abort path rejects `served` alongside `registered`
+    // so any caller already awaiting `served` fails fast. Since this
+    // helper is about to throw, no caller will ever attach a listener
+    // to `served` — swallow its rejection here to keep it from
+    // surfacing as an unhandled rejection.
+    served.catch(() => {});
+    throw err;
+  }
 
   // Hidden iframe navigation — NOT an `<a download>` click. The
   // critical difference: `<a download>` triggers the browser's

@@ -117,6 +117,29 @@ function nextPortMessage(port: MessagePort, timeoutMs = 1000): Promise<unknown> 
 }
 
 /**
+ * Collect every message delivered on a port until the test closes it.
+ * Used by the multi-message tests (registered-ACK + served-ACK,
+ * registered-ACK + aborted-ACK). Caller is responsible for closing the
+ * port after the assertions.
+ */
+function collectPortMessages(port: MessagePort): unknown[] {
+  const messages: unknown[] = [];
+  port.onmessage = (ev) => {
+    messages.push(ev.data);
+  };
+  port.start();
+  return messages;
+}
+
+/**
+ * Yield to the macrotask queue so MessagePort deliveries (which post
+ * via the HTML task queue, not microtasks) settle before assertions.
+ */
+function flushPortQueue(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0));
+}
+
+/**
  * Register a stream with a freshly-minted MessageChannel — mirrors
  * what the page-side helper does when transferring `[stream, port2]`.
  * The SW retains `port2`; the test keeps `port1` for ACK assertions
@@ -268,10 +291,55 @@ describe('handleStreamingDownloadRequest — registry semantics', () => {
   });
 });
 
+describe('handleStreamingDownloadMessage — registered-ACK handshake', () => {
+  it('posts {type:"streaming-download-registered", key} on the transferred port immediately on register', async () => {
+    // The registered-ACK closes the postMessage-vs-fetch race: without
+    // it, a fast iframe fetch can overtake the register message and
+    // hit `handleStreamingDownloadRequest` before this handler has
+    // set the entry, returning 404. The page-side helper gates iframe
+    // creation on this ACK.
+    const key = 'k-registered';
+    const channel = new MessageChannel();
+    const ackPromise = nextPortMessage(channel.port1);
+
+    handleStreamingDownloadMessage(
+      messageEvent(
+        {
+          type: 'register-streaming-download',
+          key,
+          filename: 'reg.zip',
+          contentType: 'application/zip',
+          stream: streamOf(new Uint8Array([1])),
+        },
+        [channel.port2],
+      ),
+    );
+
+    const ack = await ackPromise;
+    expect(ack).toEqual({ type: 'streaming-download-registered', key });
+
+    // Registration was successful — fetch resolves with 200, not 404.
+    const res = handleStreamingDownloadRequest(
+      new Request(`https://app.local${STREAMING_DOWNLOAD_PREFIX}${key}`),
+    );
+    expect(res.status).toBe(200);
+    await drain(res.body!);
+  });
+});
+
 describe('handleStreamingDownloadRequest — served-ACK handshake', () => {
   it('posts {type:"streaming-download-served", key} on the registered port before returning the Response', async () => {
     const key = 'k-ack';
     const channel = new MessageChannel();
+    // Listen on port1 from the start so both ACKs (registered then
+    // served) are captured in order. The registered-ACK is posted
+    // synchronously inside `handleStreamingDownloadMessage`; the
+    // served-ACK is posted synchronously inside
+    // `handleStreamingDownloadRequest` before its `Response` is
+    // returned. The two ACKs travel on the same port — port1 sees
+    // them as a FIFO sequence.
+    const messages = collectPortMessages(channel.port1);
+
     handleStreamingDownloadMessage(
       messageEvent(
         {
@@ -285,20 +353,20 @@ describe('handleStreamingDownloadRequest — served-ACK handshake', () => {
       ),
     );
 
-    // Set up the listener BEFORE the request handler fires so the
-    // test sees the message synchronously enqueued by the handler.
-    const ackPromise = nextPortMessage(channel.port1);
-
     const res = handleStreamingDownloadRequest(
       new Request(`https://app.local${STREAMING_DOWNLOAD_PREFIX}${key}`),
     );
     expect(res.status).toBe(200);
 
-    const ack = await ackPromise;
-    expect(ack).toEqual({ type: 'streaming-download-served', key });
+    await flushPortQueue();
+    expect(messages).toEqual([
+      { type: 'streaming-download-registered', key },
+      { type: 'streaming-download-served', key },
+    ]);
 
     // Drain so the response stream's reader settles cleanly.
     await drain(res.body!);
+    channel.port1.close();
   });
 
   it('does not post on the port for an unknown key (no entry, nothing to ACK)', async () => {
@@ -349,6 +417,9 @@ describe('handleStreamingDownloadRequest — served-ACK handshake', () => {
   it('unregister posts streaming-download-aborted on the registered port AND closes it so the page-side waiter fails fast', async () => {
     const key = 'k-cancel';
     const channel = new MessageChannel();
+    // Capture both ACKs (registered then aborted) on port1.
+    const messages = collectPortMessages(channel.port1);
+
     handleStreamingDownloadMessage(
       messageEvent(
         {
@@ -362,23 +433,22 @@ describe('handleStreamingDownloadRequest — served-ACK handshake', () => {
       ),
     );
 
-    // Listen on port1 BEFORE triggering unregister — the SW posts the
-    // abort message synchronously inside the message handler, before
-    // closing port2.
-    const abortPromise = nextPortMessage(channel.port1);
-
     handleStreamingDownloadMessage(messageEvent({ type: 'unregister-streaming-download', key }));
 
-    const aborted = await abortPromise;
-    expect(aborted).toEqual({ type: 'streaming-download-aborted', key });
+    await flushPortQueue();
+    expect(messages).toEqual([
+      { type: 'streaming-download-registered', key },
+      { type: 'streaming-download-aborted', key },
+    ]);
 
     // Registry entry is gone — a subsequent fetch returns 404 rather
-    // than serving phantom bytes. (nextPortMessage already closed
-    // port1 on receipt; port2 was closed by the handler.)
+    // than serving phantom bytes. (port2 was closed by the handler;
+    // the test closes port1 below.)
     const res = handleStreamingDownloadRequest(
       new Request(`https://app.local${STREAMING_DOWNLOAD_PREFIX}${key}`),
     );
     expect(res.status).toBe(404);
+    channel.port1.close();
   });
 });
 

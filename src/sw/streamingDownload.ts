@@ -24,7 +24,13 @@
  *      the page loses its handle; `port2` is transferred to the SW so it
  *      can ACK once the iframe fetch arrives.
  *   2. SW stores the entry (stream + port) in `pendingStreams` keyed by
- *      `key`.
+ *      `key`, then posts `{type:'streaming-download-registered', key}`
+ *      on the stored port. This registered-ACK closes the postMessage-
+ *      vs-fetch race: postMessage and fetch dispatch over different IPC
+ *      paths, so an iframe fetch issued immediately after postMessage
+ *      can reach the SW's fetch handler BEFORE the message handler has
+ *      run, returning 404. The page waits for the registered-ACK
+ *      before appending the iframe.
  *   3. Page navigates a hidden iframe to `/streaming-download/<key>`.
  *   4. SW intercepts the fetch (registered in `index.ts`), pulls the
  *      entry, deletes it (one-shot), posts
@@ -140,6 +146,17 @@ export function handleStreamingDownloadMessage(event: ExtendableMessageEvent): v
       contentType: data.contentType,
       port,
     });
+    // Registered-ACK so the page can safely trigger the iframe fetch.
+    // Without this ACK, the page's iframe navigation can race ahead of
+    // the message-driven `pendingStreams.set` above: the fetch handler
+    // runs first, finds no entry, returns 404, and the page-side
+    // helper waits out the 30 s served-ACK timeout. The race is
+    // observable under e2e load (Playwright trace showed the iframe
+    // GET resolving to 404 with the exact "key not registered" body).
+    // postMessage and fetch dispatch over different IPC paths, so
+    // ordering at the SW is not guaranteed even though the page
+    // issues postMessage first.
+    port.postMessage({ type: 'streaming-download-registered', key: data.key });
     return;
   }
   // unregister-streaming-download: best-effort cleanup. If the page

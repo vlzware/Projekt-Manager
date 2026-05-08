@@ -55,8 +55,17 @@ interface FakeController {
  * helper transfers `[stream, port2]`; the test reaches in for `port2`,
  * posts the served-ACK on it, and observes the helper's Promise
  * resolution.
+ *
+ * `autoRegister` controls whether the fake controller mimics the real
+ * SW's registered-ACK (post `{type:'streaming-download-registered',key}`
+ * on the transferred port as soon as `register-streaming-download`
+ * arrives). The helper now awaits that ACK before returning the handle,
+ * so most tests opt into auto-registration to keep the existing shape.
+ * The timeout test opts OUT to assert that a missing registered-ACK
+ * causes the helper itself to throw rather than returning a handle.
  */
-function installFakeController(): FakeController {
+function installFakeController(options: { autoRegister?: boolean } = {}): FakeController {
+  const { autoRegister = true } = options;
   const captured: CapturedMessage[] = [];
   const controller = {
     postMessage: (data: unknown, transfer?: Transferable[]) => {
@@ -64,6 +73,11 @@ function installFakeController(): FakeController {
         (t): t is MessagePort => t instanceof MessagePort,
       );
       captured.push({ data, ports });
+      if (!autoRegister) return;
+      const msg = data as { type?: unknown; key?: unknown } | null;
+      if (msg && msg.type === 'register-streaming-download' && ports[0]) {
+        ports[0].postMessage({ type: 'streaming-download-registered', key: msg.key });
+      }
     },
   };
   Object.defineProperty(globalThis.navigator, 'serviceWorker', {
@@ -121,29 +135,34 @@ describe('streamingDownload — served-ACK handshake', () => {
     await expect(handle.served).resolves.toBeUndefined();
   });
 
-  it('served Promise rejects when the SW never ACKs (timeout)', async () => {
+  it('streamingDownload itself rejects when the SW never ACKs registration (timeout)', async () => {
+    // With the registered-ACK gating the iframe creation, an evicted
+    // SW that never ACKs registration causes the helper itself to
+    // throw (the dialog never even gets to "summary"). The same
+    // STREAMING_DOWNLOAD_ACK_TIMEOUT_MS bound covers both halves of
+    // the handshake.
     vi.useFakeTimers();
-    installFakeController();
+    installFakeController({ autoRegister: false });
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.close();
       },
     });
 
-    const handle = await streamingDownload({
-      stream,
-      filename: 'evicted.zip',
-      contentType: 'application/zip',
-    });
-
-    // Attach the assertion BEFORE we advance the timer so the
-    // rejection is wired up by the time the timer fires.
-    const expectation = expect(handle.served).rejects.toThrow(
+    // Don't await here — the helper hangs at `await registered`.
+    // Attach the rejection assertion first so the rejection is wired
+    // up before the timer fires.
+    const expectation = expect(
+      streamingDownload({
+        stream,
+        filename: 'evicted.zip',
+        contentType: 'application/zip',
+      }),
+    ).rejects.toThrow(
       `streamingDownload: SW did not ACK within ${STREAMING_DOWNLOAD_ACK_TIMEOUT_MS} ms`,
     );
 
-    // Skip the registered iframe-removal timer too (also a setTimeout)
-    // by running all pending timers.
+    // Advance the SW-eviction timeout (and any other pending timers).
     await vi.runAllTimersAsync();
 
     await expectation;
