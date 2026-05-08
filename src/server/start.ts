@@ -28,6 +28,7 @@ import { assertBaselineLedgerMatchesFile } from './db/baseline-guard.js';
 import { createDatabase } from './db/connection.js';
 import { probeHealth } from './health.js';
 import { seed } from './seed.js';
+import { pruneBucketOrphans, createBucketKeyLister } from './storage/pruneBucketOrphans.js';
 import { deleteExpiredSessions } from './repositories/session.js';
 import { startSessionReaper } from './session-reaper.js';
 import { startAuditRetentionScheduler } from './audit-retention-scheduler.js';
@@ -146,6 +147,32 @@ async function start(): Promise<void> {
       );
     } else {
       await seed(db, { force: env.SEED === 'force' });
+
+      // SEED=force truncates `attachments` (via CASCADE from `projects`)
+      // but does not touch the bucket. Without this, a forced re-seed
+      // leaves orphan blobs that grow each run and would mirror onto B2
+      // via scripts/sync-dev-to-vps.sh if its pollution guard didn't
+      // refuse. Prune here so "force" actually means full reset.
+      if (env.SEED === 'force') {
+        const prunerConfig = {
+          endpoint: env.STORAGE_ENDPOINT,
+          bucket: env.STORAGE_BUCKET,
+          accessKey: env.STORAGE_ACCESS_KEY,
+          secretKey: env.STORAGE_SECRET_KEY,
+          region: env.STORAGE_REGION,
+        };
+        const prunerStorage = createStorageClient({
+          ...prunerConfig,
+          publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
+        });
+        await pruneBucketOrphans(
+          db,
+          prunerStorage,
+          createBucketKeyLister(prunerConfig),
+          { info: (m) => console.log(m), warn: (m) => console.warn(m) },
+          env.STORAGE_BUCKET,
+        );
+      }
     }
   }
 
