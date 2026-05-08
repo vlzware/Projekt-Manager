@@ -9,7 +9,7 @@
  *     `subscribe()` on either store would force the other to know about
  *     it, leaking the SSE concern across both slices.
  *   - The channel must be live regardless of which surface is currently
- *     mounted — an always-open observer parked on /projekte is one
+ *     mounted — an always-open observer parked on /projects is one
  *     scenario; a worker on /kanban is another. A single auth-lifetime
  *     subscription beats a per-surface refcount when the lifetime is
  *     "the whole authenticated page".

@@ -49,9 +49,9 @@ async function resolveProjectIdBySuffix(
   const resp = await ownerRequest.get(`/api/projects?search=${encodeURIComponent(`-${suffix}`)}`);
   expect(resp.ok(), `project search failed: ${resp.status()} ${await resp.text()}`).toBe(true);
   const body = (await resp.json()) as {
-    projects: Array<{ id: string; number: string; title: string }>;
+    data: Array<{ id: string; number: string; title: string }>;
   };
-  const match = body.projects.find((p) => p.number.endsWith(`-${suffix}`));
+  const match = body.data.find((p) => p.number.endsWith(`-${suffix}`));
   if (!match) {
     throw new Error(`seed project with suffix -${suffix} not found in /api/projects response`);
   }
@@ -124,7 +124,7 @@ test.describe.serial('SSE channel survives the actual login flow', () => {
     // Park the office observer on the project list. This is an in-SPA
     // navigation — main.tsx does NOT rerun, so any module-load-time
     // EventSource that 401'd at boot would still be CLOSED here.
-    await page.goto('/projekte');
+    await page.goto('/projects');
     await expect(page.getByTestId('project-table')).toBeVisible();
 
     // Surface archived rows so the post-archive readout still finds the

@@ -93,8 +93,8 @@ async function resolveProjectIdBySuffix(
   // process's clock).
   const resp = await ownerRequest.get(`/api/projects?search=${encodeURIComponent(`-${suffix}`)}`);
   expect(resp.ok(), `project search failed: ${resp.status()} ${await resp.text()}`).toBe(true);
-  const body = (await resp.json()) as { projects: Array<{ id: string; number: string; title: string }> };
-  const match = body.projects.find((p) => p.number.endsWith(`-${suffix}`));
+  const body = (await resp.json()) as { data: Array<{ id: string; number: string; title: string }> };
+  const match = body.data.find((p) => p.number.endsWith(`-${suffix}`));
   if (!match) {
     throw new Error(`seed project with suffix -${suffix} not found in /api/projects response`);
   }
@@ -147,7 +147,7 @@ async function resolveUserIdByUsername(
  * initial mount.
  */
 async function parkOfficeOnProjectList(officePage: Page): Promise<void> {
-  await officePage.goto('/projekte');
+  await officePage.goto('/projects');
   await expect(officePage.getByTestId('project-table')).toBeVisible();
 }
 
