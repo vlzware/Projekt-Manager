@@ -1,22 +1,36 @@
-import { test, expect, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
+import {
+  test,
+  expect,
+  type APIRequestContext,
+  type BrowserContext,
+  type Page,
+} from '@playwright/test';
 import { STORAGE_STATES } from './storage-states';
 
 /**
  * AC-277 — multi-user project-lifecycle invalidation over the SSE channel.
  *
- * Three actors on the same install per AC-277: an office session (the
- * always-open observer, parked on the Project Management list with the
- * Kanban surface reachable via tab toggle), a worker session, and an
- * owner-authenticated request. Each named lifecycle action is issued
- * from a session distinct from the office observer:
+ * Two actors on the same install: an office session (the always-open
+ * observer, parked on the Project Management list with the Kanban surface
+ * reachable via tab toggle) and a one-shot owner-authenticated request
+ * context that drives every mutation. Each named lifecycle action is
+ * issued from a session distinct from the office observer:
  *
- *   1. Worker advances a project (`+1` transition per AC-5) on a project
- *      the worker is assigned to (seed `-007`, geplant → in_arbeit).
+ *   1. Owner advances a project (`+1` transition per AC-5).
  *   2. Owner archives a project (AC-61).
  *   3. Owner restores an archived project.
  *   4. Owner edits a project's planned dates (AC-7).
  *   5. Owner edits an assigned-worker set.
  *   6. Owner creates a new project (AC-59).
+ *
+ * Why no worker actor: workers do not hold `project:transition`,
+ * `project:create`, `project:update`, `project:delete`, or
+ * `project:dates` per the permission matrix in `src/config/permissions.ts`
+ * (mirrored in api.md §14.3 and pinned by `auth.test.ts` AC-29). None of
+ * the AC-276 project-mutation sites are worker-reachable, so a worker
+ * session adds no value here. Contrast with AC-273 for storage usage,
+ * where workers DO hold `attachment:write` / `attachment:hide` and a
+ * worker arm is meaningful.
  *
  * After each mutation the office session's project-list surfaces
  * (Project Management view per ui/management.md §8.8, Kanban per
@@ -31,13 +45,13 @@ import { STORAGE_STATES } from './storage-states';
  * `visibilitychange` + post-mutation refresh alone leave open
  * (ADR-0025), parity with AC-273 for storage usage.
  *
- * Topology (mirrors `storage-usage-multi-user.spec.ts`):
- *   - Two long-lived browser contexts: office (observer), worker.
- *   - Per-test-arm one-shot owner request context for the five owner
- *     mutations — the AC names "owner …", and a request context is the
- *     cheapest way to issue an authenticated mutation from a session
- *     distinct from the office tab. The OFFICE browser session does NOT
- *     initiate any mutation; it must observe the resulting SSE frame.
+ * Topology:
+ *   - One long-lived browser context: office (observer).
+ *   - Per-test-arm one-shot owner request context for the six owner
+ *     mutations — a request context is the cheapest way to issue an
+ *     authenticated mutation from a session distinct from the office
+ *     tab. The OFFICE browser session does NOT initiate any mutation;
+ *     it must observe the resulting SSE frame.
  *
  * The 2-second propagation poll is the contractual gate: a polling
  * assertion fails fast on success and surfaces a clean error on timeout,
@@ -57,18 +71,14 @@ import { STORAGE_STATES } from './storage-states';
 const SSE_PROPAGATION_TIMEOUT_MS = 2_000;
 
 /**
- * Seeded geplant project the worker is assigned to (see
- * `src/server/seed/business.ts` ASSIGNMENT_SPECS — `-007`,
- * arbeiter1+arbeiter2). The kanban-flows precedent picks `.first()`
- * from the geplant column for the same reason: the worker can advance
- * it (project:transition holds for assigned workers per the permission
- * matrix), and the column is non-empty by seed.
- *
- * The worker-advance arm uses the seeded project via the worker UI;
- * the owner arms each pick their target by number suffix lookup so the
- * tests do not collide with each other on the same row.
+ * Seeded geplant project the owner-advance arm targets. `-007` is in
+ * the `geplant` column at seed and is unused by the other arms (which
+ * pick distinct suffixes), so a forward transition does not collide
+ * with the archive / restore / dates / workers / create arms.
  */
-const WORKER_GEPLANT_SUFFIX = '007';
+const OWNER_ADVANCE_SUFFIX = '007';
+const OWNER_ADVANCE_SEED_STATUS = 'geplant';
+const OWNER_ADVANCE_NEXT_STATUS = 'in_arbeit';
 
 /**
  * Seeded customer name we attach the owner-create new project to.
@@ -90,10 +100,16 @@ async function resolveProjectIdBySuffix(
   // Year prefix is `now.getFullYear()` per `buildBusinessEnvelope` —
   // search by the suffix substring rather than reconstructing the prefix
   // (the seed runs against `new Date()` at setup time, not the test
-  // process's clock).
-  const resp = await ownerRequest.get(`/api/projects?search=${encodeURIComponent(`-${suffix}`)}`);
+  // process's clock). `includeArchived=true` so the restore arm can find
+  // a project archived by the preceding archive arm; the default listing
+  // excludes archived rows.
+  const resp = await ownerRequest.get(
+    `/api/projects?search=${encodeURIComponent(`-${suffix}`)}&includeArchived=true`,
+  );
   expect(resp.ok(), `project search failed: ${resp.status()} ${await resp.text()}`).toBe(true);
-  const body = (await resp.json()) as { data: Array<{ id: string; number: string; title: string }> };
+  const body = (await resp.json()) as {
+    data: Array<{ id: string; number: string; title: string }>;
+  };
   const match = body.data.find((p) => p.number.endsWith(`-${suffix}`));
   if (!match) {
     throw new Error(`seed project with suffix -${suffix} not found in /api/projects response`);
@@ -226,17 +242,13 @@ async function expectOfficeRowChanges(
   return readProjectRow(officePage, numberRegex);
 }
 
-test.describe('AC-277: project lifecycle propagates from worker / owner mutations to office observer over SSE', () => {
+test.describe('AC-277: project lifecycle propagates from owner mutations to office observer over SSE', () => {
   let officeContext: BrowserContext;
-  let workerContext: BrowserContext;
   let officePage: Page;
-  let workerPage: Page;
 
   test.beforeAll(async ({ browser }) => {
     officeContext = await browser.newContext({ storageState: STORAGE_STATES.office });
-    workerContext = await browser.newContext({ storageState: STORAGE_STATES.worker });
     officePage = await officeContext.newPage();
-    workerPage = await workerContext.newPage();
 
     // The office session parks on the project list once for the suite.
     // Subsequent test arms reuse the same page — the SSE channel must
@@ -249,67 +261,58 @@ test.describe('AC-277: project lifecycle propagates from worker / owner mutation
 
   test.afterAll(async () => {
     await officeContext.close();
-    await workerContext.close();
   });
 
   // ------------------------------------------------------------------
-  // 1. Worker advances a project (+1 transition per AC-5).
+  // 1. Owner advances a project (+1 transition per AC-5).
   //
-  // The worker drives the kanban-card forward arrow per the precedent
-  // in `kanban-flows.spec.ts`. AC-277 names this as the worker arm
-  // because workers hold `project:transition` on assigned projects;
-  // the seed assigns arbeiter1 to `-007` (geplant), so the +1 to
-  // in_arbeit is the natural worker flow.
+  // Issued from a one-shot owner request context so the mutating session
+  // is distinct from the office observer (the AC-273 cross-session
+  // pattern). `transitionForward` requires the caller's `expectedStatus`
+  // to match the row's current status as a CAS guard against concurrent
+  // transitions.
   //
-  // Net-zero teardown: the arm rolls the project back to geplant via
-  // the same kanban backward arrow so later arms (and later test runs
-  // on the same DB without re-seed) see the seed column counts.
+  // Target: `-007` (geplant). Net-zero teardown rolls the project back
+  // to geplant so later arms and later test runs on the same DB without
+  // re-seed see the seed column counts.
   // ------------------------------------------------------------------
-  test('AC-277: office observer reflects worker advance within 2s', async () => {
-    const numberRegex = new RegExp(`-${WORKER_GEPLANT_SUFFIX}\\b`);
+  test('AC-277: office observer reflects owner advance within 2s', async ({ browser }) => {
+    const numberRegex = new RegExp(`-${OWNER_ADVANCE_SUFFIX}\\b`);
     const before = await readProjectRow(officePage, numberRegex);
 
-    // Worker drives the advance from their kanban surface. Mirrors
-    // `kanban-flows.spec.ts` "advances a card via the forward button
-    // and confirmation" test exactly.
-    await workerPage.goto('/kanban');
-    await expect(workerPage.getByTestId('kanban-board')).toBeVisible();
+    const ownerContext = await browser.newContext({ storageState: STORAGE_STATES.owner });
+    let projectId: string;
+    try {
+      const ownerRequest = ownerContext.request;
+      const target = await resolveProjectIdBySuffix(ownerRequest, OWNER_ADVANCE_SUFFIX);
+      projectId = target.id;
+      const resp = await ownerRequest.post(`/api/projects/${projectId}/transition/forward`, {
+        data: { expectedStatus: OWNER_ADVANCE_SEED_STATUS },
+      });
+      expect(resp.ok(), `forward transition failed: ${resp.status()} ${await resp.text()}`).toBe(
+        true,
+      );
+    } finally {
+      await ownerContext.close();
+    }
 
-    const geplantColumn = workerPage.getByTestId('kanban-column-geplant');
-    // Pin the target by suffix-resolved project id rather than `.first()` —
-    // arbeiter1 is also assigned to `-008` (geplant), so a `.first()` lookup
-    // is non-deterministic across kanban orderings.
-    const target = await resolveProjectIdBySuffix(workerContext.request, WORKER_GEPLANT_SUFFIX);
-    const projectId = target.id;
-    const card = geplantColumn.getByTestId(`project-card-${projectId}`);
-    await expect(card).toBeVisible();
+    await expectOfficeRowChanges(officePage, numberRegex, before, 'owner +1 transition');
 
-    await card.getByTestId(`forward-button-${projectId}`).click();
-    const dialog = workerPage.getByTestId('confirm-dialog');
-    await expect(dialog).toBeVisible();
-    await workerPage.getByTestId('confirm-ok').click();
-    await expect(
-      workerPage.getByTestId('kanban-column-in_arbeit').getByTestId(`project-card-${projectId}`),
-    ).toBeVisible();
-
-    // The OFFICE session is the AC-277 gate — its surface must reflect
-    // the change without a manual refresh.
-    await expectOfficeRowChanges(officePage, numberRegex, before, 'worker +1 transition');
-
-    // Net-zero teardown: roll the card back to geplant so the seed
-    // column counts later arms might depend on are restored. The office
-    // observer will see this second mutation propagate too — that's
-    // fine, the assertion already passed for the forward step.
-    await workerPage
-      .getByTestId('kanban-column-in_arbeit')
-      .getByTestId(`project-card-${projectId}`)
-      .getByTestId(`backward-button-${projectId}`)
-      .click();
-    await expect(workerPage.getByTestId('confirm-dialog')).toBeVisible();
-    await workerPage.getByTestId('confirm-ok').click();
-    await expect(
-      workerPage.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
-    ).toBeVisible();
+    // Net-zero teardown: roll back to geplant. The office observer will
+    // see this second mutation propagate too — fine, the assertion
+    // already passed for the forward step.
+    const teardownContext = await browser.newContext({ storageState: STORAGE_STATES.owner });
+    try {
+      const resp = await teardownContext.request.post(
+        `/api/projects/${projectId}/transition/backward`,
+        { data: { expectedStatus: OWNER_ADVANCE_NEXT_STATUS } },
+      );
+      expect(resp.ok(), `backward transition failed: ${resp.status()} ${await resp.text()}`).toBe(
+        true,
+      );
+    } finally {
+      await teardownContext.close();
+    }
   });
 
   // ------------------------------------------------------------------
@@ -373,7 +376,9 @@ test.describe('AC-277: project lifecycle propagates from worker / owner mutation
   // planned end by one day produces a date-cell text diff the
   // row-readout catches.
   // ------------------------------------------------------------------
-  test('AC-277: office observer reflects owner planned-dates edit within 2s', async ({ browser }) => {
+  test('AC-277: office observer reflects owner planned-dates edit within 2s', async ({
+    browser,
+  }) => {
     const SUFFIX = '009';
     const numberRegex = new RegExp(`-${SUFFIX}\\b`);
     const before = await readProjectRow(officePage, numberRegex);
@@ -415,7 +420,9 @@ test.describe('AC-277: project lifecycle propagates from worker / owner mutation
   // new worker landing in the office surface — same shape as the
   // transition / dates / archive arms above.
   // ------------------------------------------------------------------
-  test('AC-277: office observer reflects owner assigned-worker edit within 2s', async ({ browser }) => {
+  test('AC-277: office observer reflects owner assigned-worker edit within 2s', async ({
+    browser,
+  }) => {
     const SUFFIX = '010';
     const numberRegex = new RegExp(`-${SUFFIX}\\b`);
     const before = await readProjectRow(officePage, numberRegex);
@@ -437,7 +444,9 @@ test.describe('AC-277: project lifecycle propagates from worker / owner mutation
       const resp = await ownerRequest.patch(`/api/projects/${project.id}`, {
         data: { assignedWorkerIds: Array.from(currentIds) },
       });
-      expect(resp.ok(), `assigned-worker patch failed: ${resp.status()} ${await resp.text()}`).toBe(true);
+      expect(resp.ok(), `assigned-worker patch failed: ${resp.status()} ${await resp.text()}`).toBe(
+        true,
+      );
     } finally {
       await ownerContext.close();
     }
@@ -453,7 +462,12 @@ test.describe('AC-277: project lifecycle propagates from worker / owner mutation
   // against a non-reseeded DB does not hit the unique-number guard.
   // ------------------------------------------------------------------
   test('AC-277: office observer reflects owner project create within 2s', async ({ browser }) => {
-    const newNumber = `E2E-AC277-${Date.now()}`;
+    // `projects.number` is varchar(20) (`src/server/db/schema.ts`); a
+    // longer string returns `value too long for type character varying`,
+    // bubbles through createProject as a generic Error, and surfaces as
+    // a 500. Base36 of the millisecond clock keeps the suffix unique per
+    // run while staying within the column limit (~6 + 9 = 15 chars).
+    const newNumber = `AC277-${Date.now().toString(36)}`;
     const numberRegex = new RegExp(newNumber);
     // The new number is unique to this test arm — count must be 0
     // before the mutation, 1 after.
@@ -477,7 +491,12 @@ test.describe('AC-277: project lifecycle propagates from worker / owner mutation
       await ownerContext.close();
     }
 
-    const after = await expectOfficeRowChanges(officePage, numberRegex, before, 'owner project create');
+    const after = await expectOfficeRowChanges(
+      officePage,
+      numberRegex,
+      before,
+      'owner project create',
+    );
     // Directional invariant: a create produces exactly one new row;
     // a regression that fires the wrong invalidation (e.g. delete
     // event) would change the count in the wrong direction.
