@@ -26,6 +26,7 @@ import type { Database } from '../db/connection.js';
 import type { ServiceLogger } from './Logger.js';
 import { findHiddenForReap, deleteHiddenForReap } from '../repositories/attachment.js';
 import { mutate } from './mutate.js';
+import { emitStorageUsageChanged } from '../sse/emitters.js';
 
 const MS_PER_MINUTE = 60 * 1000;
 
@@ -107,6 +108,11 @@ export async function runAttachmentHiddenReaper(
         },
       );
       removedCount += 1;
+      // Post-commit: a hidden row's bytes leave the hidden bucket
+      // (data-model.md §5.14). Broadcast AFTER mutate() resolves so
+      // CAS-loss (HiddenReaperRowRaced — caught below) and per-row
+      // failures emit nothing (AC-270 emitter list).
+      emitStorageUsageChanged();
     } catch (err) {
       if (err instanceof HiddenReaperRowRaced) continue;
       // Real DB / dispatcher fault on this row — log on the error

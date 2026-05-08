@@ -239,4 +239,143 @@ describe('Attachment purge cascade (AC-218)', () => {
     // DB cascade ran despite the storage-side no-op.
     expect(await attachmentRowExists(id)).toBe(false);
   });
+
+  // -------------------------------------------------------------------
+  // AC-266 — project purge removes the storage-usage view alongside
+  // the project row. Cascade is a property of the data layer
+  // (`project_storage_usage.project_id REFERENCES projects(id)
+  // ON DELETE CASCADE` per data-model.md §5.14 + ARCHITECTURE.md
+  // "Storage usage — trigger-maintained side table") — not an
+  // orchestrated cleanup step.
+  //
+  // Two assertions:
+  //   - GET /api/projects/:id/storage-usage on the purged id → 404
+  //     NOT_FOUND (the per-project surface treats a missing usage row
+  //     as a missing resource).
+  //   - GET /api/storage-usage no longer counts the purged project's
+  //     prior totals — the global sum drops by exactly the bytes that
+  //     were carried by the purged project at purge time.
+  //
+  // The trigger short-circuit (`pg_trigger_depth() > 1` per
+  // ARCHITECTURE.md) is what keeps the cascade from re-firing the
+  // delta trigger while the row is being removed; this test verifies
+  // the externally-visible result, not the internals.
+  // -------------------------------------------------------------------
+  describe('AC-266: project purge removes the storage-usage view', () => {
+    interface GlobalUsage {
+      ready: { plaintext: number; ciphertext: number };
+      hidden: { plaintext: number; ciphertext: number };
+    }
+
+    async function readGlobalUsage(): Promise<GlobalUsage> {
+      const res = await authGet(ownerToken, '/api/storage-usage');
+      if (res.statusCode !== 200) {
+        throw new Error(`global usage read failed ${res.statusCode} ${res.body}`);
+      }
+      return res.json() as GlobalUsage;
+    }
+
+    /** Direct-insert a hidden attachment so AC-266 covers both buckets. */
+    async function seedHiddenAttachment(
+      projectId: string,
+      withThumb: boolean,
+    ): Promise<SeededAttachment> {
+      const { db, pool } = createDatabase();
+      const id = crypto.randomUUID();
+      const originalKey = `attachments/${projectId}/${id}.orig`;
+      const thumbKey = withThumb ? `attachments/${projectId}/${id}.thumb` : null;
+      try {
+        // Hidden rows inherit the wrapped DEK and ciphertext sizes
+        // from their `ready` predecessor — synthetic envelope is fine
+        // here, the AC-266 assertion is on the cascade, not on unwrap.
+        const wrappedDek = Buffer.alloc(192, 0x77).toString('base64');
+        const wrappedThumbDek = withThumb ? Buffer.alloc(192, 0x88).toString('base64') : null;
+        await db.execute(sql`
+          INSERT INTO attachments
+            (id, project_id, status, kind, label, filename, mime_type, size_bytes,
+             thumb_size_bytes,
+             ciphertext_size_bytes, ciphertext_thumb_size_bytes,
+             original_key, thumb_key, has_thumbnail, hidden_at,
+             wrapped_dek, wrapped_thumb_dek, wrapped_dek_version)
+          VALUES (${id}, ${projectId}, 'hidden',
+                  ${withThumb ? 'photo' : 'binary'},
+                  ${withThumb ? 'foto' : 'sonstiges'},
+                  ${'h-' + id.slice(0, 6)},
+                  ${withThumb ? 'image/jpeg' : 'application/pdf'},
+                  2048,
+                  ${withThumb ? 256 : null},
+                  2112, ${withThumb ? 320 : null},
+                  ${originalKey}, ${thumbKey}, ${withThumb}, now(),
+                  ${wrappedDek}, ${wrappedThumbDek}, 1)
+        `);
+      } finally {
+        await pool.end();
+      }
+      return { id, originalKey, thumbKey };
+    }
+
+    it('removes the per-project usage row (subsequent read → 404 NOT_FOUND)', async () => {
+      const projectId = await createProject(ownerToken, customerId);
+      // One ready, one hidden — the cascade must clear the usage row
+      // regardless of which buckets carried bytes.
+      await seedReadyAttachment(projectId, storage, true);
+      await seedHiddenAttachment(projectId, false);
+
+      // Pre-condition: the usage endpoint resolves while the project
+      // still exists.
+      const beforeRes = await authGet(ownerToken, `/api/projects/${projectId}/storage-usage`);
+      expect(beforeRes.statusCode).toBe(200);
+
+      await archiveProject(ownerToken, projectId);
+      const purgeRes = await authDelete(ownerToken, `/api/projects/${projectId}/purge`);
+      expect(purgeRes.statusCode).toBe(204);
+
+      // Per-project endpoint now resolves to 404 NOT_FOUND — the
+      // project no longer exists, so the storage-usage view does not
+      // either. Same shape as a never-existed id (mirrors AC-264's
+      // 404 path; the absence of the parent row drives the response).
+      const afterRes = await authGet(ownerToken, `/api/projects/${projectId}/storage-usage`);
+      expect(afterRes.statusCode).toBe(404);
+      expect(afterRes.json().code).toBe('NOT_FOUND');
+    });
+
+    it("excludes the purged project's prior totals from the global roll-up", async () => {
+      const projectId = await createProject(ownerToken, customerId);
+      await seedReadyAttachment(projectId, storage, true);
+      await seedHiddenAttachment(projectId, false);
+
+      // Snapshot per-project totals at purge time, then snapshot the
+      // global sum. After purge, the global sum drops by exactly the
+      // per-project totals — this is the cascade made externally
+      // observable.
+      const projectUsageRes = await authGet(ownerToken, `/api/projects/${projectId}/storage-usage`);
+      expect(projectUsageRes.statusCode).toBe(200);
+      const projectUsage = projectUsageRes.json() as GlobalUsage;
+
+      const globalBefore = await readGlobalUsage();
+
+      await archiveProject(ownerToken, projectId);
+      const purgeRes = await authDelete(ownerToken, `/api/projects/${projectId}/purge`);
+      expect(purgeRes.statusCode).toBe(204);
+
+      const globalAfter = await readGlobalUsage();
+
+      // Global drops by exactly the purged project's per-bucket totals.
+      // Pinning the difference (rather than asserting an absolute
+      // value) is robust to other tests' state without diluting the
+      // cascade-observable assertion.
+      expect(globalAfter.ready.plaintext).toBe(
+        globalBefore.ready.plaintext - projectUsage.ready.plaintext,
+      );
+      expect(globalAfter.ready.ciphertext).toBe(
+        globalBefore.ready.ciphertext - projectUsage.ready.ciphertext,
+      );
+      expect(globalAfter.hidden.plaintext).toBe(
+        globalBefore.hidden.plaintext - projectUsage.hidden.plaintext,
+      );
+      expect(globalAfter.hidden.ciphertext).toBe(
+        globalBefore.hidden.ciphertext - projectUsage.hidden.ciphertext,
+      );
+    });
+  });
 });

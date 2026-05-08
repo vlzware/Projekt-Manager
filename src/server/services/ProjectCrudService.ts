@@ -49,6 +49,7 @@ import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
 import { bestEffortHideStorageKeys } from './AttachmentService.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
+import { emitStorageUsageChanged } from '../sse/emitters.js';
 
 const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
 
@@ -673,7 +674,11 @@ export class ProjectCrudService {
       // (AC-218). The FK cascade on `attachments.project_id` removes the
       // rows atomically with the project, but storage objects do not
       // cascade — the app must delete them explicitly.
-      let collectedKeys: Array<{ originalKey: string; thumbKey: string | null }> = [];
+      let collectedKeys: Array<{
+        originalKey: string;
+        thumbKey: string | null;
+        status: 'pending' | 'ready' | 'hidden';
+      }> = [];
 
       await mutate(
         this.db,
@@ -703,6 +708,22 @@ export class ProjectCrudService {
         },
       );
       log.info({ projectId: id, actorUserId: userId }, 'project_purged');
+
+      // Post-commit invalidation (AC-270). The FK cascade removed every
+      // attachment row alongside the project; the per-row delete trigger
+      // short-circuits at depth>1 and `project_storage_usage` is wiped
+      // by its own cascade, so the global figure has moved by exactly
+      // the bytes carried by the project's `ready` + `hidden` rows.
+      // Pending rows contribute zero to every counter — emitting on a
+      // purge whose attachments were all `pending` (or whose project had
+      // no attachments) would force every observer to refetch identical
+      // totals. Skip those cases.
+      const movedBytes = collectedKeys.some(
+        (entry) => entry.status === 'ready' || entry.status === 'hidden',
+      );
+      if (movedBytes) {
+        emitStorageUsageChanged();
+      }
 
       // Post-commit storage cleanup (AC-218). A failure here does not
       // abort the DB cascade — the rows are already gone; orphaned

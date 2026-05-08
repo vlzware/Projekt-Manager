@@ -38,9 +38,23 @@
 #     keys not present locally get a delete-marker on B2, original versions
 #     are preserved by Compliance Object Lock per ADR-0022)
 #
+# What does NOT survive the sync:
+#   - Hidden (Papierkorb) attachments. The dev-side bucket dump uses
+#     `mc mirror src /data` which is not version-aware: keys whose current
+#     version is a delete marker yield zero files in the dump. Shipping
+#     the DB row alongside zero bytes would leave an unrestorable row on
+#     the VPS. The VPS-side restore therefore prunes hidden rows after
+#     applying the DB dump (sync-restore-vps.sh) — Papierkorb on the VPS
+#     is empty after every sync. Audit history of those rows is preserved.
+#
 # What does NOT get touched:
 #   - VPS filesystem, secrets, Caddy, backup cron state
 #   - VPS-issued VAPID keys (stored outside the DB — unaffected)
+#   - VPS binary `age` identity (per-environment KEK material). The DEK
+#     envelopes that travel inside the dump are re-wrapped to the VPS
+#     recipient before transfer (scripts/ops/rewrap-dek-envelopes.sh),
+#     so neither side's private key crosses SSH; only the VPS's public
+#     recipient string is fetched.
 #   - Older B2 versions of any object — `--remove` and `--overwrite` both
 #     create new versions / delete markers; nothing is destroyed.
 
@@ -89,10 +103,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "[1/9] SSH preflight ($SSH_TARGET)..."
+echo "[1/10] SSH preflight ($SSH_TARGET)..."
 ssh -o BatchMode=yes -o ConnectTimeout=10 "$SSH_TARGET" true
 
-echo "[2/9] Local stack check..."
+echo "[2/10] Local stack check..."
 # Use --status running (compose >=2.24) and grep for exact service names. The
 # dev overlay must be active; without it, compose would not know about the
 # exposed ports that the `docker exec` calls below do NOT actually use — but
@@ -111,7 +125,7 @@ for svc in db storage; do
   fi
 done
 
-echo "[3/9] Schema parity check..."
+echo "[3/10] Schema parity check..."
 # The schema is canonically `0000_baseline.sql` (see
 # MEMORY: "DB schema changes collapse into baseline migration"). Hash-compare
 # is the cheapest correct check — if bytes match, Drizzle applies the same
@@ -148,7 +162,7 @@ if [ "$local_users" -lt 1 ]; then
   exit 1
 fi
 
-echo "[4/9] Bucket-pollution check..."
+echo "[4/10] Bucket-pollution check..."
 # Refuse if the local MinIO bucket holds more current-version objects than
 # the DB can justify. Each live attachment row contributes AT MOST orig +
 # thumb (2 objects); the +2 slack covers a transient bulk-download zip and
@@ -181,15 +195,44 @@ upload flows) the orphan reaper could not reach. Mirroring them onto
 B2 costs real money: every PutObject locks for R days under Compliance
 Object Lock retention, regardless of any subsequent delete-marker.
 
-Clean the local bucket before syncing:
+Clean the local bucket before syncing — preserves keys referenced by
+attachment rows (live + hidden), deletes only the orphans:
 
-  docker exec ${COMPOSE_PROJECT}-storage-1 sh -c \\
-    'mc alias set local http://localhost:9000 "\$MINIO_ROOT_USER" "\$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 && mc rm --recursive --force local/${LOCAL_BUCKET}/'
+  scripts/clean-bucket-orphans.sh           # dry-run: list orphans
+  scripts/clean-bucket-orphans.sh --apply   # delete them
 
-The current-version view goes to zero immediately; noncurrent versions
-reap after R+L days per Object Lock + lifecycle (no extra action needed).
+Noncurrent versions reap after R+L days per Object Lock + lifecycle.
 Then re-run this script.
 ERR
+  exit 1
+fi
+
+echo "[5/10] VPS KEK recipient check..."
+# Fetch the VPS app container's binary `age` recipient — the public X25519
+# string used to wrap DEKs into per-row envelopes. We need it later (step
+# [6/10]) to re-encrypt every wrapped_dek under the VPS's identity so the
+# VPS app can unwrap after restore. The recipient itself is public, so
+# transmitting it across SSH is fine; the matching private identity stays
+# on the VPS where the operator pasted it.
+VPS_AGE_RECIPIENT=$(ssh "$SSH_TARGET" \
+  "docker exec ${COMPOSE_PROJECT}-app-1 printenv BINARY_AGE_RECIPIENT" 2>/dev/null || true)
+if [ -z "$VPS_AGE_RECIPIENT" ]; then
+  echo "ERROR: could not read BINARY_AGE_RECIPIENT from VPS app container." >&2
+  echo "  Is the app booted with the operator-loaded identity? See ADR-0024." >&2
+  exit 1
+fi
+case "$VPS_AGE_RECIPIENT" in
+  age1*) ;;
+  *)
+    echo "ERROR: VPS BINARY_AGE_RECIPIENT does not look like an age recipient: $VPS_AGE_RECIPIENT" >&2
+    exit 1
+    ;;
+esac
+# Local identity must be readable; without it the rewrap step in [6/10]
+# cannot unwrap the source envelopes. Sourced from the dev-side .env.
+LOCAL_AGE_IDENTITY_PATH=$(grep -E '^BINARY_AGE_IDENTITY_PATH=' "$REPO_DIR/.env" | cut -d= -f2- || true)
+if [ -z "$LOCAL_AGE_IDENTITY_PATH" ] || [ ! -r "$LOCAL_AGE_IDENTITY_PATH" ]; then
+  echo "ERROR: BINARY_AGE_IDENTITY_PATH from .env is missing or unreadable: $LOCAL_AGE_IDENTITY_PATH" >&2
   exit 1
 fi
 
@@ -217,7 +260,7 @@ fi
 
 mkdir -p "$LOCAL_TMP"
 
-echo "[5/9] Dumping local database..."
+echo "[6/10] Dumping local database..."
 # Plain SQL with --clean --if-exists generates DROP TABLE IF EXISTS CASCADE +
 # CREATE ... at the top of the dump, which psql applies in order. --no-owner
 # and --no-acl skip ALTER OWNER and GRANT/REVOKE statements so the dump does
@@ -227,9 +270,20 @@ docker exec -i "${COMPOSE_PROJECT}-db-1" \
   pg_dump -U pm -d projekt_manager \
   --clean --if-exists --no-owner --no-acl \
   > "$LOCAL_TMP/db.sql"
+
+# Re-wrap each DEK envelope from the local recipient to the VPS recipient
+# (canonical envelope re-encryption — AWS KMS calls it ReEncrypt). Append
+# the resulting UPDATE statements to db.sql so the VPS-side restore lands
+# the rewrapped rows in a single psql apply. The rewrap script reads the
+# local DB read-only; nothing here mutates dev state.
+COMPOSE_PROJECT="$COMPOSE_PROJECT" \
+BINARY_AGE_IDENTITY_PATH="$LOCAL_AGE_IDENTITY_PATH" \
+TARGET_RECIPIENT="$VPS_AGE_RECIPIENT" \
+"$REPO_DIR/scripts/ops/rewrap-dek-envelopes.sh" >> "$LOCAL_TMP/db.sql"
+
 echo "      db.sql: $(du -h "$LOCAL_TMP/db.sql" | awk '{print $1}')"
 
-echo "[6/9] Dumping local object storage..."
+echo "[7/10] Dumping local object storage..."
 # Read MinIO credentials from the running storage container's env. Same
 # pattern the remote side uses — avoids needing to parse .env here.
 LOCAL_MINIO_USER=$(docker exec "${COMPOSE_PROJECT}-storage-1" printenv MINIO_ROOT_USER)
@@ -247,18 +301,23 @@ docker run --rm \
   mirror --overwrite --remove "src/$LOCAL_BUCKET" /data >/dev/null
 echo "      bucket: $(du -sh "$LOCAL_TMP/bucket" | awk '{print $1}') ($(find "$LOCAL_TMP/bucket" -type f | wc -l) files)"
 
-echo "[7/9] Transferring to VPS..."
+echo "[8/10] Transferring to VPS..."
 ssh "$SSH_TARGET" "mkdir -p $REMOTE_TMP"
 # Ship the SSOT smoke probe alongside the dump so the streamed
 # sync-restore-vps.sh can call it from $REMOTE_TMP. Keeps the smoke probe
 # a single file across CI, deploy, and sync — see
 # scripts/smoke-app-health.sh for why.
 cp "$REPO_DIR/scripts/smoke-app-health.sh" "$LOCAL_TMP/smoke-app-health.sh"
+# Ship the bucket-versionId repair helper. The VPS-side restore script
+# runs it after `mc mirror` to rewrite attachment.version_ids to
+# reference the freshly-PUT B2 versions, replacing the dev-side MinIO
+# UUIDs that B2 does not recognise.
+cp "$REPO_DIR/scripts/ops/repair-bucket-versionids.py" "$LOCAL_TMP/repair-bucket-versionids.py"
 # -a preserves perms/times; -z compresses (SQL and metadata compress well).
 # No --delete — REMOTE_TMP is created fresh this run and cleaned up on exit.
 rsync -az "$LOCAL_TMP/" "$SSH_TARGET:$REMOTE_TMP/"
 
-echo "[8/9] Restoring on VPS..."
+echo "[9/10] Restoring on VPS..."
 # Stream the remote script over SSH rather than copying it to the VPS. This
 # keeps the in-repo copy authoritative and avoids drift between a transferred
 # copy and the committed version. Env vars pass configuration; `bash -s`
@@ -267,4 +326,4 @@ ssh "$SSH_TARGET" \
   "REMOTE_TMP='$REMOTE_TMP' MC_IMAGE='$MC_IMAGE' COMPOSE_PROJECT='$COMPOSE_PROJECT' bash -s" \
   < "$REMOTE_SCRIPT"
 
-echo "[9/9] Done — VPS synced at $(date -u -Iseconds)"
+echo "[10/10] Done — VPS synced at $(date -u -Iseconds)"

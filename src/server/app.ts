@@ -23,6 +23,9 @@ import { notificationRuleRoutes } from './routes/notification-rules.js';
 import { pushSubscriptionRoutes } from './routes/push-subscriptions.js';
 import { pushPublicRoutes } from './routes/push.js';
 import { attachmentRoutes } from './routes/attachments.js';
+import { storageUsageRoutes } from './routes/storage-usage.js';
+import { eventsRoutes } from './routes/events.js';
+import { configureSseBus } from './sse/bus.js';
 import { registerNotificationPublisher } from './services/notification-publisher.js';
 import { noopPushDispatcher, type PushDispatcher } from './services/PushDispatcher.js';
 import { WebPushDispatcher } from './services/WebPushDispatcher.js';
@@ -228,6 +231,18 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     app.register(notificationRuleRoutes(opts.db));
     app.register(pushSubscriptionRoutes(opts.db));
     app.register(attachmentRoutes(opts.db));
+    app.register(storageUsageRoutes(opts.db));
+    // Wire the SSE bus singleton with the Fastify logger BEFORE registering
+    // the route — otherwise the bus runs without a logger and the spec-
+    // required structured-output on subscriber-write failures
+    // (architecture.md §11.13) is silently dead. Same composition shape
+    // as registerNotificationPublisher below.
+    configureSseBus({
+      logger: {
+        error: (ctx, msg) => app.log.error(ctx, msg),
+      },
+    });
+    app.register(eventsRoutes(opts.db));
     // The VAPID public-key endpoint is unauthenticated (the public key
     // is public by design). Keeping it in its own plugin isolates it
     // from the authenticated push-subscriptions plugin's preHandler

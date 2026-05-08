@@ -27,7 +27,7 @@
  */
 
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
-import { createStorageClient } from '../../server/storage/client.js';
+import { createStorageClient, StorageObjectNotFoundError } from '../../server/storage/client.js';
 import type { AttachmentStorageClient } from '../../server/storage/client.js';
 
 /**
@@ -177,6 +177,93 @@ describe('Object Storage Module', () => {
         region: process.env.STORAGE_REGION ?? 'us-east-1',
       });
       await expect(bogusStorage.ping()).rejects.toThrow();
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // copyFromVersion() — restore primitive (ADR-0022, AC-234).
+  //
+  // Provider-divergent behaviour on an unaddressable source version is
+  // the reason for the HEAD-with-versionId probe in `copyFromVersion`:
+  // AWS / MinIO surface 404 NoSuchVersion, but B2 surfaces 500
+  // InternalError on CopyObject (still 4xx on HEAD). The probe is what
+  // lets the restore caller distinguish "bytes are gone" (4xx → 410
+  // GONE) from a genuine outage (5xx bubble) — without it, B2's 500
+  // InternalError fell through the global handler as 500 SERVER_ERROR.
+  //
+  // These integration tests exercise the contract on MinIO. Every 4xx
+  // shape MinIO can return for an unaddressable version is the same
+  // shape the probe must catch on B2; the cross-provider asymmetry is
+  // narrowed to the same `StorageObjectNotFoundError` outcome here.
+  // ---------------------------------------------------------------
+  describe('copyFromVersion()', () => {
+    let testKey: string;
+
+    beforeEach(() => {
+      testKey = `test/copy-from-version-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.bin`;
+    });
+
+    afterEach(async () => {
+      try {
+        await storage.hide(testKey);
+      } catch {
+        // best-effort
+      }
+    });
+
+    it('throws StorageObjectNotFoundError when the source versionId is unknown', async () => {
+      // Upload so the KEY exists — narrows the failure surface to "the
+      // versionId is wrong" rather than "the key is missing entirely",
+      // which is the exact shape the dev→VPS sync produces (key is
+      // present on B2 with a fresh PUT version; DB carries the dev-side
+      // MinIO UUID that B2 doesn't recognize).
+      await storage.upload(testKey, Buffer.from('hello'), 'application/octet-stream');
+
+      // A versionId that is structurally invalid for any provider. On
+      // MinIO this is `NoSuchVersion` (404); on B2 this would be 400
+      // InvalidArgument. Either way the HEAD probe catches the 4xx and
+      // surfaces our typed not-found.
+      await expect(
+        storage.copyFromVersion(testKey, '00000000-0000-0000-0000-000000000000'),
+      ).rejects.toBeInstanceOf(StorageObjectNotFoundError);
+    });
+
+    it('throws StorageObjectNotFoundError when the key does not exist at all', async () => {
+      // Different from the previous test: this exercises the
+      // key-itself-missing path (HEAD returns 404 because no version of
+      // the key exists). Same 4xx classification → same outcome.
+      await expect(
+        storage.copyFromVersion(
+          `test/never-uploaded-${Date.now()}.bin`,
+          '00000000-0000-0000-0000-000000000000',
+        ),
+      ).rejects.toBeInstanceOf(StorageObjectNotFoundError);
+    });
+
+    it('promotes a noncurrent version back to current when the source versionId is valid', async () => {
+      // Round-trip: upload, capture the versionId via HEAD, hide
+      // (creates a delete marker — current version is now the marker;
+      // the original PUT becomes noncurrent), then copyFromVersion to
+      // promote the original back to current. Mirrors the Papierkorb
+      // restore flow on a versioned bucket.
+      const original = Buffer.from('restore-me');
+      await storage.upload(testKey, original, 'application/octet-stream');
+      const head = await storage.headObject(testKey);
+      expect(head.versionId).toBeDefined();
+      const sourceVersionId = head.versionId!;
+
+      await storage.hide(testKey);
+      // Sanity: download must now fail because the current version is a
+      // delete marker.
+      await expect(storage.download(testKey)).rejects.toThrow();
+
+      const newVersionId = await storage.copyFromVersion(testKey, sourceVersionId);
+      expect(newVersionId).toBeDefined();
+
+      // The promoted version is the new current; download succeeds and
+      // returns the original bytes.
+      const restored = await storage.download(testKey);
+      expect(Buffer.from(restored.data).toString('utf-8')).toBe('restore-me');
     });
   });
 });

@@ -97,6 +97,7 @@ import {
 } from '../repositories/attachment.js';
 import { getProjectRowById } from '../repositories/project.js';
 import { mutate } from './mutate.js';
+import { emitStorageUsageChanged } from '../sse/emitters.js';
 import {
   bulkLimitExceeded,
   conflict,
@@ -807,6 +808,12 @@ export class AttachmentService {
       throw conflict(STRINGS.errors.invalidInput);
     }
 
+    // Post-commit: pending → ready flips a row's contribution to the
+    // counters from 0 to its sizeBytes (data-model.md §5.14). Broadcast
+    // AFTER db.transaction resolves so a tx that aborts emits nothing
+    // (architecture.md §11.13, AC-270).
+    emitStorageUsageChanged();
+
     log.info({ attachmentId, projectId }, 'attachment_ready');
     return toAttachment(updated);
   }
@@ -920,6 +927,12 @@ export class AttachmentService {
         },
       },
     );
+
+    // Post-commit: ready → hidden moves the row out of the ready
+    // counters into the hidden bucket (data-model.md §5.14). Broadcast
+    // AFTER mutate() resolves; emission inside `run` would leak on a
+    // post-mutate fault and pre-empt the abort guarantee (AC-270).
+    emitStorageUsageChanged();
 
     log.info({ attachmentId, projectId }, 'attachment_hidden');
   }
@@ -1119,6 +1132,12 @@ export class AttachmentService {
         },
       },
     );
+
+    // Post-commit: hidden → ready moves the row from the hidden bucket
+    // back into the ready counters (data-model.md §5.14). Broadcast
+    // AFTER mutate() resolves so a tx rollback (storage copy fault,
+    // CAS-loss) emits nothing (AC-270).
+    emitStorageUsageChanged();
 
     log.info({ attachmentId, projectId }, 'attachment_restored');
     return toAttachment(restored);

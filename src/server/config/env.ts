@@ -208,6 +208,24 @@ export const envSchema = z.object({
     (v) => (v === '' ? undefined : v),
     z.coerce.number().int().positive().optional(),
   ),
+  // ---------------------------------------------------------------
+  // Realtime invalidation channel (ADR-0025, architecture.md §11.13).
+  // Heartbeat cadence on the held SSE response — `:` keepalive every
+  // `n` ms. The default (25 s) is fixed in api.md §14.2.13 and aligns
+  // with reverse-proxy / browser idle-disconnect windows; the override
+  // exists so integration tests can drive the heartbeat at sub-second
+  // cadence rather than waiting >25 s of wall-clock per case.
+  // ---------------------------------------------------------------
+  SSE_HEARTBEAT_INTERVAL_MS: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    // Bounds match the spec in architecture.md §12.2:
+    //   1 s — below this the heartbeat floods the socket and stops
+    //         being a keepalive
+    //   600 s — above this the keepalive can't outrun the typical
+    //         reverse-proxy / browser idle-disconnect windows the
+    //         heartbeat exists to defeat
+    z.coerce.number().int().min(1000).max(600_000).default(25_000),
+  ),
 });
 
 export type Env = z.infer<typeof envSchema>;

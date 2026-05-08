@@ -561,6 +561,64 @@ export const attachments = pgTable(
 );
 
 // ---------------------------------------------------------------
+// Project storage usage — derived state, trigger-maintained
+// (data-model.md §5.14, ARCHITECTURE.md "Storage usage —
+// trigger-maintained side table")
+// ---------------------------------------------------------------
+/**
+ * Per-project four-bucket aggregate of attachment byte counts. Maintained
+ * by two PL/pgSQL triggers in the baseline migration tail (the canonical
+ * Postgres pattern for maintained aggregates over an authoritative
+ * source-of-truth table):
+ *
+ *   - `projects_storage_usage_init` (AFTER INSERT ON projects) seeds a
+ *     zero row for every new project, so the delta trigger only ever
+ *     issues UPDATEs.
+ *   - `attachments_storage_usage_delta` (AFTER INSERT/UPDATE/DELETE ON
+ *     attachments) computes the four-counter delta from OLD/NEW and
+ *     applies it via one UPDATE keyed on `project_id`.
+ *
+ * Side table over columns-on-`projects` because (1) `projects` is
+ * audited and trigger-maintained derived state on an audited table
+ * muddies the audit invariant boundary, and (2) cleaner separation of
+ * concerns. The FK cascade hard-deletes the row alongside the parent
+ * project on purge ([AC-266](docs/spec/verification.md#1526-attachments)).
+ *
+ * Plaintext counters sum `size_bytes + COALESCE(thumb_size_bytes, 0)` —
+ * the user-facing "what I uploaded" view. Ciphertext counters sum the
+ * `ciphertext_*` analogues — the operator-facing "what is on object
+ * storage" view. Both axes track each row's contribution to the matching
+ * status bucket (`ready` or `hidden`); `pending` rows contribute to
+ * neither.
+ */
+export const projectStorageUsage = pgTable(
+  'project_storage_usage',
+  {
+    projectId: uuid('project_id')
+      .primaryKey()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    spaceReadyBytes: bigint('space_ready_bytes', { mode: 'number' }).notNull().default(0),
+    spaceHiddenBytes: bigint('space_hidden_bytes', { mode: 'number' }).notNull().default(0),
+    ciphertextReadyBytes: bigint('ciphertext_ready_bytes', { mode: 'number' }).notNull().default(0),
+    ciphertextHiddenBytes: bigint('ciphertext_hidden_bytes', { mode: 'number' })
+      .notNull()
+      .default(0),
+  },
+  (table) => [
+    // Tripwire — counters can only grow from the trigger arithmetic
+    // and a divergence (broken trigger replacement, hand-edited row,
+    // status-flip without matching insert) must trip at write time
+    // rather than drift silently. The reconcilability invariant
+    // (verification.md AC-267) is the integration-test backstop;
+    // this CHECK is the row-level one.
+    check(
+      'project_storage_usage_non_negative',
+      sql`${table.spaceReadyBytes} >= 0 AND ${table.spaceHiddenBytes} >= 0 AND ${table.ciphertextReadyBytes} >= 0 AND ${table.ciphertextHiddenBytes} >= 0`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------
 // Schema-level audit-payload exclusion (ADR-0024 § Audit-log boundary,
 // data-model.md §5.13 "Audit exclusion", architecture.md §
 // "Schema-level audit exclusion")

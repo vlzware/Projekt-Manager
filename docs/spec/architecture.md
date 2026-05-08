@@ -138,6 +138,8 @@ The deployed system consists of four components:
 
 These components may run on the same provider or on separate providers. The spec does not prescribe hosting vendors, managed services, or container strategies — those are ADR decisions. Network topology is further constrained by [ADR-0008](../adr/0008-vpn-first-network-access.md) (VPN-first access) and by the AC-45 HTTPS-or-nothing rule.
 
+The reverse proxy carries an explicit `flush_interval -1` directive on the `/api/events` upstream so the SSE channel is never buffered ([§11.13](#1113-realtime-invalidation-channel), [api.md §14.2.13](api.md#14213-realtime-events), [ADR-0025](../adr/0025-realtime-ui-invalidation-via-sse.md)).
+
 Any deployed environment must exercise all four components end-to-end. A topology that omits any of them — e.g. an application-only deploy without the reverse proxy or object storage — does not satisfy the deployment contract.
 
 ### 11.7 Continuous Delivery Pipeline
@@ -228,6 +230,39 @@ Each `audit_log` row carries an optional `(ancestorEntityType, ancestorEntityId)
 
 **CHECK closure.** `audit_log_ancestor_type_valid` pins `ancestorEntityType` to the same closed `AuditEntityType` set as `entityType`, keeping the two columns in lock-step when a new entity type lands.
 
+### 11.13 Realtime Invalidation Channel
+
+In-process bus that fans out typed invalidation events to subscribed SSE connections so cross-session UI surfaces refetch the read endpoints they already consume. Architectural rationale: [ADR-0025](../adr/0025-realtime-ui-invalidation-via-sse.md) (decision and shape). Same architectural shape as [§11.11](#1111-notification-publisher-and-dispatch)'s in-process publisher per [ADR-0021](../adr/0021-audit-log-and-notifications-single-write-path.md), with a distinct subscriber set: SSE connections rather than notification channels. Wire contract is in [api.md §14.2.13](api.md#14213-realtime-events).
+
+**Bus.** A process-local module owns a set of subscribers (one per live `/api/events` connection). `emit(event)` iterates the set and writes the SSE frame to each connection. Single Node process, single tenant — no cross-process fan-out is required for v1.
+
+**Subscription lifecycle.** A subscriber is added when the request handler accepts a `/api/events` connection ([api.md §14.2.13](api.md#14213-realtime-events)) and the response stream is opened. The handler registers a teardown that removes the subscriber on connection close, error, or process shutdown. Unsubscribe is idempotent — a teardown firing twice (e.g. error followed by close) is a no-op on the second call.
+
+**Emission — post-commit, from mutation call sites.** Events are emitted in-process, after the surrounding transaction commits, never inside it (parity with [§11.11](#1111-notification-publisher-and-dispatch)). v1 emitters of `storage_usage_changed`:
+
+- `AttachmentService.completeUpload` (`pending → ready`)
+- `AttachmentService.hide` (`ready → hidden`)
+- `AttachmentService.restore` (`hidden → ready`)
+- `attachment-hidden-reaper` ([data-model.md §6.12](data-model.md#612-attachment-hidden-reaper)) — `hidden` row delete
+- `ProjectCrudService.purgeProject` ([api.md §14.2.3](api.md#1423-projects), AC-155) — FK cascade removes every `attachment` row on the purged project
+- `CustomerService.deleteCustomer` ([api.md §14.2.3](api.md#1423-projects), AC-91) — atomic purge of every archived project under the customer; the cascade removes their attachments alongside
+
+The first three AttachmentService paths cover every byte-moving mutation reachable through the attachment-level API surface; the hidden reaper covers the one scheduled byte-moving path; the two cascade emitters cover the remaining byte-moving paths reachable through the project- and customer-level destructive APIs (cascade-driven attachment removal that the per-row delete trigger short-circuits at depth>1, [data-model.md §5.14](data-model.md#514-project-storage-usage)). Together they emit on every transition that changes a counter in [data-model.md §5.14](data-model.md#514-project-storage-usage). The orphan reaper ([data-model.md §6.11](data-model.md#611-attachment-orphan-reaper)) deletes only `pending` rows, which contribute zero to every counter — no event is emitted. The cascade emitters skip emission when the cascade removes no byte-bearing rows (purged project carried no attachments or only `pending` rows; customer had no archived projects, or all archived projects were empty) — pending rows do not move counters, so a wasted broadcast would refetch identical totals for every observer. New emitters land alongside new event names without new infra.
+
+**Failure isolation.** A throwing subscriber writer (closed socket, slow consumer) does not affect other subscribers — the bus catches per-subscriber failures, logs structured operational output, and removes the failing subscriber. Same posture as [§11.11](#1111-notification-publisher-and-dispatch)'s post-commit handlers; an emission failure never rolls back the originating mutation, which has already committed.
+
+**Heartbeat.** Each connection writes a `:` keepalive comment line at the configurable heartbeat interval **[C]** ([§12.2](#122-company-configurable-settings); default 25 seconds, bounded 1 s … 600 s) to defeat reverse-proxy and browser idle disconnects. Independent per connection; not coordinated across the subscriber set.
+
+**Mid-stream session re-validation.** The authentication preHandler runs once at connect time, so a held stream must not outlive the session that authorized it ([CWE-613](https://cwe.mitre.org/data/definitions/613.html)). Each heartbeat tick re-runs `AuthService.isSessionValid(token)` against the cookie token; a missing row, expired row, or inactive user ends the response and removes the subscriber. Detection bound: one heartbeat interval post-revocation. DB cost: one `findSession` query per connection per heartbeat — independent of broadcast rate, matching the cadence the timer already runs at. Transient DB errors during re-validation skip the tick rather than disconnecting; the next tick retries. Covers all four session-invalidation paths uniformly: natural expiry, logout (`AuthService.logout`), admin lockout (`UserService.deactivateUser`'s `users.active = false` + session cascade), and the periodic reaper.
+
+**Broadcast posture.** Events fan out to every connected authenticated session. Authorization happens at the consumer endpoints the client refetches, not at the event — the role-leakage tradeoff is recorded in [ADR-0025 §Consequences](../adr/0025-realtime-ui-invalidation-via-sse.md#consequences) and accepted under the project's threat model.
+
+**Reverse-proxy posture.** Caddy auto-flushes responses with `Content-Type: text/event-stream`; an explicit `flush_interval -1` directive on the `/api/events` upstream is the defensive belt-and-suspenders ([§11.6](#116-deployment-topology), [api.md §14.2.13](api.md#14213-realtime-events)). Misconfigure and SSE buffers until the connection closes.
+
+**Known v1 limitation.** Out-of-band SQL writes (admin shell, future migrations, direct trigger-driven mutations not routed through the service layer) do not emit. The PostgreSQL `LISTEN`/`NOTIFY` upgrade path is recorded in [ADR-0025](../adr/0025-realtime-ui-invalidation-via-sse.md) — when the gap becomes load-bearing, triggers `NOTIFY` and the Node process holds a persistent `LISTEN` connection that fans out to the same SSE subscribers.
+
+**Verification.** Bus failure isolation, per-emitter delivery, channel shape, heartbeat, and reconnect are pinned by [§15.28](verification.md#1528-realtime-events).
+
 ---
 
 ## 12. Configuration Boundaries
@@ -262,6 +297,7 @@ The following values are centralized as single-source constants and may vary per
 - Layer 2 backup public recipient — operator-managed `age` X25519 public recipient string used by the `backup` compose service to encrypt each `pg_dump` artifact and per-table manifest before upload to R2 ([ADR-0020](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)). No default — the deploy must supply a value; the `backup` service refuses to run without it. Env var: `AGE_RECIPIENT`. The matching private identity stays on the operator workstation and is loaded into a tmpfs mount on the `backup` service only when the operator wants Tier 2 verification (see [§11.10 "Encryption surface"](#1110-full-state-backup-layer-2)). The matching private key never appears anywhere else and is not a `[C]` value — the recipient string in this catalogue is what couples the deployed `backup` service to the operator's keypair. Parity with `BINARY_AGE_RECIPIENT` below.
 - Audit log retention window — rolling age at which `audit_log` entries are removed by the scheduled cleanup (default 90 days; see [data-model.md §6.10](data-model.md#610-audit-log-retention))
 - Audit activity-feed rendering — mapping from audit entry (`action`, `payload`) ([data-model.md §5.10](data-model.md#510-audit-log-entity)) to the German display string in the activity feed ([ui/workflow-views.md §8.4.1](ui/workflow-views.md#841-activity-feed)) and global Aktivität view ([ui/management.md §8.13](ui/management.md#813-audit-view)). Covers each [`NotificationEventClass`](data-model.md#511-notification-rule) — every catalog event has an `(action, payload)` projection.
+- Realtime invalidation heartbeat — interval of `:` keepalive comment lines on `/api/events` ([§11.13](#1113-realtime-invalidation-channel), [api.md §14.2.13](api.md#14213-realtime-events)). Default 25 seconds; bounded 1 s … 600 s. Env var: `SSE_HEARTBEAT_INTERVAL_MS`.
 - List page size — default row count for paginated list endpoints (projects, customers, users, audit) and their management views
 - Rate limit buckets — per-session mutation bucket ceiling for push-subscription mutations (`POST`, `DELETE`); exceeding returns `429 RATE_LIMITED` ([api.md §14.2.10](api.md#14210-push-subscription))
 - Attachment per-file size cap — maximum `sizeBytes` of a single attachment original (default 1 MB); enforced at init validation, pinned via the presigned PUT's signed `Content-Length`, and re-verified at complete ([data-model.md §5.13](data-model.md#513-attachment), [api.md §14.2.11](api.md#14211-attachments))

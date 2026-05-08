@@ -1,5 +1,5 @@
 {
-  "id": "d7636032-28d7-4f83-a2b8-bd7d2265c363",
+  "id": "6da908f6-d6e2-4c05-91bb-b32536331358",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -749,6 +749,72 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.project_storage_usage": {
+      "name": "project_storage_usage",
+      "schema": "",
+      "columns": {
+        "project_id": {
+          "name": "project_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "space_ready_bytes": {
+          "name": "space_ready_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "space_hidden_bytes": {
+          "name": "space_hidden_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "ciphertext_ready_bytes": {
+          "name": "ciphertext_ready_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "ciphertext_hidden_bytes": {
+          "name": "ciphertext_hidden_bytes",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "project_storage_usage_project_id_projects_id_fk": {
+          "name": "project_storage_usage_project_id_projects_id_fk",
+          "tableFrom": "project_storage_usage",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "project_storage_usage_non_negative": {
+          "name": "project_storage_usage_non_negative",
+          "value": "\"project_storage_usage\".\"space_ready_bytes\" >= 0 AND \"project_storage_usage\".\"space_hidden_bytes\" >= 0 AND \"project_storage_usage\".\"ciphertext_ready_bytes\" >= 0 AND \"project_storage_usage\".\"ciphertext_hidden_bytes\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.project_workers": {

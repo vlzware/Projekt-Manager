@@ -9,6 +9,7 @@ import { create } from 'zustand';
 import type { Customer } from '@/domain/types';
 import { customerApi } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
+import { useStorageUsageStore } from './storageUsageStore';
 
 /**
  * Result of `createCustomer`. `'ok'` — row committed (fresh or idempotent
@@ -166,6 +167,13 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
       customers: s.customers.filter((c) => c.id !== id),
       total: s.total - 1,
     }));
+    // Defence in depth alongside the SSE roundtrip — the server emits
+    // `storage_usage_changed` post-commit when the atomic archived-
+    // project purge cascade moved bytes (AC-270). The customer may
+    // have had no archived projects (no event) or the SSE channel may
+    // be unhealthy; this refresh keeps the actor's Footer badge /
+    // DatenView row current either way. Cheap idempotent GET.
+    void useStorageUsageStore.getState().refresh();
     return true;
   },
 

@@ -35,6 +35,7 @@ import {
 } from '@/domain/clientEncryption';
 import { runImagePipeline, exceedsRawCap, type ProcessedUpload } from '@/domain/imagePipeline';
 import { handleSessionExpired } from './sessionExpired';
+import { useStorageUsageStore } from './storageUsageStore';
 import { useToastStore } from './toastStore';
 
 /**
@@ -551,6 +552,11 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         return { pendingUploads: next };
       });
       await get().fetchForProject(projectId);
+      // Post-mutation: counters moved (pending → ready). Defence in
+      // depth alongside the SSE roundtrip — if the channel is
+      // unhealthy (proxy issue, dropped reconnect) the badge stays
+      // current for the same-tab caller.
+      void useStorageUsageStore.getState().refresh();
     } catch (err) {
       // Ignore aborts — the caller intentionally tore the run down; no
       // user-visible failure banner. Everything else marks failed.
@@ -704,6 +710,9 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
         },
         error: null,
       }));
+      // Post-mutation: counters moved (hidden → ready). Defence in
+      // depth alongside the SSE roundtrip.
+      void useStorageUsageStore.getState().refresh();
     },
 
     uploadFile: async (projectId, file, input) => {
@@ -854,6 +863,9 @@ export const useAttachmentStore = create<AttachmentState>((set, get) => {
       // and restoreAttachment, so a stale message from an earlier
       // mutation does not linger after a successful hide.
       set({ error: null });
+      // Post-mutation: counters moved (ready → hidden). Defence in
+      // depth alongside the SSE roundtrip.
+      void useStorageUsageStore.getState().refresh();
     },
 
     requestDownloadUrl: async (projectId, attachmentId, variant) => {

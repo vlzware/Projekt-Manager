@@ -671,4 +671,19 @@ export const attachmentApi = {
     }),
 };
 
+/**
+ * Storage usage read DTO (api.md §14.2.12). Each leaf is a non-negative
+ * byte count; the four-bucket shape matches `StorageUsageService` server-
+ * side. The deployment-wide endpoint is gated server-side by `data:export`;
+ * the client method itself imposes no role check.
+ */
+export interface StorageUsageDto {
+  ready: { plaintext: number; ciphertext: number };
+  hidden: { plaintext: number; ciphertext: number };
+}
+
+export const storageUsageApi = {
+  getGlobal: () => apiCall<StorageUsageDto>('/api/storage-usage'),
+};
+
 export type { AuthUser };

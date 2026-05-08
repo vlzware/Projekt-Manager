@@ -104,6 +104,22 @@ docker exec -i "$DB_CONTAINER" \
   psql -U pm -d projekt_manager -v ON_ERROR_STOP=1 --quiet \
   < "$REMOTE_TMP/db.sql" >/dev/null
 
+# Drop hidden attachments. The dev-side bucket dump (`mc mirror src /data`
+# in sync-dev-to-vps.sh) is not version-aware: when the source's current
+# version is a delete marker, `mc mirror` writes nothing for that key.
+# Every dev-side `hidden` (Papierkorb) row therefore arrives with a DB row
+# but zero bytes on B2 after the mirror below — restore would surface 422
+# restoreMissingVersionId. Project policy is that "deleted means gone,
+# even if takes some time to be truly gone": drop the rows so DB and
+# bucket agree. The `attachments_storage_usage_delta` trigger fires per
+# row and decrements `space_hidden_bytes` / `ciphertext_hidden_bytes` so
+# the side-table stays consistent.
+echo "  pruning hidden attachments..."
+docker exec "$DB_CONTAINER" \
+  psql -U pm -d projekt_manager -v ON_ERROR_STOP=1 -tAc \
+  "DELETE FROM attachments WHERE status = 'hidden';" \
+  >/dev/null
+
 # Mirror local-dump → B2 bucket. `mc alias set` avoids URL-encoding
 # pitfalls of `MC_HOST_*=` when an applicationKey contains `+` or `/`.
 # `--overwrite` replaces objects whose keys match (creating a new B2
@@ -134,6 +150,41 @@ docker run --rm \
     mc alias set b2 "$B2_ENDPOINT" "$B2_KEY" "$B2_SECRET" --api S3v4 >/dev/null
     mc mirror --overwrite --remove --md5 /data "b2/$B2_BUCKET"
   ' >/dev/null
+
+# Repair attachments.{version_id,thumb_version_id} so they reference
+# the freshly-PUT B2 versions just produced by `mc mirror`. Without
+# this, every row arrives with a dev-side MinIO version_id (UUID-shaped)
+# that B2 does not recognise — gallery downloads would surface as
+# `S3ServiceException InternalError 500` from CopyObject (or now 410
+# GONE per the HEAD-probe in the storage layer, 961fa9c). The Python
+# helper walks list_object_versions once, joins against the attachments
+# table extracted via psql, and emits UPDATE statements; we pipe them
+# straight back into psql.
+#
+# Idempotent: re-running converges to the same state.
+echo "  repairing attachments version_ids..."
+ATTACHMENTS_TSV="$REMOTE_TMP/attachments.tsv"
+docker exec "$DB_CONTAINER" \
+  psql -U pm -d projekt_manager -tA -F $'\t' -c "
+    SELECT id,
+           original_key,
+           COALESCE(thumb_key, ''),
+           COALESCE(version_id, ''),
+           COALESCE(thumb_version_id, '')
+      FROM attachments
+  " > "$ATTACHMENTS_TSV"
+REPAIR_SQL="$REMOTE_TMP/repair-versionids.sql"
+B2_ENDPOINT="$B2_ENDPOINT" \
+B2_BUCKET="$B2_BUCKET" \
+B2_KEY="$B2_KEY" \
+B2_SECRET="$B2_SECRET" \
+ATTACHMENTS_TSV="$ATTACHMENTS_TSV" \
+  python3 "$REMOTE_TMP/repair-bucket-versionids.py" > "$REPAIR_SQL"
+if [ -s "$REPAIR_SQL" ]; then
+  docker exec -i "$DB_CONTAINER" \
+    psql -U pm -d projekt_manager -v ON_ERROR_STOP=1 --quiet \
+    < "$REPAIR_SQL" >/dev/null
+fi
 
 # Unpause backup before the smoke probe so its dcron resumes promptly
 # and any deferred backup ticks fire against the restored DB. Clear

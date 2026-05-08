@@ -360,18 +360,27 @@ export async function listByIdsForProject(
 }
 
 /**
- * Collect every attachment key (original + thumb) for a project. Used
- * by the purge cascade so the storage-side cleanup can fire after the
- * DB transaction commits (AC-218).
+ * Collect every attachment key (original + thumb) for a project, with
+ * status. Used by the purge cascade so the storage-side cleanup can
+ * fire after the DB transaction commits (AC-218), and so the caller
+ * can gate `storage_usage_changed` emission on whether the cascade
+ * removed any byte-bearing rows (AC-270 — pending rows contribute zero
+ * to every counter, so a purge whose attachments were all `pending`
+ * does not move the global figure).
  */
 export async function listKeysForProject(
   db: TransactionalDatabase,
   projectId: string,
-): Promise<Array<{ originalKey: string; thumbKey: string | null }>> {
-  return db
-    .select({ originalKey: attachments.originalKey, thumbKey: attachments.thumbKey })
+): Promise<Array<{ originalKey: string; thumbKey: string | null; status: AttachmentStatus }>> {
+  const rows = await db
+    .select({
+      originalKey: attachments.originalKey,
+      thumbKey: attachments.thumbKey,
+      status: attachments.status,
+    })
     .from(attachments)
     .where(eq(attachments.projectId, projectId));
+  return rows as Array<{ originalKey: string; thumbKey: string | null; status: AttachmentStatus }>;
 }
 
 /**

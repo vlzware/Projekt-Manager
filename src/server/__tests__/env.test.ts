@@ -66,6 +66,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     BINARY_AGE_IDENTITY_PATH: '/run/binary-key/identity',
     VAPID_PRIVATE_KEY: undefined,
     VAPID_SUBJECT: undefined,
+    SSE_HEARTBEAT_INTERVAL_MS: 25_000,
     ...overrides,
   };
 }
@@ -266,6 +267,57 @@ describe('envSchema AUDIT_RETENTION_WINDOW_DAYS empty-string handling', () => {
   it('still rejects 0 and negatives', () => {
     expect(() => envSchema.parse({ ...minimal, AUDIT_RETENTION_WINDOW_DAYS: '0' })).toThrow();
     expect(() => envSchema.parse({ ...minimal, AUDIT_RETENTION_WINDOW_DAYS: '-5' })).toThrow();
+  });
+});
+
+/**
+ * SSE_HEARTBEAT_INTERVAL_MS — bounded heartbeat cadence per
+ * architecture.md §12.2 (default 25 s; 1 s … 600 s). Bounds reject
+ * pathological values (1 ms heartbeat flood, 23-day silence) at boot
+ * rather than at runtime when the proxy starts dropping connections
+ * the operator did not realise were misconfigured.
+ */
+describe('envSchema SSE_HEARTBEAT_INTERVAL_MS handling', () => {
+  const minimal = { DATABASE_URL: 'postgres://unused' };
+
+  it('applies the 25 000 ms default when absent', () => {
+    const parsed = envSchema.parse({ ...minimal });
+    expect(parsed.SSE_HEARTBEAT_INTERVAL_MS).toBe(25_000);
+  });
+
+  it('coerces "" to undefined so the default applies', () => {
+    const parsed = envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '' });
+    expect(parsed.SSE_HEARTBEAT_INTERVAL_MS).toBe(25_000);
+  });
+
+  it('parses an integer string within bounds', () => {
+    const parsed = envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '5000' });
+    expect(parsed.SSE_HEARTBEAT_INTERVAL_MS).toBe(5_000);
+  });
+
+  it('accepts the inclusive lower bound (1 s)', () => {
+    const parsed = envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '1000' });
+    expect(parsed.SSE_HEARTBEAT_INTERVAL_MS).toBe(1_000);
+  });
+
+  it('accepts the inclusive upper bound (600 s)', () => {
+    const parsed = envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '600000' });
+    expect(parsed.SSE_HEARTBEAT_INTERVAL_MS).toBe(600_000);
+  });
+
+  it('rejects values below the lower bound', () => {
+    expect(() => envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '999' })).toThrow();
+  });
+
+  it('rejects values above the upper bound', () => {
+    expect(() => envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '600001' })).toThrow();
+  });
+
+  it('rejects 0, negatives, fractions, and non-numeric input', () => {
+    expect(() => envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '0' })).toThrow();
+    expect(() => envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '-1' })).toThrow();
+    expect(() => envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: '3.5' })).toThrow();
+    expect(() => envSchema.parse({ ...minimal, SSE_HEARTBEAT_INTERVAL_MS: 'abc' })).toThrow();
   });
 });
 

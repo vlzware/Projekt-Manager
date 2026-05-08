@@ -6,6 +6,16 @@
         respond "ok" 200
     }
 
+    # Realtime invalidation channel (ADR-0025, api.md §14.2.13).
+    # `flush_interval -1` keeps the buffering posture explicit so a
+    # regression on the upstream content-type does not silently buffer
+    # the SSE stream until the connection closes.
+    handle /api/events {
+        reverse_proxy app:3000 {
+            flush_interval -1
+        }
+    }
+
     handle {
         reverse_proxy app:3000
     }
