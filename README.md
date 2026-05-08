@@ -141,9 +141,15 @@ nvm install                           # installs the Node.js version pinned in `
 cp .env.example .env                  # dev-ready, no edits needed
 npm install
 # run:
-docker compose -f docker-compose.yml -f docker-compose.minio.yml -f docker-compose.dev.yml up -d db storage storage-init
+docker compose up -d                  # Postgres + MinIO (the app runs on the host via npm run dev)
 npm run dev                           # starts backend + frontend at http://localhost:5173
+
+# stop:
+docker compose down                   # stop containers, keep data
+docker compose down -v                # wipe volumes too — fresh DB + bucket on next start
 ```
+
+`COMPOSE_FILE` in `.env.example` wires the dev overlay triple automatically; no `-f` flags needed. See [docs/ops/local-dev.md](docs/ops/local-dev.md).
 
 **Seed Data**:
 

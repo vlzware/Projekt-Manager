@@ -4,7 +4,11 @@
 # The MinIO mirror that stands in for B2 in dev lives in its own file
 # (`docker-compose.minio.yml`) so the CI smoke test can attach the same
 # MinIO surface to the prod GHCR image without picking up the dev
-# `build: .` override. Dev workflows load both overlays:
+# `build: .` override.
+#
+# `.env.example` declares COMPOSE_FILE for the dev overlay triple, so a
+# bare `docker compose up -d` in this repo merges all three files
+# automatically. Equivalent explicit form:
 #
 #   docker compose -f docker-compose.yml -f docker-compose.minio.yml \
 #                  -f docker-compose.dev.yml up -d
@@ -22,6 +26,16 @@ services:
     build: .
     ports:
       - "${PORT:-3000}:3000"
+    # Profile-gated off the default dev workflow. Local dev runs the
+    # app via `npm run dev` on the host (HMR, faster reload, no image
+    # rebuild per change), so a containerised app would be a duplicate
+    # listener on :3000. Opt in explicitly with
+    # `docker compose --profile containerised-app up -d` when
+    # exercising the prod-shaped Dockerfile build locally. CI smoke
+    # uses the base file's GHCR `app` directly (no dev overlay) and
+    # is unaffected.
+    profiles:
+      - containerised-app
 
   db:
     ports:
