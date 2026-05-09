@@ -87,7 +87,7 @@ Contents:
 - **Forward transition button** (same as [→]). Hidden for `Erledigt`.
 - **Backward transition button**, styled less prominently. Hidden for `Anfrage` (no previous state) and `Erledigt` (terminal).
 - Customer: name, phone (clickable), email (clickable)
-- Address (clickable map link if available)
+- `Baustelle:` line — rendered from `project.siteAddress` when non-null; falls back to the customer's `address` with a subtle inline `"(Kundenadresse)"` hint when null. Single map link on whichever address is shown. Full rule and edge cases in [project-detail.md §8.15.2](project-detail.md#8152-core-fields) (the SSOT — the panel and the page render this line identically).
 - **Dates: planned start/end** — editable via date picker inputs. Changes update `plannedStart`/`plannedEnd` and are reflected in both views immediately. The UI prevents invalid combinations: clearing `plannedStart` while `plannedEnd` is set also clears `plannedEnd` (see [data-model.md §6.8](../data-model.md#68-date-validation)).
 - Assigned workers (list of display names). Editing is available on the Project Detail Page ([ui/project-detail.md §8.15.3](project-detail.md#8153-assigned-worker-editor)) and in the Project Management View ([management.md §8.8.3](management.md#883-edit-project)).
 - Estimated value, formatted as `8.500,00 €` (German locale)

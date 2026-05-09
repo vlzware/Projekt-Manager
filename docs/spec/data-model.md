@@ -30,6 +30,16 @@ interface Project {
 
   customerId: string; // references Customer.id (§5.6)
 
+  siteAddress?: {
+    // Baustellen- / Leistungsadresse — where the work happens.
+    // Distinct from `customer.address` (Rechnungsadresse, §5.6).
+    // `null` indicates the site is at the customer's billing address;
+    // the UI renders the fallback with a "(Kundenadresse)" hint.
+    street: string;
+    zip: string;
+    city: string;
+  } | null;
+
   plannedStart?: string; // ISO 8601 date
   plannedEnd?: string; // ISO 8601 date
 
@@ -50,6 +60,7 @@ Design notes:
 
 - `statusChangedAt` is separate from `updatedAt` — editing notes must not reset aging calculations.
 - `customerId` references Customer (§5.6). The API nests the full customer object in responses; writes accept `customerId`.
+- `siteAddress` is the **Baustellen-/Leistungsadresse** — the address where the work physically happens. It is intentionally separate from `customer.address` (the **Rechnungsadresse**, §5.6) because a single customer (e.g., a Hausverwaltung) may carry multiple sites while having one legal billing address. **`null` means "the site is at the customer's billing address"** — the homeowner-renovating-their-house case. UI surfaces use the customer's address as the fallback display value with an inline `"(Kundenadresse)"` hint when `siteAddress` is null (see [ui/project-detail.md §8.15.2](ui/project-detail.md#8152-core-fields)). This is the standard ERP/CRM split and matches the Kickoff posture of a generalized Handwerker tool ([ADR-0001](../adr/0001-generalized-system-with-configurable-customer-specifics.md)).
 - `assignedWorkers` is m:n via a join table. API returns `{ userId, displayName }`; writes accept `assignedWorkerIds: string[]`.
 - `WorkflowState` reflects the default configuration. The type is derived from the configuration array (see [index.md §3](index.md#3-workflow-states)).
 - Warnings and aging are derived from state and timestamps at render time — not stored.
@@ -165,6 +176,8 @@ interface Customer {
   phone?: string; // "+49 221 1234567"
   email?: string; // "mueller@example.de"
   address?: {
+    // Rechnungsadresse — the legal entity's billing address.
+    // Distinct from a project's `siteAddress` (Baustelle, §5.1).
     street: string; // "Hauptstr. 12"
     zip: string; // "51465"
     city: string; // "Bergisch Gladbach"
@@ -179,6 +192,7 @@ interface Customer {
 
 Design notes:
 
+- `address` is the customer's **Rechnungsadresse** — the legal entity's billing address. It is intentionally separate from `Project.siteAddress` (Baustelle, §5.1): one customer can carry several sites while billing remains tied to one legal address (the standard ERP/CRM split — SAP, Odoo, Stripe, Lexware/sevDesk).
 - Address is an optional nested object within Customer.
 - Follows the audit metadata pattern (§5.5).
 - `name` is required; all other fields are optional.
@@ -615,6 +629,7 @@ Design notes:
 - Customers with minimal data (name only or name + phone): Karl-Heinz Becker (name only), Andreas Hoffmann (no email).
 - Customers linked to multiple seed projects: Familie Müller (2 projects), Schmidt GmbH (2 projects), Hausverwaltung Rheinblick (3 projects).
 - Customers with no projects yet: Schulz & Partner PartG, Monika Engel — these represent records imported from an external system (e.g., orgaMAX) before project creation.
+- **Site-address divergence demo.** At least one project of a Hausverwaltung-style customer carries a non-null `siteAddress` (§5.1) different from the customer's Rechnungsadresse — for example, the seeded `Schmidt Hausverwaltung` (Rechnungsadresse `Kölner Str. 45, 51429 Bergisch Gladbach`) carries a project at the divergent site `Goethestr. 18, 51103 Köln`. Every other seed project leaves `siteAddress` null so the fallback rendering ("(Kundenadresse)") is also exercised on the demo data.
 
 ### 7.4 Edge Cases
 
