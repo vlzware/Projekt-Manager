@@ -39,6 +39,12 @@ export interface EnvelopeProject {
   status: WorkflowState;
   statusChangedAt: string;
   customerId: string;
+  /**
+   * Baustellen-/Leistungsadresse — distinct from the customer's
+   * Rechnungsadresse (`EnvelopeCustomer.address`). Null means the site
+   * is at the customer's billing address (data-model.md §5.1).
+   */
+  siteAddress: Address | null;
   plannedStart: string | null;
   plannedEnd: string | null;
   estimatedValue: string | null;

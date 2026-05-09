@@ -156,6 +156,16 @@ export const projects = pgTable(
     customerId: uuid('customer_id')
       .notNull()
       .references(() => customers.id),
+    // Baustellen-/Leistungsadresse — where the work physically happens.
+    // Distinct from `customers.address` (Rechnungsadresse). Null means
+    // "the site is at the customer's billing address" (data-model.md
+    // §5.1) — UI fallback only, no semantic difference at the data layer.
+    // Same JSONB shape as `customers.address`.
+    siteAddress: jsonb('site_address').$type<{
+      street: string;
+      zip: string;
+      city: string;
+    } | null>(),
 
     plannedStart: date('planned_start', { mode: 'date' }),
     plannedEnd: date('planned_end', { mode: 'date' }),

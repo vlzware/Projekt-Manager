@@ -60,6 +60,7 @@ export interface ProjectIncoming {
   title: string;
   customerId: string;
   status: WorkflowState;
+  siteAddress?: { street: string; zip: string; city: string } | null;
   plannedStart?: string | null;
   plannedEnd?: string | null;
   assignedWorkerIds?: string[];
@@ -72,6 +73,7 @@ export interface ProjectStored {
   title: string;
   customerId: string;
   status: string;
+  siteAddress: { street: string; zip: string; city: string } | null;
   plannedStart: Date | null;
   plannedEnd: Date | null;
   assignedWorkerIds: string[];
@@ -108,6 +110,24 @@ export function projectMatches(incoming: ProjectIncoming, stored: ProjectStored)
   if (incoming.title !== stored.title) return false;
   if (incoming.customerId !== stored.customerId) return false;
   if (incoming.status !== stored.status) return false;
+
+  // Component-wise comparison on the nested triple — same rule as
+  // `customers.address` in `customerMatches` above. Null vs populated
+  // counts as a divergence (mirrors the customer-side rule pinned by
+  // AC-55 and re-asserted by AC-278).
+  const incSite = normalizeAddress(incoming.siteAddress ?? null);
+  const storedSite = normalizeAddress(stored.siteAddress);
+  if (incSite === null && storedSite !== null) return false;
+  if (incSite !== null && storedSite === null) return false;
+  if (incSite !== null && storedSite !== null) {
+    if (
+      incSite.street !== storedSite.street ||
+      incSite.zip !== storedSite.zip ||
+      incSite.city !== storedSite.city
+    ) {
+      return false;
+    }
+  }
 
   const incStart = incoming.plannedStart ?? null;
   const storedStart = dateToIsoDay(stored.plannedStart);

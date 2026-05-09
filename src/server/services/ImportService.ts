@@ -216,6 +216,7 @@ function toProjectInsert(p: EnvelopeProject) {
     status: p.status,
     statusChangedAt: new Date(p.statusChangedAt),
     customerId: p.customerId,
+    siteAddress: p.siteAddress ?? null,
     plannedStart: p.plannedStart ? new Date(p.plannedStart) : null,
     plannedEnd: p.plannedEnd ? new Date(p.plannedEnd) : null,
     estimatedValue: p.estimatedValue,

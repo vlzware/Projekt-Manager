@@ -107,6 +107,22 @@ export function projectRoutes(db: Database) {
               title: { type: 'string', minLength: 1 },
               customerId: { type: 'string', format: 'uuid' },
               status: { type: 'string' },
+              // Baustellen-/Leistungsadresse — same JSON shape as customer.address.
+              // Null means "site is at the customer's billing address" (data-model.md §5.1).
+              // AC-284 backstop: partial triples (any empty-string component)
+              // are rejected at this layer with 400 VALIDATION_ERROR. The
+              // primary all-or-none rule lives in the UI; the API enforces
+              // the same shape as defense-in-depth against a malformed client.
+              siteAddress: {
+                type: ['object', 'null'],
+                additionalProperties: false,
+                required: ['street', 'zip', 'city'],
+                properties: {
+                  street: { type: 'string', minLength: 1 },
+                  zip: { type: 'string', minLength: 1 },
+                  city: { type: 'string', minLength: 1 },
+                },
+              },
               plannedStart: { type: ['string', 'null'], format: 'date' },
               plannedEnd: { type: ['string', 'null'], format: 'date' },
               assignedWorkerIds: { type: 'array', items: { type: 'string', format: 'uuid' } },
@@ -124,6 +140,7 @@ export function projectRoutes(db: Database) {
           title: string;
           customerId: string;
           status?: string;
+          siteAddress?: { street: string; zip: string; city: string } | null;
           plannedStart?: string | null;
           plannedEnd?: string | null;
           assignedWorkerIds?: string[];
@@ -309,6 +326,21 @@ export function projectRoutes(db: Database) {
             properties: {
               title: { type: 'string', minLength: 1 },
               customerId: { type: 'string', format: 'uuid' },
+              // PATCH semantics: omitted leaves the stored value unchanged;
+              // null clears (= "site is at the customer's billing address");
+              // a populated triple overwrites. Mirrors the customer-address
+              // PATCH-clears rule. AC-284: each component requires minLength 1
+              // — empty-string in any field is a 400 VALIDATION_ERROR.
+              siteAddress: {
+                type: ['object', 'null'],
+                additionalProperties: false,
+                required: ['street', 'zip', 'city'],
+                properties: {
+                  street: { type: 'string', minLength: 1 },
+                  zip: { type: 'string', minLength: 1 },
+                  city: { type: 'string', minLength: 1 },
+                },
+              },
               assignedWorkerIds: { type: 'array', items: { type: 'string', format: 'uuid' } },
               estimatedValue: { type: ['number', 'null'] },
               notes: { type: ['string', 'null'] },
@@ -322,6 +354,7 @@ export function projectRoutes(db: Database) {
         const body = request.body as {
           title?: string;
           customerId?: string;
+          siteAddress?: { street: string; zip: string; city: string } | null;
           assignedWorkerIds?: string[];
           estimatedValue?: number | null;
           notes?: string | null;

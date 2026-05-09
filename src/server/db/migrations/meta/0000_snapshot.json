@@ -1,5 +1,5 @@
 {
-  "id": "6da908f6-d6e2-4c05-91bb-b32536331358",
+  "id": "ede8ae6e-c388-4d30-a3d1-76b1929f8f01",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -935,6 +935,12 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "site_address": {
+          "name": "site_address",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
         },
         "planned_start": {
           "name": "planned_start",
