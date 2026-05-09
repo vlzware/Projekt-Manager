@@ -1,0 +1,31 @@
+name: Cache cleanup
+
+# When a PR closes, delete the GHA caches scoped to its merge ref.
+# Without this, those caches squat in the 10 GB per-repo cap for up
+# to 7 days post-close and evict warm `main` caches via LRU. Public
+# repo so this is a build-hit-rate concern, not a cost concern.
+#
+# Scope is `refs/pull/<num>/merge` — caches reachable only from this
+# PR. Caches on `main` and iteration branches are not touched.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete caches scoped to this PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR_REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          set -euo pipefail
+          gh cache list --ref "$PR_REF" --limit 100 --json id --jq '.[].id' \
+            | xargs -r -n1 gh cache delete
