@@ -6,7 +6,7 @@
  */
 
 import { create } from 'zustand';
-import type { Project, Customer } from '@/domain/types';
+import type { Address, Project, Customer } from '@/domain/types';
 import { projectApi, customerApi } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';
@@ -39,6 +39,12 @@ interface ProjectManagementState {
     number: string;
     title: string;
     customerId: string;
+    /**
+     * Baustelle (work-site) address. `null` (or omitted) inherits the
+     * customer's billing address via the fallback rule. See
+     * data-model.md §5.1, AC-280 / AC-278.
+     */
+    siteAddress?: Address | null;
   }) => Promise<CreateProjectOutcome>;
   updateProject: (
     id: string,
@@ -47,6 +53,11 @@ interface ProjectManagementState {
       customerId?: string;
       estimatedValue?: number | null;
       notes?: string | null;
+      /**
+       * PATCH semantics: omit to leave unchanged, `null` to clear,
+       * triple to overwrite. See AC-279 / AC-280.
+       */
+      siteAddress?: Address | null;
     },
   ) => Promise<Project | null>;
   updateDates: (

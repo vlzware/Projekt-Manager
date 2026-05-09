@@ -9,6 +9,7 @@ import { STRINGS } from '@/config/strings';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { MenuBackdrop } from '../common/MenuBackdrop';
+import { SiteAddressGroup, type SiteAddressGroupHandle } from './SiteAddressGroup';
 import styles from './Management.module.css';
 
 type NumberPreflightStatus = 'idle' | 'checking' | 'available' | 'taken';
@@ -28,10 +29,17 @@ export function ProjectCreateForm({ onClose }: Props) {
   const [customerId, setCustomerId] = useState('');
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Surfaces the AC-284 all-or-none Baustelle validation. Cleared on
+  // every fresh submit attempt; only set when read() returns `partial`.
+  const [siteAddressError, setSiteAddressError] = useState<string | null>(null);
 
   // Client-supplied UUID for idempotent create. Stable across re-renders
   // so a retry after a transient failure replays rather than duplicating.
   const createIdRef = useRef<string>(crypto.randomUUID());
+
+  // Imperative handle on the Baustelle group — read at submit time so the
+  // group owns its draft and the parent never reaches into its internals.
+  const siteAddressRef = useRef<SiteAddressGroupHandle | null>(null);
 
   const [numberStatus, setNumberStatus] = useState<NumberPreflightStatus>('idle');
   // Monotonic request id so two overlapping blurs cannot commit out of
@@ -57,6 +65,17 @@ export function ProjectCreateForm({ onClose }: Props) {
 
   const handleCreate = async () => {
     if (submitting || !number.trim() || !title.trim() || !customerId) return;
+
+    // AC-284: all-or-none on the Baustelle group. `read()` distinguishes
+    // a valid value (null OR full triple) from a partial fill; partial
+    // blocks submit and surfaces the German validation hint.
+    const siteResult = siteAddressRef.current?.read() ?? { kind: 'valid', value: null };
+    if (siteResult.kind === 'partial') {
+      setSiteAddressError(STRINGS.projects.siteAddressPartial);
+      return;
+    }
+    setSiteAddressError(null);
+
     setSubmitting(true);
 
     const outcome = await createProject({
@@ -64,6 +83,7 @@ export function ProjectCreateForm({ onClose }: Props) {
       number: number.trim(),
       title: title.trim(),
       customerId,
+      siteAddress: siteResult.value,
     });
 
     setSubmitting(false);
@@ -170,6 +190,17 @@ export function ProjectCreateForm({ onClose }: Props) {
             )}
           </div>
         </div>
+
+        <SiteAddressGroup initial={null} disabled={submitting} handleRef={siteAddressRef} />
+        {siteAddressError && (
+          <div
+            className={styles.fieldHintError}
+            data-testid="project-site-address-error"
+            role="status"
+          >
+            {siteAddressError}
+          </div>
+        )}
 
         {error && <div className={styles.error}>{error}</div>}
 

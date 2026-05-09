@@ -195,7 +195,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
 
 // --- Typed API functions -----------------------------------------------------
 
-import type { Project, Customer, User, Attachment, AttachmentLabel } from '@/domain/types';
+import type { Address, Project, Customer, User, Attachment, AttachmentLabel } from '@/domain/types';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchange';
 import type { BackupStatus } from '@/domain/backupBadge';
@@ -300,6 +300,13 @@ export const projectApi = {
     assignedWorkerIds?: string[];
     estimatedValue?: number | null;
     notes?: string | null;
+    /**
+     * Baustelle (work-site) address. `null` (or omitted) means the
+     * project's site is the customer's billing address by the
+     * fallback rule (data-model.md §5.1). A populated triple is
+     * persisted on the row. See AC-278 / AC-280.
+     */
+    siteAddress?: Address | null;
   }) => apiCall<Project>('/api/projects', { method: 'POST', body: data }),
 
   update: (
@@ -310,6 +317,12 @@ export const projectApi = {
       assignedWorkerIds?: string[];
       estimatedValue?: number | null;
       notes?: string | null;
+      /**
+       * Baustelle (work-site) address. PATCH semantics: omit to leave
+       * unchanged, `null` to clear (project reverts to fallback), a
+       * populated triple to overwrite. See AC-279 / AC-280.
+       */
+      siteAddress?: Address | null;
     },
   ) => apiCall<Project>(`/api/projects/${id}`, { method: 'PATCH', body: data }),
 

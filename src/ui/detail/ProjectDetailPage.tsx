@@ -31,6 +31,8 @@ import { Papierkorb } from './Papierkorb';
 import { AssignedWorkerEditor } from './AssignedWorkerEditor';
 import { UploadCta } from './UploadCta';
 import { dateInputValue } from './dateInputValue';
+import { SiteAddressLine } from './SiteAddressLine';
+import { SiteAddressGroup, type SiteAddressGroupHandle } from '@/ui/management/SiteAddressGroup';
 import styles from './ProjectDetail.module.css';
 
 type LoadState = { kind: 'loading' } | FetchProjectOutcome;
@@ -107,6 +109,19 @@ export function ProjectDetailPage() {
   // — same level of persistence as the gallery / list scroll position.
   const [attachmentTab, setAttachmentTab] = useState<'attachments' | 'papierkorb'>('attachments');
 
+  // Imperative handle on the Baustelle edit group — read at submit
+  // time. The group itself never auto-commits, so the parent owns the
+  // dispatch trigger. See ui/management.md §8.8.6 + AC-281. Declared
+  // before the early-return branches below to keep the hook order
+  // stable across the loading / not-permitted / not-found paths.
+  const siteAddressEditRef = useRef<SiteAddressGroupHandle | null>(null);
+  // AC-284 partial-fill validation surface + in-flight lock for the
+  // explicit Speichern button (a double-click must dispatch one PATCH,
+  // not two). `useProjectManagementStore.updateProject` doesn't tag
+  // mutationInFlight, so the lock is local to this page.
+  const [siteAddressError, setSiteAddressError] = useState<string | null>(null);
+  const [siteAddressSubmitting, setSiteAddressSubmitting] = useState(false);
+
   // Eagerly fetch the Papierkorb count for owner / office so the tab
   // badge is accurate on first render. Workers don't have the
   // permission and would just 403; skip the GET for them.
@@ -178,12 +193,24 @@ export function ProjectDetailPage() {
 
   const config = STATE_CONFIG_MAP[project.status];
   const customer = project.customer;
-  const address = customer?.address ?? null;
-  const mapsUrl = address
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-        `${address.street} ${address.zip} ${address.city}`,
-      )}`
-    : null;
+
+  const handleSiteAddressSave = async () => {
+    if (siteAddressSubmitting) return;
+    // AC-284: partial fill blocks dispatch and surfaces the German
+    // validation hint. `valid` covers both `null` and the full triple.
+    const result = siteAddressEditRef.current?.read() ?? { kind: 'valid', value: null };
+    if (result.kind === 'partial') {
+      setSiteAddressError(STRINGS.projects.siteAddressPartial);
+      return;
+    }
+    setSiteAddressError(null);
+    setSiteAddressSubmitting(true);
+    try {
+      await updateProject(project.id, { siteAddress: result.value });
+    } finally {
+      setSiteAddressSubmitting(false);
+    }
+  };
 
   const handleArchive = async () => {
     const confirmed = await requestConfirm(
@@ -409,22 +436,9 @@ export function ProjectDetailPage() {
             <span className={styles.coreLabel}>{STRINGS.ui.customer}</span>
             <span className={styles.coreValue}>{customer?.name ?? '—'}</span>
           </div>
-          {address && (
-            <div className={styles.coreField}>
-              <span className={styles.coreLabel}>{STRINGS.ui.address}</span>
-              <span className={styles.coreValue}>
-                {address.street}, {address.zip} {address.city}
-                {mapsUrl && (
-                  <>
-                    {' '}
-                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer">
-                      {STRINGS.ui.openMaps}
-                    </a>
-                  </>
-                )}
-              </span>
-            </div>
-          )}
+          {/* Baustelle (work-site address) read-only line — same render
+              rule as the panel via SiteAddressLine. AC-282 / AC-283. */}
+          <SiteAddressLine project={project} variant="page" />
           <div className={styles.coreField}>
             <span className={styles.coreLabel}>{STRINGS.ui.dateStart}</span>
             {canUpdateDates && !isArchived ? (
@@ -483,6 +497,46 @@ export function ProjectDetailPage() {
               onCommit={(notes) => void updateProject(project.id, { notes })}
             />
           </div>
+          {/* Baustelle (work-site address) edit form rule —
+              ui/management.md §8.8.6. Reuses the SiteAddressGroup from
+              the create surface so toggle / discard / submit-shape
+              behavior is identical across create and edit. The group
+              never auto-commits; the inline Speichern button below is
+              the explicit dispatch trigger. AC-280 / AC-281 / AC-284. */}
+          {canUpdate && !isArchived && (
+            <div className={styles.coreFieldFull}>
+              <SiteAddressGroup
+                key={project.updatedAt}
+                initial={project.siteAddress}
+                disabled={siteAddressSubmitting}
+                handleRef={siteAddressEditRef}
+              />
+              {siteAddressError && (
+                <div
+                  className={styles.fieldHintError}
+                  data-testid="project-site-address-error"
+                  role="status"
+                >
+                  {siteAddressError}
+                </div>
+              )}
+              {/* Baustelle commits via explicit Speichern (not save-on-blur)
+                  because the toggle + structured triple + all-or-none
+                  requiredness cannot model on per-field blur — see
+                  ui/project-detail.md §8.15.2. */}
+              <div className={styles.inlineSaveRow}>
+                <button
+                  type="button"
+                  className={styles.inlineSaveButton}
+                  onClick={() => void handleSiteAddressSave()}
+                  disabled={siteAddressSubmitting}
+                  data-testid="project-site-save"
+                >
+                  {STRINGS.ui.save}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </section>
 

@@ -190,6 +190,47 @@
   cursor: pointer;
 }
 
+/* Inline save button for the Baustelle edit group (and any future
+   inline-form submit on this page). Sized to match `.archiveButton`
+   so the page's button family stays visually consistent; accent-tinted
+   so the affordance reads as a primary action within its group. */
+.inlineSaveRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.inlineSaveButton {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.inlineSaveButton:hover {
+  background: var(--color-accent-hover);
+}
+
+.inlineSaveButton:disabled {
+  background: var(--color-text-subtle);
+  cursor: not-allowed;
+}
+
+/* Inline-field validation hint shown beneath an editable group on the
+   detail page. Matches the management form's `.fieldHintError` shape
+   so the AC-284 Baustelle partial-fill message reads consistently
+   across create and edit surfaces. */
+.fieldHintError {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--color-danger-text);
+}
+
 .archiveButton:hover {
   background: var(--color-surface-sunken);
 }
