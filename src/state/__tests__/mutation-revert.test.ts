@@ -49,6 +49,7 @@ const SEED_PROJECT: Project = {
   updatedAt: '2026-04-01T00:00:00Z',
   customerId: 'c-1',
   customer: { id: 'c-1', name: 'Testkunde', phone: null, email: null, address: null },
+  siteAddress: null,
   assignedWorkers: [],
   estimatedValue: null,
   notes: null,

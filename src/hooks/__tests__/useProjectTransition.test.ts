@@ -48,6 +48,7 @@ const baseProject: Project = {
   updatedAt: '2026-04-01T00:00:00Z',
   customerId: 'c-1',
   customer: null,
+  siteAddress: null,
   assignedWorkers: [],
   estimatedValue: null,
   notes: null,

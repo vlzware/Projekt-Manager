@@ -96,6 +96,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     plannedEnd: '2026-06-01',
     customerId: 'c-1',
     customer: CUSTOMER,
+    siteAddress: null,
     assignedWorkers: [
       { userId: 'u-worker-1', displayName: 'Anna Arbeiter' },
       { userId: 'u-worker-2', displayName: 'Bernd Bauer' },
