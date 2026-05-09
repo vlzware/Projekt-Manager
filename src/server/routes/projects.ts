@@ -110,7 +110,7 @@ export function projectRoutes(db: Database) {
               // Baustellen-/Leistungsadresse — same JSON shape as customer.address.
               // Null means "site is at the customer's billing address" (data-model.md §5.1).
               // AC-284 backstop: partial triples (any empty-string component)
-              // are rejected at this layer with 400 VALIDATION_ERROR. The
+              // are rejected at this layer with 422 VALIDATION_ERROR. The
               // primary all-or-none rule lives in the UI; the API enforces
               // the same shape as defense-in-depth against a malformed client.
               siteAddress: {
@@ -330,7 +330,7 @@ export function projectRoutes(db: Database) {
               // null clears (= "site is at the customer's billing address");
               // a populated triple overwrites. Mirrors the customer-address
               // PATCH-clears rule. AC-284: each component requires minLength 1
-              // — empty-string in any field is a 400 VALIDATION_ERROR.
+              // — empty-string in any field is a 422 VALIDATION_ERROR.
               siteAddress: {
                 type: ['object', 'null'],
                 additionalProperties: false,

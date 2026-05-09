@@ -202,8 +202,9 @@ describe('Project siteAddress (Baustelle) — POST + PATCH', () => {
         `/api/audit?ancestorType=project&ancestorId=${id}&limit=200`,
       );
       expect(auditRes.statusCode).toBe(200);
-      const rows = auditRes.json().data ?? auditRes.json().rows ?? auditRes.json();
-      const updates = (rows as { action: string }[]).filter((r) => r.action === 'update');
+      const rows = auditRes.json().data as { action: string }[];
+      expect(Array.isArray(rows)).toBe(true);
+      const updates = rows.filter((r) => r.action === 'update');
       expect(updates.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -260,7 +261,7 @@ describe('Project siteAddress (Baustelle) — POST + PATCH', () => {
   // happy-paths (full triple, null) remain 201.
   // -----------------------------------------------------------------
   describe('AC-284: API backstop — partial siteAddress is rejected', () => {
-    it('POST with empty zip → 400 VALIDATION_ERROR', async () => {
+    it('POST with empty zip → 422 VALIDATION_ERROR', async () => {
       const number = nextProjectNumber('PARTZIP');
       const res = await authPost(ownerToken, '/api/projects', {
         number,
@@ -272,7 +273,7 @@ describe('Project siteAddress (Baustelle) — POST + PATCH', () => {
       expect(res.json().code).toBe('VALIDATION_ERROR');
     });
 
-    it('POST with empty street → 400 VALIDATION_ERROR', async () => {
+    it('POST with empty street → 422 VALIDATION_ERROR', async () => {
       const number = nextProjectNumber('PARTSTR');
       const res = await authPost(ownerToken, '/api/projects', {
         number,
@@ -284,7 +285,7 @@ describe('Project siteAddress (Baustelle) — POST + PATCH', () => {
       expect(res.json().code).toBe('VALIDATION_ERROR');
     });
 
-    it('POST with empty city → 400 VALIDATION_ERROR', async () => {
+    it('POST with empty city → 422 VALIDATION_ERROR', async () => {
       const number = nextProjectNumber('PARTCTY');
       const res = await authPost(ownerToken, '/api/projects', {
         number,
@@ -296,7 +297,7 @@ describe('Project siteAddress (Baustelle) — POST + PATCH', () => {
       expect(res.json().code).toBe('VALIDATION_ERROR');
     });
 
-    it('PATCH with empty zip → 400 VALIDATION_ERROR', async () => {
+    it('PATCH with empty zip → 422 VALIDATION_ERROR', async () => {
       const number = nextProjectNumber('PATCHPART');
       const createRes = await authPost(ownerToken, '/api/projects', {
         number,

@@ -462,6 +462,22 @@ describe('ProjectDetailPage — Baustelle toggle behavior (AC-281, edit branch)'
     // toggling is a UI-only concern.)
     const stored = useProjectStore.getState().projects.find((p) => p.id === project.id);
     expect(stored?.siteAddress).toEqual(STORED);
+
+    // Round-trip back OFF — the typed "Schillerstr. 4" was discarded
+    // by the OFF→ON flip per AC-281, so the inputs render empty. Only
+    // a server commit (which bumps project.updatedAt and remounts via
+    // `key`) re-seeds from persisted state. This mirrors the create-
+    // branch round-trip at AC-281 above and pins the destructive-wipe
+    // behavior so any future "preserve typed value" change must
+    // update the test on purpose.
+    await userEvent.click(toggle);
+    expect(toggle.checked).toBe(false);
+    expect((screen.getByTestId('project-site-street-input') as HTMLInputElement).value).toBe('');
+    expect((screen.getByTestId('project-site-zip-input') as HTMLInputElement).value).toBe('');
+    expect((screen.getByTestId('project-site-city-input') as HTMLInputElement).value).toBe('');
+
+    // Still no PATCH dispatched as a side-effect of either toggle.
+    expect(projectUpdateMock).not.toHaveBeenCalled();
   });
 });
 

@@ -829,6 +829,94 @@ describe('Unified Data Exchange', () => {
   });
 
   // ---------------------------------------------------------------
+  // AC-284: ImportService refuses partial siteAddress envelopes.
+  //
+  // Mirrors the POST /api/projects backstop. Without this, a hand-
+  // edited or round-tripped envelope is the canonical bypass for the
+  // form's all-or-none rule — the row lands in the DB as
+  // { street: '', zip: '51103', city: 'Köln' } and the next export
+  // propagates it. The validation runs before TRUNCATE so a rejected
+  // envelope leaves the target untouched.
+  // ---------------------------------------------------------------
+  describe('AC-284: ImportService partial-siteAddress validation', () => {
+    it('rejects an envelope whose project has an empty-component siteAddress (non-dry-run, 422)', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        // Pick the first project, set a partial siteAddress (zip empty).
+        // Other projects keep their valid value.
+        envelope.projects[0]!.siteAddress = { street: 'Goethestr. 18', zip: '', city: 'Köln' };
+
+        const res = await authPost(ownerToken, '/api/import', envelope);
+
+        expect(res.statusCode).toBe(422);
+        const body = res.json() as {
+          code: string;
+          details?:
+            | { validation_errors?: Array<{ path: string; message: string }> }
+            | Array<{ path: string; message: string }>;
+        };
+        expect(body.code).toBe('VALIDATION_ERROR');
+
+        const issues = Array.isArray(body.details) ? body.details : body.details?.validation_errors;
+        expect(Array.isArray(issues)).toBe(true);
+        const partial = issues!.find((i) => /projects\[0\]\.siteAddress/.test(i.path));
+        expect(partial).toBeDefined();
+        expect(partial!.message.toLowerCase()).toMatch(/partial|street|zip|city|empty/);
+
+        // No rows written — DB remains empty.
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('reports partial siteAddress in dry-run validation_errors without writes', async () => {
+      await wipeBusinessData();
+      try {
+        const envelope = buildFreshEnvelope();
+        envelope.projects[0]!.siteAddress = { street: '', zip: '51103', city: 'Köln' };
+
+        const res = await authPost(ownerToken, '/api/import?dry_run=true', envelope);
+        // Dry-run never throws — preview carries the issues.
+        expect(res.statusCode).toBe(200);
+
+        const preview = res.json() as {
+          validation_errors: Array<{ path: string; message: string }>;
+        };
+        expect(Array.isArray(preview.validation_errors)).toBe(true);
+        const partial = preview.validation_errors.find((i) =>
+          /projects\[0\]\.siteAddress/.test(i.path),
+        );
+        expect(partial).toBeDefined();
+
+        const exp = await authGet(ownerToken, '/api/export');
+        const out = exp.json() as ExportEnvelope;
+        expect(out.customers.length).toBe(0);
+        expect(out.projects.length).toBe(0);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+
+    it('accepts an unmodified envelope (null + fully-populated siteAddress shapes)', async () => {
+      // Sanity check: the validator must not reject non-partial values.
+      // buildFreshEnvelope() carries the seeded mix of null and populated
+      // siteAddress rows; either shape must pass.
+      await wipeBusinessData();
+      try {
+        const res = await authPost(ownerToken, '/api/import', buildFreshEnvelope());
+        expect(res.statusCode).toBe(200);
+      } finally {
+        await reseedAndRelogin();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------
   // AC-138: non-empty target refused without override
   // ---------------------------------------------------------------
   describe('AC-138: non-empty target refused without override', () => {

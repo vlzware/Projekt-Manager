@@ -122,7 +122,7 @@ export const STRINGS = {
      *  when the toggle is OFF and at least one but not all three of
      *  street / zip / city carry a non-whitespace value. AC-284. */
     siteAddressPartial:
-      'Bitte alle drei Felder ausfüllen oder „Identisch mit Kundenadresse" aktivieren.',
+      'Bitte alle drei Felder ausfüllen oder „Identisch mit Kundenadresse“ aktivieren.',
   },
 
   validation: {

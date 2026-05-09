@@ -118,8 +118,11 @@ export function SiteAddressGroup({ initial, disabled = false, handleRef }: Props
       </label>
 
       <div className={styles.formGroup}>
-        <label className={styles.formLabel}>{STRINGS.ui.street}</label>
+        <label className={styles.formLabel} htmlFor="project-site-street-input">
+          {STRINGS.ui.street}
+        </label>
         <input
+          id="project-site-street-input"
           className={styles.formInput}
           value={street}
           onChange={(e) => setStreet(e.target.value)}
@@ -129,8 +132,11 @@ export function SiteAddressGroup({ initial, disabled = false, handleRef }: Props
       </div>
 
       <div className={styles.formGroup}>
-        <label className={styles.formLabel}>{STRINGS.ui.zip}</label>
+        <label className={styles.formLabel} htmlFor="project-site-zip-input">
+          {STRINGS.ui.zip}
+        </label>
         <input
+          id="project-site-zip-input"
           className={styles.formInput}
           value={zip}
           onChange={(e) => setZip(e.target.value)}
@@ -140,8 +146,11 @@ export function SiteAddressGroup({ initial, disabled = false, handleRef }: Props
       </div>
 
       <div className={styles.formGroup}>
-        <label className={styles.formLabel}>{STRINGS.ui.city}</label>
+        <label className={styles.formLabel} htmlFor="project-site-city-input">
+          {STRINGS.ui.city}
+        </label>
         <input
+          id="project-site-city-input"
           className={styles.formInput}
           value={city}
           onChange={(e) => setCity(e.target.value)}
