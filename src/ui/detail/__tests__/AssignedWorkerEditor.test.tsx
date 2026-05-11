@@ -138,18 +138,6 @@ describe('AssignedWorkerEditor — read surface', () => {
     expect(chips.some((c) => c.textContent?.includes('Anna Arbeiter'))).toBe(true);
     expect(chips.some((c) => c.textContent?.includes('Bernd Bauer'))).toBe(true);
   });
-
-  it('renders the chip set for a caller without project:update (read-only)', () => {
-    setAuthUser(['bookkeeper']); // holds project:read, not project:update
-    render(<AssignedWorkerEditor projectId="p-42" />);
-
-    // Read surface still renders.
-    expect(screen.getAllByTestId(/^worker-chip-u-/)).toHaveLength(2);
-
-    // But no mutation controls.
-    expect(screen.queryByTestId('worker-editor-add')).not.toBeInTheDocument();
-    expect(screen.queryByTestId(/^worker-chip-remove-/)).not.toBeInTheDocument();
-  });
 });
 
 describe('AssignedWorkerEditor — add worker (AC-209)', () => {

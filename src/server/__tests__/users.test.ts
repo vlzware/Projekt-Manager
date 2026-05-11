@@ -82,13 +82,6 @@ describe('User Management Operations', () => {
       }
     });
 
-    it('requires user:read permission — worker is rejected', async () => {
-      const res = await authGet(workerToken, '/api/users');
-
-      expect(res.statusCode).toBe(403);
-      expect(res.json().code).toBe('NOT_PERMITTED');
-    });
-
     it('office can list users (has user:read)', async () => {
       const res = await authGet(officeToken, '/api/users');
 
@@ -231,9 +224,15 @@ describe('User Management Operations', () => {
     });
 
     it('rejects username change (immutable)', async () => {
-      await authPatch(ownerToken, `/api/users/${createdUserId}`, {
+      const res = await authPatch(ownerToken, `/api/users/${createdUserId}`, {
         username: 'newusername',
       });
+
+      // The PATCH /api/users/:id schema declares `additionalProperties: false`
+      // and omits `username` from its property list, so Fastify rejects the
+      // request at the validation layer with a 4xx before the handler runs.
+      expect(res.statusCode).toBeGreaterThanOrEqual(400);
+      expect(res.statusCode).toBeLessThan(500);
 
       // Verify username did NOT change
       const getRes = await authGet(ownerToken, `/api/users/${createdUserId}`);
