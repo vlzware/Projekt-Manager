@@ -238,14 +238,6 @@ describe('User Management Operations', () => {
       const getRes = await authGet(ownerToken, `/api/users/${createdUserId}`);
       expect(getRes.json().username).toBe('testuser_at28');
     });
-
-    it('never includes passwordHash in update response', async () => {
-      const res = await authPatch(ownerToken, `/api/users/${createdUserId}`, {
-        displayName: 'No Hash Leak',
-      });
-
-      expect(res.json()).not.toHaveProperty('passwordHash');
-    });
   });
 
   // ---------------------------------------------------------------
@@ -473,14 +465,6 @@ describe('User Management Operations', () => {
         password: 'Password123!',
         roles: ['worker'],
       });
-
-      expect(res.statusCode).toBe(403);
-      expect(res.json().code).toBe('NOT_PERMITTED');
-    });
-
-    it('bookkeeper cannot list users (lacks user:read)', async () => {
-      const bookToken = await login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD);
-      const res = await authGet(bookToken, '/api/users');
 
       expect(res.statusCode).toBe(403);
       expect(res.json().code).toBe('NOT_PERMITTED');

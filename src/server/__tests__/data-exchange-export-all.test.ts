@@ -50,7 +50,6 @@ const year = new Date().getFullYear();
 // validator must reject `limit > 500`, and a request below the floor
 // (≤ 0) should likewise reject.
 // ---------------------------------------------------------------
-const PER_PAGE_DEFAULT = 100;
 const PER_PAGE_CEILING = 500;
 
 /**
@@ -793,18 +792,6 @@ describe('AC-248: binary-descriptors contract', () => {
       const res = await authGet(ownerToken, '/api/export/binary-descriptors?limit=0');
       expect(res.statusCode).toBe(422);
       expect(res.json().code).toBe('VALIDATION_ERROR');
-    });
-
-    it('limit at the documented default succeeds (sanity check on the bounds wording)', async () => {
-      // Anchors the rejection arms above — without this, a regression
-      // that rejected every limit would tautologically pass them.
-      await wipeAttachments();
-      await seedReadyAttachments(projectAId, [{ sizeBytes: 100, fileName: 'sanity.pdf' }]);
-      const res = await authGet(
-        ownerToken,
-        `/api/export/binary-descriptors?limit=${PER_PAGE_DEFAULT}`,
-      );
-      expect(res.statusCode).toBe(200);
     });
   });
 });

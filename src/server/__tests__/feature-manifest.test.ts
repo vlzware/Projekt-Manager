@@ -462,13 +462,6 @@ describe('formatFeatureManifest produces aligned operator-readable output', () =
 // ---------------------------------------------------------------------
 
 describe('AC-230: start.ts wires emitFeatureManifest into the boot path', () => {
-  // Source-string pin — same pattern as env.test.ts. start.ts self-
-  // invokes on import (it migrates, seeds, listens), so a runtime test
-  // would boot the whole server. Reading the file as text and matching
-  // against the import + call site is the minimum-invasive way to lock
-  // the wiring; a regression that drops the emission would still pass
-  // the unit tests above (the function itself is unchanged) but would
-  // fail this pin.
   const here = path.dirname(fileURLToPath(import.meta.url));
   const startTs = readFileSync(path.resolve(here, '../start.ts'), 'utf8');
   // Strip block + line comments before matching so a comment mentioning

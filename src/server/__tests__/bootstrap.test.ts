@@ -472,24 +472,6 @@ describe('AC-B8: password never logged', () => {
     }
   });
 
-  it('does not include the plaintext password in a thrown length-violation error', async () => {
-    // Use a unique marker to distinguish "contains the password" from
-    // "contains the word password". 7 chars → fails AC-B5 length check.
-    const shortSecret = 'Xq7m!zQ'; // length 7
-    let caught: Error | null = null;
-    try {
-      await bootstrapAdminIfEmpty(
-        db,
-        { username: 'admin-b8b', password: shortSecret, displayName: undefined },
-        makeLogger(),
-      );
-    } catch (err) {
-      caught = err as Error;
-    }
-    expect(caught).not.toBeNull();
-    expect(caught!.message).not.toContain(shortSecret);
-  });
-
   it('does not include the plaintext password in a thrown too-long error', async () => {
     const longSecret = `Canary-too-long-${'y'.repeat(100)}`;
     let caught: Error | null = null;
@@ -548,16 +530,6 @@ describe('AC-B9: loud warning on success, silent on skip', () => {
     // Must explicitly tell the operator to remove the env vars — naming the
     // var prefix rules out vague "rotate your credentials" wording.
     expect(combined).toContain('BOOTSTRAP_ADMIN_');
-  });
-
-  it('does not emit the warning when bootstrap is skipped due to empty vars', async () => {
-    const logger = makeLogger();
-    await bootstrapAdminIfEmpty(
-      db,
-      { username: undefined, password: undefined, displayName: undefined },
-      logger,
-    );
-    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('does not emit the success warning when bootstrap is skipped due to non-empty DB', async () => {

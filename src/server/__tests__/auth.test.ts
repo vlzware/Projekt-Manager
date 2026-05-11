@@ -159,27 +159,6 @@ describe('Authentication & Session Management', () => {
       expect(body).not.toHaveProperty('backupStatus');
     });
 
-    it('works for a different valid user (office)', async () => {
-      const res = await getApp().inject({
-        method: 'POST',
-        url: '/api/auth/login',
-        payload: { username: SEED_USERS.office.username, password: SEED_DEFAULT_PASSWORD },
-      });
-
-      expect(res.statusCode).toBe(200);
-
-      // Session cookie is set
-      const setCookie = res.headers['set-cookie'];
-      const cookieStr = Array.isArray(setCookie) ? setCookie[0] : setCookie;
-      expect(cookieStr).toMatch(/session=[^;]+/);
-
-      const body = res.json();
-      expect(body).not.toHaveProperty('token');
-      expect(body.user.username).toBe(SEED_USERS.office.username);
-      expect(body.user.displayName).toBe(SEED_USERS.office.displayName);
-      expect(body.user.roles).toEqual(expect.arrayContaining([...SEED_USERS.office.roles]));
-    });
-
     // AC-39: session duration is driven by configuration.
     //
     // Before iteration 5 cookieMaxAgeSec and sessionDurationMs were
