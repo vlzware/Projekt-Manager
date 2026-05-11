@@ -26,6 +26,12 @@ export interface SampleEmail {
     project: {
       title: string | null;
       description: string | null;
+      // Baustellen-/Leistungsadresse (data-model.md §5.1). All-or-none:
+      // either a full triple or null. Null is the common case (only one
+      // address in the email — the customer's billing address doubles
+      // as the site by the fallback rule); a non-null value covers the
+      // Hausverwaltung-style request where billing and site diverge.
+      siteAddress: { street: string; zip: string; city: string } | null;
     };
   };
 }
@@ -62,6 +68,7 @@ Hauptstraße 42
       project: {
         title: 'Renovierung Büroräume',
         description: 'Malerarbeiten und Bodenbelag, ca. 200 qm',
+        siteAddress: null,
       },
     },
   },
@@ -91,6 +98,7 @@ Tel 0221 / 334455`,
       project: {
         title: 'Malerarbeiten Wohnzimmer und Flur',
         description: 'Wände streichen, ca. 60 qm',
+        siteAddress: null,
       },
     },
   },
@@ -116,6 +124,7 @@ Gruß, Herr Schmidt`,
       project: {
         title: 'Anstricharbeiten',
         description: null,
+        siteAddress: null,
       },
     },
   },
@@ -154,6 +163,7 @@ peter@hoffmann-immo.de`,
       project: {
         title: 'Fassadenanstrich',
         description: null,
+        siteAddress: null,
       },
     },
   },
@@ -187,6 +197,7 @@ john@ic-consulting.com
       project: {
         title: 'Innenanstrich Büro',
         description: 'Interior painting, 150 sqm',
+        siteAddress: null,
       },
     },
   },
@@ -212,6 +223,7 @@ gruß maria weber`,
       project: {
         title: 'Wohnung streichen',
         description: '3 Zimmer, Küche, Bad',
+        siteAddress: null,
       },
     },
   },
@@ -246,6 +258,7 @@ schulz@hausverwaltung-schulz.de`,
       project: {
         title: 'Fassaden- und Innenanstrich',
         description: 'Zwei Objekte in Rösrath: Fassade EFH + Innenräume DHH',
+        siteAddress: null,
       },
     },
   },
@@ -277,6 +290,48 @@ Tel: 02204 / 77 88 99`,
       project: {
         title: null,
         description: null,
+        siteAddress: null,
+      },
+    },
+  },
+
+  // ---------------------------------------------------------------
+  // 9. Hausverwaltung — separate Rechnungs- and Baustellenadresse
+  // ---------------------------------------------------------------
+  {
+    description: 'Hausverwaltung mit abweichender Baustellenadresse',
+    text: `Sehr geehrte Damen und Herren,
+
+wir verwalten ein Mehrfamilienhaus in der Goethestr. 18, 51103 Köln,
+bei dem das komplette Treppenhaus neu gestrichen werden soll
+(ca. 3 Etagen, einschließlich Decken).
+
+Bitte senden Sie uns Ihr Angebot an unsere Geschäftsadresse.
+
+Mit freundlichen Grüßen,
+Markus Schmidt
+Schmidt Hausverwaltung GmbH
+Kölner Str. 45
+51429 Bergisch Gladbach
+Tel: 02202 / 55 44 33
+info@schmidt-hv.de`,
+    expected: {
+      customer: {
+        name: 'Schmidt Hausverwaltung GmbH',
+        phone: '02202 / 55 44 33',
+        email: 'info@schmidt-hv.de',
+        street: 'Kölner Str. 45',
+        zip: '51429',
+        city: 'Bergisch Gladbach',
+      },
+      project: {
+        title: 'Treppenhaus streichen',
+        description: 'Mehrfamilienhaus, ca. 3 Etagen inkl. Decken',
+        siteAddress: {
+          street: 'Goethestr. 18',
+          zip: '51103',
+          city: 'Köln',
+        },
       },
     },
   },

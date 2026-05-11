@@ -106,6 +106,31 @@ function validateEnvelope(envelope: Envelope): ValidationIssue[] {
     }
   }
 
+  // AC-284: siteAddress is all-or-nothing — null (site = customer
+  // billing address) or a fully populated triple. A partial fill
+  // (any empty-string component) is rejected here to mirror the
+  // POST /api/projects backstop, so a hand-edited or round-tripped
+  // envelope cannot land malformed rows that the form layer would
+  // refuse.
+  for (let i = 0; i < envelope.projects.length; i++) {
+    const p = envelope.projects[i]!;
+    if (p.siteAddress == null) continue;
+    const { street, zip, city } = p.siteAddress;
+    const partial =
+      typeof street !== 'string' ||
+      street.length === 0 ||
+      typeof zip !== 'string' ||
+      zip.length === 0 ||
+      typeof city !== 'string' ||
+      city.length === 0;
+    if (partial) {
+      issues.push({
+        path: `projects[${i}].siteAddress`,
+        message: `partial siteAddress (street/zip/city must all be non-empty, or the whole field must be null)`,
+      });
+    }
+  }
+
   for (let i = 0; i < envelope.project_workers.length; i++) {
     const pw = envelope.project_workers[i]!;
     if (!projectIds.has(pw.projectId)) {
@@ -216,6 +241,7 @@ function toProjectInsert(p: EnvelopeProject) {
     status: p.status,
     statusChangedAt: new Date(p.statusChangedAt),
     customerId: p.customerId,
+    siteAddress: p.siteAddress ?? null,
     plannedStart: p.plannedStart ? new Date(p.plannedStart) : null,
     plannedEnd: p.plannedEnd ? new Date(p.plannedEnd) : null,
     estimatedValue: p.estimatedValue,

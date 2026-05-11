@@ -8,16 +8,22 @@ import { useCustomerStore } from '@/state/customerStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
-import type { Customer } from '@/domain/types';
+import type { Customer, CustomerSummary } from '@/domain/types';
 import { CustomerFields } from './CustomerCreateForm';
 import styles from './Management.module.css';
 
 interface Props {
-  customer: Customer;
+  // Accept the narrower CustomerSummary so the project detail page can
+  // pass its embedded `project.customer` directly. The form only reads
+  // id/name/phone/email/address — exactly what CustomerSummary carries.
+  // A full Customer still satisfies this type (superset).
+  customer: Customer | CustomerSummary;
   onClose: () => void;
+  /** Optional hook fired after a successful save, before close. */
+  onSaved?: () => void;
 }
 
-export function CustomerEditForm({ customer, onClose }: Props) {
+export function CustomerEditForm({ customer, onClose, onSaved }: Props) {
   const updateCustomer = useCustomerStore((s) => s.updateCustomer);
   const error = useCustomerStore((s) => s.error);
   const canWrite = usePermission('customer:write');
@@ -48,6 +54,7 @@ export function CustomerEditForm({ customer, onClose }: Props) {
 
     setSubmitting(false);
     if (ok) {
+      onSaved?.();
       onClose();
     }
   };

@@ -41,6 +41,15 @@ interface ProjectSpec {
   status: EnvelopeProject['status'];
   statusChangedAtDays: number;
   customerName: string;
+  /**
+   * Optional divergent Baustellen-/Leistungsadresse (data-model.md §5.1).
+   * When omitted (the common case) the project's siteAddress is null and
+   * the UI falls back to the customer's Rechnungsadresse. At least one
+   * Hausverwaltung-style customer's project sets this so the divergent-
+   * site rendering is exercised; the rest stay null so the fallback
+   * branch is exercised too.
+   */
+  siteAddress?: { street: string; zip: string; city: string };
   plannedStartDays?: number;
   plannedEndDays?: number;
   estimatedValue?: string;
@@ -190,6 +199,11 @@ const PROJECT_SPECS: readonly ProjectSpec[] = [
     status: 'angebot',
     statusChangedAtDays: -3,
     customerName: 'Schmidt Hausverwaltung',
+    // Divergent Baustelle — the Hausverwaltung's billing address sits
+    // elsewhere; the work happens at one of its managed properties.
+    // Exercises the project-detail panel's "Baustelle" line and the
+    // form's populated-address branch (data-model.md §7.3, issue #179).
+    siteAddress: { street: 'Goethestr. 18', zip: '51103', city: 'Köln' },
     estimatedValue: '8500.00',
     createdAtDays: -5,
     updatedAtDays: -3,
@@ -446,6 +460,7 @@ export function buildBusinessEnvelope(now: Date): Envelope {
       status: spec.status,
       statusChangedAt: daysFromNow(now, spec.statusChangedAtDays).toISOString(),
       customerId,
+      siteAddress: spec.siteAddress ?? null,
       plannedStart:
         spec.plannedStartDays === undefined
           ? null

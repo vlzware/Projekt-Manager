@@ -85,6 +85,7 @@ export function toProject(
     statusChangedAt: row.statusChangedAt.toISOString(),
     customerId: row.customerId,
     customer: customer ? toCustomer(customer) : null,
+    siteAddress: row.siteAddress ?? null,
     plannedStart: row.plannedStart ? formatDateOnly(row.plannedStart) : null,
     plannedEnd: row.plannedEnd ? formatDateOnly(row.plannedEnd) : null,
     assignedWorkers: workers.length > 0 ? workers : null,
@@ -342,6 +343,7 @@ export async function insertProject(
     title: string;
     status: WorkflowState;
     customerId: string;
+    siteAddress?: { street: string; zip: string; city: string } | null;
     plannedStart?: Date | null;
     plannedEnd?: Date | null;
     estimatedValue?: string | null;
@@ -360,6 +362,7 @@ export async function insertProject(
       status: data.status,
       statusChangedAt: now,
       customerId: data.customerId,
+      siteAddress: data.siteAddress ?? null,
       plannedStart: data.plannedStart ?? null,
       plannedEnd: data.plannedEnd ?? null,
       estimatedValue: data.estimatedValue ?? null,
@@ -392,6 +395,7 @@ export async function updateProjectFields(
   data: {
     title?: string;
     customerId?: string;
+    siteAddress?: { street: string; zip: string; city: string } | null;
     estimatedValue?: number | null;
     notes?: string | null;
   },
@@ -403,6 +407,9 @@ export async function updateProjectFields(
   };
   if (data.title !== undefined) setClause.title = data.title;
   if (data.customerId !== undefined) setClause.customerId = data.customerId;
+  // Mirrors the customer-address PATCH-clears semantics: presence (`'siteAddress' in data`)
+  // distinguishes "set to null" (clear) from "omitted" (no-op).
+  if ('siteAddress' in data) setClause.siteAddress = data.siteAddress ?? null;
   if (data.estimatedValue !== undefined) {
     setClause.estimatedValue = data.estimatedValue !== null ? String(data.estimatedValue) : null;
   }

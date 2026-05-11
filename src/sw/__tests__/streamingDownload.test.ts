@@ -132,11 +132,23 @@ function collectPortMessages(port: MessagePort): unknown[] {
 }
 
 /**
- * Yield to the macrotask queue so MessagePort deliveries (which post
- * via the HTML task queue, not microtasks) settle before assertions.
+ * Wait until the given message array reaches at least `count` entries or
+ * `timeoutMs` elapses. MessagePort deliveries are macrotask-queued, and
+ * a single `setTimeout(0)` flush is not guaranteed to be enough — under
+ * CI load the assertion can fire before the queue drains, producing a
+ * flaky `expected [] to deeply equal [..., ...]` failure. Polling each
+ * macrotask is fast in the happy path (resolves on the first round once
+ * the deliveries land) and resilient when the scheduler is busy.
  */
-function flushPortQueue(): Promise<void> {
-  return new Promise((r) => setTimeout(r, 0));
+async function waitForMessages(
+  messages: readonly unknown[],
+  count: number,
+  timeoutMs = 200,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (messages.length < count && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 0));
+  }
 }
 
 /**
@@ -358,7 +370,7 @@ describe('handleStreamingDownloadRequest — served-ACK handshake', () => {
     );
     expect(res.status).toBe(200);
 
-    await flushPortQueue();
+    await waitForMessages(messages, 2);
     expect(messages).toEqual([
       { type: 'streaming-download-registered', key },
       { type: 'streaming-download-served', key },
@@ -435,7 +447,7 @@ describe('handleStreamingDownloadRequest — served-ACK handshake', () => {
 
     handleStreamingDownloadMessage(messageEvent({ type: 'unregister-streaming-download', key }));
 
-    await flushPortQueue();
+    await waitForMessages(messages, 2);
     expect(messages).toEqual([
       { type: 'streaming-download-registered', key },
       { type: 'streaming-download-aborted', key },

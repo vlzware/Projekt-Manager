@@ -104,6 +104,25 @@ export const STRINGS = {
     dateConstraintViolation: 'Datumsangaben verletzen eine Integritätsregel.',
     concurrentModification:
       'Der Projektstatus wurde zwischenzeitlich geändert. Bitte Seite neu laden.',
+
+    // Site-address (Baustelle) labels — see ui/management.md §8.8.6
+    // and ui/project-detail.md §8.15.2. The Baustelle group on the
+    // project create / edit forms and the read-only `Baustelle:` line
+    // on both detail surfaces source their German copy from these keys.
+    siteAddressLabel: 'Baustelle',
+    /** Form toggle that maps to `siteAddress: null` on submit. */
+    siteAddressIdenticalToggle: 'Identisch mit Kundenadresse',
+    /** Inline hint on the read-only fallback (project's siteAddress is
+     *  null — the customer's billing address is shown in its place). */
+    siteAddressFallbackHint: '(Kundenadresse)',
+    /** Placeholder when neither project.siteAddress nor customer.address
+     *  is present — no map link is rendered alongside this. */
+    siteAddressNone: 'Keine Adresse',
+    /** All-or-none validation message for the Baustelle group — fires
+     *  when the toggle is OFF and at least one but not all three of
+     *  street / zip / city carry a non-whitespace value. AC-284. */
+    siteAddressPartial:
+      'Bitte alle drei Felder ausfüllen oder „Identisch mit Kundenadresse“ aktivieren.',
   },
 
   validation: {
@@ -208,7 +227,6 @@ export const STRINGS = {
     statusForward: (label: string) => `Status weiter: ${label}`,
     projectsNoDates: (n: number) => `${n} Projekte ohne Termin`,
     customer: 'Kunde',
-    address: 'Adresse',
     dates: 'Termine',
     dateStart: 'Beginn',
     dateEnd: 'Ende',

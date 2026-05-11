@@ -124,6 +124,7 @@ CREATE TABLE "projects" (
 	"status" varchar(50) DEFAULT 'anfrage' NOT NULL,
 	"status_changed_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"customer_id" uuid NOT NULL,
+	"site_address" jsonb,
 	"planned_start" date,
 	"planned_end" date,
 	"estimated_value" numeric(12, 2),

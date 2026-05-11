@@ -70,6 +70,7 @@ export class ExportService {
         status: p.status as WorkflowState,
         statusChangedAt: p.statusChangedAt.toISOString(),
         customerId: p.customerId,
+        siteAddress: p.siteAddress ?? null,
         plannedStart: p.plannedStart ? formatDateOnly(p.plannedStart) : null,
         plannedEnd: p.plannedEnd ? formatDateOnly(p.plannedEnd) : null,
         estimatedValue: p.estimatedValue,

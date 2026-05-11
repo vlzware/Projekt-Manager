@@ -61,12 +61,14 @@ const VALID_STATES: ReadonlySet<string> = new Set(WORKFLOW_ORDER);
 function projectUpdatableDiff(row: {
   title: string;
   customerId: string;
+  siteAddress: { street: string; zip: string; city: string } | null;
   estimatedValue: string | null;
   notes: string | null;
 }): Record<string, unknown> {
   return {
     title: row.title,
     customerId: row.customerId,
+    siteAddress: row.siteAddress ?? null,
     estimatedValue: row.estimatedValue ?? null,
     notes: row.notes ?? null,
   };
@@ -110,6 +112,7 @@ export class ProjectCrudService {
       title: string;
       customerId: string;
       status?: string;
+      siteAddress?: { street: string; zip: string; city: string } | null;
       plannedStart?: string | null;
       plannedEnd?: string | null;
       assignedWorkerIds?: string[];
@@ -141,6 +144,7 @@ export class ProjectCrudService {
           title: data.title,
           status,
           customerId: data.customerId,
+          siteAddress: data.siteAddress ?? null,
           plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
           plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
           assignedWorkerIds: data.assignedWorkerIds ?? [],
@@ -174,6 +178,7 @@ export class ProjectCrudService {
       title: string;
       status: WorkflowState;
       customerId: string;
+      siteAddress: { street: string; zip: string; city: string } | null;
       plannedStart: Date | null;
       plannedEnd: Date | null;
       assignedWorkerIds: string[];
@@ -201,6 +206,7 @@ export class ProjectCrudService {
             title: data.title,
             status: data.status,
             customerId: data.customerId,
+            siteAddress: data.siteAddress,
             plannedStart: data.plannedStart,
             plannedEnd: data.plannedEnd,
             estimatedValue: data.estimatedValue,
@@ -218,6 +224,7 @@ export class ProjectCrudService {
               title: row.title,
               status: row.status,
               customerId: row.customerId,
+              siteAddress: row.siteAddress ?? null,
               plannedStart: row.plannedStart,
               plannedEnd: row.plannedEnd,
               estimatedValue: row.estimatedValue,
@@ -278,6 +285,7 @@ export class ProjectCrudService {
       title: string;
       customerId: string;
       status: WorkflowState;
+      siteAddress?: { street: string; zip: string; city: string } | null;
       plannedStart?: string | null;
       plannedEnd?: string | null;
       assignedWorkerIds?: string[];
@@ -293,6 +301,7 @@ export class ProjectCrudService {
       title: data.title,
       customerId: data.customerId,
       status: data.status,
+      siteAddress: data.siteAddress ?? null,
       plannedStart: data.plannedStart ?? null,
       plannedEnd: data.plannedEnd ?? null,
       assignedWorkerIds: data.assignedWorkerIds ?? [],
@@ -317,6 +326,7 @@ export class ProjectCrudService {
               title: data.title,
               status: data.status,
               customerId: data.customerId,
+              siteAddress: data.siteAddress ?? null,
               plannedStart: data.plannedStart ? new Date(data.plannedStart) : null,
               plannedEnd: data.plannedEnd ? new Date(data.plannedEnd) : null,
               assignedWorkerIds: data.assignedWorkerIds ?? [],
@@ -358,6 +368,7 @@ export class ProjectCrudService {
       title: string;
       customerId: string;
       status: WorkflowState;
+      siteAddress: { street: string; zip: string; city: string } | null;
       plannedStart: string | null;
       plannedEnd: string | null;
       assignedWorkerIds: string[];
@@ -370,6 +381,7 @@ export class ProjectCrudService {
       title: row.title,
       customerId: row.customerId,
       status: row.status,
+      siteAddress: row.siteAddress ?? null,
       plannedStart: row.plannedStart,
       plannedEnd: row.plannedEnd,
       assignedWorkerIds: workers.map((w) => w.userId),
@@ -409,6 +421,7 @@ export class ProjectCrudService {
     data: {
       title?: string;
       customerId?: string;
+      siteAddress?: { street: string; zip: string; city: string } | null;
       assignedWorkerIds?: string[];
       estimatedValue?: number | null;
       notes?: string | null;
@@ -423,9 +436,13 @@ export class ProjectCrudService {
       correlationId: correlationId ?? null,
     };
     const collected: AuditLogRow[] = [];
+    // PATCH semantics: presence of `siteAddress` (even as null) counts as a
+    // field update — null clears the stored value, mirroring the customer-
+    // address rule. `'siteAddress' in data` distinguishes from omission.
     const hasFieldUpdate =
       data.title !== undefined ||
       data.customerId !== undefined ||
+      'siteAddress' in data ||
       data.estimatedValue !== undefined ||
       data.notes !== undefined;
 
@@ -444,6 +461,10 @@ export class ProjectCrudService {
               const updated = await updateProjectFields(innerTx, id, userId, {
                 title: data.title,
                 customerId: data.customerId,
+                // Pass through with `'siteAddress' in data` semantics so the
+                // repo's set-clause distinguishes "clear" (null) from
+                // "leave unchanged" (omitted).
+                ...('siteAddress' in data ? { siteAddress: data.siteAddress ?? null } : {}),
                 estimatedValue: data.estimatedValue,
                 notes: data.notes,
               });
@@ -454,12 +475,14 @@ export class ProjectCrudService {
               const priorDiff = projectUpdatableDiff({
                 title: priorRow.title,
                 customerId: priorRow.customerId,
+                siteAddress: priorRow.siteAddress ?? null,
                 estimatedValue: priorRow.estimatedValue,
                 notes: priorRow.notes,
               });
               const updatedDiff = projectUpdatableDiff({
                 title: updated.title,
                 customerId: updated.customerId,
+                siteAddress: updated.siteAddress ?? null,
                 estimatedValue: updated.estimatedValue,
                 notes: updated.notes,
               });
@@ -470,6 +493,10 @@ export class ProjectCrudService {
               if (data.customerId !== undefined) {
                 before.customerId = priorDiff.customerId;
                 after.customerId = updatedDiff.customerId;
+              }
+              if ('siteAddress' in data) {
+                before.siteAddress = priorDiff.siteAddress;
+                after.siteAddress = updatedDiff.siteAddress;
               }
               if (data.estimatedValue !== undefined) {
                 before.estimatedValue = priorDiff.estimatedValue;

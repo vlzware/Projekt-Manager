@@ -190,6 +190,15 @@
   cursor: pointer;
 }
 
+/* Inline-field validation hint shown inside the SiteAddressEditModal.
+   Matches the management form's `.fieldHintError` shape so the AC-284
+   Baustelle partial-fill message reads consistently across surfaces. */
+.fieldHintError {
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--color-danger-text);
+}
+
 .archiveButton:hover {
   background: var(--color-surface-sunken);
 }
@@ -225,10 +234,13 @@
   background: var(--color-surface-sunken);
 }
 
-/* Floating camera capture — fixed to the viewport's top-right corner so
-   a worker on-site can reach it without hunting the layout. Stays
-   visible across scroll; the detail shell is the only page that mounts
-   it (wrapped in `{canWrite && …}` on the caller side).
+/* Floating camera capture — anchored bottom-right, intended for a
+   worker on-site tapping a phone. Hidden on devices with both `hover`
+   and a `fine` pointer (i.e. mouse-driven desktops/laptops, including
+   touch laptops that also report a mouse). Touch tablets and phones
+   keep it. The interaction media features are the right axis here —
+   resolution-only would misfire on a narrow desktop window or a
+   landscape tablet.
 
    The FAB uses the raised-surface token (not accent) so it blends with
    the page chrome and adjusts with the active theme. An inline SVG icon
@@ -268,6 +280,16 @@
   transform: translateY(-2px);
   background: var(--color-surface-sunken);
   box-shadow: 0 6px 16px rgba(var(--color-overlay-rgb), 0.2);
+}
+
+/* Hide on mouse-driven devices. `hover: hover` + `pointer: fine`
+   together identify a desktop/laptop (incl. touch laptops, which
+   report both). Phones / iPads / Android tablets satisfy neither and
+   keep the FAB visible. */
+@media (hover: hover) and (pointer: fine) {
+  .cameraFab {
+    display: none;
+  }
 }
 
 /* On phones the bottom tab bar (`MobileTabBar`) sits at the viewport's
@@ -371,6 +393,71 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+/* Click-to-edit card variant. Used by the KUNDE row (opens the customer
+   modal) and the wrapping div around SiteAddressLine (opens the
+   site-address modal). Adds a hover/focus cue so the affordance is
+   discoverable; the cards stay visually quiet by default so the page
+   doesn't read as a wall of buttons. role="button" + tabIndex=0 are
+   set in JSX — this rule only handles the visual layer. */
+.coreFieldClickable {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  cursor: pointer;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.coreFieldClickable:hover,
+.coreFieldClickable:focus-visible {
+  background: var(--color-surface-sunken);
+  outline: none;
+}
+
+.coreFieldClickable:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+/* Wrapper for SiteAddressLine when the row is clickable. The
+   SiteAddressLine renders its own `.coreField` wrapper internally;
+   wrapping it here would double the box. Instead we strip our own
+   padding/structure and only contribute cursor + hover/focus styling
+   that bleeds into the inner row via the descendant `.coreField`. */
+.coreCardWrapClickable {
+  cursor: pointer;
+  border-radius: 6px;
+  margin: -6px -8px;
+  padding: 6px 8px;
+  transition: background 0.1s;
+}
+
+.coreCardWrapClickable:hover,
+.coreCardWrapClickable:focus-visible {
+  background: var(--color-surface-sunken);
+  outline: none;
+}
+
+.coreCardWrapClickable:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+/* Inline tel:/mailto: anchors on the KUNDE card. Sit one per line under
+   the customer name; mirror the panel's `.link` styling so the same
+   contact info reads identically across both surfaces. */
+.coreContactLink {
+  font-size: 0.85rem;
+  color: var(--color-accent);
+  text-decoration: none;
+  width: fit-content;
+}
+
+.coreContactLink:hover {
+  text-decoration: underline;
 }
 
 .coreFieldFull {

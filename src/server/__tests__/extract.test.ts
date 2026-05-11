@@ -125,6 +125,56 @@ describe('POST /api/extract', () => {
     expect(body.customer.city).toBe('Berlin');
     expect(body.project.title).toBe('Fassadenanstrich');
     expect(body.project.description).toBeNull();
+    // Single-address email: project.siteAddress falls back to null even
+    // when the upstream omits the field entirely.
+    expect(body.project.siteAddress).toBeNull();
+  });
+
+  it('returns a full siteAddress triple when the email mentions a separate Baustelle', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                customer: {
+                  name: 'Schmidt Hausverwaltung GmbH',
+                  phone: null,
+                  email: null,
+                  street: 'Kölner Str. 45',
+                  zip: '51429',
+                  city: 'Bergisch Gladbach',
+                },
+                project: {
+                  title: 'Treppenhaus streichen',
+                  description: null,
+                  siteAddress: {
+                    street: 'Goethestr. 18',
+                    zip: '51103',
+                    city: 'Köln',
+                  },
+                },
+              }),
+            },
+          },
+        ],
+      }),
+    }) as unknown as typeof fetch;
+
+    const res = await authPost(ownerToken, '/api/extract', {
+      text: 'Hausverwaltung mit Baustelle in Goethestr. 18, 51103 Köln, Rechnungsadresse Kölner Str. 45, 51429 Bergisch Gladbach.',
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.customer.street).toBe('Kölner Str. 45');
+    expect(body.project.siteAddress).toEqual({
+      street: 'Goethestr. 18',
+      zip: '51103',
+      city: 'Köln',
+    });
   });
 
   // ---------------------------------------------------------------

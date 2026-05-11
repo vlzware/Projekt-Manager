@@ -99,7 +99,7 @@ describe('EmailExtractModal — two-step save resilience', () => {
           zip: null,
           city: null,
         },
-        project: { title: 'Dachsanierung', description: null },
+        project: { title: 'Dachsanierung', description: null, siteAddress: null },
       }),
     );
     customerCreateMock.mockResolvedValueOnce(ok({ id: 'cust-1', name: 'Neue Firma' } as Customer));

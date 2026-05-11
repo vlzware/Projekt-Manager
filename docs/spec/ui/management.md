@@ -27,6 +27,7 @@ Fields:
 - **Title** — required.
 - **Customer** — required. Selection from existing customers, with an option to create a new customer inline (see [§8.9.4](#894-inline-customer-creation)).
 - **Status** — defaults to the first workflow state. Optionally selectable if configuration allows **[C]**.
+- **Baustelle (site address)** — optional nested group: street, zip, city. Headed by an `"Identisch mit Kundenadresse"` toggle. Toggle ON sends `siteAddress: null` on submit (the project inherits the customer's Rechnungsadresse for display per [data-model.md §5.1](../data-model.md#51-project-entity)) and disables the street/zip/city inputs. Toggle OFF reveals the inputs and submits the entered values. Default state for create is **ON** — the homeowner-renovating-their-house case is the common path; the operator opts into divergence explicitly. See [§8.8.6](#886-site-address-form-rule) for the rule that applies to both create and edit.
 - **Planned start / Planned end** — optional. Same validation as the detail panel (end requires start).
 - **Assigned workers** — optional multi-select from active users with the `worker` role.
 - **Estimated value** — optional numeric input.
@@ -45,6 +46,7 @@ Clicking a project row opens the project for editing. The editing surface reuses
 - **Assigned workers** are editable via multi-select.
 - **Estimated value** is editable.
 - **Customer** can be changed.
+- **Baustelle (site address)** — editable. Same group + `"Identisch mit Kundenadresse"` toggle as create (see [§8.8.6](#886-site-address-form-rule)). The toggle's initial state reflects the stored value: **ON** when `project.siteAddress` is null (the row inherits the customer's Rechnungsadresse), **OFF** with the stored street/zip/city populated when `project.siteAddress` is non-null.
 
 All editable fields use PATCH semantics via the Update project API operation. Status changes use their dedicated transition operations. Date changes use the dedicated update-dates operation (see [api.md §14.2.2](../api.md#1422-projects)).
 
@@ -68,6 +70,22 @@ Permission: requires `project:purge` (owner-only per the permission matrix in [a
 
 See [ADR-0017](../../adr/0017-soft-delete-as-board-archive.md) for the trash-bin rationale (archive-first, purge as the second step).
 
+### 8.8.6 Site-Address Form Rule
+
+Both Create Project ([§8.8.2](#882-create-project)) and Edit Project ([§8.8.3](#883-edit-project)) carry a **Baustelle** group with the same shape:
+
+- A toggle labelled `"Identisch mit Kundenadresse"`.
+- Three inputs for `street`, `zip`, `city`, grouped under the toggle.
+
+Form behavior:
+
+- **Toggle ON.** Street/zip/city inputs are disabled and visually muted. The inputs visibly mirror the selected customer's billing address (`customer.address`) as a read-only preview of what the project will inherit; if the customer has no stored address — or no customer has been picked yet on create — the inputs stay empty. The visual fill is presentation only: on submit, the request body always carries `siteAddress: null` regardless of what is shown (PATCH-null on edit clears any stored value — the project's site falls back to the customer's Rechnungsadresse per [data-model.md §5.1](../data-model.md#51-project-entity)).
+- **Toggle OFF.** Inputs are enabled. On submit, the request body carries `siteAddress: { street, zip, city }`. Required-field validation follows the same all-or-none rule pinned on the customer Address group at [§8.9.2](#892-create-customer): all three of `street`, `zip`, `city` are required if any field has a non-empty value; a partial group is rejected at submit with a German validation message. The toggle's "all blank" axis is taken instead by the ON state, so under OFF the operator commits to filling all three.
+- **Initial state.** ON by default for create. For edit, the toggle reflects the stored value: ON when `project.siteAddress` is null, OFF when non-null.
+- **Switch ON → OFF (edit).** Reveals the inputs pre-filled empty so the operator can type the divergent address. Switching back to ON before submit discards the typed values without reverting any persisted state — the persisted state is whatever the previous successful PATCH stored.
+
+This is the only form-level rule for the Baustelle group; rendering rules for read-only surfaces live in [project-detail.md §8.15.2](project-detail.md#8152-core-fields).
+
 ---
 
 ## 8.9 Customer Management View
@@ -90,7 +108,7 @@ Fields:
 - **Name** — required.
 - **Phone** — optional.
 - **Email** — optional.
-- **Address** — optional nested group: street, zip, city.
+- **Address** — optional nested group: street, zip, city. **All-or-none requiredness:** all three of `street`, `zip`, `city` are required if the group is opened (any field has a non-empty value); the group is treated as omitted (and the resulting persisted value is null) only when all three are blank. A partial group (one or two fields filled) is rejected at submit with a German validation message. The rule applies to Edit Customer ([§8.9.3](#893-edit-customer)) identically — Edit reuses the same form fields.
 - **Notes** — optional free text.
 
 **Duplicate-name suggestions (as-you-type).** While the user types in the name field, the form runs a debounced search against the customer list and presents matching customers in a dropdown below the input. Clicking a suggested customer closes the create form and opens that customer's edit form. The dropdown is an advisory hint — the user may ignore it and continue creating a new customer.

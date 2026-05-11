@@ -25,12 +25,15 @@ import { ATTACHMENT_MIME_WHITELIST } from '@/domain/attachments';
 import { formatDateDE } from '@/domain/dateFormat';
 import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
+import { CustomerEditForm } from '@/ui/management/CustomerEditForm';
 import { PhotoGallery } from './PhotoGallery';
 import { BinaryList } from './BinaryList';
 import { Papierkorb } from './Papierkorb';
 import { AssignedWorkerEditor } from './AssignedWorkerEditor';
 import { UploadCta } from './UploadCta';
 import { dateInputValue } from './dateInputValue';
+import { SiteAddressLine } from './SiteAddressLine';
+import { SiteAddressEditModal } from './SiteAddressEditModal';
 import styles from './ProjectDetail.module.css';
 
 type LoadState = { kind: 'loading' } | FetchProjectOutcome;
@@ -85,6 +88,7 @@ export function ProjectDetailPage() {
   const canUpdateDates = usePermission('project:dates');
   const canDelete = usePermission('project:delete');
   const canPurge = usePermission('project:purge');
+  const canEditCustomer = usePermission('customer:write');
 
   const fetchProject = useProjectStore((s) => s.fetchProject);
   const updateDates = useProjectStore((s) => s.updateDates);
@@ -106,6 +110,14 @@ export function ProjectDetailPage() {
   // view. Switching to Papierkorb is a one-click toggle, no URL state
   // — same level of persistence as the gallery / list scroll position.
   const [attachmentTab, setAttachmentTab] = useState<'attachments' | 'papierkorb'>('attachments');
+
+  // Modal-open flags for the inline-edit affordances on the Kunde and
+  // Baustelle cards. Both modals own their own form state and submit
+  // lifecycle (see CustomerEditForm + SiteAddressEditModal); the page
+  // just holds the open/closed bit. Replaces the old inline Baustelle
+  // edit panel — see ui/project-detail.md §8.15.2.
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [siteAddressModalOpen, setSiteAddressModalOpen] = useState(false);
 
   // Eagerly fetch the Papierkorb count for owner / office so the tab
   // badge is accurate on first render. Workers don't have the
@@ -178,12 +190,27 @@ export function ProjectDetailPage() {
 
   const config = STATE_CONFIG_MAP[project.status];
   const customer = project.customer;
-  const address = customer?.address ?? null;
-  const mapsUrl = address
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-        `${address.street} ${address.zip} ${address.city}`,
-      )}`
-    : null;
+
+  // A click anywhere on a clickable detail card opens the corresponding
+  // modal — EXCEPT when the click lands on an inner anchor (tel: /
+  // mailto: / map link). Those anchors should follow their native
+  // behaviour; the modal-open click is delegated rather than wired onto
+  // each child to avoid nested-interactive markup.
+  const cardClickShouldOpen = (e: React.MouseEvent | React.KeyboardEvent): boolean => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return true;
+    return target.closest('a') === null;
+  };
+
+  const cardKeyToggle = (onOpen: () => void) => (e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!cardClickShouldOpen(e)) return;
+    e.preventDefault();
+    onOpen();
+  };
+
+  const customerCardClickable = canEditCustomer && customer !== null && !isArchived;
+  const siteAddressCardClickable = canUpdate && !isArchived;
 
   const handleArchive = async () => {
     const confirmed = await requestConfirm(
@@ -403,27 +430,69 @@ export function ProjectDetailPage() {
         data-testid="project-detail-core"
         className={styles.coreSection}
       >
-        <h3 className={styles.regionHeading}>{STRINGS.attachments.coreFields}</h3>
         <div className={styles.coreGrid}>
-          <div className={styles.coreField}>
+          {/* KUNDE card — name + phone + email (matching the panel).
+              Clickable when the user has customer:write and the project
+              is not archived; opens the same CustomerEditForm modal the
+              Kunden tab uses. Inner tel:/mailto: anchors are delegated
+              past the card-open handler so a tap still places a call. */}
+          <div
+            className={customerCardClickable ? styles.coreFieldClickable : styles.coreField}
+            data-testid="project-detail-customer"
+            {...(customerCardClickable
+              ? {
+                  role: 'button',
+                  tabIndex: 0,
+                  'aria-label': `${STRINGS.ui.customer} ${STRINGS.ui.edit}`,
+                  onClick: (e: React.MouseEvent) => {
+                    if (cardClickShouldOpen(e)) setCustomerModalOpen(true);
+                  },
+                  onKeyDown: cardKeyToggle(() => setCustomerModalOpen(true)),
+                }
+              : {})}
+          >
             <span className={styles.coreLabel}>{STRINGS.ui.customer}</span>
             <span className={styles.coreValue}>{customer?.name ?? '—'}</span>
+            {customer?.phone && (
+              <a
+                className={styles.coreContactLink}
+                href={`tel:${customer.phone}`}
+                data-testid="project-detail-customer-phone"
+              >
+                {customer.phone}
+              </a>
+            )}
+            {customer?.email && (
+              <a
+                className={styles.coreContactLink}
+                href={`mailto:${customer.email}`}
+                data-testid="project-detail-customer-email"
+              >
+                {customer.email}
+              </a>
+            )}
           </div>
-          {address && (
-            <div className={styles.coreField}>
-              <span className={styles.coreLabel}>{STRINGS.ui.address}</span>
-              <span className={styles.coreValue}>
-                {address.street}, {address.zip} {address.city}
-                {mapsUrl && (
-                  <>
-                    {' '}
-                    <a href={mapsUrl} target="_blank" rel="noopener noreferrer">
-                      {STRINGS.ui.openMaps}
-                    </a>
-                  </>
-                )}
-              </span>
+          {/* Baustelle (work-site address) — read-only line via
+              SiteAddressLine (shared with the panel; AC-282 / AC-283).
+              Wrapped in a clickable surface when the user can edit so
+              the whole row taps through to SiteAddressEditModal. The
+              inner map anchor is delegated past the card-open handler. */}
+          {siteAddressCardClickable ? (
+            <div
+              className={styles.coreCardWrapClickable}
+              role="button"
+              tabIndex={0}
+              aria-label={`${STRINGS.projects.siteAddressLabel} ${STRINGS.ui.edit}`}
+              data-testid="project-detail-site-address-edit"
+              onClick={(e) => {
+                if (cardClickShouldOpen(e)) setSiteAddressModalOpen(true);
+              }}
+              onKeyDown={cardKeyToggle(() => setSiteAddressModalOpen(true))}
+            >
+              <SiteAddressLine project={project} variant="page" />
             </div>
+          ) : (
+            <SiteAddressLine project={project} variant="page" />
           )}
           <div className={styles.coreField}>
             <span className={styles.coreLabel}>{STRINGS.ui.dateStart}</span>
@@ -485,6 +554,27 @@ export function ProjectDetailPage() {
           </div>
         </div>
       </section>
+
+      {customerModalOpen && customer && (
+        <CustomerEditForm
+          customer={customer}
+          onClose={() => setCustomerModalOpen(false)}
+          // Refresh the project so the embedded customer snapshot —
+          // which is what the page renders — picks up the new values.
+          onSaved={() => {
+            void fetchProject(project.id);
+          }}
+        />
+      )}
+
+      {siteAddressModalOpen && (
+        <SiteAddressEditModal
+          projectId={project.id}
+          initial={project.siteAddress}
+          customerAddress={project.customer?.address ?? null}
+          onClose={() => setSiteAddressModalOpen(false)}
+        />
+      )}
 
       <AssignedWorkerEditor projectId={project.id} archived={isArchived} />
 

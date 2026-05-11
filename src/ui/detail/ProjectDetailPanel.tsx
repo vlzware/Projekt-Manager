@@ -8,6 +8,7 @@ import { usePermission } from '@/hooks/usePermission';
 import { useProjectStore } from '@/state/projectStore';
 import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { dateInputValue } from './dateInputValue';
+import { SiteAddressLine } from './SiteAddressLine';
 import styles from './ProjectDetailPanel.module.css';
 
 interface ProjectDetailPanelProps {
@@ -71,13 +72,6 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
     if (endDraft === storeValue) return;
     updateDates(currentProject.id, undefined, endDraft || null);
   };
-
-  const customerAddress = currentProject.customer?.address ?? null;
-  const mapsUrl = customerAddress
-    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-        `${customerAddress.street} ${customerAddress.zip} ${customerAddress.city}`,
-      )}`
-    : null;
 
   const handleOpenDetailPage = () => {
     onClose();
@@ -147,22 +141,12 @@ export function ProjectDetailPanel({ project, onClose }: ProjectDetailPanelProps
             )}
           </div>
 
-          {/* Address */}
-          {customerAddress && (
-            <div className={styles.section}>
-              <div className={styles.sectionLabel}>{STRINGS.ui.address}</div>
-              <div className={styles.fieldValue}>
-                {customerAddress.street}
-                <br />
-                {customerAddress.zip} {customerAddress.city}
-              </div>
-              {mapsUrl && (
-                <a className={styles.link} href={mapsUrl} target="_blank" rel="noopener noreferrer">
-                  {STRINGS.ui.openMaps}
-                </a>
-              )}
-            </div>
-          )}
+          {/* Baustelle (work-site address) — shared with the detail page
+              via SiteAddressLine. Renders project.siteAddress when set,
+              falls back to customer.address with a "(Kundenadresse)"
+              hint when null, and shows "Keine Adresse" when both are
+              absent. AC-282 / AC-283. */}
+          <SiteAddressLine project={currentProject} variant="panel" />
 
           {/* Dates */}
           {canUpdateDates && (

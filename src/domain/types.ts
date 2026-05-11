@@ -26,6 +26,14 @@ export interface Project {
   customerId: string;
   customer: CustomerSummary | null;
 
+  /**
+   * Baustellen-/Leistungsadresse — where the work happens. Distinct from
+   * `customer.address` (Rechnungsadresse). `null` indicates the project
+   * is at the customer's billing address; the UI surfaces the fallback.
+   * See data-model.md §5.1.
+   */
+  siteAddress: Address | null;
+
   plannedStart: string | null;
   plannedEnd: string | null;
 

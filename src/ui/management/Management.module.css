@@ -153,6 +153,18 @@
   margin-bottom: 12px;
 }
 
+/* Reset browser defaults when .formGroup is on a <fieldset> (used by
+   the SiteAddressGroup). Without this, the browser paints a 2 px
+   groove border and indents the legend, which would visually diverge
+   from the surrounding flat <div>-based form sections.
+   `min-inline-size: 0` is the modern fix for the legacy fieldset
+   intrinsic-min-content sizing rule that breaks flex/grid children. */
+fieldset.formGroup {
+  border: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+
 .formLabel {
   display: block;
   font-size: 0.8rem;

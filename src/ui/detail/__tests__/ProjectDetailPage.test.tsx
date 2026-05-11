@@ -96,6 +96,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     plannedEnd: '2026-06-01',
     customerId: 'c-1',
     customer: CUSTOMER,
+    siteAddress: null,
     assignedWorkers: [
       { userId: 'u-worker-1', displayName: 'Anna Arbeiter' },
       { userId: 'u-worker-2', displayName: 'Bernd Bauer' },
@@ -355,5 +356,137 @@ describe('ProjectDetailPage — camera FAB MIME gate', () => {
       expect.objectContaining({ label: 'foto', hasThumbnail: true }),
     );
     expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+});
+
+// --------------------------------------------------------------------
+// Click-to-edit: KUNDE + BAUSTELLE cards open modals (replaces the old
+// inline Baustelle edit panel; matches the Kunden tab's modal pattern).
+// --------------------------------------------------------------------
+
+describe('ProjectDetailPage — KERNFELDER heading is gone', () => {
+  it('does not render the "Kernfelder" region heading', async () => {
+    setAuthUser(['owner']);
+    renderAt('/projects/p-42');
+
+    await screen.findByTestId('project-detail-core');
+    // The region keeps its aria-label for screen readers; the visible
+    // <h3> heading is what was removed. queryAllByRole('heading') —
+    // restricted to level 3 — captures every region heading. None
+    // should carry the "Kernfelder" text.
+    const h3s = screen.queryAllByRole('heading', { level: 3 });
+    expect(h3s.map((h) => h.textContent)).not.toContain('Kernfelder');
+  });
+});
+
+describe('ProjectDetailPage — KUNDE click opens CustomerEditForm modal', () => {
+  it('opens the modal for an owner (canEditCustomer = true)', async () => {
+    setAuthUser(['owner']);
+    renderAt('/projects/p-42');
+
+    const card = await screen.findByTestId('project-detail-customer');
+    // The clickable affordance becomes a role="button" surface; the
+    // attribute is the contract the keyboard a11y path relies on.
+    expect(card).toHaveAttribute('role', 'button');
+    expect(card).toHaveAttribute('tabindex', '0');
+
+    await userEvent.click(card);
+
+    // CustomerEditForm renders the canonical "Speichern" testid the
+    // Kunden tab uses; presence implies the modal mounted.
+    expect(await screen.findByTestId('customer-save')).toBeInTheDocument();
+    // The name input is pre-seeded from the embedded customer payload.
+    expect((screen.getByTestId('customer-name-input') as HTMLInputElement).value).toBe(
+      'Kunde GmbH',
+    );
+  });
+
+  it('does NOT open the modal for a bookkeeper (no customer:write)', async () => {
+    setAuthUser(['bookkeeper']);
+    renderAt('/projects/p-42');
+
+    const card = await screen.findByTestId('project-detail-customer');
+    expect(card).not.toHaveAttribute('role', 'button');
+
+    // Even if a stray click reaches the wrapper, the modal must not open.
+    await userEvent.click(card);
+    expect(screen.queryByTestId('customer-save')).toBeNull();
+  });
+
+  it('inner tel: / mailto: anchors do not trigger the modal', async () => {
+    // Owner role + a customer with phone+email so both anchors render.
+    // Tapping a phone link must place the call (anchor default action),
+    // not steal focus into the edit modal.
+    const projectWithContact = makeProject({
+      customer: { ...CUSTOMER, phone: '+49 30 1234567', email: 'kunde@example.de' },
+    });
+    projectGetMock.mockResolvedValue({ ok: true, data: projectWithContact });
+    useProjectStore.setState({
+      projects: [projectWithContact],
+      mutationInFlight: {},
+      mutationError: null,
+    });
+
+    setAuthUser(['owner']);
+    renderAt('/projects/p-42');
+
+    const phone = await screen.findByTestId('project-detail-customer-phone');
+    await userEvent.click(phone);
+    expect(screen.queryByTestId('customer-save')).toBeNull();
+
+    const email = screen.getByTestId('project-detail-customer-email');
+    await userEvent.click(email);
+    expect(screen.queryByTestId('customer-save')).toBeNull();
+  });
+});
+
+describe('ProjectDetailPage — BAUSTELLE click opens SiteAddressEditModal', () => {
+  it('opens the modal for an owner (canUpdate = true)', async () => {
+    setAuthUser(['owner']);
+    renderAt('/projects/p-42');
+
+    const wrap = await screen.findByTestId('project-detail-site-address-edit');
+    expect(wrap).toHaveAttribute('role', 'button');
+
+    await userEvent.click(wrap);
+
+    expect(await screen.findByTestId('site-address-modal')).toBeInTheDocument();
+    // The modal carries the same Speichern testid the previous inline
+    // panel did — call sites that already targeted it keep working.
+    expect(screen.getByTestId('project-site-save')).toBeInTheDocument();
+  });
+
+  it('does NOT mount the clickable wrapper for a bookkeeper (no project:update)', async () => {
+    setAuthUser(['bookkeeper']);
+    renderAt('/projects/p-42');
+
+    // The read-only SiteAddressLine still renders under the original
+    // testid; the click-to-edit wrapper is what disappears.
+    await screen.findByTestId('project-detail-site-address');
+    expect(screen.queryByTestId('project-detail-site-address-edit')).toBeNull();
+    expect(screen.queryByTestId('site-address-modal')).toBeNull();
+  });
+
+  it('clicking the inner map link does not open the modal', async () => {
+    // Project with a non-null siteAddress so the SiteAddressLine
+    // renders the "In Google Maps öffnen" anchor.
+    const projectWithSite = makeProject({
+      siteAddress: { street: 'Goethestr. 18', zip: '51103', city: 'Köln' },
+    });
+    projectGetMock.mockResolvedValue({ ok: true, data: projectWithSite });
+    useProjectStore.setState({
+      projects: [projectWithSite],
+      mutationInFlight: {},
+      mutationError: null,
+    });
+
+    setAuthUser(['owner']);
+    renderAt('/projects/p-42');
+
+    const wrap = await screen.findByTestId('project-detail-site-address-edit');
+    const mapLink = within(wrap).getByRole('link', { name: 'In Google Maps öffnen' });
+
+    await userEvent.click(mapLink);
+    expect(screen.queryByTestId('site-address-modal')).toBeNull();
   });
 });
