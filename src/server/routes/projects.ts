@@ -14,6 +14,8 @@ import {
   ProjectCrudService,
   ProjectTransitionService,
   ProjectDatesService,
+  PROJECT_SORT_KEYS,
+  type ProjectSortKey,
 } from '../services/project.js';
 import { STATE_KEYS, type WorkflowState } from '../../config/stateConfig.js';
 import { createStorageClient } from '../storage/client.js';
@@ -61,6 +63,8 @@ export function projectRoutes(db: Database) {
               hasNoDates: { type: 'string' },
               customerId: { type: 'string', format: 'uuid' },
               includeArchived: { type: 'string' },
+              sortBy: { type: 'string', enum: [...PROJECT_SORT_KEYS] },
+              sortDir: { type: 'string', enum: ['asc', 'desc'] },
             },
           },
         },
@@ -75,6 +79,8 @@ export function projectRoutes(db: Database) {
           hasNoDates?: string;
           customerId?: string;
           includeArchived?: string;
+          sortBy?: ProjectSortKey;
+          sortDir?: 'asc' | 'desc';
         };
         const result = await crudService.listProjects(request.user!, {
           offset: query.offset,
@@ -84,6 +90,8 @@ export function projectRoutes(db: Database) {
           hasNoDates: query.hasNoDates === 'true',
           customerId: query.customerId,
           includeArchived: query.includeArchived === 'true',
+          sortBy: query.sortBy,
+          sortDir: query.sortDir,
         });
 
         return reply.code(200).send({ data: result.data, total: result.total });

@@ -7,10 +7,26 @@
 
 import { create } from 'zustand';
 import type { Address, Project, Customer } from '@/domain/types';
-import { projectApi, customerApi } from '@/api/client';
+import { projectApi, customerApi, type ProjectSortKey, type SortDir } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';
 import { useStorageUsageStore } from './storageUsageStore';
+
+// Re-export the sort-key/direction types so UI components reach them
+// through the state layer (the API client is off-limits to UI per
+// ESLint `no-restricted-imports`).
+export type { ProjectSortKey, SortDir };
+
+/**
+ * Options passed to `fetchProjects` on the management store. All
+ * optional — calling with no args returns the (unsearched) list with
+ * the historical default ordering (newest first).
+ */
+export interface FetchProjectsOpts {
+  search?: string;
+  sortBy?: ProjectSortKey;
+  sortDir?: SortDir;
+}
 
 /**
  * Result of `createProject`. Mirrors `CreateCustomerOutcome` — see that
@@ -30,7 +46,7 @@ interface ProjectManagementState {
    */
   showArchived: boolean;
 
-  fetchProjects: (search?: string) => Promise<void>;
+  fetchProjects: (opts?: FetchProjectsOpts) => Promise<void>;
   searchProjects: (search: string) => Promise<Project[]>;
   fetchCustomers: () => Promise<void>;
   setShowArchived: (v: boolean) => void;
@@ -84,14 +100,21 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
   error: null,
   showArchived: false,
 
-  fetchProjects: async (search?: string) => {
+  fetchProjects: async (opts?: FetchProjectsOpts) => {
     set({ loading: true, error: null });
     const { showArchived } = get();
     // Build the param bag from current state — omit undefined fields so
     // the server sees only what we actually meant to send.
-    const params: { search?: string; includeArchived?: boolean } = {};
-    if (search) params.search = search;
+    const params: {
+      search?: string;
+      includeArchived?: boolean;
+      sortBy?: ProjectSortKey;
+      sortDir?: SortDir;
+    } = {};
+    if (opts?.search) params.search = opts.search;
     if (showArchived) params.includeArchived = true;
+    if (opts?.sortBy) params.sortBy = opts.sortBy;
+    if (opts?.sortDir) params.sortDir = opts.sortDir;
     const result = await projectApi.list(Object.keys(params).length ? params : undefined);
 
     if (!result.ok) {

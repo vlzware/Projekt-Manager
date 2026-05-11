@@ -8,6 +8,7 @@
  *   ProjectDatesService      — planned-start/planned-end updates
  */
 
-export { ProjectCrudService } from './ProjectCrudService.js';
+export { ProjectCrudService, PROJECT_SORT_KEYS } from './ProjectCrudService.js';
+export type { ProjectSortKey } from './ProjectCrudService.js';
 export { ProjectTransitionService } from './ProjectTransitionService.js';
 export { ProjectDatesService } from './ProjectDatesService.js';

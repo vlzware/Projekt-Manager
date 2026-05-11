@@ -358,4 +358,92 @@ describe('Customer CRUD Operations', () => {
       expect(res.json().code).toBe('NOT_FOUND');
     });
   });
+
+  // ---------------------------------------------------------------
+  // Sort customers — server-side sortBy/sortDir allowlist.
+  // Each test creates a small fixture set with a unique tag in the
+  // name so the assertion can filter the sorted result down to the
+  // rows under test, ignoring any seed customers that happened to
+  // share the global ordering.
+  // ---------------------------------------------------------------
+  describe('Sort customers', () => {
+    it('sorts by name ascending then descending', async () => {
+      const tag = `SORT-NAME-${Date.now()}`;
+      const names = [`${tag}-Bravo`, `${tag}-Alpha`, `${tag}-Charlie`];
+      for (const name of names) {
+        const res = await authPost(ownerToken, '/api/customers', { name });
+        expect(res.statusCode).toBe(201);
+      }
+
+      const ascRes = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc`,
+      );
+      expect(ascRes.statusCode).toBe(200);
+      expect(ascRes.json().customers.map((c: { name: string }) => c.name)).toEqual([
+        `${tag}-Alpha`,
+        `${tag}-Bravo`,
+        `${tag}-Charlie`,
+      ]);
+
+      const descRes = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=desc`,
+      );
+      expect(descRes.statusCode).toBe(200);
+      expect(descRes.json().customers.map((c: { name: string }) => c.name)).toEqual([
+        `${tag}-Charlie`,
+        `${tag}-Bravo`,
+        `${tag}-Alpha`,
+      ]);
+    });
+
+    it('sorts by city via JSONB extract and pushes NULL city last', async () => {
+      const tag = `SORT-CITY-${Date.now()}`;
+      const fixtures: {
+        name: string;
+        address: { street: string; zip: string; city: string } | null;
+      }[] = [
+        { name: `${tag}-Z`, address: { street: 'S1', zip: '00001', city: 'Aachen' } },
+        { name: `${tag}-Y`, address: null },
+        { name: `${tag}-X`, address: { street: 'S2', zip: '00002', city: 'Mannheim' } },
+      ];
+      for (const f of fixtures) {
+        const res = await authPost(ownerToken, '/api/customers', f);
+        expect(res.statusCode).toBe(201);
+      }
+
+      const ascRes = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=city&sortDir=asc`,
+      );
+      expect(ascRes.statusCode).toBe(200);
+      const ascNames = ascRes.json().customers.map((c: { name: string }) => c.name);
+      // Aachen → Mannheim → NULL (NULLS LAST holds for both directions)
+      expect(ascNames).toEqual([`${tag}-Z`, `${tag}-X`, `${tag}-Y`]);
+
+      const descRes = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=city&sortDir=desc`,
+      );
+      expect(descRes.statusCode).toBe(200);
+      const descNames = descRes.json().customers.map((c: { name: string }) => c.name);
+      // Mannheim → Aachen → NULL (still last in DESC)
+      expect(descNames).toEqual([`${tag}-X`, `${tag}-Z`, `${tag}-Y`]);
+    });
+
+    // Fastify maps querystring schema violations to 422 via the project's
+    // error handler (server/app.ts). 422 is the right status — the
+    // request was syntactically valid, it just carried a value the route
+    // refuses.
+    it('rejects unknown sortBy column with 422', async () => {
+      const res = await authGet(ownerToken, '/api/customers?sortBy=notes&sortDir=asc');
+      expect(res.statusCode).toBe(422);
+    });
+
+    it('rejects invalid sortDir with 422', async () => {
+      const res = await authGet(ownerToken, '/api/customers?sortBy=name&sortDir=sideways');
+      expect(res.statusCode).toBe(422);
+    });
+  });
 });

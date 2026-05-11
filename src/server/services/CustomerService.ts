@@ -16,7 +16,15 @@ import {
   deleteCustomer as deleteCustomerRepo,
   getCustomerRow,
   toCustomerResponse,
+  CUSTOMER_SORT_KEYS,
+  type CustomerSortKey,
 } from '../repositories/customer.js';
+
+// Re-export the sort allowlist + key type so routes can validate
+// querystrings without crossing the routes→repository boundary
+// (architecture.md §11.2 — routes delegate through services).
+export { CUSTOMER_SORT_KEYS };
+export type { CustomerSortKey };
 import { attachments, projects } from '../db/schema.js';
 import { hardDeleteProjectUnchecked } from '../repositories/project.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
@@ -59,7 +67,13 @@ export class CustomerService {
 
   async listCustomers(
     caller: AuthUser,
-    opts: { offset?: number; limit?: number; search?: string },
+    opts: {
+      offset?: number;
+      limit?: number;
+      search?: string;
+      sortBy?: CustomerSortKey;
+      sortDir?: 'asc' | 'desc';
+    },
   ) {
     return listCustomersRepo(this.db, caller, opts);
   }

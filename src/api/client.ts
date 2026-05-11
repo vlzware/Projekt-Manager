@@ -275,6 +275,23 @@ export const authApi = {
     apiCall<LoginResponse>('/api/auth/me', { method: 'PATCH', body: patch }),
 };
 
+/**
+ * Sortable columns for the project list. Mirrors the server-side
+ * `PROJECT_SORT_KEYS` allowlist — keep them in sync.
+ */
+export type ProjectSortKey =
+  | 'number'
+  | 'title'
+  | 'customer'
+  | 'status'
+  | 'plannedStart'
+  | 'estimatedValue';
+
+/** Sortable columns for the customer list. Mirrors `CUSTOMER_SORT_KEYS`. */
+export type CustomerSortKey = 'name' | 'phone' | 'email' | 'city';
+
+export type SortDir = 'asc' | 'desc';
+
 export const projectApi = {
   list: (params?: {
     status?: string;
@@ -282,6 +299,8 @@ export const projectApi = {
     customerId?: string;
     hasNoDates?: boolean;
     includeArchived?: boolean;
+    sortBy?: ProjectSortKey;
+    sortDir?: SortDir;
   }) =>
     apiCall<ProjectListResponse>(
       '/api/projects' + toQuery(params as Record<string, string | number | boolean | undefined>),
@@ -366,7 +385,13 @@ export const projectApi = {
 };
 
 export const customerApi = {
-  list: (params?: { offset?: number; limit?: number; search?: string }) =>
+  list: (params?: {
+    offset?: number;
+    limit?: number;
+    search?: string;
+    sortBy?: CustomerSortKey;
+    sortDir?: SortDir;
+  }) =>
     apiCall<CustomerListResponse>(
       '/api/customers' + toQuery(params as Record<string, string | number | boolean | undefined>),
     ),

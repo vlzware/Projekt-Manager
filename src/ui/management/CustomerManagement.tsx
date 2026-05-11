@@ -5,12 +5,13 @@
  * See e2e/management-flows.spec.ts steps 18.
  */
 
-import { useEffect, useState } from 'react';
-import { useCustomerStore } from '@/state/customerStore';
+import { useEffect, useRef, useState } from 'react';
+import { useCustomerStore, type CustomerSortKey } from '@/state/customerStore';
 import { usePermission } from '@/hooks/usePermission';
 import { useConfirmStore } from '@/state/confirmStore';
 import { STRINGS } from '@/config/strings';
 import type { Customer } from '@/domain/types';
+import { SortableHeader, type SortDirection } from '@/ui/common/SortableHeader';
 import { CustomerCreateForm } from './CustomerCreateForm';
 import { CustomerEditForm } from './CustomerEditForm';
 import styles from './Management.module.css';
@@ -30,10 +31,35 @@ export function CustomerManagement() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<CustomerSortKey>('name');
+  const [sortDir, setSortDir] = useState<SortDirection>('asc');
 
+  // Mount fetch — uses the initial sort defaults; search starts empty.
   useEffect(() => {
-    fetchCustomers();
+    fetchCustomers({ sortBy: 'name', sortDir: 'asc' });
   }, [fetchCustomers]);
+
+  // Debounced search — skip the initial render (the mount effect above
+  // already issued a fetch with the same baseline).
+  const prevSearch = useRef(search);
+  useEffect(() => {
+    if (search === prevSearch.current) return;
+    prevSearch.current = search;
+    const timer = setTimeout(() => {
+      fetchCustomers({ search: search || undefined, sortBy, sortDir });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search, sortBy, sortDir, fetchCustomers]);
+
+  // Sort change refetches immediately — no debounce, the trigger is a
+  // discrete click, not free-text input.
+  const prevSort = useRef({ sortBy, sortDir });
+  useEffect(() => {
+    if (prevSort.current.sortBy === sortBy && prevSort.current.sortDir === sortDir) return;
+    prevSort.current = { sortBy, sortDir };
+    fetchCustomers({ search: search || undefined, sortBy, sortDir });
+  }, [sortBy, sortDir, search, fetchCustomers]);
 
   const handleDelete = async (e: React.MouseEvent, customer: Customer) => {
     e.stopPropagation();
@@ -72,6 +98,11 @@ export function CustomerManagement() {
     handleRowClick(customer);
   };
 
+  const handleSort = (column: CustomerSortKey, direction: SortDirection) => {
+    setSortBy(column);
+    setSortDir(direction);
+  };
+
   return (
     <div className={styles.container}>
       <div className={styles.toolbar}>
@@ -84,6 +115,13 @@ export function CustomerManagement() {
             {STRINGS.ui.create}
           </button>
         )}
+        <input
+          className={styles.searchInput}
+          placeholder={STRINGS.ui.search}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          data-testid="customer-search"
+        />
       </div>
 
       {error && !formOpen && !editCustomer && <div className={styles.error}>{error}</div>}
@@ -91,10 +129,42 @@ export function CustomerManagement() {
       <table className={styles.table} data-testid="customer-table">
         <thead>
           <tr>
-            <th>{STRINGS.ui.name}</th>
-            <th>{STRINGS.ui.phone}</th>
-            <th>{STRINGS.ui.email}</th>
-            <th>{STRINGS.ui.city}</th>
+            <SortableHeader<CustomerSortKey>
+              column="name"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="customer-sort-name"
+            >
+              {STRINGS.ui.name}
+            </SortableHeader>
+            <SortableHeader<CustomerSortKey>
+              column="phone"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="customer-sort-phone"
+            >
+              {STRINGS.ui.phone}
+            </SortableHeader>
+            <SortableHeader<CustomerSortKey>
+              column="email"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="customer-sort-email"
+            >
+              {STRINGS.ui.email}
+            </SortableHeader>
+            <SortableHeader<CustomerSortKey>
+              column="city"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="customer-sort-city"
+            >
+              {STRINGS.ui.city}
+            </SortableHeader>
             {canDelete && <th>{STRINGS.ui.actions}</th>}
           </tr>
         </thead>

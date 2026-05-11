@@ -7,9 +7,24 @@
 
 import { create } from 'zustand';
 import type { Customer } from '@/domain/types';
-import { customerApi } from '@/api/client';
+import { customerApi, type CustomerSortKey, type SortDir } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useStorageUsageStore } from './storageUsageStore';
+
+// Re-export the sort-key/direction types so UI components reach them
+// through the state layer (the API client is off-limits to UI per
+// ESLint `no-restricted-imports`).
+export type { CustomerSortKey, SortDir };
+
+/**
+ * Options passed to `fetchCustomers`. All optional — calling with no
+ * args returns the unfiltered list in default (name ascending) order.
+ */
+export interface FetchCustomersOpts {
+  search?: string;
+  sortBy?: CustomerSortKey;
+  sortDir?: SortDir;
+}
 
 /**
  * Result of `createCustomer`. `'ok'` — row committed (fresh or idempotent
@@ -37,7 +52,7 @@ interface CustomerState {
   loading: boolean;
   error: string | null;
 
-  fetchCustomers: (search?: string) => Promise<void>;
+  fetchCustomers: (opts?: FetchCustomersOpts) => Promise<void>;
   fetchCustomerDetail: (id: string) => Promise<CustomerDetail | null>;
   searchCustomers: (search: string) => Promise<Customer[]>;
   createCustomer: (data: {
@@ -68,9 +83,13 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   loading: false,
   error: null,
 
-  fetchCustomers: async (search?: string) => {
+  fetchCustomers: async (opts?: FetchCustomersOpts) => {
     set({ loading: true, error: null });
-    const result = await customerApi.list(search ? { search } : undefined);
+    const params: { search?: string; sortBy?: CustomerSortKey; sortDir?: SortDir } = {};
+    if (opts?.search) params.search = opts.search;
+    if (opts?.sortBy) params.sortBy = opts.sortBy;
+    if (opts?.sortDir) params.sortDir = opts.sortDir;
+    const result = await customerApi.list(Object.keys(params).length ? params : undefined);
 
     if (!result.ok) {
       if (result.sessionExpired) {

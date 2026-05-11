@@ -12,8 +12,9 @@ import { STRINGS } from '@/config/strings';
 import { STATE_CONFIGS, STATE_FALLBACK_COLOR } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
 import { usePermission } from '@/hooks/usePermission';
-import { useProjectManagementStore } from '@/state/projectManagementStore';
+import { useProjectManagementStore, type ProjectSortKey } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
+import { SortableHeader, type SortDirection } from '@/ui/common/SortableHeader';
 import { ProjectCreateForm } from './ProjectCreateForm';
 import styles from './Management.module.css';
 
@@ -35,6 +36,8 @@ export function ProjectManagement() {
   const navigate = useNavigate();
 
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState<ProjectSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDirection>('asc');
   const [formOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
@@ -42,16 +45,34 @@ export function ProjectManagement() {
     fetchCustomers();
   }, [fetchProjects, fetchCustomers]);
 
+  const buildFetchOpts = () => ({
+    search: search || undefined,
+    sortBy: sortBy ?? undefined,
+    sortDir: sortBy ? sortDir : undefined,
+  });
+
   // Debounced search — skip initial render (fetchProjects above handles it).
   const prevSearch = useRef(search);
   useEffect(() => {
     if (search === prevSearch.current) return;
     prevSearch.current = search;
     const timer = setTimeout(() => {
-      fetchProjects(search || undefined);
+      fetchProjects(buildFetchOpts());
     }, 300);
     return () => clearTimeout(timer);
+    // buildFetchOpts is intentionally not memoized — it reads current
+    // sortBy/sortDir at fire time so a sort change while typing applies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, fetchProjects]);
+
+  // Sort change — no debounce, click is discrete.
+  const prevSort = useRef({ sortBy, sortDir });
+  useEffect(() => {
+    if (prevSort.current.sortBy === sortBy && prevSort.current.sortDir === sortDir) return;
+    prevSort.current = { sortBy, sortDir };
+    fetchProjects(buildFetchOpts());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortBy, sortDir, fetchProjects]);
 
   // Refetch when showArchived toggles. The store reads `showArchived` from
   // its own state at request time, so we only need to trigger a refetch
@@ -60,8 +81,14 @@ export function ProjectManagement() {
   useEffect(() => {
     if (showArchived === prevShowArchived.current) return;
     prevShowArchived.current = showArchived;
-    fetchProjects(search || undefined);
-  }, [showArchived, fetchProjects, search]);
+    fetchProjects(buildFetchOpts());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showArchived, fetchProjects]);
+
+  const handleSort = (column: ProjectSortKey, direction: SortDirection) => {
+    setSortBy(column);
+    setSortDir(direction);
+  };
 
   const handleArchive = async (e: React.MouseEvent, project: Project) => {
     e.stopPropagation();
@@ -136,13 +163,61 @@ export function ProjectManagement() {
       <table className={styles.table} data-testid="project-table">
         <thead>
           <tr>
-            <th>{STRINGS.ui.number}</th>
-            <th>{STRINGS.ui.title}</th>
-            <th>{STRINGS.ui.customer}</th>
+            <SortableHeader<ProjectSortKey>
+              column="number"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-number"
+            >
+              {STRINGS.ui.number}
+            </SortableHeader>
+            <SortableHeader<ProjectSortKey>
+              column="title"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-title"
+            >
+              {STRINGS.ui.title}
+            </SortableHeader>
+            <SortableHeader<ProjectSortKey>
+              column="customer"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-customer"
+            >
+              {STRINGS.ui.customer}
+            </SortableHeader>
             <th>{STRINGS.ui.workers}</th>
-            <th>{STRINGS.ui.status}</th>
-            <th>{STRINGS.ui.dates}</th>
-            <th>{STRINGS.ui.value}</th>
+            <SortableHeader<ProjectSortKey>
+              column="status"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-status"
+            >
+              {STRINGS.ui.status}
+            </SortableHeader>
+            <SortableHeader<ProjectSortKey>
+              column="plannedStart"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-dates"
+            >
+              {STRINGS.ui.dates}
+            </SortableHeader>
+            <SortableHeader<ProjectSortKey>
+              column="estimatedValue"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-value"
+            >
+              {STRINGS.ui.value}
+            </SortableHeader>
             {(canDelete || canPurge) && <th>{STRINGS.ui.actions}</th>}
           </tr>
         </thead>
