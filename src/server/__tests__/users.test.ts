@@ -223,18 +223,18 @@ describe('User Management Operations', () => {
       expect(res.json().email).toBe('updated@example.de');
     });
 
-    it('rejects username change (immutable)', async () => {
-      const res = await authPatch(ownerToken, `/api/users/${createdUserId}`, {
+    it('ignores attempts to change username (immutable — Fastify ajv strips the field)', async () => {
+      await authPatch(ownerToken, `/api/users/${createdUserId}`, {
         username: 'newusername',
       });
 
-      // The PATCH /api/users/:id schema declares `additionalProperties: false`
-      // and omits `username` from its property list, so Fastify rejects the
-      // request at the validation layer with a 4xx before the handler runs.
-      expect(res.statusCode).toBeGreaterThanOrEqual(400);
-      expect(res.statusCode).toBeLessThan(500);
-
-      // Verify username did NOT change
+      // The PATCH /api/users/:id schema declares `additionalProperties: false`,
+      // and Fastify's ajv compiler defaults to `removeAdditional: true` — the
+      // unknown `username` field is stripped before the handler runs. The
+      // request thus has no observable effect on the row; `username` stays
+      // put. (We don't assert a specific status because the post-strip body
+      // can validate cleanly in some routes and trip `minProperties` in
+      // others; the immutability invariant is what this test pins.)
       const getRes = await authGet(ownerToken, `/api/users/${createdUserId}`);
       expect(getRes.json().username).toBe('testuser_at28');
     });
