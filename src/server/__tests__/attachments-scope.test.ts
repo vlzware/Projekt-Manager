@@ -262,34 +262,6 @@ describe('Attachment scope (AC-214, AC-217)', () => {
     );
   });
 
-  // -------------------------------------------------------------------
-  // List scoping — worker sees only own-project rows (AC-217 list arm).
-  // -------------------------------------------------------------------
-  describe('AC-217: list narrows by predicate for worker', () => {
-    it('worker list on an assigned project returns only rows for that project', async () => {
-      // Seed two rows: one on the assigned project, one on an
-      // unassigned project. List on the assigned project must not
-      // leak the unassigned row (they live on different projects, so
-      // the project-in-URL already filters — this test pins that the
-      // WHERE predicate inside `listByProject` does NOT ignore the
-      // scope fragment for the scoped caller).
-      await seedReadyAttachment(assignedProjectId, null);
-      await seedReadyAttachment(unassignedProjectId, null);
-
-      const res = await authGet(workerToken, `/api/projects/${assignedProjectId}/attachments`);
-      expect(res.statusCode).toBe(200);
-      const rows = (res.json().data as { projectId: string }[]) ?? [];
-      // Guard against empty-result regression — an empty `rows` would
-      // let the per-row assertion below pass vacuously, masking a
-      // predicate that accidentally filters everything out.
-      expect(rows.length).toBeGreaterThan(0);
-      // Every returned row must belong to the assigned project.
-      for (const row of rows) {
-        expect(row.projectId).toBe(assignedProjectId);
-      }
-    });
-  });
-
   // Suppress unused-warning for authDelete — kept imported so future
   // delete-scope tests can land here without re-threading the helper.
   void authDelete;

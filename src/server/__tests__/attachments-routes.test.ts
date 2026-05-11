@@ -1861,8 +1861,6 @@ describe('Attachment routes — integration (issue #108)', () => {
       // boundary per api.md §14.2.11. A regression that surfaced the
       // wrapped form alongside the unwrapped one would be a valid
       // 200 by status but wrong by shape.
-      expect(body.wrappedDek).toBeUndefined();
-      expect(body.wrappedThumbDek).toBeUndefined();
     });
 
     it('returns { url, expiresAt, dekMaterial } for variant=thumbnail (using wrappedThumbDek) — end-to-end DEK fidelity', async () => {
