@@ -782,20 +782,12 @@ describe('AT-93: Destructive-action visibility (AC-182, AC-187)', () => {
     expect(ids.has(userEmailUpdateAuditId)).toBe(true);
   });
 
-  it('office get-by-id on a purge row returns 403 NOT_PERMITTED', async () => {
-    const res = await authGet(officeToken, `/api/audit/${purgeAuditId}`);
-    expect(res.statusCode).toBe(403);
-    expect(res.json().code).toBe('NOT_PERMITTED');
-  });
-
-  it('office get-by-id on a user-delete row returns 403 NOT_PERMITTED', async () => {
-    const res = await authGet(officeToken, `/api/audit/${userDeleteAuditId}`);
-    expect(res.statusCode).toBe(403);
-    expect(res.json().code).toBe('NOT_PERMITTED');
-  });
-
-  it('office get-by-id on a user-roles-update row returns 403 NOT_PERMITTED', async () => {
-    const res = await authGet(officeToken, `/api/audit/${userRolesUpdateAuditId}`);
+  it.each([
+    ['purge', () => purgeAuditId],
+    ['user-delete', () => userDeleteAuditId],
+    ['user-roles-update', () => userRolesUpdateAuditId],
+  ])('office get-by-id on a %s row returns 403 NOT_PERMITTED', async (_, getId) => {
+    const res = await authGet(officeToken, `/api/audit/${getId()}`);
     expect(res.statusCode).toBe(403);
     expect(res.json().code).toBe('NOT_PERMITTED');
   });

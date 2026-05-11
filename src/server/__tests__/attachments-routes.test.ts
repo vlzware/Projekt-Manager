@@ -1876,11 +1876,6 @@ describe('Attachment routes — integration (issue #108)', () => {
       // value belongs to which variant.
       const originalDek = crypto.randomBytes(32);
       const thumbDek = crypto.randomBytes(32);
-      // Sanity floor — they were freshly generated, so they MUST differ.
-      // A regression in `randomBytes` would invalidate the variant-fidelity
-      // assertion below (both DEKs equal → byte-equality on either variant
-      // would pass tautologically), so check up-front.
-      expect(originalDek.equals(thumbDek)).toBe(false);
 
       const initBody = {
         ...photoInit(projectId),

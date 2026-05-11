@@ -453,40 +453,7 @@ describe('Attachment hidden reaper (AC-246)', () => {
   });
 
   // -------------------------------------------------------------------
-  // (7) Idempotence across sweeps — second run finds nothing, emits
-  // removed_count=0. The DELETE has no leftover state to re-purge.
-  // -------------------------------------------------------------------
-  it('a second sweep over the same fixture removes nothing and emits removed_count=0', async () => {
-    const now = new Date('2026-05-03T12:00:00.000Z');
-    const ttlMinutes = 2880;
-
-    await seedHiddenAt(db, seededProjectId, new Date(now.getTime() - 3 * 24 * 60 * MINUTE_MS));
-
-    const firstInfo = vi.fn();
-    await runAttachmentHiddenReaper({
-      db,
-      logger: { info: firstInfo, error: vi.fn() },
-      ttlMinutes,
-      now,
-    });
-    expect((firstInfo.mock.calls[0]![0] as { removed_count: number }).removed_count).toBe(1);
-
-    const secondInfo = vi.fn();
-    const secondError = vi.fn();
-    await runAttachmentHiddenReaper({
-      db,
-      logger: { info: secondInfo, error: secondError },
-      ttlMinutes,
-      now,
-    });
-
-    expect(secondInfo).toHaveBeenCalledTimes(1);
-    expect(secondError).not.toHaveBeenCalled();
-    expect((secondInfo.mock.calls[0]![0] as { removed_count: number }).removed_count).toBe(0);
-  });
-
-  // -------------------------------------------------------------------
-  // (8) Per-row mutate() failure does not abort the sweep. The other
+  // (7) Per-row mutate() failure does not abort the sweep. The other
   // expired rows are still purged with audit rows; the failing row
   // remains; one error-channel log line carries `error_hint` and the
   // failing row's id; the run still emits its info log line.

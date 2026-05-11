@@ -119,12 +119,12 @@ describe('AT-95: Audit retention cleanup (AC-184)', () => {
       '00000000-0000-0000-0000-00000000a002',
     ]);
 
-    // Structured-log contract: the one info call reports the count of
-    // rows actually deleted and the window applied.
+    // Cross-check: the log's `removed_count` matches the actual DB
+    // DELETE count. The full log-contract surface (event name, window,
+    // ran_at) is asserted in the next test.
     const [context] = infoSpy.mock.calls[0]!;
     const ctx = context as Record<string, unknown>;
     expect(ctx.removed_count).toBe(2);
-    expect(ctx.window_days).toBe(90);
   });
 
   it('emits exactly one info log line with the contract fields (event, window_days, removed_count, ran_at)', async () => {
