@@ -22,11 +22,22 @@ export interface ExtractionResult {
   project: {
     title: string | null;
     description: string | null;
+    // Baustellen-/Leistungsadresse, distinct from the customer's
+    // Rechnungsadresse (data-model.md §5.1). Strict shape — either all
+    // three fields are non-empty strings or the value is null. The LLM
+    // may return a partial object; the service collapses partials to
+    // null so callers can treat null as "site = customer address" by
+    // the fallback rule without re-validating field counts.
+    siteAddress: { street: string; zip: string; city: string } | null;
   };
 }
 
 const SYSTEM_PROMPT = `Du bist ein Datenextraktor für ein Handwerker-Projektmanagement-System.
 Extrahiere aus der folgenden E-Mail die Kundendaten und Projektdaten.
+
+Das System unterscheidet zwei Adressen:
+- Kundenadresse (Rechnungsadresse): die rechtliche Anschrift des Kunden — gehört unter "customer".
+- Baustellenadresse (Leistungsadresse): der Ort, an dem die Arbeit ausgeführt wird — gehört unter "project.siteAddress".
 
 Antworte ausschließlich mit validem JSON im folgenden Format, ohne Erklärungen:
 {
@@ -40,7 +51,8 @@ Antworte ausschließlich mit validem JSON im folgenden Format, ohne Erklärungen
   },
   "project": {
     "title": "Kurzer Projekttitel oder null",
-    "description": "Kurze Projektbeschreibung oder null"
+    "description": "Kurze Projektbeschreibung oder null",
+    "siteAddress": null
   }
 }
 
@@ -48,7 +60,9 @@ Regeln:
 - Extrahiere nur Informationen, die tatsächlich in der E-Mail stehen.
 - Setze Felder auf null, wenn die Information nicht vorhanden ist.
 - Der Projekttitel soll kurz und beschreibend sein (z.B. "Fassadenanstrich Einfamilienhaus").
-- Kundenname: bevorzuge den Firmennamen, falls vorhanden, sonst den Personennamen.`;
+- Kundenname: bevorzuge den Firmennamen, falls vorhanden, sonst den Personennamen.
+- Wenn die E-Mail nur eine einzige Adresse enthält, gehört sie zu "customer" und project.siteAddress bleibt null.
+- Setze project.siteAddress nur dann auf ein Objekt { "street", "zip", "city" }, wenn die E-Mail eine zweite, klar abweichende Baustellenadresse nennt (typisch: Hausverwaltung, Vermieter, Bauträger). Alle drei Felder müssen befüllt sein; sonst project.siteAddress = null.`;
 
 /**
  * Validate and clamp an LLM-extracted field: must be a string or null,
@@ -126,6 +140,23 @@ export class ExtractionService {
           ? (parsed.project as Record<string, unknown>)
           : {};
 
+      // siteAddress is all-or-none: a partial object (e.g. only street)
+      // collapses to null. The LLM is instructed to emit a full triple
+      // or null, but enforcing the rule here means callers do not need
+      // to revalidate, and an over-eager model that leaks "street only"
+      // does not propagate a malformed shape downstream.
+      const rawSite =
+        typeof project.siteAddress === 'object' && project.siteAddress !== null
+          ? (project.siteAddress as Record<string, unknown>)
+          : null;
+      const siteStreet = rawSite ? clampStr(rawSite.street, 255) : null;
+      const siteZip = rawSite ? clampStr(rawSite.zip, 20) : null;
+      const siteCity = rawSite ? clampStr(rawSite.city, 255) : null;
+      const siteAddress =
+        siteStreet && siteZip && siteCity
+          ? { street: siteStreet, zip: siteZip, city: siteCity }
+          : null;
+
       log.info({}, 'extraction_completed');
       return {
         customer: {
@@ -139,6 +170,7 @@ export class ExtractionService {
         project: {
           title: clampStr(project.title, 500),
           description: clampStr(project.description, 10000),
+          siteAddress,
         },
       };
     } catch (err) {

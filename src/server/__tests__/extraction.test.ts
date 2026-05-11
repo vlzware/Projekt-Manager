@@ -129,6 +129,7 @@ describe('ExtractionService', () => {
       expect(result.customer.city).toBeNull();
       expect(result.project.title).toBeNull();
       expect(result.project.description).toBeNull();
+      expect(result.project.siteAddress).toBeNull();
     });
 
     it('handles null customer/project objects gracefully', async () => {
@@ -138,6 +139,59 @@ describe('ExtractionService', () => {
 
       expect(result.customer.name).toBeNull();
       expect(result.project.title).toBeNull();
+      expect(result.project.siteAddress).toBeNull();
+    });
+
+    it('returns siteAddress as a full triple when the LLM emits all three fields', async () => {
+      globalThis.fetch = mockFetchResponse(
+        JSON.stringify({
+          customer: { name: 'Schmidt HV' },
+          project: {
+            title: 'Treppenhaus',
+            siteAddress: { street: 'Goethestr. 18', zip: '51103', city: 'Köln' },
+          },
+        }),
+      );
+
+      const result = await service.extract('test email', mockLog);
+
+      expect(result.project.siteAddress).toEqual({
+        street: 'Goethestr. 18',
+        zip: '51103',
+        city: 'Köln',
+      });
+    });
+
+    it('collapses a partial siteAddress (missing field) to null', async () => {
+      globalThis.fetch = mockFetchResponse(
+        JSON.stringify({
+          customer: { name: 'Test' },
+          project: {
+            title: 'X',
+            siteAddress: { street: 'Goethestr. 18', zip: null, city: 'Köln' },
+          },
+        }),
+      );
+
+      const result = await service.extract('test email', mockLog);
+
+      expect(result.project.siteAddress).toBeNull();
+    });
+
+    it('collapses a non-string siteAddress field to null', async () => {
+      globalThis.fetch = mockFetchResponse(
+        JSON.stringify({
+          customer: { name: 'Test' },
+          project: {
+            title: 'X',
+            siteAddress: { street: 'Goethestr. 18', zip: 51103, city: 'Köln' },
+          },
+        }),
+      );
+
+      const result = await service.extract('test email', mockLog);
+
+      expect(result.project.siteAddress).toBeNull();
     });
   });
 

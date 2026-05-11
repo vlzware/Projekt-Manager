@@ -480,6 +480,15 @@ export interface ExtractionResult {
   project: {
     title: string | null;
     description: string | null;
+    /**
+     * Baustellen-/Leistungsadresse — the project's work-site address,
+     * distinct from the customer's Rechnungsadresse (data-model.md
+     * §5.1). `null` means the email only mentioned one address (the
+     * common case — falls back to the customer's address by the
+     * standard ERP/CRM rule). A full triple is only emitted when the
+     * email mentions a separate site address.
+     */
+    siteAddress: Address | null;
   };
 }
 

@@ -42,6 +42,7 @@ export async function createProjectFromExtraction(data: {
   number: string;
   title: string;
   customerId: string;
+  siteAddress?: { street: string; zip: string; city: string } | null;
 }) {
   const result = await projectApi.create(data);
   if (!result.ok && result.sessionExpired) handleSessionExpired();

@@ -6,7 +6,7 @@
  * (customer first, then project with returned customerId). See ADR-0015/0016.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   extractFromEmail,
   searchCustomers,
@@ -18,8 +18,9 @@ import { useProjectManagementStore } from '@/state/projectManagementStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 import { STRINGS } from '@/config/strings';
-import type { Customer } from '@/domain/types';
+import type { Address, Customer } from '@/domain/types';
 import { MenuBackdrop } from '../common/MenuBackdrop';
+import { SiteAddressGroup, type SiteAddressGroupHandle } from '../management/SiteAddressGroup';
 import styles from '../management/Management.module.css';
 
 interface Props {
@@ -49,6 +50,14 @@ export function EmailExtractModal({ onClose }: Props) {
   // Project fields
   const [projectTitle, setProjectTitle] = useState('');
   const [projectNumber, setProjectNumber] = useState('');
+  // Extracted Baustelle (work-site address) seed for the SiteAddressGroup
+  // below. Set once when extraction completes; the group owns its own
+  // editable draft from that point on. Null seeds the group with toggle ON
+  // ("site = customer billing address"), matching the data-model.md §5.1
+  // fallback rule for emails that mention only one address.
+  const [extractedSiteAddress, setExtractedSiteAddress] = useState<Address | null>(null);
+  // AC-284 partial-fill validation hint, set by handleSave on a partial read.
+  const [siteAddressError, setSiteAddressError] = useState<string | null>(null);
 
   // Save state
   const [saving, setSaving] = useState(false);
@@ -68,6 +77,10 @@ export function EmailExtractModal({ onClose }: Props) {
   // by turning a fresh create into a replay against a stale id.
   const customerCreateIdRef = useRef<string>(crypto.randomUUID());
   const projectCreateIdRef = useRef<string>(crypto.randomUUID());
+
+  // Imperative handle on the Baustelle group — read at submit time so the
+  // group owns its draft and the parent never reaches into its internals.
+  const siteAddressRef = useRef<SiteAddressGroupHandle | null>(null);
 
   const fetchCustomers = useCustomerStore((s) => s.fetchCustomers);
   const fetchMgmtProjects = useProjectManagementStore((s) => s.fetchProjects);
@@ -92,7 +105,13 @@ export function EmailExtractModal({ onClose }: Props) {
   }, [matchSearch]);
 
   // When search is empty, suppress stale results without a synchronous setState.
-  const effectiveMatchResults = matchSearch.trim() ? matchResults : [];
+  // Memoized so downstream useMemo deps (customerAddressPreview) only invalidate
+  // when the underlying inputs actually change — a fresh `[]` literal each render
+  // would re-fire dependents on every keystroke.
+  const effectiveMatchResults = useMemo(
+    () => (matchSearch.trim() ? matchResults : []),
+    [matchSearch, matchResults],
+  );
 
   const handleExtract = async () => {
     if (extracting || !emailText.trim()) return;
@@ -117,12 +136,38 @@ export function EmailExtractModal({ onClose }: Props) {
     setCity(customer.city ?? '');
     setMatchSearch(customer.name ?? '');
     setProjectTitle(project.title ?? '');
+    setExtractedSiteAddress(project.siteAddress);
     setExtracted(true);
   };
+
+  // Customer address fed to SiteAddressGroup as the disabled-toggle-ON
+  // preview. Reflects either the matched existing customer's address or
+  // the operator's typed draft for a new customer. Reactive — switching
+  // matches or editing the typed address updates the preview live.
+  const customerAddressPreview = useMemo<Address | null>(() => {
+    if (selectedCustomerId) {
+      return effectiveMatchResults.find((c) => c.id === selectedCustomerId)?.address ?? null;
+    }
+    const s = street.trim();
+    const z = zip.trim();
+    const c = city.trim();
+    return s && z && c ? { street: s, zip: z, city: c } : null;
+  }, [selectedCustomerId, effectiveMatchResults, street, zip, city]);
 
   const handleSave = async () => {
     if (saving) return;
     setError(null);
+
+    // AC-284: all-or-none on the Baustelle group. Read the draft *before*
+    // any network call so a partial fill blocks the save without creating
+    // a stranded customer row from step 1.
+    const siteResult = siteAddressRef.current?.read() ?? { kind: 'valid' as const, value: null };
+    if (siteResult.kind === 'partial') {
+      setSiteAddressError(STRINGS.projects.siteAddressPartial);
+      return;
+    }
+    setSiteAddressError(null);
+
     setSaving(true);
 
     let custId = selectedCustomerId;
@@ -172,6 +217,7 @@ export function EmailExtractModal({ onClose }: Props) {
         number: num,
         title: projectTitle.trim(),
         customerId: custId,
+        siteAddress: siteResult.value,
       });
 
       if (!projResult.ok) {
@@ -407,6 +453,22 @@ export function EmailExtractModal({ onClose }: Props) {
                 data-testid="extract-project-title"
               />
             </div>
+
+            <SiteAddressGroup
+              initial={extractedSiteAddress}
+              customerAddress={customerAddressPreview}
+              disabled={saving}
+              handleRef={siteAddressRef}
+            />
+            {siteAddressError && (
+              <div
+                className={styles.fieldHintError}
+                data-testid="extract-project-site-address-error"
+                role="status"
+              >
+                {siteAddressError}
+              </div>
+            )}
 
             {error && <div className={styles.error}>{error}</div>}
 
