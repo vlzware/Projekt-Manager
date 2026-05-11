@@ -84,7 +84,15 @@ beforeEach(() => {
     authError: null,
     sessionChecked: true,
   });
-  useCustomerStore.setState({ customers: [], total: 0, loading: false, error: null });
+  useCustomerStore.setState({
+    customers: [],
+    total: 0,
+    loading: false,
+    error: null,
+    search: '',
+    sortBy: 'name',
+    sortDir: 'asc',
+  });
 });
 
 describe('CustomerManagement — create form UUID lifecycle', () => {

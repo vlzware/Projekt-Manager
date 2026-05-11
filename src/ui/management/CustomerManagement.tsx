@@ -20,9 +20,14 @@ export function CustomerManagement() {
   const customers = useCustomerStore((s) => s.customers);
   const loading = useCustomerStore((s) => s.loading);
   const error = useCustomerStore((s) => s.error);
+  const search = useCustomerStore((s) => s.search);
+  const sortBy = useCustomerStore((s) => s.sortBy);
+  const sortDir = useCustomerStore((s) => s.sortDir);
   const fetchCustomers = useCustomerStore((s) => s.fetchCustomers);
   const fetchCustomerDetail = useCustomerStore((s) => s.fetchCustomerDetail);
   const deleteCustomer = useCustomerStore((s) => s.deleteCustomer);
+  const setSearch = useCustomerStore((s) => s.setSearch);
+  const setSort = useCustomerStore((s) => s.setSort);
   const clearError = useCustomerStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
 
@@ -31,13 +36,11 @@ export function CustomerManagement() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [editCustomer, setEditCustomer] = useState<Customer | null>(null);
-  const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState<CustomerSortKey>('name');
-  const [sortDir, setSortDir] = useState<SortDirection>('asc');
 
-  // Mount fetch — uses the initial sort defaults; search starts empty.
+  // Mount fetch — uses whatever search/sort the store already holds
+  // (defaults to name asc + empty search on fresh load).
   useEffect(() => {
-    fetchCustomers({ sortBy: 'name', sortDir: 'asc' });
+    fetchCustomers();
   }, [fetchCustomers]);
 
   // Debounced search — skip the initial render (the mount effect above
@@ -47,10 +50,10 @@ export function CustomerManagement() {
     if (search === prevSearch.current) return;
     prevSearch.current = search;
     const timer = setTimeout(() => {
-      fetchCustomers({ search: search || undefined, sortBy, sortDir });
+      fetchCustomers();
     }, 300);
     return () => clearTimeout(timer);
-  }, [search, sortBy, sortDir, fetchCustomers]);
+  }, [search, fetchCustomers]);
 
   // Sort change refetches immediately — no debounce, the trigger is a
   // discrete click, not free-text input.
@@ -58,8 +61,8 @@ export function CustomerManagement() {
   useEffect(() => {
     if (prevSort.current.sortBy === sortBy && prevSort.current.sortDir === sortDir) return;
     prevSort.current = { sortBy, sortDir };
-    fetchCustomers({ search: search || undefined, sortBy, sortDir });
-  }, [sortBy, sortDir, search, fetchCustomers]);
+    fetchCustomers();
+  }, [sortBy, sortDir, fetchCustomers]);
 
   const handleDelete = async (e: React.MouseEvent, customer: Customer) => {
     e.stopPropagation();
@@ -99,8 +102,7 @@ export function CustomerManagement() {
   };
 
   const handleSort = (column: CustomerSortKey, direction: SortDirection) => {
-    setSortBy(column);
-    setSortDir(direction);
+    setSort(column, direction);
   };
 
   return (

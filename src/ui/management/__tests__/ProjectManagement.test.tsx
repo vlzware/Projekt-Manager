@@ -105,6 +105,12 @@ beforeEach(() => {
     customers: [],
     loading: false,
     error: null,
+    showArchived: false,
+    assignedWorkerIds: [],
+    includeUnassigned: false,
+    search: '',
+    sortBy: null,
+    sortDir: 'asc',
   });
 });
 

@@ -26,17 +26,6 @@ export type Worker = { userId: string; displayName: string };
 export type { ProjectSortKey, SortDir };
 
 /**
- * Options passed to `fetchProjects` on the management store. All
- * optional — calling with no args returns the (unsearched) list with
- * the historical default ordering (newest first).
- */
-export interface FetchProjectsOpts {
-  search?: string;
-  sortBy?: ProjectSortKey;
-  sortDir?: SortDir;
-}
-
-/**
  * Result of `createProject`. Mirrors `CreateCustomerOutcome` — see that
  * type's comment for the meaning of `'conflict'`.
  */
@@ -68,14 +57,27 @@ interface ProjectManagementState {
    */
   assignedWorkerIds: string[];
   includeUnassigned: boolean;
+  /**
+   * Toolbar search and column sort. Lifted into the store (same shape
+   * as `showArchived` / `assignedWorkerIds`) so background refetches —
+   * SSE `project_changed`, post-mutation refresh from `createProject`,
+   * etc. — keep the user's view intact instead of clobbering it with
+   * the default-ordered, unsearched list. `sortBy: null` means "no
+   * explicit sort"; the server returns its historical default order.
+   */
+  search: string;
+  sortBy: ProjectSortKey | null;
+  sortDir: SortDir;
 
-  fetchProjects: (opts?: FetchProjectsOpts) => Promise<void>;
+  fetchProjects: () => Promise<void>;
   searchProjects: (search: string) => Promise<Project[]>;
   fetchCustomers: () => Promise<void>;
   fetchWorkers: () => Promise<void>;
   setShowArchived: (v: boolean) => void;
   setAssignedWorkerIds: (ids: string[]) => void;
   setIncludeUnassigned: (v: boolean) => void;
+  setSearch: (v: string) => void;
+  setSort: (by: ProjectSortKey | null, dir: SortDir) => void;
   createProject: (data: {
     id?: string;
     number: string;
@@ -128,10 +130,13 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
   showArchived: false,
   assignedWorkerIds: [],
   includeUnassigned: false,
+  search: '',
+  sortBy: null,
+  sortDir: 'asc',
 
-  fetchProjects: async (opts?: FetchProjectsOpts) => {
+  fetchProjects: async () => {
     set({ loading: true, error: null });
-    const { showArchived, assignedWorkerIds, includeUnassigned } = get();
+    const { showArchived, assignedWorkerIds, includeUnassigned, search, sortBy, sortDir } = get();
     // Build the param bag from current state — omit undefined fields so
     // the server sees only what we actually meant to send.
     const params: {
@@ -142,12 +147,14 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
       sortBy?: ProjectSortKey;
       sortDir?: SortDir;
     } = {};
-    if (opts?.search) params.search = opts.search;
+    if (search) params.search = search;
     if (showArchived) params.includeArchived = true;
     if (assignedWorkerIds.length > 0) params.assignedWorkerIds = assignedWorkerIds;
     if (includeUnassigned) params.includeUnassigned = true;
-    if (opts?.sortBy) params.sortBy = opts.sortBy;
-    if (opts?.sortDir) params.sortDir = opts.sortDir;
+    if (sortBy) {
+      params.sortBy = sortBy;
+      params.sortDir = sortDir;
+    }
     const result = await projectApi.list(Object.keys(params).length ? params : undefined);
 
     if (!result.ok) {
@@ -172,6 +179,14 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
 
   setIncludeUnassigned: (v: boolean) => {
     set({ includeUnassigned: v });
+  },
+
+  setSearch: (v: string) => {
+    set({ search: v });
+  },
+
+  setSort: (by, dir) => {
+    set({ sortBy: by, sortDir: dir });
   },
 
   fetchWorkers: async () => {

@@ -17,16 +17,6 @@ import { useStorageUsageStore } from './storageUsageStore';
 export type { CustomerSortKey, SortDir };
 
 /**
- * Options passed to `fetchCustomers`. All optional — calling with no
- * args returns the unfiltered list in default (name ascending) order.
- */
-export interface FetchCustomersOpts {
-  search?: string;
-  sortBy?: CustomerSortKey;
-  sortDir?: SortDir;
-}
-
-/**
  * Result of `createCustomer`. `'ok'` — row committed (fresh or idempotent
  * replay). `'error'` — generic failure; caller keeps the form open. `'conflict'`
  * — server returned IDEMPOTENCY_CONFLICT; the same client id was already used
@@ -51,10 +41,22 @@ interface CustomerState {
   total: number;
   loading: boolean;
   error: string | null;
+  /**
+   * Toolbar search and column sort. Lifted into the store so background
+   * refetches — e.g. `createCustomer`'s post-commit refresh — keep the
+   * user's view intact instead of resetting to default-order unfiltered.
+   * `sortBy` defaults to `'name'` and `sortDir` to `'asc'` to match the
+   * baseline established at mount.
+   */
+  search: string;
+  sortBy: CustomerSortKey;
+  sortDir: SortDir;
 
-  fetchCustomers: (opts?: FetchCustomersOpts) => Promise<void>;
+  fetchCustomers: () => Promise<void>;
   fetchCustomerDetail: (id: string) => Promise<CustomerDetail | null>;
   searchCustomers: (search: string) => Promise<Customer[]>;
+  setSearch: (v: string) => void;
+  setSort: (by: CustomerSortKey, dir: SortDir) => void;
   createCustomer: (data: {
     id?: string;
     name: string;
@@ -82,13 +84,19 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   total: 0,
   loading: false,
   error: null,
+  search: '',
+  sortBy: 'name',
+  sortDir: 'asc',
 
-  fetchCustomers: async (opts?: FetchCustomersOpts) => {
+  fetchCustomers: async () => {
     set({ loading: true, error: null });
+    const { search, sortBy, sortDir } = get();
     const params: { search?: string; sortBy?: CustomerSortKey; sortDir?: SortDir } = {};
-    if (opts?.search) params.search = opts.search;
-    if (opts?.sortBy) params.sortBy = opts.sortBy;
-    if (opts?.sortDir) params.sortDir = opts.sortDir;
+    if (search) params.search = search;
+    if (sortBy) {
+      params.sortBy = sortBy;
+      params.sortDir = sortDir;
+    }
     const result = await customerApi.list(Object.keys(params).length ? params : undefined);
 
     if (!result.ok) {
@@ -211,6 +219,14 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
       return null;
     }
     return result.data;
+  },
+
+  setSearch: (v: string) => {
+    set({ search: v });
+  },
+
+  setSort: (by, dir) => {
+    set({ sortBy: by, sortDir: dir });
   },
 
   clearError: () => set({ error: null }),

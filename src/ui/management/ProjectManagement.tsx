@@ -29,18 +29,20 @@ export function ProjectManagement() {
   const showArchived = useProjectManagementStore((s) => s.showArchived);
   const assignedWorkerIds = useProjectManagementStore((s) => s.assignedWorkerIds);
   const includeUnassigned = useProjectManagementStore((s) => s.includeUnassigned);
+  const search = useProjectManagementStore((s) => s.search);
+  const sortBy = useProjectManagementStore((s) => s.sortBy);
+  const sortDir = useProjectManagementStore((s) => s.sortDir);
   const fetchProjects = useProjectManagementStore((s) => s.fetchProjects);
   const fetchCustomers = useProjectManagementStore((s) => s.fetchCustomers);
   const setShowArchived = useProjectManagementStore((s) => s.setShowArchived);
+  const setSearch = useProjectManagementStore((s) => s.setSearch);
+  const setSort = useProjectManagementStore((s) => s.setSort);
   const deleteProject = useProjectManagementStore((s) => s.deleteProject);
   const purgeProject = useProjectManagementStore((s) => s.purgeProject);
   const clearError = useProjectManagementStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
   const navigate = useNavigate();
 
-  const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState<ProjectSortKey | null>(null);
-  const [sortDir, setSortDir] = useState<SortDirection>('asc');
   const [formOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
@@ -48,24 +50,15 @@ export function ProjectManagement() {
     fetchCustomers();
   }, [fetchProjects, fetchCustomers]);
 
-  const buildFetchOpts = () => ({
-    search: search || undefined,
-    sortBy: sortBy ?? undefined,
-    sortDir: sortBy ? sortDir : undefined,
-  });
-
   // Debounced search — skip initial render (fetchProjects above handles it).
   const prevSearch = useRef(search);
   useEffect(() => {
     if (search === prevSearch.current) return;
     prevSearch.current = search;
     const timer = setTimeout(() => {
-      fetchProjects(buildFetchOpts());
+      fetchProjects();
     }, 300);
     return () => clearTimeout(timer);
-    // buildFetchOpts is intentionally not memoized — it reads current
-    // sortBy/sortDir at fire time so a sort change while typing applies.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, fetchProjects]);
 
   // Sort change — no debounce, click is discrete.
@@ -73,8 +66,7 @@ export function ProjectManagement() {
   useEffect(() => {
     if (prevSort.current.sortBy === sortBy && prevSort.current.sortDir === sortDir) return;
     prevSort.current = { sortBy, sortDir };
-    fetchProjects(buildFetchOpts());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchProjects();
   }, [sortBy, sortDir, fetchProjects]);
 
   // Refetch when showArchived toggles. The store reads `showArchived` from
@@ -84,8 +76,7 @@ export function ProjectManagement() {
   useEffect(() => {
     if (showArchived === prevShowArchived.current) return;
     prevShowArchived.current = showArchived;
-    fetchProjects(buildFetchOpts());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchProjects();
   }, [showArchived, fetchProjects]);
 
   // Refetch when the Mitarbeiter (assignee) filter changes. Same shape
@@ -101,13 +92,11 @@ export function ProjectManagement() {
     if (!idsChanged && !flagChanged) return;
     prevAssignedWorkerIds.current = assignedWorkerIds;
     prevIncludeUnassigned.current = includeUnassigned;
-    fetchProjects(buildFetchOpts());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchProjects();
   }, [assignedWorkerIds, includeUnassigned, fetchProjects]);
 
   const handleSort = (column: ProjectSortKey, direction: SortDirection) => {
-    setSortBy(column);
-    setSortDir(direction);
+    setSort(column, direction);
   };
 
   const handleArchive = async (e: React.MouseEvent, project: Project) => {
