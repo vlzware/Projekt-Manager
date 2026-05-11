@@ -120,9 +120,17 @@ test.describe('AC-202: Stummschalten reflects pushMuted and persists', () => {
 
     await toggle.click();
 
+    // AC-202 contract — two halves to pin:
+    //  1. The optimistic flip is observable BEFORE the server responds,
+    //     so the user gets immediate feedback.
+    //  2. The flip reverts after the 500 lands.
+    // The route handler above does not artificially delay the 500; we
+    // rely on the inherent CDP round-trip latency (handler in Node,
+    // toggle state in the browser) plus React's synchronous event-
+    // handler state-update to make the optimistic state observable.
+    await expect.poll(async () => toggle.isChecked(), { timeout: 2000 }).toBe(!before);
+
     // After the 500 response the toggle must revert to its prior state.
-    await expect
-      .poll(async () => toggle.isChecked())
-      .toBe(before);
+    await expect.poll(async () => toggle.isChecked()).toBe(before);
   });
 });

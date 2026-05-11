@@ -173,23 +173,12 @@ test.describe('AC-121: permission-based UI visibility', () => {
       // worker and bookkeeper see brand text alone. Desktop viewport
       // (default 1920×1080 in this project) — phones hide the Footer
       // entirely via the existing footer media query, and that branch
-      // is unobservable without mobile emulation.
+      // is unobservable without mobile emulation. The tooltip's plaintext
+      // labels (Sichtbar / Im Papierkorb) are pinned at unit level by
+      // `src/ui/layout/__tests__/Footer.test.tsx`.
       await expect(page.getByTestId('storage-usage-badge')).toHaveCount(
         c.canExportData ? 1 : 0,
       );
-      if (c.canExportData) {
-        // Hover reveals a tooltip carrying the two-bucket plaintext
-        // breakdown — the same labels DatenView §8.11.3 pins inline.
-        // Touch devices have no Footer (and thus no tooltip); the
-        // desktop project covers the visible-on-hover branch.
-        const badge = page.getByTestId('storage-usage-badge');
-        await expect(badge.getByTestId('storage-usage-badge-value')).toBeVisible();
-        await badge.hover();
-        const tooltip = page.getByTestId('storage-usage-badge-tooltip');
-        await expect(tooltip).toBeVisible();
-        await expect(tooltip).toContainText('Sichtbar');
-        await expect(tooltip).toContainText('Im Papierkorb');
-      }
 
       // -- Kanban view: transition controls on cards and detail panel ----
       // Only reachable when Kanban is in the role's nav matrix. Roles

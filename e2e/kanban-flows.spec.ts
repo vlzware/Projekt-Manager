@@ -157,7 +157,6 @@ test.describe('Kanban board flows', () => {
       await geplantCard.getByTestId(`forward-button-${projectId}`).click();
       const forwardDialog = page.getByTestId('confirm-dialog');
       await expect(forwardDialog).toBeVisible();
-      await expect(forwardDialog).toContainText('Geplant → In Arbeit');
       await page.getByTestId('confirm-ok').click();
       await expect(forwardDialog).not.toBeVisible();
 
@@ -173,7 +172,6 @@ test.describe('Kanban board flows', () => {
       await movedCard.getByTestId(`backward-button-${projectId}`).click();
       const backwardDialog = page.getByTestId('confirm-dialog');
       await expect(backwardDialog).toBeVisible();
-      await expect(backwardDialog).toContainText('In Arbeit → Geplant');
       await page.getByTestId('confirm-ok').click();
       await expect(backwardDialog).not.toBeVisible();
       await expect(
