@@ -361,6 +361,24 @@ describe('Project List Filters', () => {
       const occurrences = ids.filter((id) => id === projectAssignedToBoth).length;
       expect(occurrences).toBe(1);
     });
+
+    // The route schema enforces UUID shape on assignedWorkerIds via
+    // `oneOf` so a malformed value short-circuits to 422 at the route
+    // boundary rather than reaching PG and surfacing as SQLSTATE 22P02
+    // → 500. The body-level POST/PATCH schemas have always required
+    // `format: 'uuid'`; the list endpoint now matches.
+    it('rejects non-UUID assignedWorkerIds with 422', async () => {
+      const res = await authGet(token, '/api/projects?assignedWorkerIds=not-a-uuid&limit=10');
+      expect(res.statusCode).toBe(422);
+    });
+
+    it('rejects mixed valid + invalid assignedWorkerIds with 422', async () => {
+      const res = await authGet(
+        token,
+        `/api/projects?assignedWorkerIds=${worker1Id}&assignedWorkerIds=not-a-uuid&limit=10`,
+      );
+      expect(res.statusCode).toBe(422);
+    });
   });
 
   // ---------------------------------------------------------------

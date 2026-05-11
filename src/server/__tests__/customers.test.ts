@@ -445,5 +445,49 @@ describe('Customer CRUD Operations', () => {
       const res = await authGet(ownerToken, '/api/customers?sortBy=name&sortDir=sideways');
       expect(res.statusCode).toBe(422);
     });
+
+    // `customers.name` is notNull but not unique, so ties on the primary
+    // sort column would otherwise leave pagination order to the planner.
+    // The repo appends `, id ASC` as a stable tiebreaker.
+    it('produces deterministic pagination when name ties', async () => {
+      const tag = `SORT-TIE-${Date.now()}`;
+      const duplicateName = `${tag}-Same`;
+      const createdIds: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const res = await authPost(ownerToken, '/api/customers', { name: duplicateName });
+        expect(res.statusCode).toBe(201);
+        createdIds.push(res.json().id as string);
+      }
+
+      const page1 = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc&limit=1&offset=0`,
+      );
+      const page2 = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc&limit=1&offset=1`,
+      );
+      const page3 = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc&limit=1&offset=2`,
+      );
+
+      const ids = [
+        page1.json().customers[0].id,
+        page2.json().customers[0].id,
+        page3.json().customers[0].id,
+      ];
+      expect(new Set(ids).size).toBe(3);
+      const sortedById = [...createdIds].sort();
+      expect(ids).toEqual(sortedById);
+
+      // A second pass over the same query returns the same order — the
+      // tiebreaker is stable, not just deterministic for one snapshot.
+      const repeat1 = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc&limit=1&offset=0`,
+      );
+      expect(repeat1.json().customers[0].id).toBe(ids[0]);
+    });
   });
 });

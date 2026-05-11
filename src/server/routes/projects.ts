@@ -63,11 +63,18 @@ export function projectRoutes(db: Database) {
               hasNoDates: { type: 'string' },
               customerId: { type: 'string', format: 'uuid' },
               includeArchived: { type: 'string' },
-              // Mitarbeiter filter (assignee). Accepts a single uuid or an
-              // array of uuids — Fastify's querystring parser handles both
-              // `?assignedWorkerIds=u1` and `?assignedWorkerIds=u1&assignedWorkerIds=u2`
-              // shapes (matches the existing `status` filter convention).
-              assignedWorkerIds: {},
+              // Mitarbeiter filter (assignee). Modelled as an array of
+              // UUIDs; Fastify's querystring Ajv runs `coerceTypes: 'array'`
+              // so a single `?assignedWorkerIds=u1` is coerced to `[u1]`
+              // and `?assignedWorkerIds=u1&assignedWorkerIds=u2` arrives
+              // as `[u1, u2]`. `items.format: 'uuid'` enforces the shape
+              // at the route boundary so malformed input returns 422
+              // VALIDATION_ERROR up front rather than a SQLSTATE 22P02
+              // → 500 from the DB driver.
+              assignedWorkerIds: {
+                type: 'array',
+                items: { type: 'string', format: 'uuid' },
+              },
               includeUnassigned: { type: 'string' },
               sortBy: { type: 'string', enum: [...PROJECT_SORT_KEYS] },
               sortDir: { type: 'string', enum: ['asc', 'desc'] },
@@ -85,21 +92,15 @@ export function projectRoutes(db: Database) {
           hasNoDates?: string;
           customerId?: string;
           includeArchived?: string;
-          assignedWorkerIds?: string | string[];
+          assignedWorkerIds?: string[];
           includeUnassigned?: string;
           sortBy?: ProjectSortKey;
           sortDir?: 'asc' | 'desc';
         };
-        // Normalise assignedWorkerIds into a string[] regardless of whether
-        // Fastify gave us a single string (one query param) or an array
-        // (repeated param). Empty/undefined → omit so the repo treats it
-        // as "no worker filter".
-        const workerIds =
-          query.assignedWorkerIds === undefined
-            ? undefined
-            : Array.isArray(query.assignedWorkerIds)
-              ? query.assignedWorkerIds
-              : [query.assignedWorkerIds];
+        // Schema-coerced to `string[]` regardless of whether Fastify saw
+        // one query param or several. Empty/undefined → omit so the repo
+        // treats it as "no worker filter".
+        const workerIds = query.assignedWorkerIds;
         const result = await crudService.listProjects(request.user!, {
           offset: query.offset,
           limit: query.limit,

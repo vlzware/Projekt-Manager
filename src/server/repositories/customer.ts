@@ -40,18 +40,23 @@ export type CustomerSortKey = (typeof CUSTOMER_SORT_KEYS)[number];
  */
 function customerOrderBy(sortBy: CustomerSortKey, sortDir: 'asc' | 'desc'): SQL {
   const dir = sql.raw(sortDir === 'desc' ? 'DESC' : 'ASC');
-  const tiebreak = sql`, ${customers.name} ASC`;
+  // Non-primary clauses tiebreak on name; the name branch is its own
+  // primary, so it falls through to `id` instead — `customers.name` is
+  // notNull but not unique, so two rows with identical names would
+  // otherwise drift between paginated requests.
+  const tiebreakByName = sql`, ${customers.name} ASC, ${customers.id} ASC`;
+  const tiebreakById = sql`, ${customers.id} ASC`;
   switch (sortBy) {
     case 'name':
-      return sql`${customers.name} ${dir}`;
+      return sql`${customers.name} ${dir}${tiebreakById}`;
     case 'phone':
-      return sql`${customers.phone} ${dir} NULLS LAST${tiebreak}`;
+      return sql`${customers.phone} ${dir} NULLS LAST${tiebreakByName}`;
     case 'email':
-      return sql`${customers.email} ${dir} NULLS LAST${tiebreak}`;
+      return sql`${customers.email} ${dir} NULLS LAST${tiebreakByName}`;
     case 'city':
       // `address` is a JSONB column; `->>'city'` extracts city as text.
       // Whole address can be NULL, hence NULLS LAST.
-      return sql`(${customers.address}->>'city') ${dir} NULLS LAST${tiebreak}`;
+      return sql`(${customers.address}->>'city') ${dir} NULLS LAST${tiebreakByName}`;
   }
 }
 
