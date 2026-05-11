@@ -26,10 +26,17 @@ import styles from './ProjectDetail.module.css';
 interface Props {
   projectId: string;
   initial: Address | null;
+  /**
+   * Customer's billing address — surfaced through the group so the
+   * disabled inputs visually reflect the address the project will
+   * inherit when the toggle is ON. `null` when the customer has no
+   * stored address.
+   */
+  customerAddress: Address | null;
   onClose: () => void;
 }
 
-export function SiteAddressEditModal({ projectId, initial, onClose }: Props) {
+export function SiteAddressEditModal({ projectId, initial, customerAddress, onClose }: Props) {
   const updateProject = useProjectManagementStore((s) => s.updateProject);
 
   const handleRef = useRef<SiteAddressGroupHandle | null>(null);
@@ -68,7 +75,12 @@ export function SiteAddressEditModal({ projectId, initial, onClose }: Props) {
       >
         <h2 className={managementStyles.formTitle}>{STRINGS.projects.siteAddressLabel}</h2>
 
-        <SiteAddressGroup initial={initial} disabled={submitting} handleRef={handleRef} />
+        <SiteAddressGroup
+          initial={initial}
+          customerAddress={customerAddress}
+          disabled={submitting}
+          handleRef={handleRef}
+        />
 
         {error && (
           <div

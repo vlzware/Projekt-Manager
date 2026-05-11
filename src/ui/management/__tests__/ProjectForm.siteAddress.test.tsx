@@ -603,3 +603,178 @@ describe('ProjectCreateForm — Baustelle all-or-none validation (AC-284)', () =
     expect(screen.queryByTestId('project-site-address-error')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------
+// Visual auto-fill — when the toggle is ON the disabled inputs show the
+// customer's billing address as a read-only preview of what the project
+// will inherit. Submit shape is unaffected (still `siteAddress: null`)
+// since the fields are never the source of truth in the ON state.
+// ---------------------------------------------------------------------
+describe('ProjectCreateForm — Baustelle visual auto-fill (toggle ON)', () => {
+  it('selecting a customer with an address fills the disabled inputs with that address', async () => {
+    await openCreateForm();
+    await fillRequiredCreateFields();
+
+    const street = screen.getByTestId('project-site-street-input') as HTMLInputElement;
+    const zip = screen.getByTestId('project-site-zip-input') as HTMLInputElement;
+    const city = screen.getByTestId('project-site-city-input') as HTMLInputElement;
+
+    expect(street.disabled).toBe(true);
+    expect(zip.disabled).toBe(true);
+    expect(city.disabled).toBe(true);
+
+    expect(street.value).toBe(SEED_CUSTOMER.address!.street);
+    expect(zip.value).toBe(SEED_CUSTOMER.address!.zip);
+    expect(city.value).toBe(SEED_CUSTOMER.address!.city);
+  });
+
+  it('switching to a different customer updates the displayed address reactively', async () => {
+    const otherCustomer: Customer = {
+      ...SEED_CUSTOMER,
+      id: 'c-2',
+      name: 'Bauträger Mitte',
+      address: { street: 'Marktstr. 5', zip: '10117', city: 'Berlin' },
+    };
+    // Override the API mock too — the management view re-fetches on
+    // mount and would otherwise overwrite the seeded store with the
+    // beforeEach default of just SEED_CUSTOMER.
+    customerListMock.mockResolvedValue(ok({ customers: [SEED_CUSTOMER, otherCustomer], total: 2 }));
+    useProjectManagementStore.setState({
+      projects: [],
+      customers: [SEED_CUSTOMER, otherCustomer],
+      loading: false,
+      error: null,
+      showArchived: false,
+    });
+
+    await openCreateForm();
+    // Pick the seeded customer first.
+    await userEvent.click(screen.getByTestId('project-customer-select').querySelector('input')!);
+    await userEvent.click(await screen.findByText(SEED_CUSTOMER.name));
+    expect((screen.getByTestId('project-site-street-input') as HTMLInputElement).value).toBe(
+      SEED_CUSTOMER.address!.street,
+    );
+
+    // Switch to the other customer — fields must follow.
+    await userEvent.click(screen.getByTestId('project-customer-select').querySelector('input')!);
+    await userEvent.click(await screen.findByText(otherCustomer.name));
+
+    expect((screen.getByTestId('project-site-street-input') as HTMLInputElement).value).toBe(
+      otherCustomer.address!.street,
+    );
+    expect((screen.getByTestId('project-site-zip-input') as HTMLInputElement).value).toBe(
+      otherCustomer.address!.zip,
+    );
+    expect((screen.getByTestId('project-site-city-input') as HTMLInputElement).value).toBe(
+      otherCustomer.address!.city,
+    );
+  });
+
+  it('submit with toggle ON still sends siteAddress: null even though fields show customer address', async () => {
+    await openCreateForm();
+    await fillRequiredCreateFields();
+
+    // Sanity: the disabled inputs visibly carry the customer's address.
+    expect((screen.getByTestId('project-site-street-input') as HTMLInputElement).value).toBe(
+      SEED_CUSTOMER.address!.street,
+    );
+
+    await userEvent.click(screen.getByTestId('project-submit'));
+
+    await waitFor(() => {
+      expect(projectCreateMock).toHaveBeenCalledTimes(1);
+    });
+    const [body] = projectCreateMock.mock.calls[0] as unknown as [Record<string, unknown>];
+    // The visual fill is presentation only — the submit body still
+    // inherits via `null`, not by copying the customer address.
+    expect(body.siteAddress).toBeNull();
+  });
+
+  it('customer with null address leaves the disabled inputs empty', async () => {
+    const noAddressCustomer: Customer = {
+      ...SEED_CUSTOMER,
+      id: 'c-no-addr',
+      name: 'Kunde ohne Adresse',
+      address: null,
+    };
+    customerListMock.mockResolvedValue(ok({ customers: [noAddressCustomer], total: 1 }));
+    useProjectManagementStore.setState({
+      projects: [],
+      customers: [noAddressCustomer],
+      loading: false,
+      error: null,
+      showArchived: false,
+    });
+
+    await openCreateForm();
+    await userEvent.click(screen.getByTestId('project-customer-select').querySelector('input')!);
+    await userEvent.click(await screen.findByText(noAddressCustomer.name));
+
+    expect((screen.getByTestId('project-site-street-input') as HTMLInputElement).value).toBe('');
+    expect((screen.getByTestId('project-site-zip-input') as HTMLInputElement).value).toBe('');
+    expect((screen.getByTestId('project-site-city-input') as HTMLInputElement).value).toBe('');
+  });
+});
+
+describe('SiteAddressEditModal — Baustelle visual auto-fill (toggle ON)', () => {
+  function renderDetailAt(project: Project) {
+    projectGetMock.mockResolvedValue(ok(project));
+    useProjectStore.setState({
+      projects: [project],
+      mutationInFlight: {},
+      mutationError: null,
+    });
+    return render(
+      <MemoryRouter initialEntries={[`/projects/${project.id}`]}>
+        <Routes>
+          <Route path="/projects/:id" element={<ProjectDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it('shows the customer address in the disabled inputs when project.siteAddress is null', async () => {
+    renderDetailAt(makeProject({ siteAddress: null }));
+
+    await userEvent.click(await screen.findByTestId('project-detail-site-address-edit'));
+    await screen.findByTestId('site-address-modal');
+
+    const street = screen.getByTestId('project-site-street-input') as HTMLInputElement;
+    const zip = screen.getByTestId('project-site-zip-input') as HTMLInputElement;
+    const city = screen.getByTestId('project-site-city-input') as HTMLInputElement;
+
+    expect(street.disabled).toBe(true);
+    expect(street.value).toBe(SEED_CUSTOMER.address!.street);
+    expect(zip.value).toBe(SEED_CUSTOMER.address!.zip);
+    expect(city.value).toBe(SEED_CUSTOMER.address!.city);
+  });
+
+  it('toggling ON over a stored siteAddress shows customer address (not stored), submit sends null', async () => {
+    const stored = { street: 'Goethestr. 18', zip: '51103', city: 'Köln' };
+    renderDetailAt(makeProject({ siteAddress: stored }));
+
+    await userEvent.click(await screen.findByTestId('project-detail-site-address-edit'));
+    await screen.findByTestId('site-address-modal');
+
+    // Initial: OFF + populated with stored.
+    const street = screen.getByTestId('project-site-street-input') as HTMLInputElement;
+    expect(street.value).toBe(stored.street);
+
+    // Flip ON — display must swap to the customer's address.
+    await userEvent.click(screen.getByLabelText(STRINGS.projects.siteAddressIdenticalToggle));
+    expect(street.disabled).toBe(true);
+    expect(street.value).toBe(SEED_CUSTOMER.address!.street);
+
+    // Save — submit body carries `siteAddress: null` regardless of the
+    // visible value, clearing the stored override.
+    await userEvent.click(screen.getByTestId('project-site-save'));
+    await waitFor(() => {
+      expect(projectUpdateMock).toHaveBeenCalledTimes(1);
+    });
+    const [, body] = projectUpdateMock.mock.calls[0] as unknown as [
+      string,
+      Record<string, unknown>,
+    ];
+    expect(body.siteAddress).toBeNull();
+  });
+});

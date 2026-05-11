@@ -191,7 +191,12 @@ export function ProjectCreateForm({ onClose }: Props) {
           </div>
         </div>
 
-        <SiteAddressGroup initial={null} disabled={submitting} handleRef={siteAddressRef} />
+        <SiteAddressGroup
+          initial={null}
+          customerAddress={customers.find((c) => c.id === customerId)?.address ?? null}
+          disabled={submitting}
+          handleRef={siteAddressRef}
+        />
         {siteAddressError && (
           <div
             className={styles.fieldHintError}

@@ -571,6 +571,7 @@ export function ProjectDetailPage() {
         <SiteAddressEditModal
           projectId={project.id}
           initial={project.siteAddress}
+          customerAddress={project.customer?.address ?? null}
           onClose={() => setSiteAddressModalOpen(false)}
         />
       )}

@@ -9,11 +9,14 @@
  * builds the submit body; commit is the parent's call.
  *
  * Toggle behavior pinned by AC-281:
- *   - ON  : inputs disabled and visually muted; submit body's
- *           `siteAddress` is `null`.
- *   - OFF : inputs enabled; submit body's `siteAddress` is
- *           `{ street, zip, city }`. Switching back to ON discards
- *           the typed values without dispatching anything.
+ *   - ON  : inputs disabled and visually muted; their displayed values
+ *           mirror `customerAddress` so the operator can see which
+ *           address the project will inherit. The submit body's
+ *           `siteAddress` is `null` regardless of what is shown.
+ *   - OFF : inputs enabled and bound to the operator's draft; submit
+ *           body's `siteAddress` is `{ street, zip, city }`. Switching
+ *           back to ON discards the typed values without dispatching
+ *           anything.
  */
 
 import { useImperativeHandle, useState, type Ref } from 'react';
@@ -49,18 +52,33 @@ export interface SiteAddressGroupHandle {
 interface Props {
   /**
    * Initial value seeded into the draft. `null` → toggle ON, inputs
-   * empty + disabled. Non-null → toggle OFF, inputs pre-filled. Used
-   * for both the create branch (always `null`) and the edit branch
-   * (reflects the loaded `project.siteAddress`).
+   * disabled and showing the customer's address. Non-null → toggle
+   * OFF, inputs pre-filled with the stored value. Used for both the
+   * create branch (always `null`) and the edit branch (reflects the
+   * loaded `project.siteAddress`).
    */
   initial: Address | null;
+  /**
+   * Customer's billing address, used as the visual fill for the
+   * disabled inputs when the toggle is ON. `null` (or absent) keeps
+   * the inputs empty — e.g. before the operator has picked a customer
+   * on the create form, or for a customer with no stored address.
+   * Reactive: changing this prop updates the displayed values while
+   * the toggle remains ON.
+   */
+  customerAddress?: Address | null;
   /** External lock (e.g. submit-in-flight). Independent of toggle ON. */
   disabled?: boolean;
   /** Imperative handle so parent reads the draft at submit time. */
   handleRef?: Ref<SiteAddressGroupHandle>;
 }
 
-export function SiteAddressGroup({ initial, disabled = false, handleRef }: Props) {
+export function SiteAddressGroup({
+  initial,
+  customerAddress = null,
+  disabled = false,
+  handleRef,
+}: Props) {
   // Initial toggle state derives from the seed: null ↔ ON.
   const [identical, setIdentical] = useState<boolean>(initial === null);
   // Inputs always carry the most recent typed value, even when the
@@ -91,6 +109,14 @@ export function SiteAddressGroup({ initial, disabled = false, handleRef }: Props
   );
 
   const inputsDisabled = disabled || identical;
+
+  // While the toggle is ON, the disabled inputs display the customer's
+  // address as a read-only preview of what the project will inherit.
+  // The underlying draft state is untouched so OFF reverts to whatever
+  // the operator had typed (or empty after the AC-281 OFF→ON wipe).
+  const displayedStreet = identical ? (customerAddress?.street ?? '') : street;
+  const displayedZip = identical ? (customerAddress?.zip ?? '') : zip;
+  const displayedCity = identical ? (customerAddress?.city ?? '') : city;
 
   return (
     <fieldset className={styles.formGroup}>
@@ -124,7 +150,7 @@ export function SiteAddressGroup({ initial, disabled = false, handleRef }: Props
         <input
           id="project-site-street-input"
           className={styles.formInput}
-          value={street}
+          value={displayedStreet}
           onChange={(e) => setStreet(e.target.value)}
           disabled={inputsDisabled}
           data-testid="project-site-street-input"
@@ -138,7 +164,7 @@ export function SiteAddressGroup({ initial, disabled = false, handleRef }: Props
         <input
           id="project-site-zip-input"
           className={styles.formInput}
-          value={zip}
+          value={displayedZip}
           onChange={(e) => setZip(e.target.value)}
           disabled={inputsDisabled}
           data-testid="project-site-zip-input"
@@ -152,7 +178,7 @@ export function SiteAddressGroup({ initial, disabled = false, handleRef }: Props
         <input
           id="project-site-city-input"
           className={styles.formInput}
-          value={city}
+          value={displayedCity}
           onChange={(e) => setCity(e.target.value)}
           disabled={inputsDisabled}
           data-testid="project-site-city-input"
