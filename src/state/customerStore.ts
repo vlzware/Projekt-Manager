@@ -16,6 +16,13 @@ import { useStorageUsageStore } from './storageUsageStore';
 // ESLint `no-restricted-imports`).
 export type { CustomerSortKey, SortDir };
 
+// Monotonic sequence for fetchCustomers. Each call captures a fresh
+// number; if a newer call has since been issued the older response is
+// dropped instead of overwriting the user's current list. Guards against
+// (a) two debounced searches racing on the wire, and (b) an SSE-driven
+// refetch overlapping with a user-triggered one.
+let customerFetchSeq = 0;
+
 /**
  * Result of `createCustomer`. `'ok'` — row committed (fresh or idempotent
  * replay). `'error'` — generic failure; caller keeps the form open. `'conflict'`
@@ -89,15 +96,20 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   sortDir: 'asc',
 
   fetchCustomers: async () => {
+    const seq = ++customerFetchSeq;
     set({ loading: true, error: null });
     const { search, sortBy, sortDir } = get();
-    const params: { search?: string; sortBy?: CustomerSortKey; sortDir?: SortDir } = {};
+    const params: { search?: string; sortBy?: CustomerSortKey; sortDir?: SortDir } = {
+      sortBy,
+      sortDir,
+    };
     if (search) params.search = search;
-    if (sortBy) {
-      params.sortBy = sortBy;
-      params.sortDir = sortDir;
-    }
-    const result = await customerApi.list(Object.keys(params).length ? params : undefined);
+    const result = await customerApi.list(params);
+
+    // Drop superseded responses — including the error path, so a slow-
+    // failing old request can't flash an error after the user has moved
+    // on to a fresh search/sort.
+    if (seq !== customerFetchSeq) return;
 
     if (!result.ok) {
       if (result.sessionExpired) {

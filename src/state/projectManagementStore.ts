@@ -25,6 +25,10 @@ export type Worker = { userId: string; displayName: string };
 // ESLint `no-restricted-imports`).
 export type { ProjectSortKey, SortDir };
 
+// Monotonic sequence for fetchProjects. Mirrors customerStore — see that
+// store's `customerFetchSeq` comment for the rationale.
+let projectFetchSeq = 0;
+
 /**
  * Result of `createProject`. Mirrors `CreateCustomerOutcome` — see that
  * type's comment for the meaning of `'conflict'`.
@@ -135,6 +139,7 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
   sortDir: 'asc',
 
   fetchProjects: async () => {
+    const seq = ++projectFetchSeq;
     set({ loading: true, error: null });
     const { showArchived, assignedWorkerIds, includeUnassigned, search, sortBy, sortDir } = get();
     // Build the param bag from current state — omit undefined fields so
@@ -156,6 +161,9 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
       params.sortDir = sortDir;
     }
     const result = await projectApi.list(Object.keys(params).length ? params : undefined);
+
+    // Drop superseded responses — see customerStore.fetchCustomers.
+    if (seq !== projectFetchSeq) return;
 
     if (!result.ok) {
       if (result.sessionExpired) {
