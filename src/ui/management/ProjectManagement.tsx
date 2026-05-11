@@ -79,15 +79,16 @@ export function ProjectManagement() {
     fetchProjects();
   }, [showArchived, fetchProjects]);
 
-  // Refetch when the Mitarbeiter (assignee) filter changes. Same shape
-  // as the showArchived effect — store owns the selection, the effect
-  // just nudges the list. Compare via JSON for the array (small N).
+  // Refetch when the Mitarbeiter (assignee) filter changes. The selection
+  // is a SET — reordering the same ids must not refetch. Compare by
+  // Set membership so [a,b] and [b,a] are equivalent.
   const prevAssignedWorkerIds = useRef(assignedWorkerIds);
   const prevIncludeUnassigned = useRef(includeUnassigned);
   useEffect(() => {
+    const prevSet = new Set(prevAssignedWorkerIds.current);
     const idsChanged =
       prevAssignedWorkerIds.current.length !== assignedWorkerIds.length ||
-      prevAssignedWorkerIds.current.some((id, i) => id !== assignedWorkerIds[i]);
+      assignedWorkerIds.some((id) => !prevSet.has(id));
     const flagChanged = prevIncludeUnassigned.current !== includeUnassigned;
     if (!idsChanged && !flagChanged) return;
     prevAssignedWorkerIds.current = assignedWorkerIds;

@@ -103,7 +103,11 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
       sortBy,
       sortDir,
     };
-    if (search) params.search = search;
+    // Trim before forwarding — preserves the user's typed text in the
+    // input while keeping whitespace-only queries off the wire (mirrors
+    // `searchCustomers`).
+    const trimmedSearch = search.trim();
+    if (trimmedSearch) params.search = trimmedSearch;
     const result = await customerApi.list(params);
 
     // Drop superseded responses — including the error path, so a slow-

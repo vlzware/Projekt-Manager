@@ -152,7 +152,10 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
       sortBy?: ProjectSortKey;
       sortDir?: SortDir;
     } = {};
-    if (search) params.search = search;
+    // Trim before forwarding — preserves the typed text but keeps
+    // whitespace-only queries off the wire.
+    const trimmedSearch = search.trim();
+    if (trimmedSearch) params.search = trimmedSearch;
     if (showArchived) params.includeArchived = true;
     if (assignedWorkerIds.length > 0) params.assignedWorkerIds = assignedWorkerIds;
     if (includeUnassigned) params.includeUnassigned = true;

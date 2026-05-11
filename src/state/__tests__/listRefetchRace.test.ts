@@ -99,6 +99,15 @@ describe('customerStore.fetchCustomers — preserves view state across refetch',
 
     expect(customerListMock).toHaveBeenCalledWith({ sortBy: 'name', sortDir: 'asc' });
   });
+
+  it('drops whitespace-only search from the API call', async () => {
+    customerListMock.mockResolvedValue({ ok: true, data: { customers: [], total: 0 } });
+
+    useCustomerStore.setState({ search: '   ' });
+    await useCustomerStore.getState().fetchCustomers();
+
+    expect(customerListMock).toHaveBeenCalledWith({ sortBy: 'name', sortDir: 'asc' });
+  });
 });
 
 describe('customerStore.fetchCustomers — drops superseded responses', () => {
@@ -193,6 +202,15 @@ describe('projectManagementStore.fetchProjects — preserves view state across r
   it('omits sort params when sortBy is null (historical default order)', async () => {
     projectListMock.mockResolvedValue({ ok: true, data: { data: [], total: 0 } });
 
+    await useProjectManagementStore.getState().fetchProjects();
+
+    expect(projectListMock).toHaveBeenCalledWith(undefined);
+  });
+
+  it('drops whitespace-only search from the API call', async () => {
+    projectListMock.mockResolvedValue({ ok: true, data: { data: [], total: 0 } });
+
+    useProjectManagementStore.setState({ search: '   ' });
     await useProjectManagementStore.getState().fetchProjects();
 
     expect(projectListMock).toHaveBeenCalledWith(undefined);
