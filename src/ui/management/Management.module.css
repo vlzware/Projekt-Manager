@@ -337,6 +337,111 @@ fieldset.formGroup {
   background: var(--color-surface-muted);
 }
 
+.actionButton[data-active='true'] {
+  background: var(--color-surface-muted);
+  border-color: var(--color-focus-ring);
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+/* Mitarbeiter (assignee) filter — popover anchored under its trigger
+   button. Same visual language as the existing customer-select dropdown
+   (rounded surface, raised shadow) so it does not introduce a third
+   popover style on the page. */
+.workerFilterWrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.workerFilterClear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--color-surface-base);
+  color: var(--color-text-secondary);
+  font-size: 0.85rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.workerFilterClear:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger-text);
+}
+
+.workerFilterPopover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 60;
+  min-width: 240px;
+  max-width: 320px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(var(--color-overlay-rgb), 0.15);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workerFilterSearch {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  outline: none;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.workerFilterSearch:focus {
+  border-color: var(--color-focus-ring);
+}
+
+.workerFilterOption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 0.875rem;
+  color: var(--color-text);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.workerFilterOption:hover {
+  background: var(--color-surface-muted);
+}
+
+.workerFilterDivider {
+  height: 1px;
+  background: var(--color-border-subtle);
+  margin: 4px 0;
+}
+
+.workerFilterList {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.workerFilterEmpty {
+  padding: 12px 8px;
+  font-size: 0.85rem;
+  color: var(--color-text-subtle);
+  text-align: center;
+}
+
 .dangerButton {
   padding: 6px 12px;
   border: 1px solid var(--color-danger-border);

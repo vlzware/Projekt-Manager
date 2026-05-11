@@ -229,6 +229,25 @@ export interface ListProjectsOpts {
    * with all other filters via AND.
    */
   includeArchived?: boolean;
+  /**
+   * Filter by assigned worker (Mitarbeiter). Matches projects where ANY
+   * of the listed user ids appears in `project_workers` (OR semantics —
+   * the natural shape for an assignee filter, mirroring GitHub / Jira /
+   * Linear). Empty or absent → no filter.
+   *
+   * Combines with `includeUnassigned` via OR at the predicate level:
+   * a project matches when it is assigned to any of these workers OR
+   * (when the flag is set) has zero workers. AND-composes with every
+   * other filter (status, search, customerId, archived, scope).
+   */
+  assignedWorkerIds?: string[];
+  /**
+   * When true, projects with zero assigned workers are included in the
+   * result. Composes with `assignedWorkerIds` via OR — see that field's
+   * comment. Maps to the "Nicht zugewiesen" checkbox in the filter
+   * popover; useful for spotting unstaffed projects.
+   */
+  includeUnassigned?: boolean;
   sortBy?: ProjectSortKey;
   sortDir?: 'asc' | 'desc';
 }
@@ -262,6 +281,39 @@ export async function listProjects(
 
   if (opts.customerId) {
     conditions.push(eq(projects.customerId, opts.customerId));
+  }
+
+  // Mitarbeiter filter — assignedWorkerIds (OR across IDs) + optional
+  // includeUnassigned. Both branches are EXISTS-style subqueries on
+  // project_workers, so the rows themselves stay in the projects table
+  // and no JOIN/DISTINCT is needed. The two branches OR together so the
+  // user can pick "Anna" + "Bernd" + "Nicht zugewiesen" and see the
+  // union — projects assigned to either worker OR with zero workers.
+  const workerBranches: SQL[] = [];
+  if (opts.assignedWorkerIds && opts.assignedWorkerIds.length > 0) {
+    // Parameterise each id individually via sql.join so the driver binds
+    // them as bind values rather than string-interpolating the array.
+    const idList = sql.join(
+      opts.assignedWorkerIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    workerBranches.push(
+      sql`EXISTS (SELECT 1 FROM project_workers pw_f
+                  WHERE pw_f.project_id = projects.id
+                    AND pw_f.user_id IN (${idList}))`,
+    );
+  }
+  if (opts.includeUnassigned) {
+    workerBranches.push(
+      sql`NOT EXISTS (SELECT 1 FROM project_workers pw_f
+                      WHERE pw_f.project_id = projects.id)`,
+    );
+  }
+  if (workerBranches.length === 1) {
+    conditions.push(workerBranches[0]!);
+  } else if (workerBranches.length > 1) {
+    const combined = or(...workerBranches);
+    if (combined) conditions.push(combined);
   }
 
   // AC-145: apply per-caller read scope. Owner/office/bookkeeper → null

@@ -15,6 +15,7 @@ import type { Database } from '../db/connection.js';
 import {
   findById,
   listUsers as listUsersRepo,
+  listAssignableWorkers as listAssignableWorkersRepo,
   createUser as createUserRepo,
   updateUser as updateUserRepo,
   deleteUser as deleteUserRepo,
@@ -36,6 +37,16 @@ export class UserService {
 
   async listUsers(opts: { offset?: number; limit?: number }) {
     return listUsersRepo(this.db, opts);
+  }
+
+  /**
+   * Pool of users assignable as project Mitarbeiter (active + worker
+   * role). Used by the project-management filter dropdown via
+   * `GET /api/workers`. Minimal `{userId, displayName}` shape — never
+   * leaks email / roles / other admin-only fields.
+   */
+  async listAssignableWorkers() {
+    return listAssignableWorkersRepo(this.db);
   }
 
   async getUser(id: string) {

@@ -16,6 +16,7 @@ import { useProjectManagementStore, type ProjectSortKey } from '@/state/projectM
 import { useConfirmStore } from '@/state/confirmStore';
 import { SortableHeader, type SortDirection } from '@/ui/common/SortableHeader';
 import { ProjectCreateForm } from './ProjectCreateForm';
+import { WorkerFilter } from './WorkerFilter';
 import styles from './Management.module.css';
 
 export function ProjectManagement() {
@@ -26,6 +27,8 @@ export function ProjectManagement() {
   const loading = useProjectManagementStore((s) => s.loading);
   const error = useProjectManagementStore((s) => s.error);
   const showArchived = useProjectManagementStore((s) => s.showArchived);
+  const assignedWorkerIds = useProjectManagementStore((s) => s.assignedWorkerIds);
+  const includeUnassigned = useProjectManagementStore((s) => s.includeUnassigned);
   const fetchProjects = useProjectManagementStore((s) => s.fetchProjects);
   const fetchCustomers = useProjectManagementStore((s) => s.fetchCustomers);
   const setShowArchived = useProjectManagementStore((s) => s.setShowArchived);
@@ -84,6 +87,23 @@ export function ProjectManagement() {
     fetchProjects(buildFetchOpts());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showArchived, fetchProjects]);
+
+  // Refetch when the Mitarbeiter (assignee) filter changes. Same shape
+  // as the showArchived effect — store owns the selection, the effect
+  // just nudges the list. Compare via JSON for the array (small N).
+  const prevAssignedWorkerIds = useRef(assignedWorkerIds);
+  const prevIncludeUnassigned = useRef(includeUnassigned);
+  useEffect(() => {
+    const idsChanged =
+      prevAssignedWorkerIds.current.length !== assignedWorkerIds.length ||
+      prevAssignedWorkerIds.current.some((id, i) => id !== assignedWorkerIds[i]);
+    const flagChanged = prevIncludeUnassigned.current !== includeUnassigned;
+    if (!idsChanged && !flagChanged) return;
+    prevAssignedWorkerIds.current = assignedWorkerIds;
+    prevIncludeUnassigned.current = includeUnassigned;
+    fetchProjects(buildFetchOpts());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assignedWorkerIds, includeUnassigned, fetchProjects]);
 
   const handleSort = (column: ProjectSortKey, direction: SortDirection) => {
     setSortBy(column);
@@ -149,6 +169,7 @@ export function ProjectManagement() {
           />
           {STRINGS.projects.showArchived}
         </label>
+        <WorkerFilter />
         <input
           className={styles.searchInput}
           placeholder={STRINGS.ui.search}

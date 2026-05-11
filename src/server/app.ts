@@ -16,6 +16,7 @@ import { authRoutes } from './routes/auth.js';
 import { projectRoutes } from './routes/projects.js';
 import { customerRoutes } from './routes/customers.js';
 import { userRoutes } from './routes/users.js';
+import { workerRoutes } from './routes/workers.js';
 import { dataExchangeRoutes } from './routes/data-exchange.js';
 import { extractRoutes } from './routes/extract.js';
 import { auditRoutes } from './routes/audit.js';
@@ -225,6 +226,7 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     app.register(projectRoutes(opts.db));
     app.register(customerRoutes(opts.db));
     app.register(userRoutes(opts.db));
+    app.register(workerRoutes(opts.db));
     app.register(dataExchangeRoutes(opts.db));
     app.register(extractRoutes(opts.db));
     app.register(auditRoutes(opts.db));

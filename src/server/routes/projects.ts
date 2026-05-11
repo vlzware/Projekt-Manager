@@ -63,6 +63,12 @@ export function projectRoutes(db: Database) {
               hasNoDates: { type: 'string' },
               customerId: { type: 'string', format: 'uuid' },
               includeArchived: { type: 'string' },
+              // Mitarbeiter filter (assignee). Accepts a single uuid or an
+              // array of uuids — Fastify's querystring parser handles both
+              // `?assignedWorkerIds=u1` and `?assignedWorkerIds=u1&assignedWorkerIds=u2`
+              // shapes (matches the existing `status` filter convention).
+              assignedWorkerIds: {},
+              includeUnassigned: { type: 'string' },
               sortBy: { type: 'string', enum: [...PROJECT_SORT_KEYS] },
               sortDir: { type: 'string', enum: ['asc', 'desc'] },
             },
@@ -79,9 +85,21 @@ export function projectRoutes(db: Database) {
           hasNoDates?: string;
           customerId?: string;
           includeArchived?: string;
+          assignedWorkerIds?: string | string[];
+          includeUnassigned?: string;
           sortBy?: ProjectSortKey;
           sortDir?: 'asc' | 'desc';
         };
+        // Normalise assignedWorkerIds into a string[] regardless of whether
+        // Fastify gave us a single string (one query param) or an array
+        // (repeated param). Empty/undefined → omit so the repo treats it
+        // as "no worker filter".
+        const workerIds =
+          query.assignedWorkerIds === undefined
+            ? undefined
+            : Array.isArray(query.assignedWorkerIds)
+              ? query.assignedWorkerIds
+              : [query.assignedWorkerIds];
         const result = await crudService.listProjects(request.user!, {
           offset: query.offset,
           limit: query.limit,
@@ -90,6 +108,8 @@ export function projectRoutes(db: Database) {
           hasNoDates: query.hasNoDates === 'true',
           customerId: query.customerId,
           includeArchived: query.includeArchived === 'true',
+          assignedWorkerIds: workerIds,
+          includeUnassigned: query.includeUnassigned === 'true',
           sortBy: query.sortBy,
           sortDir: query.sortDir,
         });

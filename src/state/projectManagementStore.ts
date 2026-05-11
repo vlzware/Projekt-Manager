@@ -7,10 +7,18 @@
 
 import { create } from 'zustand';
 import type { Address, Project, Customer } from '@/domain/types';
-import { projectApi, customerApi, type ProjectSortKey, type SortDir } from '@/api/client';
+import {
+  projectApi,
+  customerApi,
+  workerApi,
+  type ProjectSortKey,
+  type SortDir,
+} from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useProjectStore } from './projectStore';
 import { useStorageUsageStore } from './storageUsageStore';
+
+export type Worker = { userId: string; displayName: string };
 
 // Re-export the sort-key/direction types so UI components reach them
 // through the state layer (the API client is off-limits to UI per
@@ -37,6 +45,13 @@ export type CreateProjectOutcome = { status: 'ok' } | { status: 'error' } | { st
 interface ProjectManagementState {
   projects: Project[];
   customers: Customer[];
+  /**
+   * Assignable-worker pool for the Mitarbeiter filter dropdown. Loaded
+   * once via `fetchWorkers` (lazy — only when the filter is opened or
+   * when a saved selection needs to be hydrated). Shape mirrors
+   * `Project.assignedWorkers` so the UI can reuse the same chip type.
+   */
+  workers: Worker[];
   loading: boolean;
   error: string | null;
   /**
@@ -45,11 +60,22 @@ interface ProjectManagementState {
    * "Archivierte einblenden" checkbox in the management toolbar (AC-152).
    */
   showArchived: boolean;
+  /**
+   * Mitarbeiter filter — selected worker user-ids (OR semantics) and
+   * the "Nicht zugewiesen" branch flag. Both are read by `fetchProjects`
+   * at request time so a sort/search change while the filter is set
+   * keeps the same selection in effect.
+   */
+  assignedWorkerIds: string[];
+  includeUnassigned: boolean;
 
   fetchProjects: (opts?: FetchProjectsOpts) => Promise<void>;
   searchProjects: (search: string) => Promise<Project[]>;
   fetchCustomers: () => Promise<void>;
+  fetchWorkers: () => Promise<void>;
   setShowArchived: (v: boolean) => void;
+  setAssignedWorkerIds: (ids: string[]) => void;
+  setIncludeUnassigned: (v: boolean) => void;
   createProject: (data: {
     id?: string;
     number: string;
@@ -96,23 +122,30 @@ interface ProjectManagementState {
 export const useProjectManagementStore = create<ProjectManagementState>((set, get) => ({
   projects: [],
   customers: [],
+  workers: [],
   loading: false,
   error: null,
   showArchived: false,
+  assignedWorkerIds: [],
+  includeUnassigned: false,
 
   fetchProjects: async (opts?: FetchProjectsOpts) => {
     set({ loading: true, error: null });
-    const { showArchived } = get();
+    const { showArchived, assignedWorkerIds, includeUnassigned } = get();
     // Build the param bag from current state — omit undefined fields so
     // the server sees only what we actually meant to send.
     const params: {
       search?: string;
       includeArchived?: boolean;
+      assignedWorkerIds?: string[];
+      includeUnassigned?: boolean;
       sortBy?: ProjectSortKey;
       sortDir?: SortDir;
     } = {};
     if (opts?.search) params.search = opts.search;
     if (showArchived) params.includeArchived = true;
+    if (assignedWorkerIds.length > 0) params.assignedWorkerIds = assignedWorkerIds;
+    if (includeUnassigned) params.includeUnassigned = true;
     if (opts?.sortBy) params.sortBy = opts.sortBy;
     if (opts?.sortDir) params.sortDir = opts.sortDir;
     const result = await projectApi.list(Object.keys(params).length ? params : undefined);
@@ -131,6 +164,23 @@ export const useProjectManagementStore = create<ProjectManagementState>((set, ge
 
   setShowArchived: (v: boolean) => {
     set({ showArchived: v });
+  },
+
+  setAssignedWorkerIds: (ids: string[]) => {
+    set({ assignedWorkerIds: ids });
+  },
+
+  setIncludeUnassigned: (v: boolean) => {
+    set({ includeUnassigned: v });
+  },
+
+  fetchWorkers: async () => {
+    const result = await workerApi.list();
+    if (!result.ok) {
+      if (result.sessionExpired) handleSessionExpired();
+      return;
+    }
+    set({ workers: result.data.data });
   },
 
   fetchCustomers: async () => {

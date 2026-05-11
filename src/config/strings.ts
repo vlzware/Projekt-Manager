@@ -72,6 +72,15 @@ export const STRINGS = {
     archive: 'Archivieren',
     archiveConfirm: (identifier: string) => `Projekt ${identifier} wirklich archivieren?`,
     showArchived: 'Archivierte einblenden',
+    /** Mitarbeiter (assignee) filter on the management toolbar. */
+    filterWorkers: 'Mitarbeiter filtern',
+    filterWorkersCount: (n: number) => `Mitarbeiter (${n})`,
+    /** "Nicht zugewiesen" entry in the assignee filter — projects with zero workers. */
+    filterUnassigned: 'Nicht zugewiesen',
+    /** Empty state in the assignee-filter popover. */
+    filterNoWorkers: 'Keine Mitarbeiter vorhanden.',
+    /** Search box placeholder inside the assignee-filter popover. */
+    filterWorkersSearchPlaceholder: 'Mitarbeiter suchen…',
     archivedBadge: 'Archiviert',
     purge: 'Endgültig löschen',
     purgeConfirm: (identifier: string) =>
