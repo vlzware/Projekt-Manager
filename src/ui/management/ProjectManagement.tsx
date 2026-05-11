@@ -162,6 +162,7 @@ export function ProjectManagement() {
         <input
           className={styles.searchInput}
           placeholder={STRINGS.ui.search}
+          aria-label={STRINGS.ui.search}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           data-testid="project-search"

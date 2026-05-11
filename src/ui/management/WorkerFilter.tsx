@@ -100,29 +100,21 @@ export function WorkerFilter() {
         data-active={selectedCount > 0 ? 'true' : 'false'}
       >
         {buttonLabel}
-        {selectedCount > 0 && (
-          <span
-            role="button"
-            tabIndex={0}
-            className={styles.workerFilterClear}
-            onClick={(e) => {
-              e.stopPropagation();
-              clearAll();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                e.stopPropagation();
-                clearAll();
-              }
-            }}
-            aria-label={STRINGS.ui.clearFilter}
-            data-testid="worker-filter-clear"
-          >
-            ×
-          </span>
-        )}
       </button>
+      {selectedCount > 0 && (
+        // Sibling, not child, of the toggle <button>. HTML disallows interactive
+        // descendants inside a <button> (nested-button anti-pattern: dual focus
+        // targets, ambiguous SR output, browser-dependent event delivery).
+        <button
+          type="button"
+          className={styles.workerFilterClear}
+          onClick={clearAll}
+          aria-label={STRINGS.ui.clearFilter}
+          data-testid="worker-filter-clear"
+        >
+          ×
+        </button>
+      )}
 
       {open && (
         <div

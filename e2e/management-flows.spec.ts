@@ -418,7 +418,7 @@ test.describe('Management flows', () => {
     const filteredCount = await rows.count();
     expect(filteredCount).toBeLessThan(fullCount);
 
-    // Click the × inside the toggle to wipe the selection.
+    // Click the × adjacent to the toggle to wipe the selection.
     await page.getByTestId('worker-filter-clear').click();
     await expect(page.getByTestId('worker-filter-toggle')).toHaveText('Mitarbeiter filtern');
     await expect(rows).toHaveCount(fullCount);

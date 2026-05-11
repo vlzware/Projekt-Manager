@@ -359,8 +359,10 @@ fieldset.formGroup {
   align-items: center;
   justify-content: center;
   margin-left: 6px;
+  padding: 0;
   width: 16px;
   height: 16px;
+  border: 0;
   border-radius: 50%;
   background: var(--color-surface-base);
   color: var(--color-text-secondary);
@@ -372,6 +374,11 @@ fieldset.formGroup {
 .workerFilterClear:hover {
   background: var(--color-danger-bg);
   color: var(--color-danger-text);
+}
+
+.workerFilterClear:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 .workerFilterPopover {
