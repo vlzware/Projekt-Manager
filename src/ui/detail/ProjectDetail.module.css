@@ -234,10 +234,13 @@
   background: var(--color-surface-sunken);
 }
 
-/* Floating camera capture — fixed to the viewport's top-right corner so
-   a worker on-site can reach it without hunting the layout. Stays
-   visible across scroll; the detail shell is the only page that mounts
-   it (wrapped in `{canWrite && …}` on the caller side).
+/* Floating camera capture — anchored bottom-right, intended for a
+   worker on-site tapping a phone. Hidden on devices with both `hover`
+   and a `fine` pointer (i.e. mouse-driven desktops/laptops, including
+   touch laptops that also report a mouse). Touch tablets and phones
+   keep it. The interaction media features are the right axis here —
+   resolution-only would misfire on a narrow desktop window or a
+   landscape tablet.
 
    The FAB uses the raised-surface token (not accent) so it blends with
    the page chrome and adjusts with the active theme. An inline SVG icon
@@ -277,6 +280,16 @@
   transform: translateY(-2px);
   background: var(--color-surface-sunken);
   box-shadow: 0 6px 16px rgba(var(--color-overlay-rgb), 0.2);
+}
+
+/* Hide on mouse-driven devices. `hover: hover` + `pointer: fine`
+   together identify a desktop/laptop (incl. touch laptops, which
+   report both). Phones / iPads / Android tablets satisfy neither and
+   keep the FAB visible. */
+@media (hover: hover) and (pointer: fine) {
+  .cameraFab {
+    display: none;
+  }
 }
 
 /* On phones the bottom tab bar (`MobileTabBar`) sits at the viewport's
