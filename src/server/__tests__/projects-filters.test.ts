@@ -379,6 +379,28 @@ describe('Project List Filters', () => {
       );
       expect(res.statusCode).toBe(422);
     });
+
+    // The worker-scope predicate must AND with assignedWorkerIds — a
+    // worker filtering by *other* workers' ids cannot see projects they
+    // are not assigned to. Without this guarantee, a future refactor of
+    // the predicate chain (e.g. moving the assignee branch outside the
+    // scope AND) could regress to a data leak. AC-145, scope.ts.
+    it('worker caller cannot widen scope via assignedWorkerIds filter', async () => {
+      const workerToken = await login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD);
+      // Filter by worker2 only — the "both" fixture is assigned to
+      // worker1 (the caller) as well, so scope allows it through; the
+      // w2-only fixture is NOT assigned to worker1 and must NOT appear.
+      const res = await authGet(
+        workerToken,
+        `/api/projects?assignedWorkerIds=${worker2Id}&limit=200`,
+      );
+      expect(res.statusCode).toBe(200);
+      const ids = (res.json().data as { id: string }[]).map((p) => p.id);
+      expect(ids).toContain(projectAssignedToBoth);
+      expect(ids).not.toContain(projectAssignedToW2);
+      expect(ids).not.toContain(projectAssignedToW1);
+      expect(ids).not.toContain(projectUnassigned);
+    });
   });
 
   // ---------------------------------------------------------------

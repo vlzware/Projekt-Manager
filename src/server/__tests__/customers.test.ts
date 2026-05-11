@@ -446,6 +446,85 @@ describe('Customer CRUD Operations', () => {
       expect(res.statusCode).toBe(422);
     });
 
+    // LIKE-pattern metacharacters (`%`, `_`, `\`) and quote / semicolon
+    // shapes are escaped at the repository boundary (`escapeLike`) so
+    // user input is treated as literal text. Without escape, `%` and `_`
+    // would expand the wildcard space and a malicious `'); DROP …`
+    // would never reach the SQL — drizzle's tagged-template still binds
+    // the value — but the escape contract is the first line of defense.
+    describe('LIKE-pattern escape (search safety)', () => {
+      it('treats % as a literal character, not a wildcard', async () => {
+        const tag = `ESC-PCT-${Date.now()}`;
+        const literal = `${tag}-50%-off`;
+        const decoy = `${tag}-plain`;
+        for (const name of [literal, decoy]) {
+          const res = await authPost(ownerToken, '/api/customers', { name });
+          expect(res.statusCode).toBe(201);
+        }
+        // Search for `%` should match only the literal-% row, not the
+        // decoy. Without escaping, `%` would match every row.
+        const res = await authGet(
+          ownerToken,
+          `/api/customers?search=${encodeURIComponent('%')}-off`,
+        );
+        expect(res.statusCode).toBe(200);
+        const names = res.json().customers.map((c: { name: string }) => c.name);
+        expect(names).toContain(literal);
+        expect(names).not.toContain(decoy);
+      });
+
+      it('treats _ as a literal character, not a single-char wildcard', async () => {
+        const tag = `ESC-UND-${Date.now()}`;
+        const literal = `${tag}-foo_bar`;
+        const decoy = `${tag}-fooXbar`;
+        for (const name of [literal, decoy]) {
+          const res = await authPost(ownerToken, '/api/customers', { name });
+          expect(res.statusCode).toBe(201);
+        }
+        const res = await authGet(
+          ownerToken,
+          `/api/customers?search=${encodeURIComponent('foo_bar')}`,
+        );
+        expect(res.statusCode).toBe(200);
+        const names = res.json().customers.map((c: { name: string }) => c.name);
+        expect(names).toContain(literal);
+        expect(names).not.toContain(decoy);
+      });
+
+      it('treats \\ as a literal character', async () => {
+        const tag = `ESC-BS-${Date.now()}`;
+        const literal = `${tag}-back\\slash`;
+        const res = await authPost(ownerToken, '/api/customers', { name: literal });
+        expect(res.statusCode).toBe(201);
+        const search = await authGet(
+          ownerToken,
+          `/api/customers?search=${encodeURIComponent('back\\slash')}`,
+        );
+        expect(search.statusCode).toBe(200);
+        const names = search.json().customers.map((c: { name: string }) => c.name);
+        expect(names).toContain(literal);
+      });
+
+      it('treats SQL-injection-shaped input as plain text', async () => {
+        const tag = `ESC-SQLI-${Date.now()}`;
+        const literal = `${tag}-'); DROP TABLE customers; --`;
+        const createRes = await authPost(ownerToken, '/api/customers', { name: literal });
+        expect(createRes.statusCode).toBe(201);
+        const res = await authGet(
+          ownerToken,
+          `/api/customers?search=${encodeURIComponent('); DROP TABLE')}`,
+        );
+        expect(res.statusCode).toBe(200);
+        const names = res.json().customers.map((c: { name: string }) => c.name);
+        expect(names).toContain(literal);
+        // Sanity: the table still exists — the next list query succeeds
+        // and returns a non-empty result set.
+        const sanity = await authGet(ownerToken, '/api/customers?limit=1');
+        expect(sanity.statusCode).toBe(200);
+        expect(sanity.json().customers.length).toBeGreaterThan(0);
+      });
+    });
+
     // `customers.name` is notNull but not unique, so ties on the primary
     // sort column would otherwise leave pagination order to the planner.
     // The repo appends `, id ASC` as a stable tiebreaker.
