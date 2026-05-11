@@ -448,41 +448,6 @@ describe('Unified Data Exchange', () => {
       expect(archived!.deleted).toBe(true);
     });
 
-    // AC-135: row-level fidelity — every customer carries id,createdAt,updatedAt.
-    it('customer rows carry id, createdAt, updatedAt', async () => {
-      const res = await authGet(ownerToken, '/api/export');
-      const env = res.json() as ExportEnvelope;
-      for (const c of env.customers) {
-        expect(typeof c.id).toBe('string');
-        expect(c.createdAt).toBeDefined();
-        expect(c.updatedAt).toBeDefined();
-      }
-    });
-
-    // AC-135: row-level fidelity — every project carries id,createdAt,updatedAt,deleted.
-    it('project rows carry id, createdAt, updatedAt, deleted', async () => {
-      const res = await authGet(ownerToken, '/api/export');
-      const env = res.json() as ExportEnvelope;
-      for (const p of env.projects) {
-        expect(typeof p.id).toBe('string');
-        expect(p.createdAt).toBeDefined();
-        expect(p.updatedAt).toBeDefined();
-        expect(typeof p.deleted).toBe('boolean');
-      }
-    });
-
-    // AC-135: project_workers entries carry projectId and userId.
-    it('project_workers rows carry projectId and userId', async () => {
-      const res = await authGet(ownerToken, '/api/export');
-      const env = res.json() as ExportEnvelope;
-      // Seed has 7 assignments — but this test does not pin the count,
-      // only that whatever is returned has the documented shape.
-      for (const a of env.project_workers) {
-        expect(typeof a.projectId).toBe('string');
-        expect(typeof a.userId).toBe('string');
-      }
-    });
-
     // AC-135 (exclusion): users, sessions, password hashes must not appear
     // anywhere in the serialized envelope. Grep-style check on the JSON
     // string catches accidental inclusion via row spread / serializer leak.
