@@ -25,10 +25,6 @@
  *     wrap output is non-empty, and a base64 decode of a successfully
  *     wrapped envelope is non-empty AES-GCM-shaped bytes (the standard
  *     `age` envelope shape — header + body, byte-for-byte stable).
- *
- * The implementation does NOT yet exist. Compile errors against
- * `../services/KeyEnvelopeService.js` are the right failure mode; the
- * implementation phase lands the module and resolves both.
  */
 
 import { describe, it, expect } from 'vitest';

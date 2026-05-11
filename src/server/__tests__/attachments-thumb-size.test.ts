@@ -148,13 +148,19 @@ describe('Attachment thumbnail-size cap + HEAD re-assertion', () => {
       expect(body.thumbnailUpload.headers['Content-Length']).toBe('8000');
     });
 
-    it('still issues a 201 with no extra fields (regression guard for `additionalProperties: false`)', async () => {
+    it('strips unknown body fields before the handler (Fastify ajv `removeAdditional` default)', async () => {
       const before = await countAttachmentRows();
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/init`,
-        photoInitBody(),
-      );
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInitBody(),
+        nonsense: true,
+      });
+      // Fastify's ajv compiler defaults to `removeAdditional: true` —
+      // the unknown `nonsense` field is stripped before the handler
+      // sees it, so the request succeeds (201) on the canonical
+      // sanitized payload. `additionalProperties: false` in the schema
+      // is what tells ajv WHICH fields to strip; a regression that
+      // dropped that constraint would let the unknown field through
+      // to the handler.
       expect(res.statusCode).toBe(201);
       expect(await countAttachmentRows()).toBe(before + 1);
     });

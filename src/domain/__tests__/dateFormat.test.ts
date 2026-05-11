@@ -36,12 +36,4 @@ describe('formatDateOnly', () => {
     expect(formatDateOnly(new Date(2026, 0, 5))).toBe('2026-01-05');
     expect(formatDateOnly(new Date(2026, 11, 31))).toBe('2026-12-31');
   });
-
-  it('mirrors native local-component getters', () => {
-    const d = new Date('2026-03-15T10:30:00Z');
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    expect(formatDateOnly(d)).toBe(`${y}-${m}-${dd}`);
-  });
 });

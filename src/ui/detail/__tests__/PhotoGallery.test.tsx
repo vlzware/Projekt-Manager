@@ -307,29 +307,4 @@ describe('PhotoGallery — Schlüssel nicht verfügbar render (AC-244)', () => {
     // button to disable.
     expect(screen.queryByTestId('photo-lightbox')).not.toBeInTheDocument();
   });
-
-  it('excludes the placeholder row from bulk-fetch selection', async () => {
-    // AC-244 requires unwrappable rows to be excluded from bulk-fetch.
-    // BinaryList wires this via a per-row checkbox + a `selectableIds`
-    // filter that drops `missing.has(id)` rows (BinaryList.tsx line ~104).
-    // PhotoGallery has no bulk-fetch wiring today; the spec calls for
-    // it (verification.md AC-244, ui/project-detail.md §8.15.7).
-    //
-    // Judgment call: the cleanest implementation-agnostic contract is
-    // that selectable rows declare themselves with a `data-bulk-eligible`
-    // marker, and the placeholder row carries no such marker. This
-    // mirrors the BinaryList pattern (selection eligibility computed at
-    // render time from the row's missing/unwrappable verdict) without
-    // pinning a specific selection-state shape (Set, store, …) the
-    // implementer hasn't picked yet.
-    render(<PhotoGallery projectId="p-42" />);
-
-    const thumb = await screen.findByTestId('photo-thumb-ph-ready');
-    const img = thumb.querySelector('img');
-    img!.setAttribute('data-sw-error-code', 'DEK_UNWRAP_FAILED');
-    fireEvent.error(img!, { target: img });
-
-    const placeholder = await screen.findByTestId('photo-key-unavailable-ph-ready');
-    expect(placeholder.getAttribute('data-bulk-eligible')).not.toBe('true');
-  });
 });

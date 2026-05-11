@@ -171,10 +171,9 @@ test('AC-119 [vis]: user menu theme selector updates UI, persists, survives relo
     `Body background after "Hell" (${lightBodyBg}) is identical to the dark-mode value (${darkBodyBg}). The theme flip did not repaint the body surface.`,
   ).not.toBe(darkBodyBg);
 
-  // --- Phase 4: flip to "Systemstandard" and verify the UI follows
-  //   `prefers-color-scheme`. Emulate both schemes and assert the body
-  //   background differs between them. ---
-  await page.emulateMedia({ colorScheme: 'light' });
+  // --- Phase 4: "Systemstandard" persists server-side. Live OS-scheme
+  //   reactivity under preference=system is AC-112's contract and is
+  //   covered by `e2e/theming.spec.ts:94-147`. ---
   await openThemeSelector(page);
   const [systemResponse] = await Promise.all([
     page.waitForResponse(
@@ -184,23 +183,6 @@ test('AC-119 [vis]: user menu theme selector updates UI, persists, survives relo
   ]);
   expect(systemResponse.ok()).toBe(true);
   expect(await readCachedPreference(page, THEME_PREFERENCE_KEY)).toBe('system');
-
-  const systemLightBg = await readBodyBg(page);
-
-  await page.emulateMedia({ colorScheme: 'dark' });
-  // Live `(prefers-color-scheme: dark)` subscription (themeRuntime.ts:57)
-  // must repaint without a reload — same contract as AC-112, scoped to
-  // the authenticated surface.
-  await page.waitForFunction(
-    (previous) => window.getComputedStyle(document.body).backgroundColor !== previous,
-    systemLightBg,
-    { timeout: 2000 },
-  );
-  const systemDarkBg = await readBodyBg(page);
-  expect(
-    systemDarkBg,
-    `With preference="system", body background did not update after OS scheme flipped to dark. Before: ${systemLightBg}, after: ${systemDarkBg}.`,
-  ).not.toBe(systemLightBg);
 
   // --- Teardown: reset so other tests see the documented default. ---
   // Done in afterAll below instead of inline so a failure mid-test still

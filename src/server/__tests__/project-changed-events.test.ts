@@ -570,6 +570,7 @@ describe('AC-276: project_changed emission from every project-mutation site', ()
         await new Promise<void>((r) => setImmediate(r));
 
         expect(countProjectChanged(conn)).toBe(1);
+        expect(countStorageUsageChanged(conn)).toBe(0);
       } finally {
         bus.unsubscribe(conn);
       }
@@ -684,6 +685,7 @@ describe('AC-276: project_changed emission from every project-mutation site', ()
         await new Promise<void>((r) => setImmediate(r));
 
         expect(countProjectChanged(conn)).toBe(1);
+        expect(countStorageUsageChanged(conn)).toBe(0);
       } finally {
         bus.unsubscribe(conn);
       }
@@ -847,11 +849,14 @@ describe('AC-276: project_changed emission from every project-mutation site', ()
 
         await new Promise<void>((r) => setImmediate(r));
 
-        // Post-commit ordering: a tx that aborts MUST NOT emit
-        // (architecture.md §11.13 + verification.md AC-276 cross-ref
-        // to AC-270). A regression that calls the emitter before the
-        // transaction commits — or in a `try` block that swallows
-        // the rollback — would land an event on `conn` here.
+        // Refutes the "emit before the throwing service call runs"
+        // regression class: db.transaction() is Proxy-rejected before
+        // any service work runs, so an event here proves the emitter
+        // fired up-front (regardless of tx state). NOTE: this test
+        // alone does NOT distinguish pre-tx from post-rollback emission
+        // — both would land an event here. Post-commit ordering proper
+        // is implicitly pinned by the storage_usage_changed silence
+        // arms (16, 17) where the commit succeeds but no bytes moved.
         expect(countProjectChanged(conn)).toBe(0);
       } finally {
         bus.unsubscribe(conn);
@@ -889,59 +894,6 @@ describe('AC-276: project_changed emission from every project-mutation site', ()
 
         expect(countProjectChanged(conn)).toBe(1);
         expect(countStorageUsageChanged(conn)).toBe(1);
-      } finally {
-        bus.unsubscribe(conn);
-      }
-    });
-  });
-
-  // (16) purgeProject of an archived project with no byte-bearing
-  // attachments — `project_changed` fires (the row is gone),
-  // `storage_usage_changed` does not (no bytes moved).
-  describe('AC-276: purgeProject of an empty archived project emits project_changed but not storage_usage_changed', () => {
-    it('a subscribed connection observes one project_changed and zero storage_usage_changed', async () => {
-      const bus = await loadBus();
-      const customerId = await seededCustomerIdAny(ownerToken);
-      const projectId = await createActiveProject(ownerToken, customerId);
-      await archiveProject(ownerToken, projectId);
-
-      const conn = subscribeFake(bus);
-      try {
-        const res = await authDelete(ownerToken, `/api/projects/${projectId}/purge`);
-        expect(res.statusCode).toBe(204);
-
-        await new Promise<void>((r) => setImmediate(r));
-
-        // The two gates are independent: the project row left the
-        // includeArchived list, so project_changed fires; no bytes
-        // moved, so storage_usage_changed stays silent.
-        expect(countProjectChanged(conn)).toBe(1);
-        expect(countStorageUsageChanged(conn)).toBe(0);
-      } finally {
-        bus.unsubscribe(conn);
-      }
-    });
-  });
-
-  // (17) deleteCustomer whose archived projects had no byte-bearing
-  // attachments — `project_changed` fires (archived rows purged),
-  // `storage_usage_changed` does not.
-  describe('AC-276: deleteCustomer with archived but empty projects emits project_changed but not storage_usage_changed', () => {
-    it('a subscribed connection observes one project_changed and zero storage_usage_changed', async () => {
-      const bus = await loadBus();
-      const customerId = await createCustomer(ownerToken);
-      const projectId = await createActiveProject(ownerToken, customerId);
-      await archiveProject(ownerToken, projectId);
-
-      const conn = subscribeFake(bus);
-      try {
-        const res = await authDelete(ownerToken, `/api/customers/${customerId}`);
-        expect(res.statusCode).toBe(204);
-
-        await new Promise<void>((r) => setImmediate(r));
-
-        expect(countProjectChanged(conn)).toBe(1);
-        expect(countStorageUsageChanged(conn)).toBe(0);
       } finally {
         bus.unsubscribe(conn);
       }

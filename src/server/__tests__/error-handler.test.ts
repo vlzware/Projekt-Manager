@@ -207,13 +207,6 @@ describe('production composition — SPA-aware not-found handler', () => {
     if (distDir) rmSync(distDir, { recursive: true, force: true });
   });
 
-  it('a follow-on setNotFoundHandler did not throw at app.ready()', () => {
-    // beforeAll already proved this — if buildApp pre-mounted a
-    // not-found handler again, the await app.ready() above would
-    // have rejected with "Not found handler already set …".
-    expect(app.hasRoute).toBeDefined();
-  });
-
   it('/api/<unknown> → 404 ROUTE_NOT_FOUND (structured AppError shape)', async () => {
     const res = await app.inject({ method: 'GET', url: '/api/this-route-does-not-exist' });
     expect(res.statusCode).toBe(404);

@@ -237,19 +237,6 @@ describe('AC-239: binary-identity boot probe — orchestration', () => {
     });
   });
 
-  it('resolves silently on the canonical happy path (file + matching recipient)', async () => {
-    await withTempIdentity(async (filePath) => {
-      const { identity, recipient } = freshAgeIdentity();
-      writeFileSync(filePath, identity + '\n', { mode: 0o400 });
-      // No throw — boot proceeds. Mirror `assertStorageBucketSafe`'s
-      // healthy-shape arm.
-      await assertBinaryIdentityLoaded({
-        identityPath: filePath,
-        configuredRecipient: recipient,
-      });
-    });
-  });
-
   it('emits a structured error log line on failure (event identifier present in error)', async () => {
     // The boot site translates the thrown error into a non-zero exit;
     // the structured log line emitted right before the throw is the

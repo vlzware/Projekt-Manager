@@ -28,53 +28,10 @@ describe('Project Operations — Transitions', () => {
     await stopApp();
   });
 
-  // ---------------------------------------------------------------
-  // AT-9: Transition forward changes status and statusChangedAt
-  // ---------------------------------------------------------------
-  describe('AT-9: Transition forward', () => {
-    it('advances a project from geplant to in_arbeit', async () => {
-      // First, find a project in "geplant" state
-      const listRes = await authGet(token, '/api/projects');
-      const projects = listRes.json().data;
-      const geplantProject = projects.find((p: Record<string, unknown>) => p.status === 'geplant');
-      expect(geplantProject).toBeDefined();
-
-      const originalStatusChangedAt = geplantProject.statusChangedAt;
-      const originalUpdatedAt = geplantProject.updatedAt;
-
-      const res = await authPost(token, `/api/projects/${geplantProject.id}/transition/forward`, {
-        expectedStatus: 'geplant',
-      });
-
-      expect(res.statusCode).toBe(200);
-
-      const updated = res.json();
-      expect(updated.id).toBe(geplantProject.id);
-      expect(updated.status).toBe('in_arbeit');
-      expect(updated.statusChangedAt).not.toBe(originalStatusChangedAt);
-      expect(updated.statusChangedAt).toMatch(ISO_DATE_REGEX);
-      expect(updated.updatedAt).not.toBe(originalUpdatedAt);
-      expect(updated.updatedAt).toMatch(ISO_DATE_REGEX);
-    });
-
-    it('sets updatedBy to the authenticated user', async () => {
-      const listRes = await authGet(token, '/api/projects');
-      const projects = listRes.json().data;
-      const project = projects.find((p: Record<string, unknown>) => p.status === 'beauftragt');
-      expect(project).toBeDefined();
-
-      // Get the authenticated user's ID
-      const meRes = await authGet(token, '/api/auth/me');
-      const me = meRes.json().user;
-
-      const res = await authPost(token, `/api/projects/${project.id}/transition/forward`, {
-        expectedStatus: 'beauftragt',
-      });
-
-      const updated = res.json();
-      expect(updated.updatedBy).toBe(me.id);
-    });
-  });
+  // AT-9 forward-edge spot-checks (single-edge advance + updatedBy) are
+  // subsumed by the full-chain test below (every forward edge) and by
+  // the backward-direction updatedBy arm — both pin the same mutate()
+  // stamping path. Removed under T-REDU.
 
   // ---------------------------------------------------------------
   // B F-1: Mutation responses must include assignedWorkers.

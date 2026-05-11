@@ -31,14 +31,26 @@ describe('Project Operations — Dates', () => {
   //        but not statusChangedAt
   // ---------------------------------------------------------------
   describe('AT-12: Update dates', () => {
-    it('updates plannedStart and plannedEnd', async () => {
+    // A single PATCH pins every AT-12 invariant in one shot:
+    //   - plannedStart / plannedEnd are persisted on the row
+    //   - updatedAt changes (mutation stamps audit-row time)
+    //   - statusChangedAt does NOT change (date edit is not a transition)
+    //   - updatedBy is the authenticated user (mutate() stamping)
+    // Splitting these across three tests gave no extra coverage —
+    // identical setup, identical PATCH shape, identical service path.
+    it('persists dates, stamps updatedAt+updatedBy, leaves statusChangedAt', async () => {
       const listRes = await authGet(token, '/api/projects');
       const projects = listRes.json().data;
-      // Pick a project that already has dates
       const project = projects.find(
         (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
       );
       expect(project).toBeDefined();
+
+      const originalStatusChangedAt = project.statusChangedAt;
+      const originalUpdatedAt = project.updatedAt;
+
+      const meRes = await authGet(token, '/api/auth/me');
+      const me = meRes.json().user;
 
       const newStart = '2026-05-01';
       const newEnd = '2026-05-10';
@@ -51,53 +63,14 @@ describe('Project Operations — Dates', () => {
       expect(res.statusCode).toBe(200);
 
       const updated = res.json();
-      expect(updated.plannedStart).toContain('2026-05-01');
-      expect(updated.plannedEnd).toContain('2026-05-10');
-    });
-
-    it('updates updatedAt but NOT statusChangedAt', async () => {
-      const listRes = await authGet(token, '/api/projects');
-      const projects = listRes.json().data;
-      const project = projects.find(
-        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
-      );
-      expect(project).toBeDefined();
-
-      const originalStatusChangedAt = project.statusChangedAt;
-      const originalUpdatedAt = project.updatedAt;
-
-      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
-        plannedStart: '2026-06-01',
-        plannedEnd: '2026-06-15',
-      });
-
-      expect(res.statusCode).toBe(200);
-
-      const updated = res.json();
-      // statusChangedAt must NOT change — date edits are not state transitions
+      expect(updated.plannedStart).toContain(newStart);
+      expect(updated.plannedEnd).toContain(newEnd);
+      // statusChangedAt must NOT change — date edits are not state transitions.
       expect(updated.statusChangedAt).toBe(originalStatusChangedAt);
-      // updatedAt MUST change
+      // updatedAt MUST change.
       expect(updated.updatedAt).not.toBe(originalUpdatedAt);
       expect(updated.updatedAt).toMatch(ISO_DATE_REGEX);
-    });
-
-    it('sets updatedBy to the authenticated user', async () => {
-      const listRes = await authGet(token, '/api/projects');
-      const projects = listRes.json().data;
-      const project = projects.find(
-        (p: Record<string, unknown>) => p.plannedStart != null && p.plannedEnd != null,
-      );
-      expect(project).toBeDefined();
-
-      const meRes = await authGet(token, '/api/auth/me');
-      const me = meRes.json().user;
-
-      const res = await authPatch(token, `/api/projects/${project.id}/dates`, {
-        plannedStart: '2026-07-01',
-        plannedEnd: '2026-07-05',
-      });
-
-      const updated = res.json();
+      // updatedBy stamps the authenticated user.
       expect(updated.updatedBy).toBe(me.id);
     });
   });

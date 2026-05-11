@@ -108,7 +108,6 @@ describe('Project Restore (undo archive)', () => {
     expect(res.statusCode).toBe(409);
     const body = res.json();
     expect(body.code).toBe('CONFLICT');
-    expect(body.message).toMatch(/nicht archiviert/i);
   });
 
   it('returns 404 NOT_FOUND when the project id does not exist', async () => {

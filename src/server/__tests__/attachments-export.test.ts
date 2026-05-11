@@ -190,13 +190,6 @@ describe('Attachment export envelope (AC-220)', () => {
   // -------------------------------------------------------------------
   // AC-220 Part 1 — Envelope shape + ready/pending filtering
   // -------------------------------------------------------------------
-  it('exports an attachments array', async () => {
-    const res = await authGet(ownerToken, '/api/export');
-    expect(res.statusCode).toBe(200);
-    const env = res.json();
-    expect(Array.isArray(env.attachments)).toBe(true);
-  });
-
   it('includes every ready row with the documented metadata fields', async () => {
     const res = await authGet(ownerToken, '/api/export');
     expect(res.statusCode).toBe(200);

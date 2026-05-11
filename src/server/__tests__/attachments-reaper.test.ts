@@ -368,20 +368,19 @@ describe('Attachment orphan reaper (AC-213)', () => {
   });
 
   // -------------------------------------------------------------------
-  // Storage-delete failure tolerance — the row is still removed.
-  // Per §6.11: "an object delete that finds nothing is a no-op, not a
-  // failure"; the metadata-table cleanliness goal trumps a missing
-  // backing object.
+  // Idempotent storage-delete — the row removal completes even when
+  // there is no backing object for storage.delete to remove. Per §6.11:
+  // "an object delete that finds nothing is a no-op, not a failure";
+  // the metadata-table cleanliness goal trumps a missing backing object.
   // -------------------------------------------------------------------
-  it('still removes the row when the storage delete fails (object already absent)', async () => {
+  it('still removes the row when the backing object is already absent (idempotent storage-delete)', async () => {
     const now = new Date();
     const ttlMinutes = 15;
 
     // Seed the row, but DO NOT upload the backing object — the reaper's
     // storage.delete will address a missing key. S3 DeleteObject is
-    // idempotent (no throw on missing key) per its spec; but even if a
-    // provider surfaced a transient error, the row removal must still
-    // succeed per §6.11.
+    // idempotent on a missing key (no-op, no throw); the reaper must
+    // therefore complete the row removal in this shape per §6.11.
     const expired = await seedPendingAt(
       db,
       seededProjectId,

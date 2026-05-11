@@ -359,26 +359,6 @@ describe('ProjectDetailPage — camera FAB MIME gate', () => {
   });
 });
 
-// --------------------------------------------------------------------
-// Click-to-edit: KUNDE + BAUSTELLE cards open modals (replaces the old
-// inline Baustelle edit panel; matches the Kunden tab's modal pattern).
-// --------------------------------------------------------------------
-
-describe('ProjectDetailPage — KERNFELDER heading is gone', () => {
-  it('does not render the "Kernfelder" region heading', async () => {
-    setAuthUser(['owner']);
-    renderAt('/projects/p-42');
-
-    await screen.findByTestId('project-detail-core');
-    // The region keeps its aria-label for screen readers; the visible
-    // <h3> heading is what was removed. queryAllByRole('heading') —
-    // restricted to level 3 — captures every region heading. None
-    // should carry the "Kernfelder" text.
-    const h3s = screen.queryAllByRole('heading', { level: 3 });
-    expect(h3s.map((h) => h.textContent)).not.toContain('Kernfelder');
-  });
-});
-
 describe('ProjectDetailPage — KUNDE click opens CustomerEditForm modal', () => {
   it('opens the modal for an owner (canEditCustomer = true)', async () => {
     setAuthUser(['owner']);
@@ -461,10 +441,11 @@ describe('ProjectDetailPage — BAUSTELLE click opens SiteAddressEditModal', () 
     renderAt('/projects/p-42');
 
     // The read-only SiteAddressLine still renders under the original
-    // testid; the click-to-edit wrapper is what disappears.
+    // testid; the click-to-edit wrapper is what disappears. Without
+    // the wrapper, there is no click target that could open the modal,
+    // so the wrapper-absence assertion is sufficient.
     await screen.findByTestId('project-detail-site-address');
     expect(screen.queryByTestId('project-detail-site-address-edit')).toBeNull();
-    expect(screen.queryByTestId('site-address-modal')).toBeNull();
   });
 
   it('clicking the inner map link does not open the modal', async () => {

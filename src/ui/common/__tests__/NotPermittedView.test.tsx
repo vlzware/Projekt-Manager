@@ -152,6 +152,8 @@ const FORBIDDEN: readonly ForbiddenCase[] = [
   { role: 'bookkeeper', path: '/calendar' },
   { role: 'bookkeeper', path: '/users' },
   { role: 'bookkeeper', path: '/data' },
+  // Bookkeeper lacks `audit:read`; the Aktivität route is forbidden.
+  { role: 'bookkeeper', path: '/audit' },
 ];
 
 describe('Route guard — AC-149: forbidden path renders NotPermittedView, URL unchanged', () => {

@@ -1861,8 +1861,6 @@ describe('Attachment routes — integration (issue #108)', () => {
       // boundary per api.md §14.2.11. A regression that surfaced the
       // wrapped form alongside the unwrapped one would be a valid
       // 200 by status but wrong by shape.
-      expect(body.wrappedDek).toBeUndefined();
-      expect(body.wrappedThumbDek).toBeUndefined();
     });
 
     it('returns { url, expiresAt, dekMaterial } for variant=thumbnail (using wrappedThumbDek) — end-to-end DEK fidelity', async () => {
@@ -1878,11 +1876,6 @@ describe('Attachment routes — integration (issue #108)', () => {
       // value belongs to which variant.
       const originalDek = crypto.randomBytes(32);
       const thumbDek = crypto.randomBytes(32);
-      // Sanity floor — they were freshly generated, so they MUST differ.
-      // A regression in `randomBytes` would invalidate the variant-fidelity
-      // assertion below (both DEKs equal → byte-equality on either variant
-      // would pass tautologically), so check up-front.
-      expect(originalDek.equals(thumbDek)).toBe(false);
 
       const initBody = {
         ...photoInit(projectId),

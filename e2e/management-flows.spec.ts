@@ -166,8 +166,10 @@ test.describe('Management flows', () => {
     // Submit
     await page.getByTestId('user-submit').click();
 
-    // Verify the user appears in the table
-    await expect(page.getByText('E2E Testarbeiter')).toBeVisible();
+    // Verify the user appears in the table — anchor on the unique
+    // username so the row-lookup doesn't depend on the display-name
+    // copy (which is brittle if a future test reuses similar labels).
+    await expect(page.getByText(testUsername)).toBeVisible();
   });
 
   // ---------------------------------------------------------------

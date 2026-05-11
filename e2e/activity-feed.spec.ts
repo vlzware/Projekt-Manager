@@ -18,9 +18,16 @@ import { clickView, expectViewReachable } from './nav-helpers';
  *     UI so a reviewer can watch the visibility split in UI mode
  *     (ADR-0014 [vis] contract).
  *
- * Role walk: owner, office. Worker and bookkeeper lack `audit:read`
- * (api.md §14.3) — both the nav tab and the deep-link path are
- * denied, asserted as separate cases.
+ * Role coverage:
+ *   - AC-185: owner only (project-detail feed mechanics — pagination,
+ *     ordering, empty state — are role-invariant; the role split is
+ *     pinned by AC-186 / AC-187 below).
+ *   - AC-186: owner and office walks (drawer visibility per role).
+ *   - AC-187: owner positive arm; the office negative arm is pinned
+ *     at the API by `src/server/__tests__/audit-log.test.ts` (AT-93).
+ *   - Worker and bookkeeper lack `audit:read` (api.md §14.3) — both
+ *     the nav tab and the deep-link path are denied, asserted as
+ *     separate cases above the AC blocks.
  *
  * Auth: each describe uses the pre-authenticated storage state for its
  * target role (see e2e/auth.setup.ts). No per-test login — that path
@@ -441,24 +448,12 @@ test.describe('AC-187: destructive entries — owner sees them, others do not', 
       // A row with action=purge must exist (the fixture above drove
       // one). The UI's German label for `purge` is implementation-
       // defined; we filter by a structural `data-action` attribute.
+      //
+      // Office-side negative is pinned at the API by
+      // `src/server/__tests__/audit-log.test.ts` (AT-93) — the UI
+      // honors what the server returns is the integration claim.
       const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
       await expect(purgeRows).not.toHaveCount(0);
-    });
-  });
-
-  test.describe('office', () => {
-    test.use({ storageState: STORAGE_STATES.office });
-    test('purge entries are not visible', async ({ page }) => {
-      await page.goto('/');
-      await clickView(page, 'aktivitaet');
-      // Widen to the full RBAC feed so the absence assertion below is
-      // the complement of owner's presence assertion on the same feed
-      // shape — AT-93 pins the API-level split; this UI walk must
-      // observe it over the same set, not merely the recipient-scoped
-      // subset (which would pass trivially for purge regardless).
-      await showAllActivity(page);
-      const purgeRows = page.locator('[data-testid^="activity-feed-row-"][data-action="purge"]');
-      await expect(purgeRows).toHaveCount(0);
     });
   });
 });

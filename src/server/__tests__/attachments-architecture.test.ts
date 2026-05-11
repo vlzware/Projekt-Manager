@@ -84,16 +84,6 @@ describe('AC-179: attachment table wired into the audit-mutation architecture ch
     expect(drizzleExports).toContain('attachments');
   });
 
-  it('check-audit-mutations.sh carries no manual append for `attachments` — derivation is the sole source', () => {
-    // Regression guard against the pre-promotion workaround: the shell
-    // script appended `attachments` to AUDITED_TABLE_SQL_NAMES /
-    // AUDITED_DRIZZLE_EXPORTS by hand because `attachment` was outside
-    // the enum. With enum promotion the append must be gone.
-    const scriptSrc = readSource('scripts/check-audit-mutations.sh');
-    expect(scriptSrc).not.toMatch(/AUDITED_TABLE_SQL_NAMES\+=\("attachments"\)/);
-    expect(scriptSrc).not.toMatch(/AUDITED_DRIZZLE_EXPORTS\+=\("attachments"\)/);
-  });
-
   it('the reaper path (src/server/services/attachment-orphan-reaper.ts) is allowlisted in check-audit-mutations.sh', () => {
     // The spec names the reaper as an allowlisted bypass (it deletes
     // attachment rows outside mutate() — pending orphans never entered
