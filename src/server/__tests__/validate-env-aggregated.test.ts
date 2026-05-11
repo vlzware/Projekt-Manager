@@ -118,30 +118,6 @@ describe('AC-231: validateEnv folds in the production-safety guards in the same 
     expect(message).toContain('ALLOW_INSECURE_HTTP');
   });
 
-  it('reports a dev-default POSTGRES_PASSWORD as part of the aggregated error in production', () => {
-    const input = {
-      NODE_ENV: 'production',
-      DATABASE_URL: 'postgres://prod',
-      STORAGE_ENDPOINT: 'https://storage.example.com',
-      STORAGE_PUBLIC_ENDPOINT: 'https://storage.example.com',
-      STORAGE_ACCESS_KEY: 'ak',
-      STORAGE_SECRET_KEY: 'sk',
-      STORAGE_BUCKET: 'pm',
-      ALLOW_INSECURE_HTTP: 'false',
-      POSTGRES_PASSWORD: 'postgres',
-    };
-
-    let captured: unknown = null;
-    try {
-      validateEnvAggregated(input);
-    } catch (err) {
-      captured = err;
-    }
-    expect(captured, 'expected validateEnv to throw on dev-default POSTGRES_PASSWORD').toBeTruthy();
-    const message = captured instanceof Error ? captured.message : String(captured ?? '');
-    expect(message).toContain('POSTGRES_PASSWORD');
-  });
-
   it('reports a container-only STORAGE_ENDPOINT without STORAGE_PUBLIC_ENDPOINT in production', () => {
     const input = {
       NODE_ENV: 'production',

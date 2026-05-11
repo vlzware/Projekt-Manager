@@ -1,47 +1,26 @@
 import { test, expect } from '@playwright/test';
 import { STORAGE_STATES } from './storage-states';
-import { clickView, expectViewReachable } from './nav-helpers';
+import { clickView } from './nav-helpers';
 
 /**
  * E2E — Notification Rules admin view.
  *
- * Pins AC-198 (URL-gated access) and AC-199 (form conditional fields),
- * plus the basic create → list → edit → delete flow tied to the admin
- * surface defined in `docs/spec/ui/management.md §8.14`.
+ * Pins AC-199 (form conditional fields) plus the basic create → list →
+ * edit → delete flow tied to the admin surface defined in
+ * `docs/spec/ui/management.md §8.14`.
  *
  * Why `chromium-mutating`: the spec drives rule CRUD, which mutates DB
  * state. It must run in the mutating project so playwright.config.ts
  * serializes it after read-only specs (shared DB fixture, no isolation
  * between specs within a project).
  *
- * Role walk:
- *   - Owner (sees the tab, can CRUD rules) — asserted here.
- *   - Office / worker / bookkeeper (tab hidden, deep-link not-permitted)
- *     are asserted in `permission-visibility.spec.ts` per the pattern.
+ * Role coverage: AC-198 (URL-gated access by role) is asserted in
+ * `permission-visibility.spec.ts` — that spec owns the role-matrix walk.
  *
  * Auth: pre-authenticated storage states per e2e/auth.setup.ts.
  */
 
 test.describe.configure({ mode: 'serial' });
-
-// ---------------------------------------------------------------
-// AC-198 — Nav + URL access for owner only
-// ---------------------------------------------------------------
-test.describe('AC-198: Notification Rules view is reachable only with notifications:manage', () => {
-  test.describe('owner', () => {
-    test.use({ storageState: STORAGE_STATES.owner });
-    test('owner sees the Benachrichtigungen tab and reaches the view', async ({ page }) => {
-      await page.goto('/');
-      await expectViewReachable(page, 'benachrichtigungen', true);
-      await clickView(page, 'benachrichtigungen');
-      await expect(page.getByTestId('notification-rules-view')).toBeVisible();
-    });
-  });
-
-  // The roles without notifications:manage assert absence via
-  // permission-visibility.spec.ts — that spec owns the role-matrix
-  // walk. We cross-link rather than duplicate it here.
-});
 
 // ---------------------------------------------------------------
 // AC-199 — Form conditional fields by event class
