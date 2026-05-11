@@ -304,12 +304,20 @@ describe('ProjectDetailPage — Baustelle group (AC-280, edit branch)', () => {
     );
   }
 
+  // The Baustelle group is no longer inline on the detail page — it
+  // lives inside SiteAddressEditModal, opened by clicking the read-only
+  // address row. Tests therefore open the modal as a precondition.
+  async function openSiteAddressModal() {
+    await userEvent.click(await screen.findByTestId('project-detail-site-address-edit'));
+    return screen.findByTestId('site-address-modal');
+  }
+
   it('renders the Baustelle group on the edit surface', async () => {
     renderDetailAt(makeProject({ siteAddress: null }));
 
-    expect(
-      await screen.findByLabelText(STRINGS.projects.siteAddressIdenticalToggle),
-    ).toBeInTheDocument();
+    await openSiteAddressModal();
+
+    expect(screen.getByLabelText(STRINGS.projects.siteAddressIdenticalToggle)).toBeInTheDocument();
     expect(screen.getByTestId('project-site-street-input')).toBeInTheDocument();
     expect(screen.getByTestId('project-site-zip-input')).toBeInTheDocument();
     expect(screen.getByTestId('project-site-city-input')).toBeInTheDocument();
@@ -318,9 +326,11 @@ describe('ProjectDetailPage — Baustelle group (AC-280, edit branch)', () => {
   it('initial toggle state on Edit is ON when project.siteAddress is null', async () => {
     renderDetailAt(makeProject({ siteAddress: null }));
 
-    const toggle = (await screen.findByLabelText(
+    await openSiteAddressModal();
+
+    const toggle = screen.getByLabelText(
       STRINGS.projects.siteAddressIdenticalToggle,
-    )) as HTMLInputElement;
+    ) as HTMLInputElement;
     expect(toggle.checked).toBe(true);
 
     expect((screen.getByTestId('project-site-street-input') as HTMLInputElement).disabled).toBe(
@@ -332,9 +342,11 @@ describe('ProjectDetailPage — Baustelle group (AC-280, edit branch)', () => {
     const stored = { street: 'Goethestr. 18', zip: '51103', city: 'Köln' };
     renderDetailAt(makeProject({ siteAddress: stored }));
 
-    const toggle = (await screen.findByLabelText(
+    await openSiteAddressModal();
+
+    const toggle = screen.getByLabelText(
       STRINGS.projects.siteAddressIdenticalToggle,
-    )) as HTMLInputElement;
+    ) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
 
     const street = screen.getByTestId('project-site-street-input') as HTMLInputElement;
@@ -431,9 +443,13 @@ describe('ProjectDetailPage — Baustelle toggle behavior (AC-281, edit branch)'
   it('OFF → ON discards typed values without dispatching a PATCH or reverting persisted state', async () => {
     const project = renderDetailWithStoredAddress();
 
-    const toggle = (await screen.findByLabelText(
+    // Open the modal — the Baustelle group is no longer inline.
+    await userEvent.click(await screen.findByTestId('project-detail-site-address-edit'));
+    await screen.findByTestId('site-address-modal');
+
+    const toggle = screen.getByLabelText(
       STRINGS.projects.siteAddressIdenticalToggle,
-    )) as HTMLInputElement;
+    ) as HTMLInputElement;
     // Edit starts OFF (siteAddress non-null), inputs pre-filled.
     expect(toggle.checked).toBe(false);
 

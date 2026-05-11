@@ -190,41 +190,9 @@
   cursor: pointer;
 }
 
-/* Inline save button for the Baustelle edit group (and any future
-   inline-form submit on this page). Sized to match `.archiveButton`
-   so the page's button family stays visually consistent; accent-tinted
-   so the affordance reads as a primary action within its group. */
-.inlineSaveRow {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 8px;
-}
-
-.inlineSaveButton {
-  padding: 8px 16px;
-  border: none;
-  border-radius: 6px;
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-
-.inlineSaveButton:hover {
-  background: var(--color-accent-hover);
-}
-
-.inlineSaveButton:disabled {
-  background: var(--color-text-subtle);
-  cursor: not-allowed;
-}
-
-/* Inline-field validation hint shown beneath an editable group on the
-   detail page. Matches the management form's `.fieldHintError` shape
-   so the AC-284 Baustelle partial-fill message reads consistently
-   across create and edit surfaces. */
+/* Inline-field validation hint shown inside the SiteAddressEditModal.
+   Matches the management form's `.fieldHintError` shape so the AC-284
+   Baustelle partial-fill message reads consistently across surfaces. */
 .fieldHintError {
   margin-top: 4px;
   font-size: 0.8rem;
@@ -412,6 +380,71 @@
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+}
+
+/* Click-to-edit card variant. Used by the KUNDE row (opens the customer
+   modal) and the wrapping div around SiteAddressLine (opens the
+   site-address modal). Adds a hover/focus cue so the affordance is
+   discoverable; the cards stay visually quiet by default so the page
+   doesn't read as a wall of buttons. role="button" + tabIndex=0 are
+   set in JSX — this rule only handles the visual layer. */
+.coreFieldClickable {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  cursor: pointer;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border-radius: 6px;
+  transition: background 0.1s;
+}
+
+.coreFieldClickable:hover,
+.coreFieldClickable:focus-visible {
+  background: var(--color-surface-sunken);
+  outline: none;
+}
+
+.coreFieldClickable:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+/* Wrapper for SiteAddressLine when the row is clickable. The
+   SiteAddressLine renders its own `.coreField` wrapper internally;
+   wrapping it here would double the box. Instead we strip our own
+   padding/structure and only contribute cursor + hover/focus styling
+   that bleeds into the inner row via the descendant `.coreField`. */
+.coreCardWrapClickable {
+  cursor: pointer;
+  border-radius: 6px;
+  margin: -6px -8px;
+  padding: 6px 8px;
+  transition: background 0.1s;
+}
+
+.coreCardWrapClickable:hover,
+.coreCardWrapClickable:focus-visible {
+  background: var(--color-surface-sunken);
+  outline: none;
+}
+
+.coreCardWrapClickable:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+/* Inline tel:/mailto: anchors on the KUNDE card. Sit one per line under
+   the customer name; mirror the panel's `.link` styling so the same
+   contact info reads identically across both surfaces. */
+.coreContactLink {
+  font-size: 0.85rem;
+  color: var(--color-accent);
+  text-decoration: none;
+  width: fit-content;
+}
+
+.coreContactLink:hover {
+  text-decoration: underline;
 }
 
 .coreFieldFull {

@@ -25,6 +25,7 @@ import { ATTACHMENT_MIME_WHITELIST } from '@/domain/attachments';
 import { formatDateDE } from '@/domain/dateFormat';
 import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
+import { CustomerEditForm } from '@/ui/management/CustomerEditForm';
 import { PhotoGallery } from './PhotoGallery';
 import { BinaryList } from './BinaryList';
 import { Papierkorb } from './Papierkorb';
@@ -32,7 +33,7 @@ import { AssignedWorkerEditor } from './AssignedWorkerEditor';
 import { UploadCta } from './UploadCta';
 import { dateInputValue } from './dateInputValue';
 import { SiteAddressLine } from './SiteAddressLine';
-import { SiteAddressGroup, type SiteAddressGroupHandle } from '@/ui/management/SiteAddressGroup';
+import { SiteAddressEditModal } from './SiteAddressEditModal';
 import styles from './ProjectDetail.module.css';
 
 type LoadState = { kind: 'loading' } | FetchProjectOutcome;
@@ -87,6 +88,7 @@ export function ProjectDetailPage() {
   const canUpdateDates = usePermission('project:dates');
   const canDelete = usePermission('project:delete');
   const canPurge = usePermission('project:purge');
+  const canEditCustomer = usePermission('customer:write');
 
   const fetchProject = useProjectStore((s) => s.fetchProject);
   const updateDates = useProjectStore((s) => s.updateDates);
@@ -109,18 +111,13 @@ export function ProjectDetailPage() {
   // — same level of persistence as the gallery / list scroll position.
   const [attachmentTab, setAttachmentTab] = useState<'attachments' | 'papierkorb'>('attachments');
 
-  // Imperative handle on the Baustelle edit group — read at submit
-  // time. The group itself never auto-commits, so the parent owns the
-  // dispatch trigger. See ui/management.md §8.8.6 + AC-281. Declared
-  // before the early-return branches below to keep the hook order
-  // stable across the loading / not-permitted / not-found paths.
-  const siteAddressEditRef = useRef<SiteAddressGroupHandle | null>(null);
-  // AC-284 partial-fill validation surface + in-flight lock for the
-  // explicit Speichern button (a double-click must dispatch one PATCH,
-  // not two). `useProjectManagementStore.updateProject` doesn't tag
-  // mutationInFlight, so the lock is local to this page.
-  const [siteAddressError, setSiteAddressError] = useState<string | null>(null);
-  const [siteAddressSubmitting, setSiteAddressSubmitting] = useState(false);
+  // Modal-open flags for the inline-edit affordances on the Kunde and
+  // Baustelle cards. Both modals own their own form state and submit
+  // lifecycle (see CustomerEditForm + SiteAddressEditModal); the page
+  // just holds the open/closed bit. Replaces the old inline Baustelle
+  // edit panel — see ui/project-detail.md §8.15.2.
+  const [customerModalOpen, setCustomerModalOpen] = useState(false);
+  const [siteAddressModalOpen, setSiteAddressModalOpen] = useState(false);
 
   // Eagerly fetch the Papierkorb count for owner / office so the tab
   // badge is accurate on first render. Workers don't have the
@@ -194,23 +191,26 @@ export function ProjectDetailPage() {
   const config = STATE_CONFIG_MAP[project.status];
   const customer = project.customer;
 
-  const handleSiteAddressSave = async () => {
-    if (siteAddressSubmitting) return;
-    // AC-284: partial fill blocks dispatch and surfaces the German
-    // validation hint. `valid` covers both `null` and the full triple.
-    const result = siteAddressEditRef.current?.read() ?? { kind: 'valid', value: null };
-    if (result.kind === 'partial') {
-      setSiteAddressError(STRINGS.projects.siteAddressPartial);
-      return;
-    }
-    setSiteAddressError(null);
-    setSiteAddressSubmitting(true);
-    try {
-      await updateProject(project.id, { siteAddress: result.value });
-    } finally {
-      setSiteAddressSubmitting(false);
-    }
+  // A click anywhere on a clickable detail card opens the corresponding
+  // modal — EXCEPT when the click lands on an inner anchor (tel: /
+  // mailto: / map link). Those anchors should follow their native
+  // behaviour; the modal-open click is delegated rather than wired onto
+  // each child to avoid nested-interactive markup.
+  const cardClickShouldOpen = (e: React.MouseEvent | React.KeyboardEvent): boolean => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return true;
+    return target.closest('a') === null;
   };
+
+  const cardKeyToggle = (onOpen: () => void) => (e: React.KeyboardEvent) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!cardClickShouldOpen(e)) return;
+    e.preventDefault();
+    onOpen();
+  };
+
+  const customerCardClickable = canEditCustomer && customer !== null && !isArchived;
+  const siteAddressCardClickable = canUpdate && !isArchived;
 
   const handleArchive = async () => {
     const confirmed = await requestConfirm(
@@ -430,15 +430,70 @@ export function ProjectDetailPage() {
         data-testid="project-detail-core"
         className={styles.coreSection}
       >
-        <h3 className={styles.regionHeading}>{STRINGS.attachments.coreFields}</h3>
         <div className={styles.coreGrid}>
-          <div className={styles.coreField}>
+          {/* KUNDE card — name + phone + email (matching the panel).
+              Clickable when the user has customer:write and the project
+              is not archived; opens the same CustomerEditForm modal the
+              Kunden tab uses. Inner tel:/mailto: anchors are delegated
+              past the card-open handler so a tap still places a call. */}
+          <div
+            className={customerCardClickable ? styles.coreFieldClickable : styles.coreField}
+            data-testid="project-detail-customer"
+            {...(customerCardClickable
+              ? {
+                  role: 'button',
+                  tabIndex: 0,
+                  'aria-label': `${STRINGS.ui.customer} ${STRINGS.ui.edit}`,
+                  onClick: (e: React.MouseEvent) => {
+                    if (cardClickShouldOpen(e)) setCustomerModalOpen(true);
+                  },
+                  onKeyDown: cardKeyToggle(() => setCustomerModalOpen(true)),
+                }
+              : {})}
+          >
             <span className={styles.coreLabel}>{STRINGS.ui.customer}</span>
             <span className={styles.coreValue}>{customer?.name ?? '—'}</span>
+            {customer?.phone && (
+              <a
+                className={styles.coreContactLink}
+                href={`tel:${customer.phone}`}
+                data-testid="project-detail-customer-phone"
+              >
+                {customer.phone}
+              </a>
+            )}
+            {customer?.email && (
+              <a
+                className={styles.coreContactLink}
+                href={`mailto:${customer.email}`}
+                data-testid="project-detail-customer-email"
+              >
+                {customer.email}
+              </a>
+            )}
           </div>
-          {/* Baustelle (work-site address) read-only line — same render
-              rule as the panel via SiteAddressLine. AC-282 / AC-283. */}
-          <SiteAddressLine project={project} variant="page" />
+          {/* Baustelle (work-site address) — read-only line via
+              SiteAddressLine (shared with the panel; AC-282 / AC-283).
+              Wrapped in a clickable surface when the user can edit so
+              the whole row taps through to SiteAddressEditModal. The
+              inner map anchor is delegated past the card-open handler. */}
+          {siteAddressCardClickable ? (
+            <div
+              className={styles.coreCardWrapClickable}
+              role="button"
+              tabIndex={0}
+              aria-label={`${STRINGS.projects.siteAddressLabel} ${STRINGS.ui.edit}`}
+              data-testid="project-detail-site-address-edit"
+              onClick={(e) => {
+                if (cardClickShouldOpen(e)) setSiteAddressModalOpen(true);
+              }}
+              onKeyDown={cardKeyToggle(() => setSiteAddressModalOpen(true))}
+            >
+              <SiteAddressLine project={project} variant="page" />
+            </div>
+          ) : (
+            <SiteAddressLine project={project} variant="page" />
+          )}
           <div className={styles.coreField}>
             <span className={styles.coreLabel}>{STRINGS.ui.dateStart}</span>
             {canUpdateDates && !isArchived ? (
@@ -497,48 +552,28 @@ export function ProjectDetailPage() {
               onCommit={(notes) => void updateProject(project.id, { notes })}
             />
           </div>
-          {/* Baustelle (work-site address) edit form rule —
-              ui/management.md §8.8.6. Reuses the SiteAddressGroup from
-              the create surface so toggle / discard / submit-shape
-              behavior is identical across create and edit. The group
-              never auto-commits; the inline Speichern button below is
-              the explicit dispatch trigger. AC-280 / AC-281 / AC-284. */}
-          {canUpdate && !isArchived && (
-            <div className={styles.coreFieldFull}>
-              <SiteAddressGroup
-                key={project.updatedAt}
-                initial={project.siteAddress}
-                disabled={siteAddressSubmitting}
-                handleRef={siteAddressEditRef}
-              />
-              {siteAddressError && (
-                <div
-                  className={styles.fieldHintError}
-                  data-testid="project-site-address-error"
-                  role="status"
-                >
-                  {siteAddressError}
-                </div>
-              )}
-              {/* Baustelle commits via explicit Speichern (not save-on-blur)
-                  because the toggle + structured triple + all-or-none
-                  requiredness cannot model on per-field blur — see
-                  ui/project-detail.md §8.15.2. */}
-              <div className={styles.inlineSaveRow}>
-                <button
-                  type="button"
-                  className={styles.inlineSaveButton}
-                  onClick={() => void handleSiteAddressSave()}
-                  disabled={siteAddressSubmitting}
-                  data-testid="project-site-save"
-                >
-                  {STRINGS.ui.save}
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       </section>
+
+      {customerModalOpen && customer && (
+        <CustomerEditForm
+          customer={customer}
+          onClose={() => setCustomerModalOpen(false)}
+          // Refresh the project so the embedded customer snapshot —
+          // which is what the page renders — picks up the new values.
+          onSaved={() => {
+            void fetchProject(project.id);
+          }}
+        />
+      )}
+
+      {siteAddressModalOpen && (
+        <SiteAddressEditModal
+          projectId={project.id}
+          initial={project.siteAddress}
+          onClose={() => setSiteAddressModalOpen(false)}
+        />
+      )}
 
       <AssignedWorkerEditor projectId={project.id} archived={isArchived} />
 
