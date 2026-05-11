@@ -6,10 +6,9 @@
  * someone noticed manually. The fix has two halves:
  *
  *   1. A single source of truth mapping `feature -> required env var
- *      names` lives in `src/server/config/features.ts` (NEW — does not
- *      yet exist on iteration/9; created by the impl phase). The
- *      registration sites stop using ad-hoc `if (env.X)` checks and
- *      defer to `featureStatus(env, feature)` instead.
+ *      names` lives in `src/server/config/features.ts`. The registration
+ *      sites stop using ad-hoc `if (env.X)` checks and defer to
+ *      `featureStatus(env, feature)` instead.
  *
  *   2. `start.ts` emits exactly one structured log line at boot
  *      enumerating every feature in the catalog with `enabled` or
@@ -38,10 +37,6 @@
  *   - The manifest's reported `state` for a given feature matches what
  *     `featureStatus(env, feature)` returns for the same env — so a
  *     manifest cannot diverge from the wiring it is supposed to mirror.
- *
- * STATUS: Expected to FAIL on iteration/9 — `src/server/config/features.ts`
- * does not yet exist. The impl phase creates it; this test pins the
- * contract before the code lands.
  */
 
 import { readFileSync } from 'node:fs';
@@ -49,45 +44,15 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi } from 'vitest';
 import type { Env } from '../config/env.js';
+import {
+  featureStatus,
+  emitFeatureManifest,
+  formatFeatureManifest,
+  FEATURES,
+  FEATURE_CATALOG,
+} from '../config/features.js';
 
-// Imports from a module that does not yet exist — the impl phase
-// creates `src/server/config/features.ts`. The dynamic-import pattern
-// below keeps the file type-checkable today (no missing-module
-// compile error) but the test bodies WILL fail when the import resolves
-// to undefined.
-//
-// Why dynamic instead of static: a static `import { featureStatus }
-// from '../config/features.js'` would fail at the TypeScript compile
-// step BEFORE the test runs, surfacing as a tooling error rather than
-// a failing test. The prompt requires the failure to be a behavioural
-// one (test runner reports a failed assertion), not a compile error.
-async function loadFeaturesModule(): Promise<{
-  featureStatus: (env: Env, feature: FeatureName) => FeatureStatus;
-  emitFeatureManifest: (env: Env, logger: ManifestLogger) => void;
-  formatFeatureManifest: (env: Env) => string;
-  FEATURES: readonly FeatureName[];
-  FEATURE_CATALOG: readonly { feature: FeatureName; requires: readonly string[] }[];
-}> {
-  // The module now exists (impl phase landed in #139). The
-  // `@ts-expect-error` directive that previously kept the missing-module
-  // failure behavioural was removed when the impl module landed —
-  // TypeScript would otherwise warn that the expected error is no longer
-  // present. The dynamic import shape is kept so the surface this file
-  // pins is unambiguously the public API of `../config/features.js`.
-  return (await import('../config/features.js')) as unknown as {
-    featureStatus: (env: Env, feature: FeatureName) => FeatureStatus;
-    emitFeatureManifest: (env: Env, logger: ManifestLogger) => void;
-    formatFeatureManifest: (env: Env) => string;
-    FEATURES: readonly FeatureName[];
-    FEATURE_CATALOG: readonly { feature: FeatureName; requires: readonly string[] }[];
-  };
-}
-
-type FeatureName = 'push' | 'llm' | 'admin-bootstrap' | 'backup';
-
-type FeatureStatus = { enabled: true } | { enabled: false; reason: string };
-
-interface ManifestLogger {
+interface ExtraLogger {
   info: (ctx: Record<string, unknown>, event?: string) => void;
   /** Optional. The manifest emission must never call these. */
   warn?: (ctx: Record<string, unknown>, event?: string) => void;
@@ -153,7 +118,6 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
 
 describe('AC-230: featureStatus(env, "push")', () => {
   it('returns { enabled: true } when both VAPID_PRIVATE_KEY and VAPID_SUBJECT are set', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       VAPID_PRIVATE_KEY: 'priv',
       VAPID_SUBJECT: 'mailto:ops@example.com',
@@ -162,7 +126,6 @@ describe('AC-230: featureStatus(env, "push")', () => {
   });
 
   it('returns { enabled: false, reason } naming VAPID_PRIVATE_KEY when only that var is missing', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       VAPID_PRIVATE_KEY: undefined,
       VAPID_SUBJECT: 'mailto:ops@example.com',
@@ -175,7 +138,6 @@ describe('AC-230: featureStatus(env, "push")', () => {
   });
 
   it('returns { enabled: false, reason } naming VAPID_SUBJECT when only that var is missing', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       VAPID_PRIVATE_KEY: 'priv',
       VAPID_SUBJECT: undefined,
@@ -188,7 +150,6 @@ describe('AC-230: featureStatus(env, "push")', () => {
   });
 
   it('names the FIRST missing var (VAPID_PRIVATE_KEY) when both are absent — deterministic ordering', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       VAPID_PRIVATE_KEY: undefined,
       VAPID_SUBJECT: undefined,
@@ -203,13 +164,11 @@ describe('AC-230: featureStatus(env, "push")', () => {
 
 describe('AC-230: featureStatus(env, "llm")', () => {
   it('returns { enabled: true } when OPENROUTER_API_KEY is set', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({ OPENROUTER_API_KEY: 'sk-test' });
     expect(featureStatus(env, 'llm')).toEqual({ enabled: true });
   });
 
   it('returns { enabled: false, reason } naming OPENROUTER_API_KEY when absent', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({ OPENROUTER_API_KEY: undefined });
     const status = featureStatus(env, 'llm');
     expect(status).toEqual({
@@ -221,7 +180,6 @@ describe('AC-230: featureStatus(env, "llm")', () => {
 
 describe('AC-230: featureStatus(env, "admin-bootstrap")', () => {
   it('returns { enabled: true } when both BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD are set', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       BOOTSTRAP_ADMIN_USERNAME: 'admin',
       BOOTSTRAP_ADMIN_PASSWORD: 'changeme',
@@ -230,7 +188,6 @@ describe('AC-230: featureStatus(env, "admin-bootstrap")', () => {
   });
 
   it('returns { enabled: false, reason } naming the first absent bootstrap var', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       BOOTSTRAP_ADMIN_USERNAME: undefined,
       BOOTSTRAP_ADMIN_PASSWORD: undefined,
@@ -246,7 +203,6 @@ describe('AC-230: featureStatus(env, "admin-bootstrap")', () => {
 
 describe('AC-230: featureStatus(env, "backup")', () => {
   it('returns { enabled: true } when every R2_* var and AGE_RECIPIENT is set', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       R2_ACCESS_KEY_ID: 'ak',
       R2_SECRET_ACCESS_KEY: 'sk',
@@ -258,7 +214,6 @@ describe('AC-230: featureStatus(env, "backup")', () => {
   });
 
   it('returns { enabled: false, reason } naming the first absent backup var', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       R2_ACCESS_KEY_ID: undefined,
       R2_SECRET_ACCESS_KEY: undefined,
@@ -274,7 +229,6 @@ describe('AC-230: featureStatus(env, "backup")', () => {
   });
 
   it('names the second var as missing when only the first is set', async () => {
-    const { featureStatus } = await loadFeaturesModule();
     const env = makeEnv({
       R2_ACCESS_KEY_ID: 'ak',
       R2_SECRET_ACCESS_KEY: undefined,
@@ -296,13 +250,13 @@ describe('AC-230: featureStatus(env, "backup")', () => {
 
 describe('AC-230: emitFeatureManifest emits exactly one structured info line', () => {
   it('emits one info call with event = config-feature-manifest, and no warn/error', async () => {
-    const { emitFeatureManifest } = await loadFeaturesModule();
     const info = vi.fn();
     const warn = vi.fn();
     const error = vi.fn();
     const env = makeEnv();
 
-    emitFeatureManifest(env, { info, warn, error });
+    const logger: ExtraLogger = { info, warn, error };
+    emitFeatureManifest(env, logger);
 
     expect(info).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
@@ -313,7 +267,6 @@ describe('AC-230: emitFeatureManifest emits exactly one structured info line', (
   });
 
   it('the manifest has a `features` map keyed by every feature in the catalog', async () => {
-    const { emitFeatureManifest, FEATURES } = await loadFeaturesModule();
     const info = vi.fn();
     const env = makeEnv();
 
@@ -329,7 +282,6 @@ describe('AC-230: emitFeatureManifest emits exactly one structured info line', (
   });
 
   it('each feature value has a `state` of enabled | disabled', async () => {
-    const { emitFeatureManifest, FEATURES } = await loadFeaturesModule();
     const info = vi.fn();
     const env = makeEnv();
 
@@ -346,7 +298,6 @@ describe('AC-230: emitFeatureManifest emits exactly one structured info line', (
   });
 
   it('every non-enabled state carries a non-empty reason', async () => {
-    const { emitFeatureManifest } = await loadFeaturesModule();
     const info = vi.fn();
     // All optional features off → every entry is non-enabled and must
     // carry a reason.
@@ -381,7 +332,6 @@ describe('AC-230: emitFeatureManifest emits exactly one structured info line', (
   });
 
   it('the manifest state for each feature matches featureStatus(env, feature) for the same env', async () => {
-    const { emitFeatureManifest, featureStatus, FEATURES } = await loadFeaturesModule();
     const info = vi.fn();
     // Mixed env so some features are enabled, some are not — exercises
     // both arms of the agreement assertion.
@@ -430,7 +380,6 @@ describe('AC-230: emitFeatureManifest emits exactly one structured info line', (
 
 describe('formatFeatureManifest produces aligned operator-readable output', () => {
   it('returns one line per feature plus a header', async () => {
-    const { formatFeatureManifest, FEATURES } = await loadFeaturesModule();
     const env = makeEnv();
     const lines = formatFeatureManifest(env).split('\n');
     // Header + one line per catalog feature.
@@ -438,7 +387,6 @@ describe('formatFeatureManifest produces aligned operator-readable output', () =
   });
 
   it('lists every feature in catalog order', async () => {
-    const { formatFeatureManifest, FEATURES } = await loadFeaturesModule();
     const env = makeEnv();
     const lines = formatFeatureManifest(env).split('\n').slice(1);
     for (let i = 0; i < FEATURES.length; i++) {
@@ -447,7 +395,6 @@ describe('formatFeatureManifest produces aligned operator-readable output', () =
   });
 
   it('marks an enabled feature with `enabled` and no dash-reason', async () => {
-    const { formatFeatureManifest } = await loadFeaturesModule();
     const env = makeEnv({ OPENROUTER_API_KEY: 'sk-test' });
     const llmLine = formatFeatureManifest(env)
       .split('\n')
@@ -458,7 +405,6 @@ describe('formatFeatureManifest produces aligned operator-readable output', () =
   });
 
   it('marks a disabled feature with `disabled — <reason>`', async () => {
-    const { formatFeatureManifest } = await loadFeaturesModule();
     const env = makeEnv({ OPENROUTER_API_KEY: undefined });
     const llmLine = formatFeatureManifest(env)
       .split('\n')
@@ -469,7 +415,6 @@ describe('formatFeatureManifest produces aligned operator-readable output', () =
   });
 
   it('aligns feature names so state columns line up', async () => {
-    const { formatFeatureManifest, FEATURES } = await loadFeaturesModule();
     const env = makeEnv();
     const lines = formatFeatureManifest(env).split('\n').slice(1);
     // The `disabled` / `enabled` token must start at the same column on
@@ -484,7 +429,6 @@ describe('formatFeatureManifest produces aligned operator-readable output', () =
   });
 
   it('agrees with featureStatus(env, f) for every feature in the same env', async () => {
-    const { formatFeatureManifest, featureStatus, FEATURES } = await loadFeaturesModule();
     const env = makeEnv({
       VAPID_PRIVATE_KEY: 'priv',
       VAPID_SUBJECT: 'mailto:ops@example.com',
@@ -624,7 +568,6 @@ describe('AC-230: docker-compose.yml services.app.environment forwards every cat
   });
 
   it('every var in every catalog entry `requires` is declared in services.app.environment', async () => {
-    const { FEATURE_CATALOG } = await loadFeaturesModule();
     const missing: { feature: string; var: string }[] = [];
     for (const entry of FEATURE_CATALOG) {
       for (const v of entry.requires) {

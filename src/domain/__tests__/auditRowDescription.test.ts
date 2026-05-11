@@ -13,6 +13,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { describeAuditRow } from '../auditRowDescription';
+import { labelForAuditAction } from '@/config/auditActionLabels';
 
 describe('describeAuditRow', () => {
   it('renders a forward transition as "Status geändert: From → To"', () => {
@@ -132,7 +133,7 @@ describe('describeAuditRow', () => {
       entityType: 'project',
       payload: { before: { number: 'P-1', title: 'X' }, after: {} },
     });
-    expect(out).toBe('Archiviert');
+    expect(out).toBe(labelForAuditAction('archive'));
   });
 
   it('falls back to labelForAuditAction for known non-enriched actions', () => {
@@ -141,7 +142,7 @@ describe('describeAuditRow', () => {
       entityType: 'project',
       payload: null,
     });
-    expect(out).toBe('Endgültig gelöscht');
+    expect(out).toBe(labelForAuditAction('purge'));
   });
 
   it('renders an attachment:add row via the config-layer label', () => {
@@ -161,7 +162,7 @@ describe('describeAuditRow', () => {
         },
       },
     });
-    expect(out).toBe('Datei hinzugefügt');
+    expect(out).toBe(labelForAuditAction('attachment:add'));
   });
 
   it('renders an attachment:hide row via the config-layer label', () => {
@@ -178,7 +179,7 @@ describe('describeAuditRow', () => {
         },
       },
     });
-    expect(out).toBe('In Papierkorb verschoben');
+    expect(out).toBe(labelForAuditAction('attachment:hide'));
   });
 
   it('returns the raw action string for unknown actions (forward-compat)', () => {

@@ -302,9 +302,6 @@ describe('Map link — exactly once, on the displayed address (AC-283)', () => {
     expect(href).toContain(encodeURIComponent(SITE.city));
   });
 
-  // TAUTOLOGICAL TODAY: passes against current code; this test locks the contract
-  // once impl renders the Baustelle line. Sibling failure cases on this AC verify
-  // the regression direction.
   it('panel: map link points at customer.address when siteAddress is null', async () => {
     const project = makeProject(null, CUSTOMER_ADDRESS);
     renderPanel(project);
@@ -317,9 +314,6 @@ describe('Map link — exactly once, on the displayed address (AC-283)', () => {
     expect(href).toContain(encodeURIComponent(CUSTOMER_ADDRESS.city));
   });
 
-  // TAUTOLOGICAL TODAY: passes against current code; this test locks the contract
-  // once impl renders the Baustelle line. Sibling failure cases on this AC verify
-  // the regression direction.
   it('page: map link points at customer.address when siteAddress is null', async () => {
     const project = makeProject(null, CUSTOMER_ADDRESS);
     renderPage(project);
@@ -333,9 +327,6 @@ describe('Map link — exactly once, on the displayed address (AC-283)', () => {
     expect(href).toContain(encodeURIComponent(CUSTOMER_ADDRESS.city));
   });
 
-  // TAUTOLOGICAL TODAY: passes against current code; this test locks the contract
-  // once impl renders the Baustelle line. Sibling failure cases on this AC verify
-  // the regression direction.
   it('panel: no map link rendered when neither address is present', async () => {
     const project = makeProject(null, null);
     renderPanel(project);
@@ -343,9 +334,6 @@ describe('Map link — exactly once, on the displayed address (AC-283)', () => {
     expect(screen.queryByRole('link', { name: STRINGS.ui.openMaps })).toBeNull();
   });
 
-  // TAUTOLOGICAL TODAY: passes against current code; this test locks the contract
-  // once impl renders the Baustelle line. Sibling failure cases on this AC verify
-  // the regression direction.
   it('page: no map link rendered when neither address is present', async () => {
     const project = makeProject(null, null);
     renderPage(project);

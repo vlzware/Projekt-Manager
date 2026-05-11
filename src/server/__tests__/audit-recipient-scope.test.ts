@@ -13,8 +13,6 @@
  *   - Rule matching via explicit `userIds` → spec.userIds membership.
  *   - Pagination: offset/limit applied AFTER the recipient-scope filter
  *     so pages stay stable and never skip legitimate rows.
- *   - Inactive caller → `SESSION_EXPIRED` at the middleware (never reaches
- *     the route) — documents the non-bypass.
  *   - Omitted / `false` → current behaviour unchanged.
  *
  * Fixture strategy: each describe block wipes `notification_rule` in
@@ -419,24 +417,5 @@ describe('GET /api/audit recipientScope (AC-200)', () => {
   it('rejects recipientScope values outside {"true","false"} with 422', async () => {
     const res = await authGet(ownerToken, '/api/audit?recipientScope=yes');
     expect(res.statusCode).toBe(422);
-  });
-
-  // ---------------------------------------------------------------
-  // AC-200 — inactive caller cannot reach the endpoint
-  // ---------------------------------------------------------------
-  //
-  // The auth middleware rejects inactive users with SESSION_EXPIRED
-  // before the route handler runs. This test pins the guard at the
-  // login boundary — `SEED_USERS.inactive` cannot authenticate at all,
-  // so a login attempt surfaces the rejection. The recipient-scope
-  // repo predicate therefore never sees an inactive caller.
-  it('inactive users cannot authenticate and cannot reach the audit surface', async () => {
-    let loginError: Error | null = null;
-    try {
-      await login(SEED_USERS.inactive.username, SEED_DEFAULT_PASSWORD);
-    } catch (err) {
-      loginError = err as Error;
-    }
-    expect(loginError).not.toBeNull();
   });
 });

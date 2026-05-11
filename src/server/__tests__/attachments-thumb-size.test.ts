@@ -148,15 +148,15 @@ describe('Attachment thumbnail-size cap + HEAD re-assertion', () => {
       expect(body.thumbnailUpload.headers['Content-Length']).toBe('8000');
     });
 
-    it('still issues a 201 with no extra fields (regression guard for `additionalProperties: false`)', async () => {
+    it('rejects unknown fields with 422 (regression guard for `additionalProperties: false`)', async () => {
       const before = await countAttachmentRows();
-      const res = await authPost(
-        ownerToken,
-        `/api/projects/${projectId}/attachments/init`,
-        photoInitBody(),
-      );
-      expect(res.statusCode).toBe(201);
-      expect(await countAttachmentRows()).toBe(before + 1);
+      const res = await authPost(ownerToken, `/api/projects/${projectId}/attachments/init`, {
+        ...photoInitBody(),
+        nonsense: true,
+      });
+      expect(res.statusCode).toBe(422);
+      expect(res.json().code).toBe('VALIDATION_ERROR');
+      expect(await countAttachmentRows()).toBe(before);
     });
   });
 
