@@ -1,0 +1,387 @@
+/* Per-project invoice block — list, draft form, cancel dialog. Mirrors
+   the visual register used by other ProjectDetail sections so the block
+   reads as part of the page rather than a foreign affordance. */
+
+.section {
+  padding: 16px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  min-width: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.createButton {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.createButton:hover {
+  background: var(--color-surface-muted);
+}
+
+.errorBanner {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: var(--color-surface-muted);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.empty {
+  padding: 16px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Row visuals. The Storno row is rendered with a left indent + a muted
+   border accent so it visually subordinates under its `cancellationOf`
+   original — the same grouping rule ui/invoices.md §8.16.1 names for
+   the list view. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 110px 110px minmax(160px, 1fr) 120px auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 6px;
+  background: var(--color-surface);
+}
+
+.rowStorno {
+  margin-left: 24px;
+  border-left: 3px solid var(--color-border);
+}
+
+.rowCancelled {
+  opacity: 0.85;
+}
+
+@media (max-width: 700px) {
+  .row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .rowStorno {
+    margin-left: 12px;
+  }
+}
+
+.cellNumber {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.cellRecipient {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cellTotal {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+}
+
+.statusIssued {
+  background: var(--color-success-bg, #e7f6e7);
+  color: var(--color-success, #2d6a2d);
+}
+
+.statusCancelled {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.statusStorno {
+  background: var(--color-warning-bg, #fff4e0);
+  color: var(--color-warning, #8a5a00);
+}
+
+.stornoOfHint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.actionButton {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.actionButton:hover {
+  background: var(--color-surface-muted);
+}
+
+.actionDanger {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* Form panel — slides in as an inline panel above the list. Same chrome
+   register as the management modal overlays for visual consistency. */
+.formOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 5vh 16px;
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.formPanel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 20px;
+  width: 100%;
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formTitle {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.formSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.formSectionHeading {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+@media (max-width: 600px) {
+  .formGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.formField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.formLabel {
+  font-size: 0.8rem;
+  color: var(--color-text-subtle);
+}
+
+.formInput,
+.formSelect {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.formHint {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+
+.lineTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.lineTableScroll {
+  overflow-x: auto;
+}
+
+.lineTable th,
+.lineTable td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 0.9rem;
+}
+
+.lineTable input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.lineActions {
+  width: 32px;
+  text-align: center;
+}
+
+.lineRemoveButton {
+  background: transparent;
+  border: 0;
+  color: var(--color-danger);
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.addLineButton {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+}
+
+.formActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.primaryButton,
+.secondaryButton {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.primaryButton {
+  background: var(--color-primary, #2a5cdb);
+  color: var(--color-on-primary, #fff);
+  border-color: var(--color-primary, #2a5cdb);
+}
+
+.primaryButton:disabled,
+.secondaryButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.secondaryButton {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.cancelDialogOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 110;
+}
+
+.cancelDialog {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 20px;
+  width: 100%;
+  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cancelDialogWarning {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--color-warning-bg, #fff4e0);
+  color: var(--color-warning, #8a5a00);
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+.cancelReasonInput {
+  width: 100%;
+  min-height: 80px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  resize: vertical;
+  box-sizing: border-box;
+}

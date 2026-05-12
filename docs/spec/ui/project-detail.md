@@ -24,7 +24,7 @@ A full-page view of a single project. Reachable by URL (`/projects/:id`) and fro
 ├──────────────────────────────────────────────────────────┤
 │ Binary list — PDFs, DOCX, other non-photo attachments    │
 ├──────────────────────────────────────────────────────────┤
-│ Invoice — latest issued + Neue Rechnung action (§8.15.11)│
+│ Invoice — per-project list + Neue Rechnung CTA (§8.15.11)│
 ├──────────────────────────────────────────────────────────┤
 │ Activity feed — scoped to this project (see §8.4.1)      │
 └──────────────────────────────────────────────────────────┘
@@ -127,14 +127,20 @@ Per-project trash surface listing rows soft-hidden via §8.15.6. Bounded by the 
 
 ### 8.15.11 Invoice
 
-Per-project invoice block. Surfaces the project's most recent issued invoice (when present) and exposes the entry point to the dedicated invoice draft form ([invoices.md §8.16.2](invoices.md#8162-draft-form)). The full per-invoice viewer and the cross-project list view live in [invoices.md §8.16](invoices.md#816-invoices-view).
+Per-project invoice block. Surfaces every invoice tied to the project as a list with row-level actions and exposes the entry point to the invoice draft form ([invoices.md §8.16.2](invoices.md#8162-draft-form)). The standalone cross-project list view lives at [invoices.md §8.16](invoices.md#816-invoices-view) — same data, different surface.
 
-- **Latest issued invoice summary.** When the project carries at least one `status = 'issued'` or `'cancelled'` invoice, the block surfaces the latest issued row (sorted `issueDate DESC`, `id` tiebreaker): the `RE-YYYY-NNNN` number, the issue date (DD.MM.YYYY), `totals.grossGrandTotal` (EUR, German locale), and the snapshotted recipient name. A `PDF herunterladen` action calls `GET /api/invoices/:id/pdf` (gated by `invoice:read` per [AC-299](../verification.md#1530-invoices)).
-- **`Neue Rechnung` action.** Visible to `invoice:write` holders only, and only when the project's `status = 'rechnung_faellig'`. The action navigates to the draft form (or opens it inline) pre-bound to the current project. Outside `rechnung_faellig`, the action is hidden (the project workflow has not yet reached the invoice-creation gate); the block falls back to the latest-issued-invoice summary or to an empty German placeholder `"Noch keine Rechnung"`.
-- **Stornorechnung indicator.** When the latest issued invoice has been cancelled (its `status = 'cancelled'` and a Storno sibling exists), the block renders a subtle indicator `"Storniert — siehe Rechnungsliste"` linking to the full invoice view ([invoices.md §8.16](invoices.md#816-invoices-view)). The project status is **not** auto-reverted by the cancellation, so a user staring at an `abgerechnet` project with a cancelled invoice sees the gap and can act on it (manual transition back).
-- **Cross-link to the full invoice view.** A `Alle Rechnungen anzeigen` affordance navigates to the invoice list ([invoices.md §8.16.1](invoices.md#8161-list-view)) pre-filtered to this project's `projectId`.
-- **Worker exclusion.** Workers do not hold `invoice:read` and never see this block. The page renders without the invoice section for worker callers.
-- **Realtime refresh.** Subscribes to the `invoice_changed` SSE event ([api.md §14.2.13](../api.md#14213-realtime-events)) so a fresh issuance from another session updates the block without a manual refresh.
+- **List.** Paginated-shape but unfiltered table over `GET /api/invoices?projectId=...` ([api.md §14.2.14](../api.md#14214-invoice-operations)). Each row carries `number` (`RE-YYYY-NNNN` / `ST-YYYY-NNNN`, or `—` for drafts), German `status` label per the [invoices.md §8.16.1](invoices.md#8161-list-view) mapping, `issueDate` (DD.MM.YYYY; `—` for drafts), the snapshotted recipient name, and `totals.grossGrandTotal` (EUR, German locale). Default sort matches the standalone view (`issueDate DESC, createdAt DESC, id`).
+- **Storno grouping.** A Storno sibling row (`cancellationOf` non-null) renders visually subordinated under its `cancellationOf` original — indented + muted accent + a `"Storno zu RE-YYYY-NNNN"` hint line. The grouping is rendered client-side from the `cancellationOf` reference; the underlying rows are independent in the database.
+- **Row actions.**
+  - **Draft row** (`status = 'draft'`, `invoice:write`): `Bearbeiten` re-opens the draft form pre-filled with the row, `Ausstellen` issues via `POST /api/invoices/:id/issue` after a confirmation dialog, `Entwurf löschen` hard-deletes via `DELETE /api/invoices/:id` after a confirmation dialog.
+  - **Issued row** (`status = 'issued'`, `cancellationOf` null): `PDF herunterladen` calls `GET /api/invoices/:id/pdf`; `Stornieren` (`invoice:write` only) opens the cancel dialog (below).
+  - **Cancelled original / Storno sibling**: PDF download only. The cancellation atom on the issued row is one-shot — a second Storno on either the cancelled original or the Storno sibling is not offered.
+- **`Neue Rechnung` CTA.** Visible to `invoice:write` holders only, and only when the project's `status = 'rechnung_faellig'`. Opens the draft form inline as a modal panel; the new draft inherits the project's customer (server-side recipient pre-fill at create), the project's `plannedEnd` as the performance date, and the company profile's `defaultTaxMode`. Outside `rechnung_faellig`, the CTA is hidden; the list remains visible with whatever invoices the project already carries. An empty list renders the German placeholder `"Noch keine Rechnungen"`.
+- **Cancel dialog.** Bespoke dialog (not the shared `ConfirmDialog` because the call requires a free-text `Grund` input). German warning copy per [invoices.md §8.16.3](invoices.md#8163-issued-invoice-viewer) (both rows remain, project status NOT auto-reverted). Reason is required client-side; the server validates again and remains authoritative. On confirm dispatches `POST /api/invoices/:id/cancel` with the reason; on success the original row's badge flips to `Storniert` and the Storno sibling appears in the list.
+- **Project-status flip.** The issue path flips `project.status` to `abgerechnet` server-side (AC-287); the block refetches the project so the page header / Kanban column reflect the new state without a manual reload. The cancel path deliberately does NOT auto-revert (AC-290 trailing clause) — a user staring at an `abgerechnet` project with a cancelled invoice sees the gap and acts on it manually.
+- **Cross-link to the full invoice view.** A `Alle Rechnungen anzeigen` affordance navigates to the invoice list ([invoices.md §8.16.1](invoices.md#8161-list-view)) pre-filtered to this project's `projectId`. (The standalone route is delivered in Chunk C — the cross-link is the seam.)
+- **Worker exclusion.** Workers do not hold `invoice:read` and never see the section. The page renders without it for worker callers.
+- **Realtime refresh.** Subscribes to the `invoice_changed` SSE event ([api.md §14.2.13](../api.md#14213-realtime-events)) so a fresh issuance / cancellation from another session updates the block without a manual refresh.
 
 ---
 

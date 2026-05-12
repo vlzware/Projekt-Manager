@@ -210,7 +210,13 @@ import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchang
 import type { BackupStatus } from '@/domain/backupBadge';
 import type { AuditEntry, AuditListParams, AuditListResponse } from '@/domain/audit';
 import type { NotificationRule, NotificationRuleInput } from '@/domain/notifications';
-import type { CompanyProfile, TaxMode } from '@/domain/invoice';
+import type {
+  CompanyProfile,
+  Invoice,
+  InvoiceLine,
+  InvoiceRecipientSnapshot,
+  TaxMode,
+} from '@/domain/invoice';
 
 interface AuthUser {
   id: string;
@@ -800,6 +806,69 @@ export const companyProfileApi = {
 
   put: (payload: CompanyProfileInput) =>
     apiCall<CompanyProfile>('/api/company-profile', { method: 'PUT', body: payload }),
+};
+
+/**
+ * Invoice endpoints (api.md §14.2.14, ADR-0026). The list endpoint
+ * returns `{ data, total }` mirroring the server's repository shape;
+ * the per-id read / mutation endpoints return a single `Invoice` row.
+ * Cancel returns `{ original, storno }` — both rows in one envelope so
+ * the client never has to round-trip for the Storno sibling.
+ *
+ * `pdfUrl` is a URL-builder helper (not a fetch); the caller drives the
+ * download via an `<a download>` click handler so the browser surfaces
+ * the file the same way as any other binary download.
+ */
+export interface InvoiceListResponse {
+  data: Invoice[];
+  total: number;
+}
+
+export interface InvoiceCreateDraftInput {
+  lines?: InvoiceLine[];
+  recipient?: InvoiceRecipientSnapshot;
+  taxMode?: TaxMode;
+  performanceDate?: string | null;
+}
+
+export interface InvoiceUpdateDraftInput {
+  lines?: InvoiceLine[];
+  recipient?: InvoiceRecipientSnapshot;
+  taxMode?: TaxMode;
+  performanceDate?: string | null;
+}
+
+export interface InvoiceCancelResult {
+  original: Invoice;
+  storno: Invoice;
+}
+
+export const invoicesApi = {
+  listByProject: (projectId: string) =>
+    apiCall<InvoiceListResponse>('/api/invoices' + toQuery({ projectId })),
+
+  getById: (id: string) => apiCall<Invoice>(`/api/invoices/${id}`),
+
+  createDraft: (projectId: string, payload: InvoiceCreateDraftInput) =>
+    apiCall<Invoice>('/api/invoices', {
+      method: 'POST',
+      body: { projectId, ...payload },
+    }),
+
+  updateDraft: (id: string, payload: InvoiceUpdateDraftInput) =>
+    apiCall<Invoice>(`/api/invoices/${id}`, { method: 'PATCH', body: payload }),
+
+  deleteDraft: (id: string) => apiCall<null>(`/api/invoices/${id}`, { method: 'DELETE' }),
+
+  issue: (id: string) => apiCall<Invoice>(`/api/invoices/${id}/issue`, { method: 'POST' }),
+
+  cancel: (id: string, reason: string) =>
+    apiCall<InvoiceCancelResult>(`/api/invoices/${id}/cancel`, {
+      method: 'POST',
+      body: { reason },
+    }),
+
+  pdfUrl: (id: string) => `/api/invoices/${id}/pdf`,
 };
 
 export type { AuthUser };

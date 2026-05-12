@@ -432,6 +432,86 @@ export const STRINGS = {
     restorePhrasePrompt: (phrase: string) => `Zur Bestätigung bitte „${phrase}" eingeben:`,
   },
 
+  /**
+   * Per-project invoice block (ui/project-detail.md §8.15.11) and the
+   * inline draft form / cancel dialog (ui/invoices.md §8.16.2 / §8.16.3).
+   * Status labels live alongside `Invoice.status` from the domain types;
+   * the German display copy stays here so the wire vocabulary
+   * (`'draft' / 'issued' / 'cancelled'`) and the UX vocabulary
+   * (`'Entwurf' / 'Ausgestellt' / 'Storniert'`) never drift.
+   */
+  invoices: {
+    sectionHeading: 'Rechnungen',
+    newInvoice: 'Neue Rechnung',
+    empty: 'Noch keine Rechnungen',
+
+    statusDraft: 'Entwurf',
+    statusIssued: 'Ausgestellt',
+    statusCancelled: 'Storniert',
+    statusStorno: 'Storno',
+
+    columnNumber: 'Nr.',
+    columnStatus: 'Status',
+    columnIssueDate: 'Datum',
+    columnRecipient: 'Kunde',
+    columnTotal: 'Summe',
+
+    issueAction: 'Ausstellen',
+    cancelAction: 'Stornieren',
+    downloadPdfAction: 'PDF herunterladen',
+    deleteDraftAction: 'Entwurf löschen',
+    editDraftAction: 'Bearbeiten',
+    saveAction: 'Speichern',
+    discardAction: 'Verwerfen',
+
+    stornoOfLabel: (number: string) => `Storno zu ${number}`,
+
+    // Form (§8.16.2)
+    formRecipientHeading: 'Empfänger',
+    formRecipientFrozenHint: 'Daten werden bei Ausstellung der Rechnung eingefroren.',
+    formRecipientName: 'Name',
+    formRecipientStreet: 'Straße',
+    formRecipientZip: 'PLZ',
+    formRecipientCity: 'Ort',
+    formLinesHeading: 'Positionen',
+    formLineDescription: 'Beschreibung',
+    formLineQuantity: 'Menge',
+    formLineUnit: 'Einheit',
+    formLineUnitPrice: 'Einzelpreis (€ netto)',
+    formLineTaxRate: 'MwSt %',
+    formLineTotal: 'Position (€ netto)',
+    formAddLine: '+ Position hinzufügen',
+    formRemoveLine: 'Entfernen',
+    formTaxMode: 'Steuermodus',
+    formPerformanceDate: 'Leistungsdatum',
+
+    // Confirmation copies
+    issueConfirmTitle: 'Rechnung jetzt ausstellen?',
+    issueConfirmBody:
+      'Diese Aktion ist unwiderruflich. Nach dem Ausstellen kann die Rechnung nur noch storniert werden.',
+    issueConfirmOk: 'Ausstellen',
+    deleteDraftConfirm: 'Entwurf endgültig löschen?',
+
+    // Cancel dialog (§8.16.3)
+    cancelDialogTitle: 'Stornorechnung erstellen',
+    cancelDialogWarning:
+      'Diese Aktion erstellt eine Storno-Rechnung. Beide Rechnungen bleiben dauerhaft erhalten. Der Projektstatus wird NICHT automatisch zurückgesetzt — bitte separat anpassen.',
+    cancelReasonLabel: 'Grund',
+    cancelReasonPlaceholder: 'Grund',
+    cancelConfirm: 'Stornieren',
+    cancelReasonRequired: 'Bitte einen Grund angeben.',
+
+    // Error decodes for the 4xx/5xx envelope responses (api.md §14.4).
+    errorFrozen: 'Diese Rechnung ist bereits ausgestellt und kann nicht mehr geändert werden.',
+    errorNotIssued: 'Die Rechnung ist noch ein Entwurf.',
+    errorAlreadyCancelled: 'Die Rechnung wurde bereits storniert.',
+    errorProjectState:
+      'Das Projekt steht nicht im Status „Rechnung fällig" — die Rechnung kann nicht ausgestellt werden.',
+    errorCompanyProfileRequired:
+      'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
+    errorPdfDownload: 'Die PDF konnte nicht geladen werden.',
+  },
+
   aging: {
     sinceNDays: (n: number) => `seit ${n} Tagen`,
     agedBuffer: (count: number, label: string, days: number) =>

@@ -75,14 +75,32 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   await loadNotificationRules(db);
 
   // Restore the company_profile singleton row that the TRUNCATE
-  // CASCADE above wiped. Default values land — mandatory fields
-  // remain empty so the issuance gate (AC-289 /
-  // COMPANY_PROFILE_REQUIRED) keeps firing until owner fills them
-  // via `PUT /api/company-profile`. Matches the baseline migration
-  // INSERT verbatim.
-  await db.execute(
-    sql`INSERT INTO "company_profile" DEFAULT VALUES ON CONFLICT ("singleton") DO NOTHING`,
-  );
+  // CASCADE above wiped. The seed ships a COMPLETE profile so the
+  // dev / E2E happy path can issue invoices without manual setup
+  // — the invoice issuance gate (AC-289 / COMPANY_PROFILE_REQUIRED)
+  // expects every mandatory field populated. Owner can still edit
+  // via `PUT /api/company-profile` (ui/daten.md §8.11.4). The
+  // baseline migration's empty defaults remain the production
+  // posture; the seed overrides them for the test fixture.
+  await db.execute(sql`
+    INSERT INTO "company_profile"
+      ("company_name", "address", "tax_id", "ust_id", "iban", "default_tax_mode")
+    VALUES (
+      'Maler Berger GmbH',
+      '{"street":"Werkstr. 1","zip":"10115","city":"Berlin"}'::jsonb,
+      '111/222/33333',
+      'DE123456789',
+      'DE12 1000 0000 1234 5678 90',
+      'standard'
+    )
+    ON CONFLICT ("singleton") DO UPDATE SET
+      "company_name" = EXCLUDED."company_name",
+      "address" = EXCLUDED."address",
+      "tax_id" = EXCLUDED."tax_id",
+      "ust_id" = EXCLUDED."ust_id",
+      "iban" = EXCLUDED."iban",
+      "default_tax_mode" = EXCLUDED."default_tax_mode"
+  `);
 
   console.warn(
     `⚠  Seed-Daten geladen. Alle Benutzer haben das Standardpasswort "${SEED_DEFAULT_PASSWORD}". ` +

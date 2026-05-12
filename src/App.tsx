@@ -5,6 +5,7 @@ import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { subscribeProjectStoresToSse } from '@/state/projectSseSubscription';
+import { subscribeInvoiceStoreToSse } from '@/state/invoiceSseSubscription';
 import { viewFromPath } from '@/hooks/useRouterNav';
 import { ROUTES, routeByPath, landingPathForUser } from '@/config/routes';
 import { isInsecureConnection } from '@/config/insecureConnection';
@@ -172,6 +173,11 @@ export function App() {
   useEffect(() => {
     if (!authUser) return;
     return subscribeProjectStoresToSse();
+  }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    return subscribeInvoiceStoreToSse();
   }, [authUser]);
 
   if (authUser) {
