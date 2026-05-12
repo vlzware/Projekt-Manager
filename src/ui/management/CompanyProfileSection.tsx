@@ -18,7 +18,7 @@
  * in the task scope. No logo affordance is rendered.
  */
 
-import { useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useEffect, useState, type ChangeEvent } from 'react';
 import { STRINGS } from '@/config/strings';
 import { useAuthStore } from '@/state/authStore';
 import { useCompanyProfileStore } from '@/state/companyProfileStore';
@@ -125,8 +125,7 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
   const valid = isFormValid(values);
   const ustIdMissing = ustIdRequiredFor(values.defaultTaxMode) && !values.ustId.trim();
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async () => {
     if (!isOwner || submitting) return;
     if (!valid) {
       setShowErrors(true);
@@ -181,7 +180,14 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
       <h3 className={styles.heading}>{STRINGS.companyProfile.heading}</h3>
       <p className={styles.description}>{STRINGS.companyProfile.description}</p>
 
-      <form className={styles.form} onSubmit={handleSubmit} data-testid="company-profile-form">
+      <form
+        className={styles.form}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleSubmit();
+        }}
+        data-testid="company-profile-form"
+      >
         {fields.map((f) => (
           <LabeledInput
             key={f.key}
