@@ -25,6 +25,15 @@ export type ErrorCode =
   | 'MISSING_USER_REFS'
   | 'BULK_LIMIT_EXCEEDED'
   | 'DEK_UNWRAP_FAILED'
+  // Invoice + company-profile domain (ADR-0026, api.md §14.4).
+  | 'INVOICE_FROZEN'
+  | 'INVOICE_NUMBER_FORMAT'
+  | 'INVOICE_PROJECT_STATE'
+  | 'INVOICE_NOT_ISSUED'
+  | 'INVOICE_ALREADY_CANCELLED'
+  | 'COMPANY_PROFILE_REQUIRED'
+  | 'CUSTOMER_HAS_INVOICES'
+  | 'PROJECT_HAS_INVOICES'
   | 'SERVER_ERROR';
 
 export interface AppErrorResponse {
@@ -239,4 +248,85 @@ export function bulkLimitExceeded(details: BulkLimitDetails): AppError {
  */
 export function dekUnwrapFailed(): AppError {
   return new AppError('DEK_UNWRAP_FAILED', STRINGS.errors.invalidInput, 422);
+}
+
+// ---------------------------------------------------------------------
+// Invoice + company-profile domain errors (ADR-0026, api.md §14.4)
+// ---------------------------------------------------------------------
+
+/**
+ * Mutation rejected on an issued or cancelled invoice row. AC-286 / §6.14:
+ * issued rows are write-once at the persistence layer; the route surface
+ * rejects PATCH / DELETE / non-cancellation mutations with this code
+ * before the persistence-layer backstop fires.
+ */
+export function invoiceFrozen(): AppError {
+  return new AppError('INVOICE_FROZEN', STRINGS.errors.invoiceFrozen, 422);
+}
+
+/**
+ * Issue call rejected because the parent project is not in
+ * `rechnung_faellig`. AC-289 / api.md §14.2.14 error paths.
+ */
+export function invoiceProjectState(): AppError {
+  return new AppError('INVOICE_PROJECT_STATE', STRINGS.errors.invoiceProjectState, 409);
+}
+
+/**
+ * Cancel / PDF-download rejected because the row is still a draft.
+ * AC-291 (cancel-on-draft) and AC-299 (download-on-draft).
+ */
+export function invoiceNotIssued(): AppError {
+  return new AppError('INVOICE_NOT_ISSUED', STRINGS.errors.invoiceNotIssued, 409);
+}
+
+/**
+ * Cancel rejected because the row is already cancelled. AC-291.
+ */
+export function invoiceAlreadyCancelled(): AppError {
+  return new AppError('INVOICE_ALREADY_CANCELLED', STRINGS.errors.invoiceAlreadyCancelled, 409);
+}
+
+/**
+ * Issue / company-profile-upsert rejected because the singleton
+ * `company_profile` row lacks one or more fields required for the
+ * resolved `taxMode`. AC-289(i) / AC-303 / AC-305.
+ *
+ * `details.missingFields` enumerates the offending field paths so the
+ * UI can target the right input(s).
+ */
+export interface CompanyProfileRequiredDetails {
+  missingFields: string[];
+}
+
+export function companyProfileRequired(details: CompanyProfileRequiredDetails): AppError {
+  return new AppError(
+    'COMPANY_PROFILE_REQUIRED',
+    STRINGS.errors.companyProfileRequired,
+    422,
+    details,
+  );
+}
+
+/**
+ * Customer delete rejected — at least one of the customer's projects
+ * (active or archived) carries an issued or cancelled invoice. AC-307.
+ * `details.invoiceCount` carries the count of issued + cancelled rows
+ * (drafts excluded — they cascade-delete with their project).
+ */
+export interface InvoiceRetentionDetails {
+  invoiceCount: number;
+}
+
+export function customerHasInvoices(details: InvoiceRetentionDetails): AppError {
+  return new AppError('CUSTOMER_HAS_INVOICES', STRINGS.errors.customerHasInvoices, 409, details);
+}
+
+/**
+ * Project purge rejected — the project carries at least one issued or
+ * cancelled invoice. AC-308. Distinct from the generic CONFLICT used
+ * for the non-archived purge precondition (AC-156).
+ */
+export function projectHasInvoices(details: InvoiceRetentionDetails): AppError {
+  return new AppError('PROJECT_HAS_INVOICES', STRINGS.errors.projectHasInvoices, 409, details);
 }

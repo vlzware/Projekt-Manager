@@ -41,6 +41,19 @@ export const STRINGS = {
       'Bestätigung fehlt oder stimmt nicht. Bitte den angezeigten Text exakt eingeben.',
     missingUserRefs:
       'Die Datei verweist auf Benutzer, die in der Zieldatenbank nicht vorhanden sind.',
+    // Invoice domain (ADR-0026 / api.md §14.4)
+    invoiceFrozen:
+      'Diese Rechnung ist bereits ausgestellt und kann nicht mehr geändert oder gelöscht werden.',
+    invoiceProjectState:
+      'Das Projekt steht nicht im Status „Rechnung fällig" — die Rechnung kann nicht ausgestellt werden.',
+    invoiceNotIssued: 'Die Rechnung ist noch ein Entwurf.',
+    invoiceAlreadyCancelled: 'Die Rechnung wurde bereits storniert.',
+    companyProfileRequired:
+      'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
+    customerHasInvoices:
+      'Der Kunde kann nicht gelöscht werden, da ausgestellte oder stornierte Rechnungen existieren.',
+    projectHasInvoices:
+      'Das Projekt kann nicht endgültig gelöscht werden, da ausgestellte oder stornierte Rechnungen existieren.',
   },
 
   entities: {
@@ -50,6 +63,8 @@ export const STRINGS = {
     audit: 'Audit-Eintrag',
     notificationRule: 'Benachrichtigungsregel',
     pushSubscription: 'Push-Abonnement',
+    invoice: 'Rechnung',
+    companyProfile: 'Firmendaten',
     resource: 'Ressource',
   },
 

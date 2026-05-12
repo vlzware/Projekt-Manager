@@ -94,6 +94,11 @@ export function customerRoutes(db: Database) {
                   city: { type: 'string' },
                 },
               },
+              // USt-IdNr. — data-model.md §5.6 / AC-306. Structurally
+              // optional at the route layer; the issuance-time
+              // requiredness gate fires only when taxMode =
+              // 'reverse_charge' (see AC-289).
+              ustId: { type: ['string', 'null'] },
               notes: { type: ['string', 'null'] },
             },
           },
@@ -107,6 +112,7 @@ export function customerRoutes(db: Database) {
           phone?: string | null;
           email?: string | null;
           address?: { street: string; zip: string; city: string } | null;
+          ustId?: string | null;
           notes?: string | null;
         };
         const customer = await customerService.createCustomer(
@@ -147,6 +153,9 @@ export function customerRoutes(db: Database) {
                   city: { type: 'string' },
                 },
               },
+              // USt-IdNr. — see POST handler note above (AC-306).
+              // PATCH with `ustId: null` clears the field.
+              ustId: { type: ['string', 'null'] },
               notes: { type: ['string', 'null'] },
             },
           },
@@ -160,6 +169,7 @@ export function customerRoutes(db: Database) {
           phone?: string | null;
           email?: string | null;
           address?: { street: string; zip: string; city: string } | null;
+          ustId?: string | null;
           notes?: string | null;
         };
         const customer = await customerService.updateCustomer(

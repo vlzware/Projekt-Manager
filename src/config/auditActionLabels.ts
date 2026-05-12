@@ -44,6 +44,15 @@ export const AUDIT_ACTION_KEYS = [
   'attachment:hide',
   'attachment:restore',
   'attachment:purge',
+  // Invoice domain (ADR-0026, api.md §14.2.14).
+  // - 'invoice:delete' on a draft hard-delete (ADR-0026 §Audit and realtime).
+  // - 'invoice:issue'  on the issuance transaction; also on the Storno row's
+  //   own issuance (a Storno is a fresh sibling that itself was issued).
+  // - 'invoice:cancel' on the original row's flip to `cancelled`.
+  // - Draft create / update reuse the generic 'create' / 'update' keys.
+  'invoice:delete',
+  'invoice:issue',
+  'invoice:cancel',
 ] as const;
 
 export type AuditActionKey = (typeof AUDIT_ACTION_KEYS)[number];
@@ -79,6 +88,9 @@ export const AUDIT_ACTION_LABELS: Record<AuditActionKey, string> = {
   'attachment:hide': 'In Papierkorb verschoben',
   'attachment:restore': 'Aus Papierkorb wiederhergestellt',
   'attachment:purge': 'Aus Papierkorb endgültig gelöscht',
+  'invoice:delete': 'Entwurf gelöscht',
+  'invoice:issue': 'Rechnung ausgestellt',
+  'invoice:cancel': 'Rechnung storniert',
 };
 
 /**

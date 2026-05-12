@@ -50,7 +50,15 @@ import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';
 import type { WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
 import { DB_CONSTRAINTS } from '../db/constraints.js';
-import { notFound, notPermitted, validationError, conflict, extractSqlState } from '../errors.js';
+import {
+  notFound,
+  notPermitted,
+  validationError,
+  conflict,
+  extractSqlState,
+  projectHasInvoices,
+} from '../errors.js';
+import { countIssuedOrCancelledForProject } from '../repositories/invoice-read.js';
 import { projectMatches, createIdempotent } from './idempotency.js';
 import type { ServiceLogger } from './Logger.js';
 import type { AuthUser } from '../middleware/auth.js';
@@ -736,6 +744,18 @@ export class ProjectCrudService {
             // outside the tx and map to HTTP codes.
             const priorRows = await tx.select().from(projects).where(eq(projects.id, id)).limit(1);
             const priorRow = priorRows[0];
+            // AC-308: a project carrying any issued or cancelled invoice
+            // is legally retained — purge is rejected with a dedicated
+            // code so the UI can target the "retention" message rather
+            // than the generic CONFLICT. Drafts cascade-delete with the
+            // project and DO NOT count. The check runs INSIDE the tx so
+            // a concurrent issue cannot slip through.
+            if (priorRow) {
+              const invoiceCount = await countIssuedOrCancelledForProject(tx, id);
+              if (invoiceCount > 0) {
+                throw projectHasInvoices({ invoiceCount });
+              }
+            }
             collectedKeys = await listKeysForProject(tx, id);
             await hardDeleteProjectRepo(tx, id);
             return {

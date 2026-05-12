@@ -2,9 +2,9 @@
  * Customer repository — CRUD operations.
  */
 
-import { eq, and, count, ilike, sql, type SQL } from 'drizzle-orm';
+import { eq, and, count, ilike, inArray, sql, type SQL } from 'drizzle-orm';
 import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
-import { customers, projects } from '../db/schema.js';
+import { customers, projects, invoices } from '../db/schema.js';
 import type { AuthUser } from '../middleware/auth.js';
 import {
   customerScopeForCaller,
@@ -69,6 +69,10 @@ export function toCustomerResponse(row: CustomerRow) {
     phone: row.phone ?? null,
     email: row.email ?? null,
     address: row.address ?? null,
+    // USt-IdNr. — data-model.md §5.6 / AC-306. Structurally optional;
+    // requiredness gate fires at invoice issuance when taxMode =
+    // 'reverse_charge'. Round-trips on POST/PATCH/GET.
+    ustId: row.ustId ?? null,
     notes: row.notes ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -141,6 +145,7 @@ export async function getCustomer(
     ReturnType<typeof toCustomerResponse> & {
       projectCount: number;
       archivedProjectCount: number;
+      invoiceCount: number;
     }
   >
 > {
@@ -167,7 +172,7 @@ export async function getCustomer(
           AND pw.user_id = ${caller.id}
       )`;
 
-  const [[activeCount], [archivedCount]] = await Promise.all([
+  const [[activeCount], [archivedCount], [invoiceCountRow]] = await Promise.all([
     db
       .select({ value: count() })
       .from(projects)
@@ -176,12 +181,23 @@ export async function getCustomer(
       .select({ value: count() })
       .from(projects)
       .where(and(eq(projects.customerId, id), eq(projects.deleted, true), callerAssignmentFilter)),
+    // AC-307 trailing clause: the customer GET exposes the count of
+    // issued + cancelled invoice rows across the project graph
+    // (active + archived). Drafts excluded by construction — they have
+    // no legal weight and cascade-delete with their project. The UI
+    // uses this number to disable the destructive-delete affordance.
+    db
+      .select({ value: count() })
+      .from(invoices)
+      .innerJoin(projects, eq(invoices.projectId, projects.id))
+      .where(and(eq(projects.customerId, id), inArray(invoices.status, ['issued', 'cancelled']))),
   ]);
 
   return {
     ...toCustomerResponse(rows[0]!),
     projectCount: activeCount?.value ?? 0,
     archivedProjectCount: archivedCount?.value ?? 0,
+    invoiceCount: invoiceCountRow?.value ?? 0,
   };
 }
 
@@ -193,6 +209,7 @@ export async function createCustomer(
     phone?: string | null;
     email?: string | null;
     address?: { street: string; zip: string; city: string } | null;
+    ustId?: string | null;
     notes?: string | null;
     createdBy?: string | null;
     updatedBy?: string | null;
@@ -206,6 +223,7 @@ export async function createCustomer(
       phone: data.phone ?? null,
       email: data.email ?? null,
       address: data.address ?? null,
+      ustId: data.ustId ?? null,
       notes: data.notes ?? null,
       createdBy: data.createdBy ?? null,
       updatedBy: data.updatedBy ?? null,
@@ -237,6 +255,7 @@ export async function updateCustomer(
     phone?: string | null;
     email?: string | null;
     address?: { street: string; zip: string; city: string } | null;
+    ustId?: string | null;
     notes?: string | null;
   },
 ): Promise<ReturnType<typeof toCustomerResponse> | null> {
@@ -248,6 +267,7 @@ export async function updateCustomer(
   if ('phone' in data) setClause.phone = data.phone;
   if ('email' in data) setClause.email = data.email;
   if ('address' in data) setClause.address = data.address;
+  if ('ustId' in data) setClause.ustId = data.ustId;
   if ('notes' in data) setClause.notes = data.notes;
 
   const rows = await db.update(customers).set(setClause).where(eq(customers.id, id)).returning();

@@ -20,6 +20,7 @@ export interface CustomerIncoming {
   phone?: string | null;
   email?: string | null;
   address?: { street: string; zip: string; city: string } | null;
+  ustId?: string | null;
   notes?: string | null;
 }
 
@@ -28,6 +29,7 @@ export interface CustomerStored {
   phone: string | null;
   email: string | null;
   address: { street: string; zip: string; city: string } | null;
+  ustId: string | null;
   notes: string | null;
 }
 
@@ -43,6 +45,8 @@ export function customerMatches(incoming: CustomerIncoming, stored: CustomerStor
   if ((incoming.phone ?? null) !== stored.phone) return false;
   if ((incoming.email ?? null) !== stored.email) return false;
   if ((incoming.notes ?? null) !== stored.notes) return false;
+  // AC-306: `ustId` participates in idempotent-replay comparison.
+  if ((incoming.ustId ?? null) !== stored.ustId) return false;
 
   const incAddr = normalizeAddress(incoming.address ?? null);
   const storedAddr = normalizeAddress(stored.address);

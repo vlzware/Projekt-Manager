@@ -53,6 +53,13 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   // The rule table is truncated separately below so the seed-supplied
   // v1 rule set lands cleanly even when notification_rule had prior
   // rows (force-reseed).
+  //
+  // `company_profile` is reseeded after the TRUNCATE: it has a FK
+  // (`updated_by → users.id`), so `TRUNCATE … users CASCADE` empties it
+  // as well. The singleton-row contract (data-model.md §5.17,
+  // ADR-0026) says the row MUST exist before any read — re-insert with
+  // `ON CONFLICT (singleton) DO NOTHING`, mirroring the baseline
+  // migration's seed line.
   await db.execute(
     sql`TRUNCATE TABLE notification_rule, project_workers, sessions, projects, customers, users CASCADE`,
   );
@@ -66,6 +73,16 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   await loadUsers(db);
   await loadBusiness(db, { now });
   await loadNotificationRules(db);
+
+  // Restore the company_profile singleton row that the TRUNCATE
+  // CASCADE above wiped. Default values land — mandatory fields
+  // remain empty so the issuance gate (AC-289 /
+  // COMPANY_PROFILE_REQUIRED) keeps firing until owner fills them
+  // via `PUT /api/company-profile`. Matches the baseline migration
+  // INSERT verbatim.
+  await db.execute(
+    sql`INSERT INTO "company_profile" DEFAULT VALUES ON CONFLICT ("singleton") DO NOTHING`,
+  );
 
   console.warn(
     `⚠  Seed-Daten geladen. Alle Benutzer haben das Standardpasswort "${SEED_DEFAULT_PASSWORD}". ` +
