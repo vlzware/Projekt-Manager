@@ -33,7 +33,7 @@ import {
   getInvoiceRowForMutation,
   allocateInvoiceNumber,
 } from '../repositories/invoice-read.js';
-import { CompanyProfileService } from './CompanyProfileService.js';
+import { readSingleton, toCompanyProfileResponse } from './CompanyProfileService.js';
 import { InvoiceRenderer } from './InvoiceRenderer.js';
 import { notFound, invoiceNotIssued, invoiceAlreadyCancelled } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
@@ -125,14 +125,18 @@ export class InvoiceCancelService {
       const stornoId = crypto.randomUUID();
       const stornoLines = negateInvoiceLines(before.lines as InvoiceLine[]);
       const stornoTotals = computeInvoiceTotals(stornoLines, before.taxMode as TaxMode);
-      const cancellationReason = input.reason ?? null;
+      const cancellationReason =
+        input.reason && input.reason.trim().length > 0 ? input.reason : null;
       const now = new Date();
 
       // 3. Render the Storno PDF from the synthesised snapshot. A
       //    throw rolls back the whole cancel atom, including the
-      //    sequence allocation.
-      const profileService = new CompanyProfileService(this.db);
-      const profile = await profileService.get();
+      //    sequence allocation. The company profile read shares the
+      //    cancel transaction's snapshot — a concurrent PUT to the
+      //    profile cannot drift the Storno's rendered visual style
+      //    away from the persisted `issuer` block.
+      const profileRow = await readSingleton(tx);
+      const profile = toCompanyProfileResponse(profileRow);
       const stornoPreview: Invoice = {
         id: stornoId,
         number: stornoNumber,

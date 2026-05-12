@@ -121,7 +121,7 @@ export function validateCompanyProfileUpsert(input: CompanyProfileUpsertInput): 
  * missing — that condition means the baseline seed is broken and the
  * service refuses to serve (project principle).
  */
-async function readSingleton(tx: TransactionalDatabase): Promise<CompanyProfileRow> {
+export async function readSingleton(tx: TransactionalDatabase): Promise<CompanyProfileRow> {
   const rows = await tx.select().from(companyProfile).limit(1);
   if (rows.length === 0) {
     throw new Error(
