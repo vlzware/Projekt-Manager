@@ -50,6 +50,7 @@ import { sql } from 'drizzle-orm';
 import { startApp, stopApp, login, authGet, authPost, authPut } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
+import { InvoiceRenderer } from '../services/InvoiceRenderer.js';
 
 const year = new Date().getFullYear();
 
@@ -574,11 +575,10 @@ describe('Invoice issuance — gapless sequence (AT-112 / AC-288)', () => {
     // §Storage) is a new server-side dependency wrapped behind a
     // service; this is the natural module to mock.
     //
-    // The sentinel string is asserted on the failed call's error
-    // chain — proving the failure reached the renderer step
-    // (post-allocation), not pre-allocation validation. If the
-    // assertion can't fire because the seam is unwired pre-impl,
-    // that is the correct red signal.
+    // Proof the failure reached the renderer step (i.e. ran AFTER
+    // sequence allocation) is `expect(spy).toHaveBeenCalled()` — the
+    // production error handler collapses 5xx bodies to a generic
+    // German message, so we cannot probe a sentinel through the wire.
     const projectId3 = await rechnungFaelligProjectId(ownerToken, new Set([projectId]));
 
     // Snapshot the value the failed allocation will reserve and roll
@@ -588,44 +588,36 @@ describe('Invoice issuance — gapless sequence (AT-112 / AC-288)', () => {
 
     const SENTINEL = 'test-injected-render-fault';
 
-    // vi.mock requires the module exist at call time; use vi.doMock so
-    // the mock is installed dynamically. The import-via-variable
-    // keeps TS --noEmit clean before the impl lands the module.
-    const rendererPath = '../services/InvoiceRenderer.js';
-    vi.doMock(rendererPath, () => ({
-      InvoiceRenderer: class {
-        render(): never {
-          throw new Error(SENTINEL);
-        }
-      },
-      default: {
-        render: (): never => {
-          throw new Error(SENTINEL);
-        },
-      },
-    }));
+    // Prototype-level spy on the renderer's `render` method. `this.renderer.render(...)`
+    // inside InvoiceService resolves via the prototype chain, so the spy intercepts
+    // the live singleton's calls — no module-mock timing concerns (the route +
+    // service modules were already loaded by `startApp()` in `beforeAll`).
+    // Precedent: backup.test.ts:94, backup-status.test.ts:209, error-handler.test.ts:50.
+    const spy = vi.spyOn(InvoiceRenderer.prototype, 'render').mockImplementation(() => {
+      throw new Error(SENTINEL);
+    });
 
-    const draftId = await createDraft(ownerToken, projectId3);
+    try {
+      const draftId = await createDraft(ownerToken, projectId3);
 
-    const failed = await authPost(ownerToken, `/api/invoices/${draftId}/issue`);
-    // Error must propagate to the response. The exact status code is
-    // implementation-defined (500 for an unexpected render fault, 422
-    // for a structured rejection); the sentinel must surface somewhere
-    // the route can return.
-    expect(failed.statusCode).toBeGreaterThanOrEqual(400);
-    // The sentinel is the proof that the failure reached the renderer
-    // step — i.e. ran AFTER the sequence allocation. The response body
-    // either embeds the sentinel directly (5xx with leaked error) or
-    // the impl swallows the message and surfaces a generic 500 — in
-    // the latter case the assertion below fails, surfacing the need
-    // for the impl team to either expose the sentinel or document the
-    // post-allocation seam another way.
-    expect(failed.body).toContain(SENTINEL);
+      const failed = await authPost(ownerToken, `/api/invoices/${draftId}/issue`);
+      // Error must propagate to the response. The exact status code is
+      // implementation-defined (500 for an unexpected render fault, 422
+      // for a structured rejection); the production error handler collapses
+      // unhandled 5xx errors to a generic German message, so we do NOT
+      // assert on the response body's text content here.
+      expect(failed.statusCode).toBeGreaterThanOrEqual(400);
+      // Proof the failure reached the renderer step: by construction,
+      // InvoiceService.runIssueInsideTx calls `this.renderer.render(...)`
+      // ONLY after `allocateInvoiceNumber(...)`, so the spy being called
+      // guarantees the throw is post-allocation. The load-bearing AC-288
+      // assertion is the rolled-back-value check below.
+      expect(spy).toHaveBeenCalled();
 
-    // Clear the mock so the subsequent successful issue uses the real
-    // renderer.
-    vi.doUnmock(rendererPath);
-    vi.resetModules();
+      // Restore real renderer before the second (successful) issuance.
+    } finally {
+      spy.mockRestore();
+    }
 
     // Reuse projectId3 — the failed issue rolled back, so the project
     // is still in `rechnung_faellig` (the status flip is part of the

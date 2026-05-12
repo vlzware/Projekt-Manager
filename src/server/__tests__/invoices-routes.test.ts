@@ -41,6 +41,7 @@ import {
   login,
   authGet,
   authPost,
+  authPut,
   authPatch,
   authDelete,
 } from '../../test/api-helpers.js';
@@ -60,11 +61,19 @@ interface Project {
  * Fetch a seeded project in `rechnung_faellig` — the only status that
  * permits a successful invoice issue per AC-289. The seed places three
  * such projects per `src/server/seed/business.ts`, so picking the first
- * non-`deleted` row is robust to ordering changes.
+ * non-`deleted` row is robust to ordering changes. `skipIds` lets the
+ * AT-120 PDF arms claim three distinct projects in turn — each issuance
+ * flips its project to `abgerechnet`, so consecutive calls need fresh
+ * slots.
  */
-async function rechnungFaelligProjectId(ownerToken: string): Promise<string> {
+async function rechnungFaelligProjectId(
+  ownerToken: string,
+  skipIds: Set<string> = new Set(),
+): Promise<string> {
   const res = await authGet(ownerToken, '/api/projects?status=rechnung_faellig&limit=200');
-  const rows = (res.json().data as Project[]).filter((p) => !('deleted' in p) || !p['deleted']);
+  const rows = (res.json().data as Project[]).filter(
+    (p) => (!('deleted' in p) || !p['deleted']) && !skipIds.has(p.id),
+  );
   if (rows.length === 0) throw new Error('seed missing project in rechnung_faellig');
   return rows[0]!.id;
 }
@@ -227,6 +236,68 @@ function assertPdfDownloadShape(res: any): void {
   }
 }
 
+/**
+ * Fill the `company_profile` singleton with the fields required for a
+ * successful issue (AC-289 / COMPANY_PROFILE_REQUIRED). The seeded row
+ * ships empty per data-model.md §5.17 so the issue gate fires until an
+ * owner PUTs values — mirrors the helper in `invoices-issue.test.ts`.
+ */
+async function ensureCompanyProfileComplete(ownerToken: string): Promise<void> {
+  const res = await authPut(ownerToken, '/api/company-profile', {
+    companyName: 'Test Maler GmbH',
+    address: { street: 'Werkstr. 1', zip: '10115', city: 'Berlin' },
+    taxId: '111/222/33333',
+    ustId: 'DE123456789',
+    iban: 'DE89370400440532013000',
+    accentColor: '#FF6600',
+    footerText: 'Vielen Dank für Ihren Auftrag.',
+    defaultTaxMode: 'standard',
+  });
+  if (![200, 204].includes(res.statusCode)) {
+    throw new Error(`ensureCompanyProfileComplete failed ${res.statusCode} ${res.body}`);
+  }
+}
+
+/**
+ * Drive a real issuance through the production routes — POST a draft,
+ * then POST `/issue`. Returns the issued invoice's id.
+ *
+ * WHY this exists: `seedIssuedInvoice` writes the row directly via SQL
+ * and pre-dates the issuance service, so it leaves
+ * `rendered_pdf_binary_descriptor_id` NULL — `InvoiceService.downloadPdf`
+ * then correctly returns 404 for that row. The AT-120 PDF-download arms
+ * need a row whose descriptor is wired, which only the full issue
+ * pipeline produces.
+ *
+ * Caller must supply a project in `rechnung_faellig` — issuance flips it
+ * to `abgerechnet`, so every call consumes one fresh project.
+ */
+async function issueViaApi(token: string, projectId: string): Promise<string> {
+  const draft = await authPost(token, '/api/invoices', {
+    projectId,
+    lines: [
+      {
+        description: 'Anstrich Fassade',
+        quantity: 1,
+        unit: 'pauschal',
+        unitPrice: 1500,
+        lineTotal: 1500,
+        taxRate: 19,
+      },
+    ],
+    performanceDate: '2026-04-10',
+  });
+  if (draft.statusCode !== 201) {
+    throw new Error(`issueViaApi — draft create failed ${draft.statusCode} ${draft.body}`);
+  }
+  const draftId = draft.json().id as string;
+  const issued = await authPost(token, `/api/invoices/${draftId}/issue`);
+  if (issued.statusCode !== 200) {
+    throw new Error(`issueViaApi — issue failed ${issued.statusCode} ${issued.body}`);
+  }
+  return issued.json().id as string;
+}
+
 describe('Invoice routes — integration (issue #109)', () => {
   let ownerToken: string;
   let officeToken: string;
@@ -242,6 +313,10 @@ describe('Invoice routes — integration (issue #109)', () => {
       login(SEED_USERS.worker1.username, SEED_DEFAULT_PASSWORD),
       login(SEED_USERS.bookkeeper.username, SEED_DEFAULT_PASSWORD),
     ]);
+    // The AT-120 PDF arms drive real issuances via the production route,
+    // which requires a complete company_profile (AC-289). The seed ships
+    // the singleton empty; fill it here so the issue gate passes.
+    await ensureCompanyProfileComplete(ownerToken);
     projectId = await rechnungFaelligProjectId(ownerToken);
   });
 
@@ -566,8 +641,18 @@ describe('Invoice routes — integration (issue #109)', () => {
   //        worker → 403 NOT_PERMITTED (covered by AC-298).
   // -------------------------------------------------------------------
   describe('AT-120 / AC-299: GET /api/invoices/:id/pdf', () => {
+    // Each PDF-download arm that needs real rendered bytes drives a
+    // full issuance via `issueViaApi`, which flips its project to
+    // `abgerechnet`. The seed ships 3 `rechnung_faellig` projects
+    // (`src/server/seed/business.ts`); track consumed IDs so each call
+    // claims a fresh slot. The 409/draft and 403/worker arms keep
+    // using `seedIssuedInvoice` — they don't need a real PDF.
+    const consumedProjectIds = new Set<string>();
+
     it('returns the rendered PDF for an issued row — Content-Type-branched assertion', async () => {
-      const issuedId = await seedIssuedInvoice(projectId, '9100');
+      const pid = await rechnungFaelligProjectId(ownerToken, consumedProjectIds);
+      consumedProjectIds.add(pid);
+      const issuedId = await issueViaApi(ownerToken, pid);
       const res = await authGet(ownerToken, `/api/invoices/${issuedId}/pdf`);
       assertPdfDownloadShape(res);
     });
@@ -576,8 +661,17 @@ describe('Invoice routes — integration (issue #109)', () => {
       // AC-299 names `status ∈ {'issued', 'cancelled'}` as the
       // PDF-downloadable set. Cancelled rows are legally retained
       // artifacts under §147 AO; the bytes must remain reachable.
-      const cancelledId = await seedIssuedInvoice(projectId, '9103', 'cancelled');
-      const res = await authGet(ownerToken, `/api/invoices/${cancelledId}/pdf`);
+      //
+      // The original's `renderedPdfBinaryDescriptorId` is preserved on
+      // cancel (InvoiceService.cancel only flips status / updatedAt /
+      // updatedBy on the original — confirmed against the immutability
+      // trigger). Download the ORIGINAL's PDF, not the Storno's.
+      const pid = await rechnungFaelligProjectId(ownerToken, consumedProjectIds);
+      consumedProjectIds.add(pid);
+      const issuedId = await issueViaApi(ownerToken, pid);
+      const cancel = await authPost(ownerToken, `/api/invoices/${issuedId}/cancel`, {});
+      expect(cancel.statusCode).toBe(200);
+      const res = await authGet(ownerToken, `/api/invoices/${issuedId}/pdf`);
       assertPdfDownloadShape(res);
     });
 
@@ -598,7 +692,9 @@ describe('Invoice routes — integration (issue #109)', () => {
     });
 
     it('bookkeeper can download the PDF (holds invoice:read)', async () => {
-      const issuedId = await seedIssuedInvoice(projectId, '9102');
+      const pid = await rechnungFaelligProjectId(ownerToken, consumedProjectIds);
+      consumedProjectIds.add(pid);
+      const issuedId = await issueViaApi(ownerToken, pid);
 
       const res = await authGet(bookkeeperToken, `/api/invoices/${issuedId}/pdf`);
       assertPdfDownloadShape(res);
