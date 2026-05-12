@@ -24,6 +24,7 @@
 
 import crypto from 'node:crypto';
 
+const AES_ALGORITHM = 'aes-256-gcm' as const;
 const NONCE_BYTES = 12;
 const DEK_BYTES = 32;
 const TAG_BYTES = 16;
@@ -42,7 +43,7 @@ export interface EncryptedInvoicePayload {
 export function encryptInvoicePayload(plaintext: Uint8Array): EncryptedInvoicePayload {
   const dek = crypto.randomBytes(DEK_BYTES);
   const nonce = crypto.randomBytes(NONCE_BYTES);
-  const cipher = crypto.createCipheriv('aes-256-gcm', dek, nonce);
+  const cipher = crypto.createCipheriv(AES_ALGORITHM, dek, nonce);
   const ctBody = Buffer.concat([cipher.update(plaintext), cipher.final()]);
   const authTag = cipher.getAuthTag();
   const out = new Uint8Array(NONCE_BYTES + ctBody.byteLength + TAG_BYTES);
@@ -68,7 +69,7 @@ export function decryptInvoicePayload(ciphertext: Uint8Array, dek: Uint8Array): 
   const nonce = ciphertext.subarray(0, NONCE_BYTES);
   const tag = ciphertext.subarray(ciphertext.byteLength - TAG_BYTES);
   const body = ciphertext.subarray(NONCE_BYTES, ciphertext.byteLength - TAG_BYTES);
-  const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(dek), Buffer.from(nonce));
+  const decipher = crypto.createDecipheriv(AES_ALGORITHM, Buffer.from(dek), Buffer.from(nonce));
   decipher.setAuthTag(Buffer.from(tag));
   const plain = Buffer.concat([decipher.update(Buffer.from(body)), decipher.final()]);
   return new Uint8Array(plain);

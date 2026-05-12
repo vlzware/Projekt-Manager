@@ -196,13 +196,20 @@ export class InvoiceIssueService {
     //    trigger (data-model.md §6.14, baseline migration) blocks every
     //    UPDATE on an issued row except the cancellation-status flip,
     //    so the legacy "UPDATE to issued THEN UPDATE descriptor" two-
-    //    step is rejected by Postgres on the second statement. The
-    //    renderer takes a synthetic `Invoice` snapshot built from the
-    //    locally-resolved fields — it does not require a persisted row.
-    //    A throw inside `render()` rolls back the entire transaction;
-    //    the sequence value returns to the pool (AC-288). The mock
-    //    seam in `invoices-issue.test.ts:521-536` exercises this exact
-    //    path.
+    //    step is rejected by Postgres on the second statement.
+    //
+    //    Why the preview snapshot is hand-rolled rather than fetched
+    //    from the DB: the renderer must run BEFORE the UPDATE (the
+    //    trigger blocks UPDATE-after-INSERT on issued rows), so there
+    //    is no persisted issued row to read at this point. The
+    //    snapshot is therefore constructed from the locally-resolved
+    //    fields, and it MUST be byte-equal to what step 8's UPDATE
+    //    writes — same `issuer`, `recipient`, `lines`, `totals`,
+    //    `taxMode`, `profile`, `number`, `issueDate` — so the rendered
+    //    bytes match the eventually-persisted row exactly. A throw
+    //    inside `render()` rolls back the entire transaction; the
+    //    sequence value returns to the pool (AC-288). The mock seam in
+    //    `invoices-issue.test.ts:521-536` exercises this exact path.
     const previewInvoice: Invoice = {
       id: invoiceId,
       number,

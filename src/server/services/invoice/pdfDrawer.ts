@@ -29,8 +29,9 @@
  * structural shape; the certified-PDF/A-3 gate is future work.
  */
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const pdfLibImport = import('pdf-lib') as Promise<any>;
+import type { PDFDocument, PDFFont, PDFPage } from 'pdf-lib';
+
+const pdfLibImport: Promise<typeof import('pdf-lib')> = import('pdf-lib');
 
 import type { Invoice } from '../../../domain/invoice.js';
 import { taxModeBoilerplate } from './boilerplate.js';
@@ -45,22 +46,15 @@ function sanitizeForWinAnsi(input: string): string {
 }
 
 interface DrawCursor {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  page: any;
+  page: PDFPage;
   y: number;
   pageNumber: number;
 }
 
-interface PdfDrawDeps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  PDFDocument: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  StandardFonts: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  rgb: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  AFRelationship: any;
-}
+type PdfDrawDeps = Pick<
+  typeof import('pdf-lib'),
+  'PDFDocument' | 'StandardFonts' | 'rgb' | 'AFRelationship'
+>;
 
 const PAGE_WIDTH = 595.28; // A4 width in points
 const PAGE_HEIGHT = 841.89; // A4 height in points
@@ -104,11 +98,9 @@ function fmtDate(value: string | Date | null): string {
 }
 
 function addPage(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  doc: any,
+  doc: PDFDocument,
   cursor: DrawCursor,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  font: any,
+  font: PDFFont,
   pageNumberCount: { value: number; total: number },
 ): void {
   const newPage = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
@@ -125,14 +117,7 @@ function addPage(
  * footer that does not contend with the boilerplate paragraph above
  * the page margin.
  */
-function drawFooterPageNumber(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  page: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  font: any,
-  num: number,
-  total: number,
-): void {
+function drawFooterPageNumber(page: PDFPage, font: PDFFont, num: number, total: number): void {
   page.drawText(`Seite ${num} / ${total}`, {
     x: PAGE_WIDTH - MARGIN_RIGHT - 60,
     y: 30,
@@ -143,11 +128,9 @@ function drawFooterPageNumber(
 }
 
 function ensureSpace(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  doc: any,
+  doc: PDFDocument,
   cursor: DrawCursor,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  font: any,
+  font: PDFFont,
   pageNumberCount: { value: number; total: number },
   needed: number,
 ): void {

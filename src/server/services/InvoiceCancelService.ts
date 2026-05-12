@@ -73,6 +73,19 @@ export class InvoiceCancelService {
    * the original to `'cancelled'`, write TWO audit rows in one tx,
    * emit ONE SSE event post-commit (AC-290 / AT-114).
    *
+   * Invariant: the cancel atom commits EXACTLY two audit rows AND
+   * dispatches EXACTLY one SSE event. Because this path uses a bespoke
+   * `db.transaction(...)` with two `mutateInTx(...)` calls (instead of
+   * the single-action `mutate()` wrapper), the post-commit
+   * `dispatchAuditRows(collected)` below is the manual replacement for
+   * what `mutate()` would otherwise publish for us — it pumps both
+   * collected audit rows through the same publisher in one shot. A
+   * future maintainer adding state or steps to this path MUST preserve
+   * that one-dispatch invariant: collect every audit row into
+   * `collected`, do not introduce a second `dispatchAuditRows` call,
+   * and do not let `mutate()` (with its built-in dispatch) sneak back
+   * into the cancel atom — that would double-publish.
+   *
    * Rejections (AC-291):
    *   - draft → 409 `INVOICE_NOT_ISSUED`
    *   - cancelled → 409 `INVOICE_ALREADY_CANCELLED`
