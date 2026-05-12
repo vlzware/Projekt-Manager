@@ -159,6 +159,20 @@ export async function authPatch(token: string, url: string, payload?: Record<str
 }
 
 /**
+ * Make an authenticated PUT request.
+ *
+ * Used by upsert-style routes such as company-profile (api.md §14.2.15).
+ */
+export async function authPut(token: string, url: string, payload?: Record<string, unknown>) {
+  return getApp().inject({
+    method: 'PUT',
+    url,
+    headers: { cookie: `session=${token}` },
+    payload,
+  });
+}
+
+/**
  * Make an authenticated DELETE request.
  */
 export async function authDelete(token: string, url: string) {
