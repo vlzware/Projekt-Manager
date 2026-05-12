@@ -12,7 +12,7 @@
  * module composes it into list / get-by-id queries.
  */
 
-import { and, desc, eq, inArray, lt } from 'drizzle-orm';
+import { and, desc, eq, inArray, lt, notLike } from 'drizzle-orm';
 import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
 import { attachments, users } from '../db/schema.js';
 import type { AttachmentKind, AttachmentLabel, AttachmentStatus } from '../../domain/types.js';
@@ -103,6 +103,17 @@ export interface CreatePendingAttachmentInput {
  * `pending` rows — the list surface in api.md §14.2.11 returns ready-only
  * rows; the service layer is responsible for that filter so repositories
  * stay composable.
+ *
+ * Invoice-rendered PDFs (written by `InvoiceService.persistRenderedBinary`
+ * under the `invoices/<projectId>/<descriptorId>.orig` key prefix) are
+ * hidden from this list. They are surfaced via the dedicated
+ * `GET /api/invoices/:id/pdf` route; double-rendering them under the
+ * generic attachment list would confuse the project-detail UI's
+ * attachments block (ADR-0026 storage reuse note). The `originalKey`
+ * prefix is the cleanest schema-free discriminator: the `label='rechnung'`
+ * value is also user-selectable for human-uploaded Rechnung PDFs, and
+ * `kind='binary'` covers every non-photo upload. The key namespace is
+ * the renderer's own and never collides with user uploads.
  */
 export async function listByProject(
   db: Database,
@@ -110,7 +121,11 @@ export async function listByProject(
   caller: AuthUser,
 ): Promise<AttachmentRowWithUploader[]> {
   const scope = attachmentScopeForCaller(caller);
-  const conditions = [eq(attachments.projectId, projectId), eq(attachments.status, 'ready')];
+  const conditions = [
+    eq(attachments.projectId, projectId),
+    eq(attachments.status, 'ready'),
+    notLike(attachments.originalKey, 'invoices/%'),
+  ];
   if (scope) conditions.push(scope);
   const rows = await db
     .select({ attachments, users: { displayName: users.displayName } })
@@ -311,7 +326,17 @@ export async function listHiddenByProject(
   caller: AuthUser,
 ): Promise<AttachmentRowWithUploader[]> {
   const scope = attachmentScopeForCaller(caller);
-  const conditions = [eq(attachments.projectId, projectId), eq(attachments.status, 'hidden')];
+  // Same invoice-rendered-PDF exclusion as the live list — the
+  // Papierkorb is the user-facing trash surface for documents the
+  // operator uploaded; rendered invoice PDFs cannot reach `hidden`
+  // through any user action today, but the symmetric filter guards
+  // against a future code path that does (and against direct-SQL
+  // poisoning).
+  const conditions = [
+    eq(attachments.projectId, projectId),
+    eq(attachments.status, 'hidden'),
+    notLike(attachments.originalKey, 'invoices/%'),
+  ];
   if (scope) conditions.push(scope);
   const rows = await db
     .select({ attachments, users: { displayName: users.displayName } })

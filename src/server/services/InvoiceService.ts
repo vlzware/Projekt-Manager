@@ -64,11 +64,12 @@ import {
   assertCompanyProfileCompleteForMode,
 } from './CompanyProfileService.js';
 import { InvoiceRenderer, type RenderedInvoice } from './InvoiceRenderer.js';
-import { encryptInvoicePayload } from './invoice/payloadCrypto.js';
-import { KeyEnvelopeService } from './KeyEnvelopeService.js';
+import { encryptInvoicePayload, decryptInvoicePayload } from './invoice/payloadCrypto.js';
+import { KeyEnvelopeService, KeyEnvelopeUnwrapError } from './KeyEnvelopeService.js';
 import { attachments } from '../db/schema.js';
 import { WRAPPED_DEK_CURRENT_VERSION } from '../../domain/attachments.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
+import { StorageObjectNotFoundError } from '../storage/client.js';
 import {
   notFound,
   notPermitted,
@@ -77,6 +78,7 @@ import {
   invoiceProjectState,
   invoiceNotIssued,
   invoiceAlreadyCancelled,
+  dekUnwrapFailed,
 } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
 import { isOutOfScope } from '../repositories/scope.js';
@@ -201,6 +203,91 @@ export class InvoiceService {
     if (result === null) throw notFound(STRINGS.entities.invoice);
     if (isOutOfScope(result)) throw notPermitted();
     return result;
+  }
+
+  // -------------------------------------------------------------------
+  // PDF download
+  // -------------------------------------------------------------------
+
+  /**
+   * Resolve the rendered PDF for an issued / cancelled invoice and
+   * return the plaintext bytes plus the suggested filename. Drafts
+   * surface `INVOICE_NOT_ISSUED` (AC-299); a worker hitting any row
+   * (or any caller hitting an unknown id) surfaces via `get()` above.
+   *
+   * Sequence:
+   *   1. Triage 200 / 403 / 404 via `get()`.
+   *   2. Reject drafts with `INVOICE_NOT_ISSUED`.
+   *   3. Look up the rendered-PDF attachment row by descriptor id;
+   *      surface a synthetic `404` if the descriptor reference is
+   *      dangling (test seam without storage wiring) or the row's
+   *      `wrappedDek` is missing.
+   *   4. Unwrap the row's DEK against the operator-loaded identity.
+   *   5. Fetch the ciphertext from object storage.
+   *   6. Decrypt and return the plaintext bytes.
+   *
+   * Per-row unwrap failure → `DEK_UNWRAP_FAILED` (422), mirroring the
+   * attachment download path (AC-244). Wholesale identity failures
+   * bubble as 5xx — the boot probe (ADR-0024) is supposed to make those
+   * unreachable in steady state.
+   */
+  async downloadPdf(
+    caller: AuthUser,
+    id: string,
+  ): Promise<{ bytes: Uint8Array; filename: string }> {
+    const invoice = await this.get(caller, id);
+    if (invoice.status === 'draft') {
+      throw invoiceNotIssued();
+    }
+    const descriptorId = invoice.renderedPdfBinaryDescriptorId;
+    if (!descriptorId || !this.binaryDeps) {
+      // Descriptor missing OR storage not wired (test fallback path
+      // before storage env is present). Either way the bytes cannot
+      // be served — surface 404 rather than synthesising a placeholder.
+      throw notFound(STRINGS.entities.resource);
+    }
+
+    const rows = await this.db
+      .select()
+      .from(attachments)
+      .where(eq(attachments.id, descriptorId))
+      .limit(1);
+    const row = rows[0];
+    if (!row || !row.wrappedDek) {
+      throw notFound(STRINGS.entities.resource);
+    }
+
+    const envelope = new KeyEnvelopeService({
+      recipient: this.binaryDeps.binaryAgeRecipient,
+      identityPath: this.binaryDeps.binaryAgeIdentityPath,
+    });
+    let dek: Uint8Array;
+    try {
+      dek = await envelope.unwrap(Buffer.from(row.wrappedDek, 'base64'));
+    } catch (err) {
+      if (err instanceof KeyEnvelopeUnwrapError) {
+        throw dekUnwrapFailed();
+      }
+      throw err;
+    }
+
+    let ciphertext: Buffer;
+    try {
+      const stream = await this.binaryDeps.storage.getObject(row.originalKey);
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) {
+        chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer));
+      }
+      ciphertext = Buffer.concat(chunks);
+    } catch (err) {
+      if (err instanceof StorageObjectNotFoundError) {
+        throw notFound(STRINGS.entities.resource);
+      }
+      throw err;
+    }
+
+    const plaintext = decryptInvoicePayload(new Uint8Array(ciphertext), dek);
+    return { bytes: plaintext, filename: row.filename };
   }
 
   // -------------------------------------------------------------------
@@ -635,37 +722,44 @@ export class InvoiceService {
     };
 
     const totals = computeInvoiceTotals(lines, taxMode);
-
-    // 6. UPDATE the row with the issued state (modulo the binary
-    //    descriptor reference — populated after the render step).
     const issueDate = new Date();
-    let issuedRows = await tx
-      .update(invoices)
-      .set({
-        status: 'issued',
-        number,
-        issueDate,
-        issuer,
-        recipient,
-        lines,
-        totals,
-        taxMode,
-        profile: 'zugferd-en16931',
-        updatedAt: issueDate,
-        updatedBy: userId,
-      })
-      .where(eq(invoices.id, invoiceId))
-      .returning();
-    let issuedRow = issuedRows[0]!;
 
-    // 7. Render — Phase C delivers the ZUGFeRD EN 16931 implementation
-    //    (`InvoiceRenderer.render()` builds the EN 16931 XML payload
-    //    and the PDF/A-3 wrapper with `factur-x.xml` embedded). A
-    //    throw here rolls back the entire transaction; the sequence
-    //    value returns to the pool (AC-288). The mock seam in
-    //    `invoices-issue.test.ts:521-536` exercises this exact path.
+    // 6. Render BEFORE the UPDATE — the persistence-layer immutability
+    //    trigger (data-model.md §6.14, baseline migration) blocks every
+    //    UPDATE on an issued row except the cancellation-status flip,
+    //    so the legacy "UPDATE to issued THEN UPDATE descriptor" two-
+    //    step is rejected by Postgres on the second statement. The
+    //    renderer takes a synthetic `Invoice` snapshot built from the
+    //    locally-resolved fields — it does not require a persisted row.
+    //    A throw inside `render()` rolls back the entire transaction;
+    //    the sequence value returns to the pool (AC-288). The mock
+    //    seam in `invoices-issue.test.ts:521-536` exercises this exact
+    //    path.
+    const previewInvoice: Invoice = {
+      id: invoiceId,
+      number,
+      status: 'issued',
+      projectId: before.projectId,
+      cancellationOf: null,
+      issuer,
+      recipient,
+      lines,
+      taxMode,
+      profile: 'zugferd-en16931',
+      totals,
+      issueDate: issueDate.toISOString().slice(0, 10),
+      performanceDate: before.performanceDate
+        ? before.performanceDate.toISOString().slice(0, 10)
+        : null,
+      cancellationReason: null,
+      renderedPdfBinaryDescriptorId: null,
+      createdAt: before.createdAt.toISOString(),
+      updatedAt: issueDate.toISOString(),
+      createdBy: before.createdBy,
+      updatedBy: userId,
+    };
     const rendered: RenderedInvoice = await this.renderer.render({
-      invoice: toInvoiceResponse(issuedRow),
+      invoice: previewInvoice,
       companyProfile: {
         id: companyProfileRow.id,
         companyName: companyProfileRow.companyName,
@@ -682,11 +776,11 @@ export class InvoiceService {
       },
     });
 
-    // 8. Persist the binary descriptor through the ADR-0022 /
-    //    ADR-0024 pipeline: encrypt with a fresh DEK, wrap against the
-    //    operator `age` recipient, `putObject` ciphertext, insert
-    //    `attachments` row at `status='ready'`. The returned id is the
-    //    descriptor reference stored on the invoice row.
+    // 7. Persist the binary descriptor through the ADR-0022 / ADR-0024
+    //    pipeline: encrypt with a fresh DEK, wrap against the operator
+    //    `age` recipient, `putObject` ciphertext, insert `attachments`
+    //    row at `status='ready'`. Returns the descriptor id; we land
+    //    it on the invoice row in step 8's single UPDATE.
     const renderedDescriptorId = await this.persistRenderedBinary(
       tx,
       rendered,
@@ -694,12 +788,30 @@ export class InvoiceService {
       invoiceId,
       userId,
     );
-    issuedRows = await tx
+
+    // 8. ONE UPDATE that flips draft→issued and writes the descriptor
+    //    in the same statement (so the immutability trigger sees a
+    //    single transition from draft, not an UPDATE of an already-
+    //    issued row).
+    const issuedRows = await tx
       .update(invoices)
-      .set({ renderedPdfBinaryDescriptorId: renderedDescriptorId })
+      .set({
+        status: 'issued',
+        number,
+        issueDate,
+        issuer,
+        recipient,
+        lines,
+        totals,
+        taxMode,
+        profile: 'zugferd-en16931',
+        renderedPdfBinaryDescriptorId: renderedDescriptorId,
+        updatedAt: issueDate,
+        updatedBy: userId,
+      })
       .where(eq(invoices.id, invoiceId))
       .returning();
-    issuedRow = issuedRows[0]!;
+    const issuedRow = issuedRows[0]!;
 
     // 9. Flip the parent project's status to `abgerechnet` inside
     //    this same tx (the project transition is part of the issue
@@ -888,14 +1000,59 @@ export class InvoiceService {
       const year = new Date().getUTCFullYear();
       const { number: stornoNumber } = await allocateInvoiceNumber(tx, year, 'storno');
 
-      // 2. Build the Storno row. Snapshots copied byte-for-byte from
-      //    the original (AC-290): issuer / recipient / taxMode /
-      //    profile / performanceDate.
+      // 2. Build the Storno's snapshot fields. Same rule as the issue
+      //    path: the persistence-layer immutability trigger blocks
+      //    UPDATEs on `status='issued'` rows except the cancellation
+      //    flip, so we cannot INSERT-then-UPDATE-descriptor. Render
+      //    first, then INSERT the Storno with the descriptor in one
+      //    shot. Snapshots copied byte-for-byte from the original
+      //    (AC-290): issuer / recipient / taxMode / profile /
+      //    performanceDate.
       const stornoId = crypto.randomUUID();
       const stornoLines = negateInvoiceLines(before.lines as InvoiceLine[]);
       const stornoTotals = computeInvoiceTotals(stornoLines, before.taxMode as TaxMode);
       const cancellationReason = input.reason ?? null;
       const now = new Date();
+
+      // 3. Render the Storno PDF from the synthesised snapshot. A
+      //    throw rolls back the whole cancel atom, including the
+      //    sequence allocation.
+      const profileService = new CompanyProfileService(this.db);
+      const profile = await profileService.get();
+      const stornoPreview: Invoice = {
+        id: stornoId,
+        number: stornoNumber,
+        status: 'issued',
+        projectId: before.projectId,
+        cancellationOf: before.id,
+        issuer: before.issuer as InvoiceIssuerSnapshot,
+        recipient: before.recipient as InvoiceRecipientSnapshot,
+        lines: stornoLines,
+        taxMode: before.taxMode as TaxMode,
+        profile: before.profile as InvoiceProfile,
+        totals: stornoTotals,
+        issueDate: now.toISOString().slice(0, 10),
+        performanceDate: before.performanceDate
+          ? before.performanceDate.toISOString().slice(0, 10)
+          : null,
+        cancellationReason,
+        renderedPdfBinaryDescriptorId: null,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        createdBy: userId,
+        updatedBy: userId,
+      };
+      const rendered = await this.renderer.render({
+        invoice: stornoPreview,
+        companyProfile: profile,
+      });
+      const stornoDescriptor = await this.persistRenderedBinary(
+        tx,
+        rendered,
+        before.projectId,
+        stornoId,
+        userId,
+      );
 
       const stornoInsert = await tx
         .insert(invoices)
@@ -914,35 +1071,12 @@ export class InvoiceService {
           totals: stornoTotals,
           cancellationOf: before.id,
           cancellationReason,
-          renderedPdfBinaryDescriptorId: null,
+          renderedPdfBinaryDescriptorId: stornoDescriptor,
           createdBy: userId,
           updatedBy: userId,
         })
         .returning();
-      let stornoRow = stornoInsert[0]!;
-
-      // 3. Render the Storno PDF — same toolchain as the issue path.
-      //    A throw here rolls back the whole cancel atom, including
-      //    the sequence allocation.
-      const profileService = new CompanyProfileService(this.db);
-      const profile = await profileService.get();
-      const rendered = await this.renderer.render({
-        invoice: toInvoiceResponse(stornoRow),
-        companyProfile: profile,
-      });
-      const stornoDescriptor = await this.persistRenderedBinary(
-        tx,
-        rendered,
-        before.projectId,
-        stornoId,
-        userId,
-      );
-      const stornoFinal = await tx
-        .update(invoices)
-        .set({ renderedPdfBinaryDescriptorId: stornoDescriptor })
-        .where(eq(invoices.id, stornoId))
-        .returning();
-      stornoRow = stornoFinal[0]!;
+      const stornoRow = stornoInsert[0]!;
 
       // 4. Flip the original to `cancelled`. The DB-level immutability
       //    backstop (Phase A schema trigger) allows exactly this one
