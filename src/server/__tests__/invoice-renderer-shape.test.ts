@@ -35,7 +35,7 @@ const profile: CompanyProfile = {
   taxId: '111/222/33333',
   ustId: 'DE123456789',
   iban: 'DE89370400440532013000',
-  accentColor: '#FF6600',
+  accentColor: '#f60',
   footerText: 'Vielen Dank.',
   logoBinaryDescriptorId: null,
   defaultTaxMode: 'standard',

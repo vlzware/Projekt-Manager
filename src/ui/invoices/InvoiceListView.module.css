@@ -132,8 +132,8 @@
 }
 
 .statusIssued {
-  background: var(--color-success-bg, #e7f6e7);
-  color: var(--color-success, #2d6a2d);
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .statusCancelled {
@@ -143,8 +143,8 @@
 }
 
 .statusStorno {
-  background: var(--color-warning-bg, #fff4e0);
-  color: var(--color-warning, #8a5a00);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
 }
 
 .stornoOfHint {

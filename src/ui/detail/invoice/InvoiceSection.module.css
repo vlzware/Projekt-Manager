@@ -125,8 +125,8 @@
 }
 
 .statusIssued {
-  background: var(--color-success-bg, #e7f6e7);
-  color: var(--color-success, #2d6a2d);
+  background: var(--color-success-bg);
+  color: var(--color-success);
 }
 
 .statusCancelled {
@@ -136,8 +136,8 @@
 }
 
 .statusStorno {
-  background: var(--color-warning-bg, #fff4e0);
-  color: var(--color-warning, #8a5a00);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
 }
 
 .stornoOfHint {
@@ -332,9 +332,9 @@
 }
 
 .primaryButton {
-  background: var(--color-primary, #2a5cdb);
+  background: var(--color-accent);
   color: var(--color-on-primary, #fff);
-  border-color: var(--color-primary, #2a5cdb);
+  border-color: var(--color-accent);
 }
 
 .primaryButton:disabled,
@@ -374,8 +374,8 @@
 .cancelDialogWarning {
   margin: 0;
   padding: 10px 12px;
-  background: var(--color-warning-bg, #fff4e0);
-  color: var(--color-warning, #8a5a00);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
   border-radius: 4px;
   font-size: 0.9rem;
 }
@@ -439,9 +439,9 @@
 .companyProfileBanner {
   margin-top: 8px;
   padding: 10px 12px;
-  background: var(--color-warning-bg, #fff4e0);
-  color: var(--color-warning, #8a5a00);
-  border: 1px solid var(--color-warning, #8a5a00);
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
   border-radius: 6px;
   display: flex;
   flex-direction: column;
@@ -475,7 +475,7 @@
 
 .crossLinkAnchor {
   font-size: 0.9rem;
-  color: var(--color-primary, #2a5cdb);
+  color: var(--color-accent);
   text-decoration: none;
 }
 
