@@ -143,12 +143,16 @@ async function readInvoiceSequenceNextValue(): Promise<number | null> {
   }
 }
 
-async function countAuditRowsForInvoice(invoiceId: string): Promise<number> {
+async function countAuditRowsForInvoice(invoiceId: string, action?: string): Promise<number> {
   const { db, pool } = createDatabase();
   try {
-    const res = await db.execute(
-      sql`SELECT COUNT(*)::int AS c FROM audit_log WHERE entity_type = 'invoice' AND entity_id = ${invoiceId}`,
-    );
+    const res = action
+      ? await db.execute(
+          sql`SELECT COUNT(*)::int AS c FROM audit_log WHERE entity_type = 'invoice' AND entity_id = ${invoiceId} AND action = ${action}`,
+        )
+      : await db.execute(
+          sql`SELECT COUNT(*)::int AS c FROM audit_log WHERE entity_type = 'invoice' AND entity_id = ${invoiceId}`,
+        );
     return (res.rows[0] as { c: number }).c;
   } finally {
     await pool.end();
@@ -392,7 +396,11 @@ async function validateAgainstEn16931Xsd(
       `validateAgainstEn16931Xsd — XSD not present at ${xsdPath}. The implementer adds it in step 5 (mirror the EN 16931 / Factur-X schema bundle from official sources, distribute as a test fixture).`,
     );
   }
-  const xsdDoc = lib.parseXml(fs.readFileSync(xsdPath, 'utf-8'));
+  // baseUrl is load-bearing: the Factur-X 1.07.2 EN 16931 XSD imports
+  // three sibling UN/CEFACT schemas (QualifiedDataType, Reusable...,
+  // UnqualifiedDataType). Without baseUrl libxmljs2 cannot resolve
+  // them and validation throws before reaching the actual schema check.
+  const xsdDoc = lib.parseXml(fs.readFileSync(xsdPath, 'utf-8'), { baseUrl: xsdPath });
   const xmlDoc = lib.parseXml(xml);
   const valid = xmlDoc.validate(xsdDoc);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -421,12 +429,16 @@ describe('Invoice issuance — happy path (AT-111 / AC-287)', () => {
   });
 
   it('issues a draft against a project in rechnung_faellig: number/status/dates/snapshots/audit/SSE', async () => {
+    // Draft created BEFORE subscribing — `createDraft` also emits an
+    // `invoice_changed` SSE (api.md §14.2.13: draft CRUD emits). The
+    // AC-287 assertion below pins "exactly one" event from the ISSUE
+    // call; the draft-create event must be outside the window.
+    const draftId = await createDraft(ownerToken, projectId);
+    issuedProjectIds.add(projectId);
+
     const bus = await loadBus();
     const conn = subscribeFake(bus);
     try {
-      const draftId = await createDraft(ownerToken, projectId);
-      issuedProjectIds.add(projectId);
-
       const res = await authPost(ownerToken, `/api/invoices/${draftId}/issue`);
       expect(res.statusCode).toBe(200);
 
@@ -459,16 +471,22 @@ describe('Invoice issuance — happy path (AT-111 / AC-287)', () => {
       expect(proj.statusCode).toBe(200);
       expect(proj.json().status).toBe('abgerechnet');
 
-      // Exactly one audit row with the expected shape.
-      const auditCount = await countAuditRowsForInvoice(body.id);
+      // Exactly one `invoice:issue` audit row. AC-287 pins the issue
+      // call's audit shape; the draft-create call earlier in this same
+      // arm also writes an `action='create'` row (AC-285), which is
+      // out of scope for this assertion — filter to the issue action.
+      const auditCount = await countAuditRowsForInvoice(body.id, 'invoice:issue');
       expect(auditCount).toBe(1);
 
       const { db, pool } = createDatabase();
       try {
+        // Filter to the issue audit row — the draft-create row also
+        // exists (AC-285), but the AC-287 shape pin is about the
+        // issuance call's row only.
         const auditRows = await db.execute(sql`
           SELECT entity_type, entity_id, action, ancestor_entity_type, ancestor_entity_id
           FROM audit_log
-          WHERE entity_id = ${body.id}
+          WHERE entity_id = ${body.id} AND action = 'invoice:issue'
         `);
         const row = auditRows.rows[0] as Record<string, string>;
         expect(row.entity_type).toBe('invoice');
@@ -837,10 +855,16 @@ describe('Invoice issuance — pre-condition rejections (AT-113(i) / AC-289)', (
       await pool.end();
     }
 
+    // Draft created BEFORE subscribing — `createDraft` emits an
+    // `invoice_changed` SSE per api.md §14.2.13 (draft CRUD emits).
+    // The AC-289 assertion is about the FAILED issue branch — the
+    // draft-create event is pre-existing noise and must be outside
+    // the subscription window.
+    const draftId = await createDraft(ownerToken, projectId);
+
     const bus = await loadBus();
     const conn = subscribeFake(bus);
     try {
-      const draftId = await createDraft(ownerToken, projectId);
       const baseline = await readSequenceAndAuditBaseline(draftId);
 
       const res = await authPost(ownerToken, `/api/invoices/${draftId}/issue`);
