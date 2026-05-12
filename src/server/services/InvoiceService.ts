@@ -132,9 +132,8 @@ export interface CancelInput {
 }
 
 /**
- * Optional binary-pipeline dependencies. When supplied (Phase D and
- * up — the route wiring injects them), `persistRenderedBinary` writes
- * the rendered ZUGFeRD PDF/A-3 through the existing attachment
+ * Binary-pipeline dependencies. `persistRenderedBinary` uses these to
+ * write the rendered ZUGFeRD PDF/A-3 through the existing attachment
  * binary-descriptor pipeline:
  *
  *   1. Generate fresh 32-byte AES-256-GCM DEK.
@@ -150,13 +149,10 @@ export interface CancelInput {
  *      + label `'rechnung'`. The row id is returned and stored on
  *      `invoices.renderedPdfBinaryDescriptorId`.
  *
- * When ABSENT, `persistRenderedBinary` falls back to the Phase B
- * placeholder (synthetic UUID) so test paths exercising the issuance
- * transaction without a storage backend (the renderer-throws / SSE /
- * audit assertions) continue to pass. The placeholder leaves the
- * column non-null but does NOT make the bytes actually retrievable —
- * `GET /api/invoices/:id/pdf` requires the real pipeline to fetch
- * back from B2 / MinIO.
+ * Required at construction time. The route wiring builds these from
+ * env (`STORAGE_*`, `BINARY_AGE_RECIPIENT`, `BINARY_AGE_IDENTITY_PATH`),
+ * which `assertAppServerEnv` enforces at boot — so the deps are always
+ * present in any process that registers the invoice routes.
  */
 export interface InvoiceBinaryDeps {
   storage: AttachmentStorageClient;
@@ -166,18 +162,18 @@ export interface InvoiceBinaryDeps {
 
 export class InvoiceService {
   private readonly renderer: InvoiceRenderer;
-  private readonly binaryDeps: InvoiceBinaryDeps | null;
+  private readonly binaryDeps: InvoiceBinaryDeps;
   constructor(
     private db: Database,
+    binaryDeps: InvoiceBinaryDeps,
     renderer?: InvoiceRenderer,
-    binaryDeps?: InvoiceBinaryDeps,
   ) {
     // Renderer is constructor-injected so the test mock seam in
     // `invoices-issue.test.ts:521-536` is honored — the mocked module's
     // class is what `new InvoiceRenderer()` resolves to in the test
     // process. In production the default constructor is fine.
     this.renderer = renderer ?? new InvoiceRenderer();
-    this.binaryDeps = binaryDeps ?? null;
+    this.binaryDeps = binaryDeps;
   }
 
   // -------------------------------------------------------------------
@@ -220,8 +216,8 @@ export class InvoiceService {
    *   2. Reject drafts with `INVOICE_NOT_ISSUED`.
    *   3. Look up the rendered-PDF attachment row by descriptor id;
    *      surface a synthetic `404` if the descriptor reference is
-   *      dangling (test seam without storage wiring) or the row's
-   *      `wrappedDek` is missing.
+   *      missing on the invoice row, the attachment row is gone, or
+   *      its `wrappedDek` is missing.
    *   4. Unwrap the row's DEK against the operator-loaded identity.
    *   5. Fetch the ciphertext from object storage.
    *   6. Decrypt and return the plaintext bytes.
@@ -240,10 +236,9 @@ export class InvoiceService {
       throw invoiceNotIssued();
     }
     const descriptorId = invoice.renderedPdfBinaryDescriptorId;
-    if (!descriptorId || !this.binaryDeps) {
-      // Descriptor missing OR storage not wired (test fallback path
-      // before storage env is present). Either way the bytes cannot
-      // be served — surface 404 rather than synthesising a placeholder.
+    if (!descriptorId) {
+      // No binary persisted for this row — surface 404 rather than
+      // synthesising a placeholder.
       throw notFound(STRINGS.entities.resource);
     }
 
@@ -876,13 +871,6 @@ export class InvoiceService {
    *      is the descriptor reference returned to the caller and
    *      stored on `invoices.renderedPdfBinaryDescriptorId`.
    *
-   * Fallback: when no `binaryDeps` are wired (test paths that exercise
-   * the issuance audit / SSE invariants without a storage backend),
-   * the method returns a synthetic UUID so the
-   * `renderedPdfBinaryDescriptorId` column lands non-null. The bytes
-   * are NOT retrievable in that mode — Phase D's PDF download route
-   * requires the real path.
-   *
    * The whole call runs inside the issuance transaction so a fault
    * after the bucket PUT rolls back the row insert; the orphaned
    * object is reaped by the existing attachment-orphan reaper because
@@ -897,15 +885,6 @@ export class InvoiceService {
     invoiceId: string,
     userId: string,
   ): Promise<string> {
-    if (!this.binaryDeps) {
-      // Phase B fallback — synthetic UUID. Leaves the column non-null
-      // for tests that don't drive the storage backend. The route
-      // layer's PDF download path will surface a 404 / 500 on the
-      // missing key; this is intended (the fallback is a test seam,
-      // not a production path).
-      return crypto.randomUUID();
-    }
-
     const { storage, binaryAgeRecipient, binaryAgeIdentityPath } = this.binaryDeps;
 
     // 1 + 2. Encrypt the plaintext PDF bytes under a fresh DEK.

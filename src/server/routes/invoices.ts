@@ -77,13 +77,13 @@ const recipientSchema = {
 } as const;
 
 /**
- * Build the optional `InvoiceBinaryDeps` for the service. Returns null
- * when storage env is incomplete (test harness without object storage);
- * the service falls back to the synthetic-UUID descriptor placeholder
- * in that mode. In production the env validator enforces presence so
- * the deps are always wired (architecture.md §11.14 / AC-296).
+ * Build the `InvoiceBinaryDeps` for the service from validated env.
+ * `assertAppServerEnv` enforces presence of STORAGE_* / BINARY_AGE_RECIPIENT
+ * at boot (env.ts § app-server presence predicate); BINARY_AGE_IDENTITY_PATH
+ * has a schema-level default. If any of these are missing at route
+ * registration we throw — the app should never have started.
  */
-function buildInvoiceBinaryDeps(): InvoiceBinaryDeps | null {
+function buildInvoiceBinaryDeps(): InvoiceBinaryDeps {
   const env = getEnv();
   if (
     !env.STORAGE_ENDPOINT ||
@@ -92,7 +92,12 @@ function buildInvoiceBinaryDeps(): InvoiceBinaryDeps | null {
     !env.BINARY_AGE_RECIPIENT ||
     !env.BINARY_AGE_IDENTITY_PATH
   ) {
-    return null;
+    throw new Error(
+      'Refusing to register invoice routes: STORAGE_* and BINARY_AGE_RECIPIENT / ' +
+        'BINARY_AGE_IDENTITY_PATH are required for invoice binary persistence. ' +
+        'assertAppServerEnv should have rejected this configuration at boot — see ' +
+        'src/server/config/env.ts.',
+    );
   }
   const storage = createStorageClient({
     endpoint: env.STORAGE_ENDPOINT,
@@ -113,7 +118,7 @@ export function invoiceRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
     const binaryDeps = buildInvoiceBinaryDeps();
-    const service = new InvoiceService(db, undefined, binaryDeps ?? undefined);
+    const service = new InvoiceService(db, binaryDeps);
 
     app.addHook('preHandler', authenticate);
 
