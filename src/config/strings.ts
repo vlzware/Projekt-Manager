@@ -359,6 +359,36 @@ export const STRINGS = {
    * the text-row endpoints stay as internal building blocks. Strings
    * pinned here so the Daten view and the dialogs share one source.
    */
+  /**
+   * Company-profile section on the Daten view (ui/daten.md §8.11.4,
+   * ADR-0026). Owner-only mutation surface; every authenticated role
+   * sees the section but only owner gets the save affordance.
+   */
+  companyProfile: {
+    heading: 'Firmendaten',
+    description:
+      'Die Stammdaten des ausstellenden Unternehmens. Diese Werte werden auf jeder Rechnung beim Ausstellen eingefroren.',
+    companyName: 'Firmenname',
+    street: 'Straße',
+    zip: 'PLZ',
+    city: 'Ort',
+    taxId: 'Steuernummer',
+    ustId: 'USt-IdNr.',
+    iban: 'IBAN',
+    accentColor: 'Akzentfarbe',
+    footerText: 'Fußzeile',
+    defaultTaxMode: 'Standard-Steuermodus',
+    taxModeStandard: 'Regulär',
+    taxModeKleinunternehmer: 'Kleinunternehmer §19',
+    taxModeReverseCharge: 'Reverse-Charge §13b',
+    save: 'Speichern',
+    /** Inline error rendered next to the USt-IdNr. input when the
+     *  selected Steuermodus requires it but the field is empty.
+     *  E2E pins the linguistic root `USt-IdNr` (case-insensitive). */
+    ustIdRequiredForMode:
+      'USt-IdNr. ist für den gewählten Steuermodus erforderlich. Bitte ausfüllen.',
+  },
+
   dataExchange: {
     exportHeading: 'Export',
     exportDescription:

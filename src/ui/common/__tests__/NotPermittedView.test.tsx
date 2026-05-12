@@ -146,12 +146,12 @@ type ForbiddenCase = { role: string; path: string };
 const FORBIDDEN: readonly ForbiddenCase[] = [
   { role: 'worker', path: '/customers' }, // AC-149 example
   { role: 'worker', path: '/users' },
-  { role: 'worker', path: '/data' },
+  { role: 'worker', path: '/daten' },
   { role: 'office', path: '/users' },
   { role: 'bookkeeper', path: '/kanban' },
   { role: 'bookkeeper', path: '/calendar' },
   { role: 'bookkeeper', path: '/users' },
-  { role: 'bookkeeper', path: '/data' },
+  { role: 'bookkeeper', path: '/daten' },
   // Bookkeeper lacks `audit:read`; the Aktivität route is forbidden.
   { role: 'bookkeeper', path: '/audit' },
 ];

@@ -167,7 +167,7 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     view: 'daten',
-    path: '/data',
+    path: '/daten',
     label: STRINGS.ui.viewData,
     canAccess: (u) => hasPermission(u.roles, 'data:export'),
     isDefaultFor: () => false,

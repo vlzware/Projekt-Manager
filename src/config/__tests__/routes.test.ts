@@ -124,7 +124,7 @@ describe('ROUTES — landing (ui/index.md §8.1.2)', () => {
 describe('ROUTES — path/view helpers', () => {
   it('routeByPath returns the matching entry', () => {
     expect(routeByPath('/kanban')?.view).toBe('kanban');
-    expect(routeByPath('/data')?.view).toBe('daten');
+    expect(routeByPath('/daten')?.view).toBe('daten');
     expect(routeByPath('/nowhere')).toBeUndefined();
   });
 

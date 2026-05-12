@@ -97,11 +97,15 @@ test.describe('Company profile management (AC-301, AC-303)', () => {
       await expect(error).toBeVisible();
       // The German validation copy is `[C]`; pin the linguistic root.
       await expect(error).toContainText(/USt-IdNr|UStIdNr|ustId/i);
-      // Drain any in-flight network activity so the request-listener
-      // has a deterministic window to catch a regression-emitted PUT.
-      // `networkidle` waits until there are no requests for 500 ms —
-      // the correct primitive, not a flaky `waitForTimeout`.
-      await page.waitForLoadState('networkidle');
+      // Give any sneak-through PUT a deterministic window to surface to
+      // the request listener. `networkidle` is the wrong primitive in
+      // this app — the auth-gated SSE connection (`/api/events`,
+      // ADR-0025) keeps the network active for the lifetime of the
+      // session, so it would never resolve. A short fixed wait is
+      // enough: a regression-emitted PUT fires synchronously off the
+      // click event and reaches the request listener within one
+      // microtask. 300 ms catches that with margin.
+      await page.waitForTimeout(300);
       expect(fired).toBe(false);
     });
   });

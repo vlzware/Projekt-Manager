@@ -51,6 +51,14 @@ export interface ApiFailure {
    * where a redirect would be a no-op.
    */
   sessionExpired: boolean;
+  /**
+   * Server-supplied machine-readable detail block (api.md §14.4 — every
+   * `AppError` may carry an opaque `details` field, e.g. `missingFields`
+   * for `VALIDATION_ERROR` / `COMPANY_PROFILE_REQUIRED`). Surfaced raw
+   * so consumers can branch on the shape they expect; absent when the
+   * server omitted the key.
+   */
+  details?: unknown;
 }
 
 export type ApiResult<T> = ApiSuccess<T> | ApiFailure;
@@ -160,6 +168,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       },
       category,
       sessionExpired,
+      details: data.details,
     };
   }
 
@@ -201,6 +210,7 @@ import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchang
 import type { BackupStatus } from '@/domain/backupBadge';
 import type { AuditEntry, AuditListParams, AuditListResponse } from '@/domain/audit';
 import type { NotificationRule, NotificationRuleInput } from '@/domain/notifications';
+import type { CompanyProfile, TaxMode } from '@/domain/invoice';
 
 interface AuthUser {
   id: string;
@@ -765,6 +775,31 @@ export interface StorageUsageDto {
 
 export const storageUsageApi = {
   getGlobal: () => apiCall<StorageUsageDto>('/api/storage-usage'),
+};
+
+/**
+ * Company-profile singleton (api.md §14.2.15, ADR-0026). GET is open
+ * to every authenticated role; PUT is owner-only (enforced server-
+ * side). The body excludes `id`, `updatedAt`, `updatedBy` — those are
+ * server-managed projections on every response.
+ */
+export interface CompanyProfileInput {
+  companyName: string;
+  address: { street: string; zip: string; city: string };
+  taxId: string;
+  ustId: string | null;
+  iban: string | null;
+  accentColor: string | null;
+  footerText: string | null;
+  logoBinaryDescriptorId: string | null;
+  defaultTaxMode: TaxMode;
+}
+
+export const companyProfileApi = {
+  get: () => apiCall<CompanyProfile>('/api/company-profile'),
+
+  put: (payload: CompanyProfileInput) =>
+    apiCall<CompanyProfile>('/api/company-profile', { method: 'PUT', body: payload }),
 };
 
 export type { AuthUser };
