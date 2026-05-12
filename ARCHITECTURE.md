@@ -432,6 +432,54 @@ Spec contract: [docs/spec/architecture.md §11.13](docs/spec/architecture.md#111
 
 ---
 
+## Invoices Module
+
+Spec contract: [docs/spec/data-model.md §5.15–§5.17](docs/spec/data-model.md#515-invoice-entity) (entities), [docs/spec/api.md §14.2.14–§14.2.15](docs/spec/api.md#14214-invoice-operations) (operations), [docs/spec/ui/invoices.md §8.16](docs/spec/ui/invoices.md#816-invoices-view) + [project-detail.md §8.15.11](docs/spec/ui/project-detail.md#81511-invoice) + [daten.md §8.11.4](docs/spec/ui/daten.md#8114-company-profile) (UI), [ADR-0026](docs/adr/0026-invoices-immutability-and-zugferd.md). This section pins implementation choices that fall under §14 / §14a UStG and GoBD compliance.
+
+### Immutable snapshot at issuance
+
+`InvoiceIssueService.issue` opens a single transaction that allocates the number, freezes the content, flips the project, renders the PDF/A-3, writes the binary descriptor, and emits the audit row + `invoice_changed` SSE frame. The wire shape sealed on issuance — `issuer` (copied from `company_profile`), `recipient` (copied from the project's customer), `lines`, `taxMode`, `profile`, `totals`, `performanceDate` — is then immutable for GoBD. Subsequent PATCH attempts return `INVOICE_FROZEN`; DELETE on issued is refused at the service layer. Cancellation produces a Stornorechnung as a sibling row (`cancellationOf` points to the original) — the original stays untouched. A correction is a fresh draft → issue cycle, never an edit.
+
+### Gapless year-scoped sequence
+
+`invoice_sequence` carries one row per `(year, kind)` (`kind ∈ 'invoice' | 'storno'`). Allocation is `SELECT … FOR UPDATE` against the matching row inside the issuance transaction; the row-level lock holds until commit, so a rollback returns the value to the sequence — the canonical Postgres gapless-counter pattern. Postgres `SERIAL` / `IDENTITY` are incompatible by design (they advance on rollback). The `RE-YYYY-NNNN` / `ST-YYYY-NNNN` format is pinned by a DB `CHECK` constraint so a wire-shape bug cannot insert a malformed number even via raw SQL. The year segment is the issuance year (Postgres `EXTRACT(YEAR FROM CURRENT_TIMESTAMP)` taken inside the transaction); a year-end issuance does not reuse the prior year's counter even if the row sits over the boundary.
+
+### Service split
+
+`src/server/services/InvoiceService.ts` is the route-facing facade; four focused services own the moving parts:
+
+- **`InvoiceIssueService`** — draft CRUD + the issue transaction (sequence allocation, content freeze, project status flip to `abgerechnet`, render via `InvoiceRenderer`, binary write via `InvoiceBinaryService`, audit + SSE).
+- **`InvoiceCancelService`** — Storno-sibling creation, audit + SSE. Does NOT auto-revert project state ([AC-290](docs/spec/verification.md#1530-invoices) trailing clause): a user staring at an `abgerechnet` project with a cancelled invoice sees the gap and acts on it manually.
+- **`InvoiceBinaryService`** — wraps the binary-descriptor flow for the rendered PDF/A-3. Sits on top of the same `BinaryDescriptorService` the attachment module uses, with the company-tax retention applied per `INVOICE_OBJECT_LOCK_DAYS`. Unlike attachments, the descriptor is server-rendered (no client encrypt path): the PDF/A-3 is constructed server-side, then PUT to B2 under the same E2E-encryption envelope ([ADR-0024](docs/adr/0024-binary-attachment-e2e-encryption.md)) so the storage layer sees only ciphertext.
+- **`InvoiceRenderer`** — orchestrates the PDF/A-3 + `factur-x.xml` build (see below). Returns the bytes; the binary service owns persistence.
+
+### ZUGFeRD EN 16931 renderer
+
+`src/server/services/InvoiceRenderer.ts` drives a Node-native pipeline (no headless browser, no external service):
+
+- **PDF/A-3 base.** `src/server/services/invoice/pdfDrawer.ts` lays out the visible invoice using `pdf-lib` — German typography, EUR/DE numerics, address block, per-line table, totals breakdown, tax-mode boilerplate (Kleinunternehmer §19 or Reverse-Charge §13b text where applicable), IBAN footer when set on the profile. Output is conformance level PDF/A-3 (no JavaScript, no external resources, embedded fonts, XMP metadata, color profile).
+- **Embedded `factur-x.xml`.** `src/server/services/invoice/facturXmlBuilder.ts` emits the EN 16931 Comfort profile XML from the snapshotted invoice fields. The XML is XSD-validated against the canonical EN 16931 schemas pinned at `src/test/fixtures/en16931/` before embed; a validation failure refuses to issue. The XML is attached to the PDF as a Factur-X-compliant file attachment (relationship `Alternative`, AFRelationship metadata on the embedded file spec).
+- **Profile column.** `invoices.profile` snapshots the renderer profile (`zugferd-en16931` today) so the UI's PDF download affordance can label itself appropriately (`ZUGFeRD herunterladen` vs the generic `PDF herunterladen`). A future XRECHNUNG renderer drops in as a sibling builder keyed off the same column.
+- **Boilerplate.** `src/server/services/invoice/boilerplate.ts` carries the German tax-mode legal text — `kleinunternehmer` (§19 UStG: "Gemäß §19 UStG wird keine Umsatzsteuer berechnet."), `reverse_charge` (§13b UStG reverse-charge notice). Single source of truth so a §-text revision is one file.
+
+### Object Lock retention — env-driven
+
+`INVOICE_OBJECT_LOCK_DAYS` is the retention envelope `assertStorageBucketSafe()` enforces against the bucket-level default-retention for the configured invoices bucket. Prod: 3650 (10 years per §147 AO). Dev: 0 (no retention, drop on `force` reseed). The bucket-shape probe verifies the configured retention is **≥** the env value at boot — a configured shorter retention than the env requires fails closed. Per [AC-296](docs/spec/verification.md#1530-invoices), the bucket may legitimately carry a longer retention than the env (e.g. tightened compliance horizon) without failing the probe — the env names the minimum, not the equality.
+
+### Tax modes (per-invoice, snapshotted)
+
+`taxMode ∈ 'standard' | 'kleinunternehmer' | 'reverse_charge'` is snapshotted onto each invoice at draft creation (defaulted from `company_profile.defaultTaxMode`); editable on the draft, frozen at issuance. The mode drives both the totals computation (no per-line tax for kleinunternehmer + reverse_charge; per-rate breakdown for standard) and the renderer boilerplate. `company_profile.ustId` is structurally optional; the issue gate refuses when the snapshotted mode is `standard` or `reverse_charge` and the profile's `ustId` is empty (`COMPANY_PROFILE_REQUIRED`). The UI's company-profile form mirrors the validation as a UX affordance ([docs/spec/ui/daten.md §8.11.4](docs/spec/ui/daten.md#8114-company-profile)); the server is authoritative.
+
+### `company_profile` singleton
+
+One row per deployment, pinned by `UNIQUE(singleton) + CHECK(singleton = true)`. Owner-only mutation through `PUT /api/company-profile`; every authenticated role may read so the values invoices will snapshot are visible (office / worker / bookkeeper see a read-only summary on the Daten view). No dedicated `company_profile:*` permission key — the route-layer role check is the gate (mutations restricted to `owner`). Logo upload is not yet wired client-side — the schema's `logoBinaryDescriptorId` column is present but the orphan (non-project) binary-descriptor pipeline is a follow-up; the form sends `null` until that lands.
+
+### Realtime + repository scope
+
+`invoice_changed` SSE frames emit post-commit from the issue / cancel / draft-CRUD paths through `src/server/sse/emitters.ts`. The browser-side store fan-in mirrors the storage-usage pattern: `src/state/invoiceStore.ts` owns per-project cache; `src/state/invoiceListStore.ts` owns the cross-project `/rechnungen` view; both refresh on `invoice_changed` via `src/state/invoiceSseSubscription.ts` (the auth-gated `useEffect` in `src/App.tsx` is the only entry point). Worker callers are excluded structurally via the repository scope predicate ([ADR-0019](docs/adr/0019-worker-data-scoping-repository-layer-predicate.md)) — no `invoice:read` permission gate on the list / get routes (a worker probe returns `200 + []` for list, `404` for single-row, never `403` — matches the spec contract that worker exclusion is invisible).
+
+---
+
 ## Design Decisions (Not ADR-Worthy)
 
 - **Export format**: JSON only. Unified envelope shape defined in [docs/spec/data-model.md §5.8](docs/spec/data-model.md#58-export-envelope).
