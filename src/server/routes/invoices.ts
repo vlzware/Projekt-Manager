@@ -26,13 +26,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
-import {
-  InvoiceService,
-  type InvoiceBinaryDeps,
-  type ListInvoicesOpts,
-} from '../services/InvoiceService.js';
-import { createStorageClient } from '../storage/client.js';
-import { getEnv } from '../config/env.js';
+import { createInvoiceService, type ListInvoicesOpts } from '../services/InvoiceService.js';
 import type { InvoiceLine, InvoiceRecipientSnapshot, TaxMode } from '../../domain/invoice.js';
 import { TAX_MODES, INVOICE_STATUSES } from '../../domain/invoice.js';
 
@@ -76,49 +70,10 @@ const recipientSchema = {
   },
 } as const;
 
-/**
- * Build the `InvoiceBinaryDeps` for the service from validated env.
- * `assertAppServerEnv` enforces presence of STORAGE_* / BINARY_AGE_RECIPIENT
- * at boot (env.ts § app-server presence predicate); BINARY_AGE_IDENTITY_PATH
- * has a schema-level default. If any of these are missing at route
- * registration we throw — the app should never have started.
- */
-function buildInvoiceBinaryDeps(): InvoiceBinaryDeps {
-  const env = getEnv();
-  if (
-    !env.STORAGE_ENDPOINT ||
-    !env.STORAGE_ACCESS_KEY ||
-    !env.STORAGE_SECRET_KEY ||
-    !env.BINARY_AGE_RECIPIENT ||
-    !env.BINARY_AGE_IDENTITY_PATH
-  ) {
-    throw new Error(
-      'Refusing to register invoice routes: STORAGE_* and BINARY_AGE_RECIPIENT / ' +
-        'BINARY_AGE_IDENTITY_PATH are required for invoice binary persistence. ' +
-        'assertAppServerEnv should have rejected this configuration at boot — see ' +
-        'src/server/config/env.ts.',
-    );
-  }
-  const storage = createStorageClient({
-    endpoint: env.STORAGE_ENDPOINT,
-    publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
-    bucket: env.STORAGE_BUCKET,
-    accessKey: env.STORAGE_ACCESS_KEY,
-    secretKey: env.STORAGE_SECRET_KEY,
-    region: env.STORAGE_REGION,
-  });
-  return {
-    storage,
-    binaryAgeRecipient: env.BINARY_AGE_RECIPIENT,
-    binaryAgeIdentityPath: env.BINARY_AGE_IDENTITY_PATH,
-  };
-}
-
 export function invoiceRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
     const authenticate = createAuthMiddleware(db);
-    const binaryDeps = buildInvoiceBinaryDeps();
-    const service = new InvoiceService(db, binaryDeps);
+    const service = createInvoiceService(db);
 
     app.addHook('preHandler', authenticate);
 
