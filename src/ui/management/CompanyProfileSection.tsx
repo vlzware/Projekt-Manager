@@ -22,7 +22,7 @@ import { useEffect, useState, type ChangeEvent } from 'react';
 import { STRINGS } from '@/config/strings';
 import { useAuthStore } from '@/state/authStore';
 import { useCompanyProfileStore } from '@/state/companyProfileStore';
-import { TAX_MODES, type CompanyProfile, type TaxMode } from '@/domain/invoice';
+import { TAX_MODES, labelForTaxMode, type CompanyProfile, type TaxMode } from '@/domain/invoice';
 import styles from './CompanyProfileSection.module.css';
 
 interface FormValues {
@@ -220,7 +220,11 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
           >
             {TAX_MODES.map((mode) => (
               <option key={mode} value={mode}>
-                {labelForMode(mode)}
+                {labelForTaxMode(mode, {
+                  standard: STRINGS.companyProfile.taxModeStandard,
+                  kleinunternehmer: STRINGS.companyProfile.taxModeKleinunternehmer,
+                  reverseCharge: STRINGS.companyProfile.taxModeReverseCharge,
+                })}
               </option>
             ))}
           </select>
@@ -254,12 +258,6 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
       </form>
     </section>
   );
-}
-
-function labelForMode(mode: TaxMode): string {
-  if (mode === 'standard') return STRINGS.companyProfile.taxModeStandard;
-  if (mode === 'kleinunternehmer') return STRINGS.companyProfile.taxModeKleinunternehmer;
-  return STRINGS.companyProfile.taxModeReverseCharge;
 }
 
 interface LabeledInputProps {

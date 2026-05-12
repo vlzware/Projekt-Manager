@@ -170,6 +170,29 @@ export function round2(value: number): number {
 }
 
 /**
+ * Tax-mode → German display label. Single source so the company-profile
+ * select and the draft-form select cannot drift from each other (and
+ * from anywhere else the label is rendered).
+ *
+ * Lives next to the `TaxMode` definition rather than in `strings.ts` so
+ * the discriminator and its display copy stay structurally paired —
+ * adding a fourth `TaxMode` triggers a TS exhaustiveness error here.
+ */
+export function labelForTaxMode(
+  mode: TaxMode,
+  copy: { standard: string; kleinunternehmer: string; reverseCharge: string },
+): string {
+  switch (mode) {
+    case 'standard':
+      return copy.standard;
+    case 'kleinunternehmer':
+      return copy.kleinunternehmer;
+    case 'reverse_charge':
+      return copy.reverseCharge;
+  }
+}
+
+/**
  * Re-derive totals from a line list + tax mode. The service calls this
  * on every draft PATCH and on the issue transaction so totals are never
  * client-trusted (AC-286).

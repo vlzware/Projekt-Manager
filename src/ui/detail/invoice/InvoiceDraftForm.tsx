@@ -17,19 +17,25 @@
  * /issue (AC-286).
  */
 
-import { useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { STRINGS } from '@/config/strings';
 import {
   TAX_MODES,
+  computeInvoiceTotals,
+  labelForTaxMode,
   round2,
   type Invoice,
   type InvoiceLine,
   type InvoiceRecipientSnapshot,
   type TaxMode,
 } from '@/domain/invoice';
+import { formatCurrencyDE } from '@/domain/dateFormat';
+import { useDialogA11y } from '@/ui/common/useDialogA11y';
 import { useInvoiceStore } from '@/state/invoiceStore';
 import { dateInputValue } from '../dateInputValue';
 import styles from './InvoiceSection.module.css';
+
+const TITLE_ID = 'invoice-draft-form-title';
 
 interface Props {
   projectId: string;
@@ -60,6 +66,14 @@ interface RecipientDraft {
   street: string;
   zip: string;
   city: string;
+  /**
+   * Carried through the round-trip but not yet editable in the form —
+   * the per-recipient `USt-IdNr.` input is a future spec amendment. The
+   * draft create endpoint pre-fills this from the customer snapshot;
+   * preserving it on PATCH keeps any pre-existing value intact instead
+   * of wiping it on every save (F1).
+   */
+  ustId: string | null;
 }
 
 function emptyLine(): LineDraft {
@@ -83,6 +97,7 @@ function recipientFromInvoice(inv: Invoice): RecipientDraft {
     street: inv.recipient.address?.street ?? '',
     zip: inv.recipient.address?.zip ?? '',
     city: inv.recipient.address?.city ?? '',
+    ustId: inv.recipient.ustId ?? null,
   };
 }
 
@@ -117,7 +132,7 @@ function toWireRecipient(r: RecipientDraft): InvoiceRecipientSnapshot {
   return {
     name: r.name.trim(),
     address: hasAddress ? { street, zip, city } : null,
-    ustId: null,
+    ustId: r.ustId,
   };
 }
 
@@ -132,7 +147,10 @@ export function InvoiceDraftForm({
   const updateDraft = useInvoiceStore((s) => s.updateDraft);
 
   const [recipient, setRecipient] = useState<RecipientDraft>(
-    draft ? recipientFromInvoice(draft) : fallbackRecipient,
+    // The fallback path has no carried `ustId` to preserve (no draft has
+    // been minted yet); the server's recipient pre-fill on createDraft
+    // populates it from the customer snapshot on the round-trip back.
+    draft ? recipientFromInvoice(draft) : { ...fallbackRecipient, ustId: null },
   );
   const [lines, setLines] = useState<LineDraft[]>(draft ? linesFromInvoice(draft) : [emptyLine()]);
   const [taxMode, setTaxMode] = useState<TaxMode>(draft?.taxMode ?? 'standard');
@@ -148,6 +166,27 @@ export function InvoiceDraftForm({
   // update; a setState here would have to be flushed before the next
   // `handleSave` call could see it.
   const draftIdRef = useRef<string | null>(draft?.id ?? null);
+
+  // Modal accessibility: focus trap, body scroll lock, Escape-to-close.
+  // Same hook the cancel dialog uses so the two surfaces match. Escape
+  // is suppressed while a save is in flight — the in-flight lock from
+  // [behavior.md §9.5] also applies to the close affordance.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const firstFieldRef = useRef<HTMLInputElement>(null);
+  const onEscape = useCallback(() => {
+    if (submitting) return;
+    onClose();
+  }, [submitting, onClose]);
+  const onOpenedFocus = useCallback(() => firstFieldRef.current?.focus(), []);
+  useDialogA11y({ isOpen: true, dialogRef, onOpenedFocus, onEscape });
+
+  // Read-only totals preview (ui/invoices.md §8.16.2 — "the visible
+  // totals are a UX preview"). The server re-derives over the wire-shape
+  // lines at issue time and remains authoritative.
+  const previewTotals = useMemo(
+    () => computeInvoiceTotals(toWireLines(lines), taxMode),
+    [lines, taxMode],
+  );
 
   const handleSave = async () => {
     if (submitting) return;
@@ -197,235 +236,277 @@ export function InvoiceDraftForm({
 
   return (
     <div className={styles.formOverlay} data-testid="invoice-form-overlay">
-      <form
+      <div
+        ref={dialogRef}
         className={styles.formPanel}
-        data-testid="invoice-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void handleSave();
-        }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={TITLE_ID}
       >
-        <h2 className={styles.formTitle}>{STRINGS.invoices.newInvoice}</h2>
+        <form
+          data-testid="invoice-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleSave();
+          }}
+        >
+          <h2 id={TITLE_ID} className={styles.formTitle}>
+            {STRINGS.invoices.newInvoice}
+          </h2>
 
-        <section className={styles.formSection}>
-          <h3 className={styles.formSectionHeading}>{STRINGS.invoices.formRecipientHeading}</h3>
-          <p className={styles.formHint}>{STRINGS.invoices.formRecipientFrozenHint}</p>
+          <section className={styles.formSection}>
+            <h3 className={styles.formSectionHeading}>{STRINGS.invoices.formRecipientHeading}</h3>
+            <p className={styles.formHint}>{STRINGS.invoices.formRecipientFrozenHint}</p>
+            <div className={styles.formGrid}>
+              <div className={styles.formField}>
+                <label className={styles.formLabel} htmlFor="invoice-recipient-name">
+                  {STRINGS.invoices.formRecipientName}
+                </label>
+                <input
+                  ref={firstFieldRef}
+                  id="invoice-recipient-name"
+                  className={styles.formInput}
+                  value={recipient.name}
+                  onChange={(e) => setRecipient((r) => ({ ...r, name: e.target.value }))}
+                  disabled={submitting}
+                  data-testid="invoice-recipient-name-input"
+                />
+              </div>
+              <div className={styles.formField}>
+                <label className={styles.formLabel} htmlFor="invoice-recipient-street">
+                  {STRINGS.invoices.formRecipientStreet}
+                </label>
+                <input
+                  id="invoice-recipient-street"
+                  className={styles.formInput}
+                  value={recipient.street}
+                  onChange={(e) => setRecipient((r) => ({ ...r, street: e.target.value }))}
+                  disabled={submitting}
+                />
+              </div>
+              <div className={styles.formField}>
+                <label className={styles.formLabel} htmlFor="invoice-recipient-zip">
+                  {STRINGS.invoices.formRecipientZip}
+                </label>
+                <input
+                  id="invoice-recipient-zip"
+                  className={styles.formInput}
+                  value={recipient.zip}
+                  onChange={(e) => setRecipient((r) => ({ ...r, zip: e.target.value }))}
+                  disabled={submitting}
+                />
+              </div>
+              <div className={styles.formField}>
+                <label className={styles.formLabel} htmlFor="invoice-recipient-city">
+                  {STRINGS.invoices.formRecipientCity}
+                </label>
+                <input
+                  id="invoice-recipient-city"
+                  className={styles.formInput}
+                  value={recipient.city}
+                  onChange={(e) => setRecipient((r) => ({ ...r, city: e.target.value }))}
+                  disabled={submitting}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section className={styles.formSection}>
+            <h3 className={styles.formSectionHeading}>{STRINGS.invoices.formLinesHeading}</h3>
+            <div className={styles.lineTableScroll}>
+              <table className={styles.lineTable}>
+                <thead>
+                  <tr>
+                    <th>{STRINGS.invoices.formLineDescription}</th>
+                    <th>{STRINGS.invoices.formLineQuantity}</th>
+                    <th>{STRINGS.invoices.formLineUnit}</th>
+                    <th>{STRINGS.invoices.formLineUnitPrice}</th>
+                    <th>{STRINGS.invoices.formLineTaxRate}</th>
+                    <th className={styles.lineActions} aria-hidden="true"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, idx) => {
+                    // Row 0 carries the un-suffixed testids the E2E pins
+                    // (`invoice-line-description-input`, etc.); subsequent
+                    // rows carry the `-${idx}` suffix.
+                    const suffix = idx === 0 ? '' : `-${idx}`;
+                    return (
+                      <tr key={idx}>
+                        <td>
+                          <input
+                            className={styles.formInput}
+                            value={line.description}
+                            onChange={(e) => updateLine(idx, { description: e.target.value })}
+                            disabled={submitting}
+                            data-testid={`invoice-line-description-input${suffix}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className={styles.formInput}
+                            value={line.quantity}
+                            onChange={(e) => updateLine(idx, { quantity: e.target.value })}
+                            disabled={submitting}
+                            inputMode="decimal"
+                            data-testid={`invoice-line-quantity-input${suffix}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className={styles.formInput}
+                            value={line.unit}
+                            onChange={(e) => updateLine(idx, { unit: e.target.value })}
+                            disabled={submitting}
+                            data-testid={`invoice-line-unit-input${suffix}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className={styles.formInput}
+                            value={line.unitPrice}
+                            onChange={(e) => updateLine(idx, { unitPrice: e.target.value })}
+                            disabled={submitting}
+                            inputMode="decimal"
+                            data-testid={`invoice-line-unit-price-input${suffix}`}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            className={styles.formInput}
+                            value={line.taxRate}
+                            onChange={(e) => updateLine(idx, { taxRate: e.target.value })}
+                            disabled={submitting}
+                            inputMode="decimal"
+                            data-testid={`invoice-line-tax-rate-input${suffix}`}
+                          />
+                        </td>
+                        <td className={styles.lineActions}>
+                          <button
+                            type="button"
+                            className={styles.lineRemoveButton}
+                            onClick={() => removeLine(idx)}
+                            disabled={submitting || lines.length === 1}
+                            aria-label={STRINGS.invoices.formRemoveLine}
+                            title={STRINGS.invoices.formRemoveLine}
+                          >
+                            {'×'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <button
+              type="button"
+              className={styles.addLineButton}
+              onClick={addLine}
+              disabled={submitting}
+            >
+              {STRINGS.invoices.formAddLine}
+            </button>
+          </section>
+
           <div className={styles.formGrid}>
             <div className={styles.formField}>
-              <label className={styles.formLabel} htmlFor="invoice-recipient-name">
-                {STRINGS.invoices.formRecipientName}
+              <label className={styles.formLabel} htmlFor="invoice-tax-mode">
+                {STRINGS.invoices.formTaxMode}
               </label>
-              <input
-                id="invoice-recipient-name"
-                className={styles.formInput}
-                value={recipient.name}
-                onChange={(e) => setRecipient((r) => ({ ...r, name: e.target.value }))}
+              <select
+                id="invoice-tax-mode"
+                className={styles.formSelect}
+                value={taxMode}
+                onChange={(e) => setTaxMode(e.target.value as TaxMode)}
                 disabled={submitting}
-                data-testid="invoice-recipient-name-input"
-              />
+                data-testid="invoice-tax-mode-select"
+              >
+                {TAX_MODES.map((mode) => (
+                  <option key={mode} value={mode}>
+                    {labelForTaxMode(mode, {
+                      standard: STRINGS.companyProfile.taxModeStandard,
+                      kleinunternehmer: STRINGS.companyProfile.taxModeKleinunternehmer,
+                      reverseCharge: STRINGS.companyProfile.taxModeReverseCharge,
+                    })}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className={styles.formField}>
-              <label className={styles.formLabel} htmlFor="invoice-recipient-street">
-                {STRINGS.invoices.formRecipientStreet}
+              <label className={styles.formLabel} htmlFor="invoice-performance-date">
+                {STRINGS.invoices.formPerformanceDate}
               </label>
               <input
-                id="invoice-recipient-street"
+                id="invoice-performance-date"
+                type="date"
                 className={styles.formInput}
-                value={recipient.street}
-                onChange={(e) => setRecipient((r) => ({ ...r, street: e.target.value }))}
+                value={performanceDate}
+                onChange={(e) => setPerformanceDate(e.target.value)}
                 disabled={submitting}
-              />
-            </div>
-            <div className={styles.formField}>
-              <label className={styles.formLabel} htmlFor="invoice-recipient-zip">
-                {STRINGS.invoices.formRecipientZip}
-              </label>
-              <input
-                id="invoice-recipient-zip"
-                className={styles.formInput}
-                value={recipient.zip}
-                onChange={(e) => setRecipient((r) => ({ ...r, zip: e.target.value }))}
-                disabled={submitting}
-              />
-            </div>
-            <div className={styles.formField}>
-              <label className={styles.formLabel} htmlFor="invoice-recipient-city">
-                {STRINGS.invoices.formRecipientCity}
-              </label>
-              <input
-                id="invoice-recipient-city"
-                className={styles.formInput}
-                value={recipient.city}
-                onChange={(e) => setRecipient((r) => ({ ...r, city: e.target.value }))}
-                disabled={submitting}
+                data-testid="invoice-performance-date-input"
               />
             </div>
           </div>
-        </section>
 
-        <section className={styles.formSection}>
-          <h3 className={styles.formSectionHeading}>{STRINGS.invoices.formLinesHeading}</h3>
-          <div className={styles.lineTableScroll}>
-            <table className={styles.lineTable}>
-              <thead>
-                <tr>
-                  <th>{STRINGS.invoices.formLineDescription}</th>
-                  <th>{STRINGS.invoices.formLineQuantity}</th>
-                  <th>{STRINGS.invoices.formLineUnit}</th>
-                  <th>{STRINGS.invoices.formLineUnitPrice}</th>
-                  <th>{STRINGS.invoices.formLineTaxRate}</th>
-                  <th className={styles.lineActions} aria-hidden="true"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((line, idx) => {
-                  // Row 0 carries the un-suffixed testids the E2E pins
-                  // (`invoice-line-description-input`, etc.); subsequent
-                  // rows carry the `-${idx}` suffix.
-                  const suffix = idx === 0 ? '' : `-${idx}`;
-                  return (
-                    <tr key={idx}>
-                      <td>
-                        <input
-                          className={styles.formInput}
-                          value={line.description}
-                          onChange={(e) => updateLine(idx, { description: e.target.value })}
-                          disabled={submitting}
-                          data-testid={`invoice-line-description-input${suffix}`}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className={styles.formInput}
-                          value={line.quantity}
-                          onChange={(e) => updateLine(idx, { quantity: e.target.value })}
-                          disabled={submitting}
-                          inputMode="decimal"
-                          data-testid={`invoice-line-quantity-input${suffix}`}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className={styles.formInput}
-                          value={line.unit}
-                          onChange={(e) => updateLine(idx, { unit: e.target.value })}
-                          disabled={submitting}
-                          data-testid={`invoice-line-unit-input${suffix}`}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className={styles.formInput}
-                          value={line.unitPrice}
-                          onChange={(e) => updateLine(idx, { unitPrice: e.target.value })}
-                          disabled={submitting}
-                          inputMode="decimal"
-                          data-testid={`invoice-line-unit-price-input${suffix}`}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className={styles.formInput}
-                          value={line.taxRate}
-                          onChange={(e) => updateLine(idx, { taxRate: e.target.value })}
-                          disabled={submitting}
-                          inputMode="decimal"
-                          data-testid={`invoice-line-tax-rate-input${suffix}`}
-                        />
-                      </td>
-                      <td className={styles.lineActions}>
-                        <button
-                          type="button"
-                          className={styles.lineRemoveButton}
-                          onClick={() => removeLine(idx)}
-                          disabled={submitting || lines.length === 1}
-                          aria-label={STRINGS.invoices.formRemoveLine}
-                          title={STRINGS.invoices.formRemoveLine}
-                        >
-                          {'×'}
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <button
-            type="button"
-            className={styles.addLineButton}
-            onClick={addLine}
-            disabled={submitting}
+          <section
+            className={styles.totalsBlock}
+            aria-labelledby="invoice-totals-heading"
+            data-testid="invoice-totals-preview"
           >
-            {STRINGS.invoices.formAddLine}
-          </button>
-        </section>
-
-        <div className={styles.formGrid}>
-          <div className={styles.formField}>
-            <label className={styles.formLabel} htmlFor="invoice-tax-mode">
-              {STRINGS.invoices.formTaxMode}
-            </label>
-            <select
-              id="invoice-tax-mode"
-              className={styles.formSelect}
-              value={taxMode}
-              onChange={(e) => setTaxMode(e.target.value as TaxMode)}
-              disabled={submitting}
-              data-testid="invoice-tax-mode-select"
-            >
-              {TAX_MODES.map((mode) => (
-                <option key={mode} value={mode}>
-                  {mode === 'standard'
-                    ? STRINGS.companyProfile.taxModeStandard
-                    : mode === 'kleinunternehmer'
-                      ? STRINGS.companyProfile.taxModeKleinunternehmer
-                      : STRINGS.companyProfile.taxModeReverseCharge}
-                </option>
+            <h3 id="invoice-totals-heading" className={styles.formSectionHeading}>
+              {STRINGS.invoices.totalsHeading}
+            </h3>
+            <dl className={styles.totalsList}>
+              <div className={styles.totalsRow}>
+                <dt>{STRINGS.invoices.totalsNet}</dt>
+                <dd data-testid="invoice-totals-net">
+                  {formatCurrencyDE(previewTotals.netGrandTotal)}
+                </dd>
+              </div>
+              {previewTotals.perRate.map((band) => (
+                <div className={styles.totalsRow} key={band.taxRate}>
+                  <dt>{STRINGS.invoices.totalsTaxAt(band.taxRate)}</dt>
+                  <dd data-testid={`invoice-totals-tax-${band.taxRate}`}>
+                    {formatCurrencyDE(band.taxAmount)}
+                  </dd>
+                </div>
               ))}
-            </select>
-          </div>
-          <div className={styles.formField}>
-            <label className={styles.formLabel} htmlFor="invoice-performance-date">
-              {STRINGS.invoices.formPerformanceDate}
-            </label>
-            <input
-              id="invoice-performance-date"
-              type="date"
-              className={styles.formInput}
-              value={performanceDate}
-              onChange={(e) => setPerformanceDate(e.target.value)}
+              <div className={`${styles.totalsRow} ${styles.totalsGrossRow}`}>
+                <dt>{STRINGS.invoices.totalsGross}</dt>
+                <dd data-testid="invoice-totals-gross">
+                  {formatCurrencyDE(previewTotals.grossGrandTotal)}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          {errorMessage && (
+            <div className={styles.errorBanner} role="status">
+              {errorMessage}
+            </div>
+          )}
+
+          <div className={styles.formActions}>
+            <button
+              type="button"
+              className={styles.secondaryButton}
+              onClick={onClose}
               disabled={submitting}
-              data-testid="invoice-performance-date-input"
-            />
+            >
+              {STRINGS.ui.cancel}
+            </button>
+            <button
+              type="submit"
+              className={styles.primaryButton}
+              disabled={submitting}
+              data-testid="invoice-form-save"
+            >
+              {STRINGS.invoices.saveAction}
+            </button>
           </div>
-        </div>
-
-        {errorMessage && (
-          <div className={styles.errorBanner} role="status">
-            {errorMessage}
-          </div>
-        )}
-
-        <div className={styles.formActions}>
-          <button
-            type="button"
-            className={styles.secondaryButton}
-            onClick={onClose}
-            disabled={submitting}
-          >
-            {STRINGS.ui.cancel}
-          </button>
-          <button
-            type="submit"
-            className={styles.primaryButton}
-            disabled={submitting}
-            data-testid="invoice-form-save"
-          >
-            {STRINGS.invoices.saveAction}
-          </button>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }

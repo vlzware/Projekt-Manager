@@ -160,19 +160,51 @@
   align-items: center;
 }
 
-.downloadLink {
+.actionButton {
   padding: 4px 10px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
   background: var(--color-surface);
   color: var(--color-text);
   font-size: 0.85rem;
-  text-decoration: none;
   cursor: pointer;
 }
 
-.downloadLink:hover {
+.actionButton:hover {
   background: var(--color-surface-muted);
+}
+
+.actionDanger {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* Active project filter chip — surfaces the URL-driven `?projectId=`
+   filter as a removable indicator so the user sees why the list is
+   constrained. Clearing strips the query param and refetches. */
+.projectChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.85rem;
+  align-self: flex-start;
+}
+
+.projectChipClear {
+  background: transparent;
+  border: 0;
+  color: var(--color-text-subtle);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.projectChipClear:hover {
+  color: var(--color-text);
 }
 
 .loadMore {

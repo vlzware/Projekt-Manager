@@ -82,6 +82,14 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   // via `PUT /api/company-profile` (ui/daten.md §8.11.4). The
   // baseline migration's empty defaults remain the production
   // posture; the seed overrides them for the test fixture.
+  // The INSERT lists only the columns the fixture pins; the UPDATE
+  // clause mirrors the same column set so a re-seed over an existing
+  // row (force re-seed) overwrites exactly what the fixture asserts and
+  // leaves every other column at whatever the row already carried.
+  // `accent_color`, `footer_text`, and `logo_binary_descriptor_id` are
+  // intentionally absent: the fixture does not pin them, and the column
+  // defaults from the baseline migration are the right resting state
+  // (no accent override, no footer text, no logo).
   await db.execute(sql`
     INSERT INTO "company_profile"
       ("company_name", "address", "tax_id", "ust_id", "iban", "default_tax_mode")

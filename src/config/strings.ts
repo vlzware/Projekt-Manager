@@ -521,6 +521,30 @@ export const STRINGS = {
     filterYearAll: 'Alle Jahre',
     filterStatusAll: 'Alle',
     loadMore: 'Weitere laden',
+    /** Active project filter chip on the /rechnungen toolbar — set when the
+     *  view is opened with `?projectId=…` from the per-project block's
+     *  cross-link (ui/project-detail.md §8.15.11). */
+    filterProjectChip: 'Projekt-Filter aktiv',
+    filterProjectClear: 'Filter aufheben',
+
+    // Cross-link from the per-project block to the standalone view
+    // (ui/project-detail.md §8.15.11).
+    crossLinkToList: 'Alle Rechnungen anzeigen',
+
+    // Totals preview (ui/invoices.md §8.16.2 — server re-derives at issue
+    // time, the form's block is a UX preview only).
+    totalsHeading: 'Summen',
+    totalsNet: 'Nettosumme',
+    totalsTaxAt: (rate: number) => `MwSt ${rate}%`,
+    totalsGross: 'Bruttosumme',
+
+    // COMPANY_PROFILE_REQUIRED banner (ui/project-detail.md §8.15.11) —
+    // surfaces when the issue call returns 422 with that code. The banner
+    // names the missing fields and links to the Daten view's company-
+    // profile form so the user can fix them inline.
+    companyProfileBannerHeading: 'Firmendaten unvollständig',
+    companyProfileBannerBody: (fields: string) => `Fehlende Felder: ${fields}.`,
+    companyProfileBannerLink: 'Firmendaten vervollständigen',
   },
 
   aging: {

@@ -19,6 +19,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Invoice } from '@/domain/invoice';
@@ -31,6 +32,35 @@ import { usePermission } from '@/hooks/usePermission';
 import { InvoiceDraftForm } from './InvoiceDraftForm';
 import { InvoiceCancelDialog } from './InvoiceCancelDialog';
 import styles from './InvoiceSection.module.css';
+
+/**
+ * Translate the server's missing-field path ("address.zip", "ustId", …)
+ * to its German display label. The path strings are pinned at the API
+ * layer (api.md §14.2.15 + CompanyProfileService), so this map is the
+ * client-side decoder. Unknown paths fall back to the raw key — operator
+ * triage still reads it, and a missing translation surfaces as text
+ * rather than a silent drop.
+ */
+function labelForCompanyProfileField(path: string): string {
+  switch (path) {
+    case 'companyName':
+      return STRINGS.companyProfile.companyName;
+    case 'address.street':
+      return STRINGS.companyProfile.street;
+    case 'address.zip':
+      return STRINGS.companyProfile.zip;
+    case 'address.city':
+      return STRINGS.companyProfile.city;
+    case 'taxId':
+      return STRINGS.companyProfile.taxId;
+    case 'ustId':
+      return STRINGS.companyProfile.ustId;
+    case 'defaultTaxMode':
+      return STRINGS.companyProfile.defaultTaxMode;
+    default:
+      return path;
+  }
+}
 
 interface Props {
   projectId: string;
@@ -58,6 +88,11 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
   const [cancelSubmitting, setCancelSubmitting] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // F3 — dedicated banner state for COMPANY_PROFILE_REQUIRED. Separated
+  // from the generic `actionError` so the user reads it as "do this and
+  // try again" rather than a transient mutation failure. Cleared on the
+  // next successful action or when the user dismisses it by issuing.
+  const [missingProfileFields, setMissingProfileFields] = useState<string[] | null>(null);
 
   useEffect(() => {
     if (!canRead) return;
@@ -87,12 +122,32 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
 
   const handleIssue = async (invoice: Invoice) => {
     setActionError(null);
+    setMissingProfileFields(null);
     const ok = await requestConfirm(STRINGS.invoices.issueConfirmBody, {
       title: STRINGS.invoices.issueConfirmTitle,
       confirmLabel: STRINGS.invoices.issueConfirmOk,
     });
     if (!ok) return;
     const outcome = await issueInvoice(invoice.id, projectId);
+    if (
+      outcome.status === 'validation' &&
+      outcome.missingFields &&
+      outcome.missingFields.length > 0
+    ) {
+      // F3 — surface the dedicated COMPANY_PROFILE_REQUIRED banner with
+      // the named fields + a link to /daten. The row state stays intact
+      // so the user can fix the profile and retry. The server validates
+      // recipient fields the same way; recipient.* paths are typed-input
+      // problems the user fixes in the form itself, so we route only the
+      // company-profile paths to the banner.
+      const companyProfilePaths = outcome.missingFields.filter(
+        (path) => !path.startsWith('recipient.') && !['lines', 'performanceDate'].includes(path),
+      );
+      if (companyProfilePaths.length > 0) {
+        setMissingProfileFields(companyProfilePaths);
+        return;
+      }
+    }
     if (outcome.status !== 'ok') {
       setActionError(outcome.errorMessage);
       return;
@@ -168,6 +223,29 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
           {error}
         </div>
       )}
+      {missingProfileFields && (
+        <div
+          className={styles.companyProfileBanner}
+          role="status"
+          data-testid="invoice-company-profile-required-banner"
+        >
+          <h4 className={styles.companyProfileBannerHeading}>
+            {STRINGS.invoices.companyProfileBannerHeading}
+          </h4>
+          <p>
+            {STRINGS.invoices.companyProfileBannerBody(
+              missingProfileFields.map(labelForCompanyProfileField).join(', '),
+            )}
+          </p>
+          <Link
+            to="/daten"
+            className={styles.companyProfileBannerLink}
+            data-testid="invoice-company-profile-link"
+          >
+            {STRINGS.invoices.companyProfileBannerLink}
+          </Link>
+        </div>
+      )}
       {actionError && (
         <div className={styles.errorBanner} role="status">
           {actionError}
@@ -205,6 +283,20 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
           ))}
         </div>
       )}
+
+      {/* Cross-link to the standalone list view, pre-filtered to this
+          project (ui/project-detail.md §8.15.11). Rendered unconditionally
+          for `invoice:read` holders — the link is read-only, not a write
+          affordance. */}
+      <div className={styles.crossLink}>
+        <Link
+          to={`/rechnungen?projectId=${projectId}`}
+          className={styles.crossLinkAnchor}
+          data-testid="invoice-cross-link-list"
+        >
+          {STRINGS.invoices.crossLinkToList}
+        </Link>
+      </div>
 
       {formOpen && (
         <InvoiceDraftForm
@@ -337,21 +429,20 @@ function InvoiceRow({
             </button>
             <button
               type="button"
+              className={`${styles.actionButton} ${styles.actionDanger}`}
+              onClick={onDeleteDraft}
+              data-testid="invoice-draft-delete"
+              title={STRINGS.invoices.deleteDraftAction}
+            >
+              {STRINGS.invoices.discardAction}
+            </button>
+            <button
+              type="button"
               className={styles.actionButton}
               onClick={onIssue}
               data-testid="invoice-issue-button"
             >
               {STRINGS.invoices.issueAction}
-            </button>
-            <button
-              type="button"
-              className={`${styles.actionButton} ${styles.actionDanger}`}
-              onClick={onDeleteDraft}
-              data-testid="invoice-draft-delete"
-              aria-label={STRINGS.invoices.deleteDraftAction}
-              title={STRINGS.invoices.deleteDraftAction}
-            >
-              {'×'}
             </button>
           </>
         )}

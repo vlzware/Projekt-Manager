@@ -1,16 +1,32 @@
 /**
  * Single row on the standalone /rechnungen list (ui/invoices.md §8.16.1).
  *
- * Click anywhere on the row → navigate to the per-project detail page
- * (the per-invoice viewer route is deferred — see Chunk C report). The
- * PDF anchor lives inside the row; its click is stopped from bubbling so
- * a download click does not double-fire navigation.
+ * The row is a clickable container — `<div role="button">` with explicit
+ * keyboard handling — so action affordances can sit as DOM siblings
+ * (HTML forbids `<a>` and `<button>` inside `<button>`). Click anywhere
+ * on the row navigates to the project detail page where the per-project
+ * block (ui/project-detail.md §8.15.11) hosts the issue / cancel flows;
+ * action clicks `stopPropagation` so they do not double-fire navigation.
+ *
+ * Row actions per topology:
+ *   - draft  → `Bearbeiten` (navigate to the project block, which owns
+ *               the form), `Verwerfen` (delete draft inline).
+ *   - issued → `PDF herunterladen`.
+ *   - storno → `PDF herunterladen`.
+ *
+ * `Ausstellen` is intentionally NOT exposed here — issuing requires the
+ * project context (status flip via project store, refetch of the
+ * project), which is the per-project block's responsibility.
  */
 
 import { useNavigate } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import type { Invoice } from '@/domain/invoice';
 import { formatCurrencyDE, formatDateDE } from '@/domain/dateFormat';
+import { useInvoiceListStore } from '@/state/invoiceListStore';
+import { useInvoiceStore } from '@/state/invoiceStore';
+import { useConfirmStore } from '@/state/confirmStore';
+import { usePermission } from '@/hooks/usePermission';
 import styles from './InvoiceListView.module.css';
 
 interface RowAttrs {
@@ -57,14 +73,50 @@ interface Props {
 
 export function InvoiceListRow({ invoice, originalNumber }: Props) {
   const navigate = useNavigate();
+  const canWrite = usePermission('invoice:write');
+  const fetchList = useInvoiceListStore((s) => s.fetch);
+  const deleteDraft = useInvoiceStore((s) => s.deleteDraft);
+  const requestConfirm = useConfirmStore((s) => s.request);
   const attrs = statusAttrs(invoice);
+  const isDraft = invoice.status === 'draft';
   const showDownload = invoice.status !== 'draft';
 
+  const navigateToProject = () => navigate(`/projects/${invoice.projectId}`);
+
+  // Programmatic download via an invisible `<a download>` — the same
+  // trick the per-project block uses. Keeps the row's action a button
+  // (HTML allows nesting buttons as siblings of an action button when
+  // the row container is `role="button"`, but it does NOT allow nested
+  // anchors inside a button parent — hence the click-driven anchor).
+  const downloadPdf = () => {
+    const anchor = document.createElement('a');
+    anchor.href = `/api/invoices/${invoice.id}/pdf`;
+    anchor.download = `${invoice.number ?? invoice.id}.pdf`;
+    anchor.rel = 'noopener';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  };
+
+  const handleDeleteDraft = async () => {
+    const ok = await requestConfirm(STRINGS.invoices.deleteDraftConfirm);
+    if (!ok) return;
+    const outcome = await deleteDraft(invoice.id, invoice.projectId);
+    if (outcome.status === 'ok') void fetchList();
+  };
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={attrs.rowClassName}
-      onClick={() => navigate(`/projects/${invoice.projectId}`)}
+      onClick={navigateToProject}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          navigateToProject();
+        }
+      }}
       data-testid={`invoice-row-${invoice.id}`}
     >
       <div>
@@ -85,20 +137,40 @@ export function InvoiceListRow({ invoice, originalNumber }: Props) {
       <div>{invoice.issueDate ? formatDateDE(invoice.issueDate) : '—'}</div>
       <div className={styles.cellRecipient}>{invoice.recipient.name}</div>
       <div className={styles.cellTotal}>{formatCurrencyDE(invoice.totals.grossGrandTotal)}</div>
-      <div className={styles.rowActions}>
+      <div className={styles.rowActions} onClick={(e) => e.stopPropagation()}>
+        {isDraft && canWrite && (
+          <>
+            <button
+              type="button"
+              className={styles.actionButton}
+              onClick={navigateToProject}
+              data-testid="invoice-draft-edit"
+            >
+              {STRINGS.invoices.editDraftAction}
+            </button>
+            <button
+              type="button"
+              className={`${styles.actionButton} ${styles.actionDanger}`}
+              onClick={() => void handleDeleteDraft()}
+              data-testid="invoice-draft-delete"
+              aria-label={STRINGS.invoices.deleteDraftAction}
+              title={STRINGS.invoices.deleteDraftAction}
+            >
+              {STRINGS.invoices.discardAction}
+            </button>
+          </>
+        )}
         {showDownload && (
-          <a
-            className={styles.downloadLink}
-            href={`/api/invoices/${invoice.id}/pdf`}
-            download={`${invoice.number ?? invoice.id}.pdf`}
-            rel="noopener"
-            onClick={(e) => e.stopPropagation()}
+          <button
+            type="button"
+            className={styles.actionButton}
+            onClick={downloadPdf}
             data-testid="invoice-download-pdf"
           >
             {STRINGS.invoices.downloadPdfAction}
-          </a>
+          </button>
         )}
       </div>
-    </button>
+    </div>
   );
 }

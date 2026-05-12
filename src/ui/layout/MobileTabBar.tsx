@@ -15,17 +15,9 @@
 import { useAuthStore } from '@/state/authStore';
 import { useUIStore } from '@/state/uiStore';
 import { useRouterNav } from '@/hooks/useRouterNav';
-import { visibleRoutesForUser, type RouteView } from '@/config/routes';
+import { SECONDARY_VIEWS, visibleRoutesForUser } from '@/config/routes';
 import { TAB_BAR_ICONS } from './tabBarIconMap';
 import styles from './MobileTabBar.module.css';
-
-const SECONDARY_VIEWS: readonly RouteView[] = [
-  'rechnungen',
-  'benutzer',
-  'daten',
-  'aktivitaet',
-  'benachrichtigungen',
-];
 
 export function MobileTabBar() {
   const authUser = useAuthStore((s) => s.authUser);
@@ -34,17 +26,25 @@ export function MobileTabBar() {
 
   if (!authUser) return null;
 
-  const primaryRoutes = visibleRoutesForUser(authUser).filter(
-    (r) => !SECONDARY_VIEWS.includes(r.view),
-  );
+  // Mirrors the Header's "≥2 to render the menu" rule (Header.tsx) — a
+  // single-item secondary bucket renders inline alongside the primary
+  // tabs so the user reaches it in one tap. Bookkeeper's only secondary
+  // entry is `rechnungen`, so on a phone they see `Rechnungen` next to
+  // Projekte / Kunden rather than buried in a Verwaltung dropdown the
+  // mobile shell never renders.
+  const visibleRoutes = visibleRoutesForUser(authUser);
+  const primaryRoutes = visibleRoutes.filter((r) => !SECONDARY_VIEWS.includes(r.view));
+  const secondaryRoutes = visibleRoutes.filter((r) => SECONDARY_VIEWS.includes(r.view));
+  const tabRoutes =
+    secondaryRoutes.length >= 2 ? primaryRoutes : [...primaryRoutes, ...secondaryRoutes];
 
-  // Empty primary set (e.g. unknown-role caller) — render nothing
+  // Empty tab set (e.g. unknown-role caller) — render nothing
   // rather than an empty bar that would steal vertical real estate.
-  if (primaryRoutes.length === 0) return null;
+  if (tabRoutes.length === 0) return null;
 
   return (
     <nav className={styles.tabBar} data-testid="mobile-tab-bar" aria-label="Hauptnavigation">
-      {primaryRoutes.map((r) => {
+      {tabRoutes.map((r) => {
         const active = r.view === activeView;
         const Icon = TAB_BAR_ICONS[r.view];
         return (

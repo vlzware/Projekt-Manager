@@ -27,6 +27,13 @@ export interface InvoiceListFilters {
   status: InvoiceStatus | null;
   /** Free-text — substring match on `number` and recipient name (server-side). */
   search: string;
+  /**
+   * URL-driven project filter — set by the per-project block's
+   * `Alle Rechnungen anzeigen` cross-link (ui/project-detail.md §8.15.11).
+   * Not exposed as a user-facing widget; the chip on the toolbar is a
+   * read-only indicator that the URL carries `?projectId=…`.
+   */
+  projectId: string | null;
 }
 
 interface InvoiceListState {
@@ -50,13 +57,14 @@ function buildParams(filters: InvoiceListFilters, offset: number): ListInvoicesP
   };
   if (filters.year !== null) params.year = filters.year;
   if (filters.status !== null) params.status = filters.status;
+  if (filters.projectId !== null) params.projectId = filters.projectId;
   const trimmed = filters.search.trim();
   if (trimmed.length > 0) params.search = trimmed;
   return params;
 }
 
 export const useInvoiceListStore = create<InvoiceListState>((set, get) => ({
-  filters: { year: null, status: null, search: '' },
+  filters: { year: null, status: null, search: '', projectId: null },
   invoices: [],
   total: 0,
   loading: false,

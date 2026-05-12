@@ -193,6 +193,13 @@
   padding: 20px;
   width: 100%;
   max-width: 900px;
+}
+
+/* The inner <form> inherits the flex column from its parent — splitting
+   the dialog wrapper from the form lets the wrapper carry the dialog
+   semantics (role / aria-modal / focus trap target) while the form
+   element only carries submit handling. */
+.formPanel > form {
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -384,4 +391,94 @@
   font: inherit;
   resize: vertical;
   box-sizing: border-box;
+}
+
+/* Read-only totals preview below the line editor. Visually subdued so
+   the eye treats it as derived output, not another input. */
+.totalsBlock {
+  padding: 10px 12px;
+  background: var(--color-surface-muted);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.totalsList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+}
+
+.totalsRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.92rem;
+}
+
+.totalsRow > dt {
+  color: var(--color-text-subtle);
+}
+
+.totalsRow > dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalsGrossRow {
+  font-weight: 600;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 6px;
+}
+
+/* COMPANY_PROFILE_REQUIRED banner — heading + named missing fields +
+   a link to /daten. Visually distinct from the generic error banner so
+   the user reads it as actionable, not a transient fail. */
+.companyProfileBanner {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--color-warning-bg, #fff4e0);
+  color: var(--color-warning, #8a5a00);
+  border: 1px solid var(--color-warning, #8a5a00);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.companyProfileBannerHeading {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.companyProfileBannerLink {
+  align-self: flex-start;
+  font-weight: 500;
+  color: inherit;
+  text-decoration: underline;
+}
+
+.companyProfileBannerLink:hover {
+  text-decoration: none;
+}
+
+/* Footer affordance on the per-project block — a single cross-link to
+   the standalone /rechnungen view pre-filtered to this project. */
+.crossLink {
+  margin-top: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.crossLinkAnchor {
+  font-size: 0.9rem;
+  color: var(--color-primary, #2a5cdb);
+  text-decoration: none;
+}
+
+.crossLinkAnchor:hover {
+  text-decoration: underline;
 }

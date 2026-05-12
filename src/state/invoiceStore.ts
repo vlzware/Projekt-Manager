@@ -7,10 +7,11 @@
  * channel may target any project whose list the user has already seen).
  *
  * Mutation surface — draft create / patch / delete, issue, cancel — mirrors
- * the API endpoints 1:1. Every write refetches the parent project's list
- * so the local cache stays consistent with the server's ordering / number
- * allocation; the cancel path additionally re-resolves the original row
- * so the Storno sibling and the flipped original land in a single render.
+ * the API endpoints 1:1. Every write (including cancel) refetches the
+ * parent project's list so the local cache stays consistent with the
+ * server's ordering / number allocation. A cancel call therefore lands
+ * the flipped original AND its freshly minted Storno sibling in the same
+ * `fetchByProject` response — no separate re-resolve step is needed.
  *
  * Session expiry is funnelled through the shared helper. Error messages
  * are decoded from the server's `code` field to the German UI copy in
@@ -186,7 +187,15 @@ export const useInvoiceStore = create<InvoiceState>((set, get) => ({
         return { status: 'error', errorMessage: STRINGS.auth.sessionExpired };
       }
       const message = decodeErrorMessage(result.error.code, result.error.message);
-      if (result.category === 'validation') {
+      // `COMPANY_PROFILE_REQUIRED` is a domain-level precondition gate, not
+      // a request-validation error — the server tags it with its own code
+      // (api.md §14.4) and `classifyCode` defaults it to `server_error`.
+      // For the surface, however, it carries actionable `details.missingFields`
+      // the F3 banner consumes, so it routes through the `validation`
+      // outcome branch alongside genuine VALIDATION_ERROR responses.
+      const isValidationLike =
+        result.category === 'validation' || result.error.code === 'COMPANY_PROFILE_REQUIRED';
+      if (isValidationLike) {
         const missing = extractMissingFields(result.details);
         return {
           status: 'validation',

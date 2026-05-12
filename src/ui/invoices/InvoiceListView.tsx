@@ -18,6 +18,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import { usePermission } from '@/hooks/usePermission';
 import { orderInvoicesWithStornoGrouping } from '@/domain/invoiceGrouping';
@@ -62,12 +63,35 @@ export function InvoiceListView() {
   // the GET only fires after the user stops for `SEARCH_DEBOUNCE_MS`.
   const [searchInput, setSearchInput] = useState(filters.search);
 
-  // Initial fetch. Subsequent fetches are triggered by filter changes
-  // (see below) and by the SSE subscription in App.tsx.
+  // F7 — sync the URL's `?projectId=` query into the store filter so the
+  // cross-link from the per-project block lands a pre-filtered view. The
+  // chip in the toolbar makes the filter explicit; clearing the chip
+  // strips the query and falls through here to reset the filter.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlProjectId = searchParams.get('projectId');
+  useEffect(() => {
+    if (filters.projectId !== urlProjectId) {
+      setFilter('projectId', urlProjectId);
+    }
+    // We intentionally do not fetch here — the initial-fetch effect below
+    // observes the synced filter and dispatches a single GET. Splitting
+    // sync + fetch avoids a double-fetch when the view mounts with a URL
+    // projectId, and the filter-effect for year/status takes over for
+    // subsequent runtime changes.
+  }, [urlProjectId, filters.projectId, setFilter]);
+
+  // Initial fetch. Subsequent fetches are triggered by the
+  // year/status/projectId effects below and by the SSE subscription in
+  // App.tsx. The dependency on `filters.projectId` covers the URL-sync
+  // path: the URL effect above flushes the filter, then this effect's
+  // re-run picks it up.
   useEffect(() => {
     if (!canRead) return;
     void fetch();
-  }, [canRead, fetch]);
+    // Initial fetch — triggered by canRead and any URL-driven projectId
+    // change. Year/status/search have their own effects.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canRead, filters.projectId]);
 
   // Year / status changes are discrete clicks → fire immediately.
   const prevYear = useRef(filters.year);
@@ -78,6 +102,12 @@ export function InvoiceListView() {
     prevStatus.current = filters.status;
     void fetch();
   }, [filters.year, filters.status, fetch]);
+
+  const clearProjectFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('projectId');
+    setSearchParams(next, { replace: true });
+  };
 
   // Search is debounced to avoid hammering the endpoint while typing.
   useEffect(() => {
@@ -117,6 +147,21 @@ export function InvoiceListView() {
         onStatusChange={(s) => setFilter('status', s)}
         onSearchChange={setSearchInput}
       />
+
+      {filters.projectId && (
+        <div className={styles.projectChip} data-testid="invoice-list-project-chip">
+          <span>{STRINGS.invoices.filterProjectChip}</span>
+          <button
+            type="button"
+            className={styles.projectChipClear}
+            onClick={clearProjectFilter}
+            data-testid="invoice-list-project-chip-clear"
+            aria-label={STRINGS.invoices.filterProjectClear}
+          >
+            {STRINGS.invoices.filterProjectClear}
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className={styles.error} role="status">
