@@ -244,14 +244,22 @@ describe('AC-295: invoices.number CHECK constraint matches /^(RE|ST)-\\d{4}-\\d{
   ];
   const totals = { perRate: [], netGrandTotal: 1, taxGrandTotal: 0, grossGrandTotal: 1 };
 
-  async function insertWithNumber(number: string): Promise<PgErrorShape | null> {
+  // `cancellationOf` lets ST- rows satisfy the
+  // `invoices_cancellation_pair` CHECK — that constraint pairs the
+  // ST- prefix with a non-null parent FK and the RE- prefix with a
+  // null parent FK. Plain RE- callers leave it null, which is the
+  // CHECK's default-valid branch.
+  async function insertWithNumber(
+    number: string,
+    cancellationOf: string | null = null,
+  ): Promise<PgErrorShape | null> {
     try {
       await pool.query(
         `INSERT INTO invoices
           (id, project_id, status, number, issue_date, performance_date,
-           tax_mode, profile, issuer, recipient, lines, totals)
+           tax_mode, profile, issuer, recipient, lines, totals, cancellation_of)
          VALUES ($1, $2, 'issued', $3, NOW(), CURRENT_DATE,
-                 'standard', 'zugferd-en16931', $4, $5, $6, $7)`,
+                 'standard', 'zugferd-en16931', $4, $5, $6, $7, $8)`,
         [
           crypto.randomUUID(),
           testProjectId,
@@ -260,12 +268,37 @@ describe('AC-295: invoices.number CHECK constraint matches /^(RE|ST)-\\d{4}-\\d{
           JSON.stringify(recipient),
           JSON.stringify(lines),
           JSON.stringify(totals),
+          cancellationOf,
         ],
       );
       return null;
     } catch (err) {
       return err as PgErrorShape;
     }
+  }
+
+  // ST- rows must point at a parent RE- via cancellation_of (CHECK
+  // `invoices_cancellation_pair`). Insert a parent first and return
+  // its id so the ST- canonical-shape arm can satisfy the pair.
+  async function insertParentRe(number: string): Promise<string> {
+    const parentId = crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO invoices
+        (id, project_id, status, number, issue_date, performance_date,
+         tax_mode, profile, issuer, recipient, lines, totals)
+       VALUES ($1, $2, 'issued', $3, NOW(), CURRENT_DATE,
+               'standard', 'zugferd-en16931', $4, $5, $6, $7)`,
+      [
+        parentId,
+        testProjectId,
+        number,
+        JSON.stringify(issuer),
+        JSON.stringify(recipient),
+        JSON.stringify(lines),
+        JSON.stringify(totals),
+      ],
+    );
+    return parentId;
   }
 
   // Each `it.each` case probes one anchor in the regex. Per AC-294's
@@ -292,7 +325,12 @@ describe('AC-295: invoices.number CHECK constraint matches /^(RE|ST)-\\d{4}-\\d{
   });
 
   it('accepts INSERT with the canonical ST-YYYY-NNNN shape', async () => {
-    const err = await insertWithNumber(`ST-${year}-0042`);
+    // ST- rows require a paired parent RE- (CHECK
+    // `invoices_cancellation_pair`): the prefix and the
+    // cancellation_of FK move together. Insert the parent first,
+    // then assert the ST- shape lands.
+    const parentId = await insertParentRe(`RE-${year}-9001`);
+    const err = await insertWithNumber(`ST-${year}-0042`, parentId);
     expect(err).toBeNull();
   });
 
