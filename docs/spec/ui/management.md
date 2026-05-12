@@ -108,6 +108,7 @@ Fields:
 - **Name** — required.
 - **Phone** — optional.
 - **Email** — optional.
+- **USt-IdNr.** — optional. The customer's value-added-tax identifier ([data-model.md §5.6](../data-model.md#56-customer-entity)); pre-fills the invoice draft's `recipient.ustId`. Required at invoice issuance only when the draft's `taxMode` is `reverse_charge` ([data-model.md §5.15](../data-model.md#515-invoice-entity)); the customer form does not gate on tax mode.
 - **Address** — optional nested group: street, zip, city. **All-or-none requiredness:** all three of `street`, `zip`, `city` are required if the group is opened (any field has a non-empty value); the group is treated as omitted (and the resulting persisted value is null) only when all three are blank. A partial group (one or two fields filled) is rejected at submit with a German validation message. The rule applies to Edit Customer ([§8.9.3](#893-edit-customer)) identically — Edit reuses the same form fields.
 - **Notes** — optional free text.
 
@@ -135,12 +136,13 @@ When creating or editing a project ([§8.8.2](#882-create-project), [§8.8.3](#8
 
 Available per customer row or in the edit view. Requires `customer:delete` permission (button hidden otherwise).
 
-The confirmation dialog text depends on `archivedProjectCount` returned by `GET /api/customers/:id` (see [api.md §14.2.5](../api.md#1425-customer-management)):
+The confirmation dialog text depends on `archivedProjectCount` and `invoiceCount` (issued + cancelled rows only) returned by `GET /api/customers/:id` (see [api.md §14.2.5](../api.md#1425-customer-management)):
 
-- When `archivedProjectCount` is 0, the standard confirmation phrasing applies.
-- When `archivedProjectCount > 0`, the confirmation surfaces a German warning that names the count and informs the user that those archived projects will be permanently deleted together with the customer.
+- When `archivedProjectCount` is 0 AND `invoiceCount` is 0, the standard confirmation phrasing applies. Draft invoices on archived projects do not block — they cascade with the project on hard-delete.
+- When `archivedProjectCount > 0` AND `invoiceCount` is 0, the confirmation surfaces a German warning that names the archived-project count and informs the user that those archived projects (and any draft invoices on them) will be permanently deleted together with the customer.
+- When `invoiceCount > 0`, the delete affordance is disabled and an inline German retention notice replaces it: `"Dieser Kunde hat ausgestellte oder stornierte Rechnungen. Aufbewahrungspflicht — Löschen während der gesetzlichen Frist nicht möglich."` (or the configured equivalent — German UI strings `[C]`, [architecture.md §12.2](../architecture.md#122-company-configurable-settings)). The notice does not suggest a remediation: issued invoices are immutable ([data-model.md §6.14](../data-model.md#614-immutability-of-issued-invoices)) and cancellation creates a Storno sibling rather than removing the original, so there is no in-app path that brings the count to zero before the §147 AO 10-year retention window elapses. The API enforces the same gate — `CUSTOMER_HAS_INVOICES` ([api.md §14.4](../api.md#144-error-handling)).
 
-Deletion of a customer that still has active (non-archived) projects is rejected as a conflict by the API — the UI surfaces the German error message via the mutation error banner. See [ADR-0017](../../adr/0017-soft-delete-as-board-archive.md) for the archive-vs-purge boundary.
+Deletion of a customer that still has active (non-archived) projects is rejected as a conflict by the API — the UI surfaces the German error message via the mutation error banner. Deletion of a customer whose project graph (active or archived) carries any issued or cancelled invoice is rejected with `CUSTOMER_HAS_INVOICES`; the UI surfaces the same retention notice via the mutation error banner if the request reaches the server (defense-in-depth on the disabled-affordance gate). See [ADR-0017](../../adr/0017-soft-delete-as-board-archive.md) for the archive-vs-purge boundary; see [ADR-0026](../../adr/0026-invoices-immutability-and-zugferd.md) for the invoice retention posture.
 
 ---
 

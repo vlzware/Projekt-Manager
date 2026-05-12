@@ -175,6 +175,7 @@ interface Customer {
   name: string; // "Familie Müller"
   phone?: string; // "+49 221 1234567"
   email?: string; // "mueller@example.de"
+  ustId?: string; // "DE123456789" — USt-IdNr.; optional structurally, required at invoice issuance when taxMode === 'reverse_charge'
   address?: {
     // Rechnungsadresse — the legal entity's billing address.
     // Distinct from a project's `siteAddress` (Baustelle, §5.1).
@@ -196,8 +197,9 @@ Design notes:
 - Address is an optional nested object within Customer.
 - Follows the audit metadata pattern (§5.5).
 - `name` is required; all other fields are optional.
+- `ustId` (USt-IdNr.) is the customer's value-added-tax identifier. Always structurally optional; the requiredness gate runs at invoice issuance against `recipient.ustId` when the draft's `taxMode = 'reverse_charge'` (the §13b counter-party — pinned by [AC-289](verification.md#1530-invoices)). Invoice draft forms pre-fill `recipient.ustId` from this field; the draft author may override per-invoice.
 - A customer may exist without any projects (e.g., imported from an external system before project creation).
-- Customers can be hard-deleted via the API when no **active** (non-archived) projects reference them. Archived projects are purged atomically with the customer (see [§6.9](#69-soft-deletes) and [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Deletion requires the `customer:delete` permission (owner only). A customer without projects is a normal state (e.g., imported before project creation) and deleting such a record is a cleanup operation, not a data-integrity concern.
+- Customers can be hard-deleted via the API when no **active** (non-archived) projects reference them AND none of the customer's projects (active or archived) carries any issued or cancelled `Invoice` row. Archived projects without issued/cancelled invoices are purged atomically with the customer; draft invoices on those projects cascade-delete with the project (see [§6.9](#69-soft-deletes) and [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Deletion requires the `customer:delete` permission (owner only). A customer without projects is a normal state (e.g., imported before project creation) and deleting such a record is a cleanup operation, not a data-integrity concern.
 
 ### 5.7 User Theme Preference
 
@@ -279,7 +281,14 @@ An append-only record of every domain-entity state change. Drives the user-facin
 ```typescript
 type AuditActorKind = 'user' | 'system';
 
-type AuditEntityType = 'project' | 'customer' | 'user' | 'project_worker' | 'attachment';
+type AuditEntityType =
+  | 'project'
+  | 'customer'
+  | 'user'
+  | 'project_worker'
+  | 'attachment'
+  | 'invoice'
+  | 'company_profile';
 
 interface AuditLogEntry {
   id: string; // UUID
@@ -303,7 +312,7 @@ Design notes:
 - **Actor kind semantics.**
   - `user` — an authenticated caller performed the mutation. `actorId` references the `UserAccount.id`; `actorReason` is null.
   - `system` — no authenticated caller is present. `actorId` is null; `actorReason` is required and carries a human-readable cue naming the code path (e.g., `"first-run-bootstrap"`). First-run admin bootstrap ([ADR-0010](../adr/0010-first-run-admin-bootstrap.md)) is the current domain-entity system-actor path. A system entry with an empty or missing `actorReason` is rejected by the database via a CHECK constraint (defense in depth) — else a system write would be invisible in the activity feed.
-- **Action vocabulary.** `action` is free text so new mutation shapes can record without a schema migration. The current vocabulary is `create`, `update`, `delete`, `archive`, `transition:forward`, `transition:backward`, `purge`, `reactivate`, `deactivate`, `password-reset`, `password-change`, `attachment:add`, `attachment:hide`, `attachment:restore`, `attachment:purge`. `archive` is the `entityType = 'project'` soft-delete action (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)); `delete` and `purge` remain distinct (generic delete for non-project entities, hard-delete on projects respectively). `attachment:add`, `attachment:hide`, and `attachment:restore` live on `entityType = 'attachment'` and correspond to init, user-DELETE (soft-hide per [ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)), and Papierkorb-restore respectively. `attachment:purge` records the system-initiated permanent destruction of a hidden attachment row by the hidden reaper ([§6.12](#612-attachment-hidden-reaper)) — distinct from `attachment:hide`, which is the user-initiated soft-hide that moves the row to the Papierkorb. The orphan reaper ([§6.11](#611-attachment-orphan-reaper)) removes rows / objects without producing audit rows — it operates on housekeeping artifacts that never entered the user-visible domain. A free-text field is chosen over an enum because the vocabulary is expected to grow with new features and an enum would churn the schema; uniqueness and casing are enforced by convention and reviewed at PR time. Each entry in the vocabulary maps to exactly one mutation shape.
+- **Action vocabulary.** `action` is free text so new mutation shapes can record without a schema migration. The current vocabulary is `create`, `update`, `delete`, `archive`, `transition:forward`, `transition:backward`, `purge`, `reactivate`, `deactivate`, `password-reset`, `password-change`, `attachment:add`, `attachment:hide`, `attachment:restore`, `attachment:purge`, `invoice:issue`, `invoice:cancel`. `archive` is the `entityType = 'project'` soft-delete action (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)); `delete` and `purge` remain distinct (generic delete for non-project entities, hard-delete on projects respectively). `attachment:add`, `attachment:hide`, and `attachment:restore` live on `entityType = 'attachment'` and correspond to init, user-DELETE (soft-hide per [ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)), and Papierkorb-restore respectively. `attachment:purge` records the system-initiated permanent destruction of a hidden attachment row by the hidden reaper ([§6.12](#612-attachment-hidden-reaper)) — distinct from `attachment:hide`, which is the user-initiated soft-hide that moves the row to the Papierkorb. The orphan reaper ([§6.11](#611-attachment-orphan-reaper)) removes rows / objects without producing audit rows — it operates on housekeeping artifacts that never entered the user-visible domain. A free-text field is chosen over an enum because the vocabulary is expected to grow with new features and an enum would churn the schema; uniqueness and casing are enforced by convention and reviewed at PR time. Each entry in the vocabulary maps to exactly one mutation shape.
 - **Payload shape.** `payload` carries the changed fields only, as `{ before, after }` field-keyed objects — not the full row. For a create, `before` is empty and `after` carries the persisted values for every non-server-managed field. For a delete or purge, `after` is empty. For a state transition, `before` and `after` carry `status` and `statusChangedAt`. Full-row snapshots are deliberately excluded (see [ADR-0021 — Alternatives Considered](../adr/0021-audit-log-and-notifications-single-write-path.md#alternatives-considered)).
 - **Entity label snapshot.** `entityLabel` is a nullable text column captured at write time (e.g. a project's `"2026-002 Innenraumgestaltung Weber"`, a customer's `"Firma Weber GmbH"`, a user's `displayName`). Frozen with the audit row so the activity feed stays readable after the target is renamed or purged. Write paths that do not have a natural label (import, retention cleanup) leave it null; the UI falls back to `entityId`. This is display metadata — it is not part of the `{ before, after }` diff contract. For `project_worker` rows specifically, `entityId` is the project's id (not the join-row's composite key) and `entityLabel` is the **worker's** displayName — the feed reads "Jan Nowak wurde zugewiesen" under the owning project's header, so the worker name is the meaningful label, while the project id remains the row's target. Pinned by [AC-188](verification.md#1523-audit-log).
 - **Correlation id.** `correlationId` is a nullable, per-request id set at the route layer and threaded through the service call chain. It groups every audit row produced by one request, enabling a future bulk-undo or one-request trace. Null is valid for entries produced outside a request (bootstrap and other unattended domain-entity writes).
@@ -473,6 +482,150 @@ Design notes:
 - **Project deletion removes the totals with the project.** Hard-deleting (purging) a project removes the project's storage-usage view alongside the project itself — the usage row does not survive the parent. Soft-delete (archive) is a board-only operation per [§6.9](#69-soft-deletes) and does not touch the row; an archived project retains its accumulated totals (its attachments still exist, see [§5.13](#513-attachment)) and is included in the global roll-up exposed by [api.md §14.2.12](api.md#14212-storage-usage).
 - **Authoritative totals, not a cache.** There is no cache layer; reads return the live totals at the time of the read. Reconciliation of the totals against the underlying attachment aggregate is the integration-test invariant pinned by [verification.md AC-267](verification.md#1526-attachments) — the storage-usage view is authoritative only insofar as it stays equal to the row aggregate.
 
+### 5.15 Invoice Entity
+
+The artifact produced by the `Rechnung fällig → Abgerechnet` transition of the project workflow ([index.md §3](index.md#3-workflow-states)). Architectural rationale — immutability posture, gapless numbering, ZUGFeRD profile, Stornorechnung model, snapshot semantics — is pinned by [ADR-0026](../adr/0026-invoices-immutability-and-zugferd.md).
+
+```typescript
+type InvoiceStatus = 'draft' | 'issued' | 'cancelled';
+
+type TaxMode = 'standard' | 'kleinunternehmer' | 'reverse_charge';
+
+type InvoiceProfile = 'zugferd-en16931';
+
+interface InvoiceLine {
+  description: string; // free text, German display
+  quantity: number; // positive decimal
+  unit: string; // free text — "Stück", "h", "m²", "pauschal", …
+  unitPrice: number; // EUR, net of VAT; precision 4 decimals
+  lineTotal: number; // EUR, computed `quantity * unitPrice`, rounded to 2 decimals; server re-derives at issuance
+  taxRate: number; // percent — 0, 7, 19 in v1; ignored in totals when taxMode != 'standard'
+}
+
+interface InvoiceIssuerSnapshot {
+  // Snapshot of company_profile at issuance time — never re-derived from the live row.
+  companyName: string;
+  address: { street: string; zip: string; city: string };
+  taxId: string; // Steuernummer
+  ustId?: string; // USt-IdNr. — required when taxMode != 'kleinunternehmer'
+  iban?: string;
+  footerText?: string;
+  // Logo bytes are referenced indirectly — the rendered PDF/A-3 carries the logo at render time.
+}
+
+interface InvoiceRecipientSnapshot {
+  // Snapshot of customer at issuance time — never re-derived from the live row.
+  name: string;
+  address?: { street: string; zip: string; city: string };
+  ustId?: string; // customer's USt-IdNr. — required for reverse_charge
+}
+
+interface InvoiceTotals {
+  // Aggregations across `lines`. Per-rate subtotals populated only for taxMode = 'standard'.
+  perRate: { taxRate: number; netSubtotal: number; taxAmount: number }[];
+  netGrandTotal: number; // sum of perRate.netSubtotal, or sum of lineTotal for non-standard modes
+  taxGrandTotal: number; // sum of perRate.taxAmount; zero for kleinunternehmer / reverse_charge
+  grossGrandTotal: number; // netGrandTotal + taxGrandTotal
+}
+
+interface Invoice {
+  id: string; // UUID
+  number?: string; // "RE-YYYY-NNNN" (invoice) or "ST-YYYY-NNNN" (Storno); null while status = 'draft'
+  status: InvoiceStatus;
+
+  projectId: string; // references Project.id — the project whose work this invoice bills
+  cancellationOf?: string; // references Invoice.id of the original issued row when this is a Stornorechnung; null otherwise
+
+  issuer: InvoiceIssuerSnapshot; // frozen at issuance — owner-mutable in draft
+  recipient: InvoiceRecipientSnapshot; // frozen at issuance — owner-mutable in draft
+  lines: InvoiceLine[]; // JSONB array — frozen at issuance
+  taxMode: TaxMode; // snapshotted at issuance; pre-filled from company_profile.defaultTaxMode in draft
+  profile: InvoiceProfile; // snapshotted at issuance; v1 always 'zugferd-en16931'
+  totals: InvoiceTotals; // server-computed at issuance; frozen thereafter
+
+  issueDate?: string; // ISO 8601 date — server-set at issuance; null in draft
+  performanceDate?: string; // ISO 8601 date — Leistungsdatum per §14 UStG; required at issuance; editable in draft
+
+  cancellationReason?: string; // free text from the cancel call; null on non-Storno rows; frozen on the Storno row at issuance of the cancellation
+
+  renderedPdfBinaryDescriptorId?: string; // FK to a binary descriptor row carrying the rendered PDF/A-3 + embedded factur-x.xml; null in draft, set at issuance
+
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601 — frozen after issuance (only `status: 'issued' → 'cancelled'` may bump it)
+  createdBy?: string; // UserAccount.id
+  updatedBy?: string; // UserAccount.id
+}
+```
+
+Design notes:
+
+- **Snapshot at issuance — issuer, recipient, lines, taxMode, profile.** A draft is a live editing surface bound to `project.customerId` and the live `company_profile` row. At issuance the service freezes every contributing value onto the row: each field listed above is copied from its live source into the invoice row before the transaction commits. A subsequent edit to the live company profile or customer does not retroactively change the issued artifact. Rendering an issued invoice is a pure projection over the row — no join is needed against `customers` or `company_profile` to reproduce the document.
+- **Issued rows are write-once.** Once `status = 'issued'`, no UPDATE path is permitted on the row except the `cancelled` transition. The constraint is structural — the API rejects (per [api.md §14.2.14](api.md#14214-invoice-operations)) and the persistence layer treats issued rows as immutable. A correction is a fresh `draft → issued` cycle, not an edit; the cancellation primitive is a sibling row (see `cancellationOf`).
+- **Stornorechnung is a sibling row.** A cancel call against an issued invoice creates a new row with its own `id`, a `ST-YYYY-NNNN` number from the storno sub-sequence, `cancellationOf` pointing at the original, and line totals negated (sign-flipped lineTotal and unitPrice values). The original row's `status` flips to `'cancelled'`; both rows persist forever. Project status is **not** auto-reverted on cancellation — the UI surfaces the gap (see [ui/invoices.md §8.16](ui/invoices.md#816-invoices-view)).
+- **Number format pinned at the DB.** `number` carries a CHECK constraint matching `^(RE|ST)-\d{4}-\d{4,}$` so a misshapen number cannot land even via raw SQL. The four-digit minimum allows growth past 9999 within a year without a schema migration. `number` is null on `status = 'draft'` rows and non-null on `'issued' | 'cancelled'`; a partial unique index over `number WHERE number IS NOT NULL` enforces uniqueness on the non-draft set.
+- **Why JSONB lines.** Lines are part of the snapshot — they freeze at issuance and are read as a unit when the invoice renders. There is no analytic query workload across `lines` (no "sum every invoice line containing 'Anstrich' across all years"). The JSONB shape matches the lifecycle exactly (`Stripe Invoices` analogue, [ADR-0026 Alternatives Considered](../adr/0026-invoices-immutability-and-zugferd.md#alternatives-considered)). Adding a typed columns table would impose FK / ordering / per-row audit churn on data that is read once at render time.
+- **Project linkage.** `projectId` is required and FK-enforced. An invoice belongs to exactly one project. The project's status flips to `abgerechnet` as part of the issuance transaction (see [api.md §14.2.14](api.md#14214-invoice-operations)). Multiple invoices may reference one project (e.g., a Storno + a fresh re-issued invoice).
+- **Performance date is editable in draft, frozen at issuance.** `performanceDate` is the Leistungsdatum required by §14 UStG. It is required to issue (the API rejects an issue call when `performanceDate` is null). In the absence of an explicit user entry, drafts default `performanceDate` to the project's `plannedEnd` if available — the UI is the SSOT for this default. The field is frozen once `status = 'issued'`.
+- **Totals are server-computed.** On every PATCH on a draft and on the issue call, the server re-computes `totals` from `lines` + `taxMode`. Client-supplied totals are ignored. Per-rate subtotals are produced only for `taxMode = 'standard'`; `kleinunternehmer` and `reverse_charge` produce a `perRate: []` and `taxGrandTotal: 0`.
+- **Rendered artifact reference.** `renderedPdfBinaryDescriptorId` references the binary descriptor produced by the ZUGFeRD renderer at issuance ([ADR-0026 §Storage](../adr/0026-invoices-immutability-and-zugferd.md#storage-and-retention)). The bytes flow through the existing binary descriptor pipeline ([§5.13](#513-attachment), [§6.6](#66-referential-integrity)); the invoice row holds only the descriptor reference. Object Lock retention is env-driven per [architecture.md §12.2](architecture.md#122-company-configurable-settings) (`INVOICE_OBJECT_LOCK_DAYS`).
+- **Audit metadata follows §5.5.** `createdBy` / `updatedBy` / `createdAt` / `updatedAt` set by the server. After issuance only the cancellation flip writes `updatedAt`; no other mutation path is reachable.
+- **Audit ancestor.** Invoice rows write `audit_log` entries with `entityType = 'invoice'`, ancestor `('project', projectId)` ([architecture.md §11.12](architecture.md#1112-audit-ancestor-link)) so the project-detail activity feed surfaces invoice events alongside attachment events under the same indexed predicate.
+
+### 5.16 Invoice Sequence Entity
+
+The gapless year-scoped counter feeding `Invoice.number` allocation at issuance time. Rationale and rejected alternatives (`SERIAL` / `IDENTITY` leak gaps on rollback) are pinned by [ADR-0026 §Data model](../adr/0026-invoices-immutability-and-zugferd.md#data-model).
+
+```typescript
+type InvoiceSequenceKind = 'invoice' | 'storno';
+
+interface InvoiceSequence {
+  year: number; // calendar year — composite key with `kind`
+  kind: InvoiceSequenceKind; // 'invoice' for RE-YYYY-NNNN; 'storno' for ST-YYYY-NNNN
+  nextValue: bigint; // monotonically increasing within (year, kind); starts at 1
+  updatedAt: string; // ISO 8601 — bumped on every allocation
+}
+```
+
+Design notes:
+
+- **Composite primary key `(year, kind)`.** One row per `(calendar year, sequence kind)` pair; allocations are scoped to that key. A new `(year, kind)` row is **upserted on first use** in the same transaction as the first issuance of the year — the sequence table has no pre-seeding obligation.
+- **Allocation is `SELECT … FOR UPDATE` inside the issuance transaction.** The service reads the matching row with `FOR UPDATE`, increments `nextValue`, formats the resulting `number`, and writes the invoice row — all inside one DB transaction. The row lock is held until commit; a rollback returns the value to the sequence (the increment never persists), which is the gapless guarantee.
+- **`bigint` for headroom.** `nextValue` is bigint so a deployment cannot mathematically exhaust a year's namespace; the four-digit-minimum format in §5.15 widens past 9999 without a schema migration.
+- **Persistence principle.** The `FOR UPDATE` pattern is generalized in [§6.13](#613-gapless-sequence-allocation) so future gapless counters can reuse the shape without re-arguing the choice against `SERIAL`.
+
+### 5.17 Company Profile Entity
+
+The single-row table carrying the issuing company's identity — the source from which every issued invoice's `issuer` snapshot is taken ([§5.15](#515-invoice-entity)). Single-tenant by [ADR-0001](../adr/0001-generalized-system-with-configurable-customer-specifics.md), so the singleton shape is correct without a tenant key.
+
+```typescript
+// `TaxMode` is defined in §5.15 and reused here.
+
+interface CompanyProfile {
+  // Singleton — enforced by a CHECK on a fixed primary key (parity with `meta_backup_status.singleton`).
+  companyName: string; // required, non-empty
+  address: { street: string; zip: string; city: string }; // all three components required
+  taxId: string; // Steuernummer — required, non-empty
+  ustId?: string; // USt-IdNr. — required to issue `standard` or `reverse_charge` invoices; optional structurally
+  iban?: string; // always structurally optional; the renderer emits a payment block iff `iban` is present
+  accentColor?: string; // hex; nullable — the renderer falls back to the brand accent ([architecture.md §12.5](architecture.md#125-theming-model))
+  footerText?: string; // free German text printed at the foot of every rendered invoice
+  logoBinaryDescriptorId?: string; // FK to a binary descriptor carrying the logo asset; nullable
+  defaultTaxMode: TaxMode; // pre-fills new invoice drafts; editable per-draft until issuance
+
+  updatedAt: string; // ISO 8601
+  updatedBy?: string; // UserAccount.id
+}
+```
+
+Design notes:
+
+- **Singleton invariant.** Exactly one row exists. The row is pre-seeded by the baseline migration with empty mandatory fields so write paths are always upserts rather than first-writes. The DB enforces the singleton via a CHECK constraint on a constant primary key (parity with [§5.9](#59-backup-status-entity)).
+- **Owner-only mutation surface.** Every authenticated role may read; writes are owner-only, enforced by the route-layer role check (no dedicated `company_profile:read` / `company_profile:write` keys are introduced — see [api.md §14.3](api.md#143-authorization-rules)). The CRUD shape is `GET` + `PUT` (upsert), no `POST` / `DELETE`. The mutation goes through the single-write-path helper ([architecture.md §11.3](architecture.md#113-state-layer-behavioral-contract)); the audit entity type is `'company_profile'` (added to `AuditEntityType` alongside `'invoice'` — [§5.10](#510-audit-log-entity)).
+- **Required-fields gate at invoice issuance.** Issuing an invoice requires `companyName`, `address` (all three components), and `taxId` to be non-empty on the singleton; `standard` and `reverse_charge` modes additionally require `ustId`. The API rejects the issue call with a specific error code when any required field is empty (see [api.md §14.4](api.md#144-error-handling) `COMPANY_PROFILE_REQUIRED`). The singleton's mere existence is not sufficient — its contents must be complete for the requested mode.
+- **Snapshot at issuance, not at draft creation.** Drafts read the live row for pre-fill (default tax mode, recipient hints if needed), but the actual `Invoice.issuer` block is snapshotted at the issue call — never earlier. A draft created today and issued next month carries next month's company profile, not today's. This matches the standard ERP "as of the issue date" expectation.
+- **`defaultTaxMode` is a tenant default, not a per-user preference.** Stored on the singleton row, edited by the owner via the company-profile form ([ui/daten.md §8.11.4](ui/daten.md#8114-company-profile)); it does not live on the user record. New invoice drafts pre-fill `taxMode` from this value; the draft author edits per-invoice as needed (some customers are kleinunternehmer-issued, others reverse-charge for Bauleistungen). Listed in [architecture.md §12.2](architecture.md#122-company-configurable-settings) as a `[C]` value — the default is set per deployment by the owner, not at deploy time.
+- **Logo asset is by reference.** Bytes ride the existing binary descriptor pipeline ([§5.13](#513-attachment)); the row carries only the descriptor id. Replacing the logo replaces the descriptor reference; the prior descriptor is reaped by the existing orphan reaper if unreferenced (no specific cleanup primitive lives on this table).
+
 ---
 
 ## 6. Persistence Principles
@@ -510,6 +663,8 @@ Low write concurrency is assumed; the design tolerates multiple concurrent users
 ### 6.6 Referential Integrity
 
 - The database enforces foreign keys where relationships exist (e.g., `Session.userId` references `UserAccount.id`, `Project.customerId` references `Customer.id`, `Project.createdBy`/`updatedBy` reference `UserAccount.id`).
+- **`Invoice.projectId`** references `Project.id`. Hard-deleting (purging) a project that carries any **issued or cancelled** `Invoice` row is rejected — those rows are legally retained artifacts ([§6.14](#614-immutability-of-issued-invoices), §147 AO 10-year retention) and cannot cascade away with their parent. **Draft** invoices (`status = 'draft'`) have no legal weight and cascade-delete with the project via FK; the audit trail is unaffected because drafts produce no `invoice:issue` audit row.
+- **`Invoice.cancellationOf`** is a nullable self-FK on `invoices.id`; non-null only on Storno rows. The original-invoice row referenced by `cancellationOf` cannot be hard-deleted while the Storno row exists (parity with the project FK above).
 - **Exception**: `UserAccount.createdBy`/`updatedBy` are nullable UUIDs with no FK constraint. A self-referential FK on the users table would complicate bootstrapping and deletion without adding meaningful integrity (see §5.3 design notes).
 - Orphaned records are not acceptable.
 
@@ -531,9 +686,9 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 - Users can be deactivated (`active = false`) or hard-deleted. Deactivation is the default for preserving assignment history. Hard deletion is available to the owner role and cascades sessions and worker assignments; `createdBy`/`updatedBy` references are set to null. Self-deletion is rejected by the API.
 - Projects are soft-deleted (`deleted = true`) as an **archive-from-board** mechanism (see [ADR-0017](../adr/0017-soft-delete-as-board-archive.md)). Archived projects are excluded from active views (Kanban, Calendar, list endpoints) but retained in the database as historical reference. This is not an audit trail — there is no immutability guarantee.
   - Archived projects are **immutable via the API**: transitions, date updates, PATCH, and re-delete are rejected as not found (see [AC-95](verification.md#1517-data-integrity)).
-  - When a customer is deleted, their archived projects are **purged atomically** with the customer — the archive has no value without the customer relationship. Active (non-archived) projects still block customer deletion as a conflict (see [AC-92](verification.md#1511-customer-management)).
-  - `project:purge` (owner-only) allows per-project hard-delete via `DELETE /api/projects/:id/purge`. Purge requires the project already be archived (`deleted = true`); the endpoint rejects with 409 Conflict otherwise. `project_workers` rows cascade via FK. See [AC-155](verification.md#1512-project-management) to [AC-158](verification.md#1512-project-management).
-  - The API exposes an archived-project count on the customer GET response so the UI can warn before destructive customer deletion.
+  - When a customer is deleted, their archived projects are **purged atomically** with the customer iff none of those archived projects carries an issued or cancelled `Invoice` row; otherwise the customer-delete is rejected. The archive has no value without the customer relationship, but issued invoices are legally retained ([§6.14](#614-immutability-of-issued-invoices), §147 AO) and cannot cascade away with their parent customer either. Draft invoices on those archived projects cascade-delete with the project (drafts have no legal weight). Active (non-archived) projects still block customer deletion as a conflict (see [AC-92](verification.md#1511-customer-management)); a customer whose project graph (active or archived) carries any issued or cancelled invoice is rejected with `CUSTOMER_HAS_INVOICES`.
+  - `project:purge` (owner-only) allows per-project hard-delete via `DELETE /api/projects/:id/purge`. Purge requires the project already be archived (`deleted = true`); the endpoint rejects with 409 Conflict otherwise. A project that carries any issued or cancelled `Invoice` row is also rejected (`PROJECT_HAS_INVOICES`). Draft invoices on a purged project cascade-delete via FK alongside `project_workers`. See [AC-155](verification.md#1512-project-management) to [AC-158](verification.md#1512-project-management).
+  - The API exposes archived-project AND invoice counts on the customer GET response so the UI can warn before destructive customer deletion. The exposed `invoiceCount` counts issued + cancelled rows only (the rows that block); drafts are excluded by construction.
   - No restore path exists via the API. Recovery requires database access.
 
 ### 6.10 Audit Log Retention
@@ -562,6 +717,20 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 - A per-row failure (DB transient error inside `mutate()`) is logged under the same event with `error_hint` populated; the sweep continues with the next row. Partial progress is acceptable — the next sweep picks up anything left behind, parity with the orphan reaper ([§6.11](#611-attachment-orphan-reaper)).
 - Sweeps are single-flight: a tick that finds the previous sweep still running is skipped. Implementation rests on the periodic-sweeper infrastructure shared with §6.11.
 - An in-flight sweep is drained on graceful shutdown before the database pool closes — parity with the orphan reaper ([§6.11](#611-attachment-orphan-reaper)) and the session reaper ([verification.md AC-132](verification.md#159-infrastructure)).
+
+### 6.13 Gapless Sequence Allocation
+
+- A gapless sequence is an integer counter whose advancement is **coupled to the commit of a using transaction** — a rollback returns the value to the pool, never leaving a gap. Postgres `SERIAL` / `IDENTITY` is incompatible by design (they advance on every insert attempt, including rolled-back ones).
+- The canonical pattern is a dedicated counter table whose row is selected `FOR UPDATE` inside the using transaction. The lock is held until the transaction commits; the row's `nextValue` is incremented and read inside the same transaction; if the transaction rolls back, the increment never persists.
+- The pattern is reusable for any future counter with gapless semantics. The current consumer is `invoice_sequence` ([§5.16](#516-invoice-sequence-entity)) per [ADR-0026](../adr/0026-invoices-immutability-and-zugferd.md); allocations are scoped to `(year, kind)` composite keys.
+- The using transaction commits the counter increment, the using row's insert, the audit row, and any byte-side write (e.g., a rendered artifact's binary descriptor) atomically. Splitting the counter advancement out of the using transaction breaks the gapless guarantee.
+
+### 6.14 Immutability of Issued Invoices
+
+- An `invoices` row with `status = 'issued'` is **write-once** at the persistence layer. The only field that may transition is `status: 'issued' → 'cancelled'`, paired with the creation of a sibling Storno row ([§5.15](#515-invoice-entity)).
+- The application enforces immutability at every write surface: the API rejects mutations on issued rows ([api.md §14.4](api.md#144-error-handling) `INVOICE_FROZEN`), the service layer refuses to dispatch an update that touches a frozen row, and the persistence layer is the last line of defense — direct DB writes to issued rows other than the cancellation flip are out of contract.
+- Rationale anchors in §147 AO (10-year retention of business records) and GoBD (immutability of issued documents). A correction is a fresh `draft → issued` cycle producing a new sibling row, not an edit. See [ADR-0026 §State machine](../adr/0026-invoices-immutability-and-zugferd.md#state-machine).
+- Object-storage retention on the rendered PDF/A-3 ([architecture.md §11.14](architecture.md#1114-invoice-domain)) is the storage-layer backstop on the artifact bytes; this principle is the row-side counterpart.
 
 ---
 

@@ -24,6 +24,8 @@ A full-page view of a single project. Reachable by URL (`/projects/:id`) and fro
 ├──────────────────────────────────────────────────────────┤
 │ Binary list — PDFs, DOCX, other non-photo attachments    │
 ├──────────────────────────────────────────────────────────┤
+│ Invoice — latest issued + Neue Rechnung action (§8.15.11)│
+├──────────────────────────────────────────────────────────┤
 │ Activity feed — scoped to this project (see §8.4.1)      │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -122,6 +124,17 @@ Per-project trash surface listing rows soft-hidden via §8.15.6. Bounded by the 
 - **Restore interaction.** One-click. No confirmation dialog — restore is reversible (a subsequent soft-hide returns the row to the Papierkorb). Server contract pinned by [AC-233](../verification.md#1526-attachments).
 - **Archived projects.** Restore is permitted on archived projects — binaries must be recoverable before lifecycle reap consumes the hidden version. Hide remains forbidden on archived projects (read-only previews refuse new mutations); see §8.15.6.
 - **Server contract.** List shape, ordering (`hiddenAt DESC`, `id` tiebreaker), and scoping pinned by [AC-235](../verification.md#1526-attachments).
+
+### 8.15.11 Invoice
+
+Per-project invoice block. Surfaces the project's most recent issued invoice (when present) and exposes the entry point to the dedicated invoice draft form ([invoices.md §8.16.2](invoices.md#8162-draft-form)). The full per-invoice viewer and the cross-project list view live in [invoices.md §8.16](invoices.md#816-invoices-view).
+
+- **Latest issued invoice summary.** When the project carries at least one `status = 'issued'` or `'cancelled'` invoice, the block surfaces the latest issued row (sorted `issueDate DESC`, `id` tiebreaker): the `RE-YYYY-NNNN` number, the issue date (DD.MM.YYYY), `totals.grossGrandTotal` (EUR, German locale), and the snapshotted recipient name. A `PDF herunterladen` action calls `GET /api/invoices/:id/pdf` (gated by `invoice:read` per [AC-299](../verification.md#1530-invoices)).
+- **`Neue Rechnung` action.** Visible to `invoice:write` holders only, and only when the project's `status = 'rechnung_faellig'`. The action navigates to the draft form (or opens it inline) pre-bound to the current project. Outside `rechnung_faellig`, the action is hidden (the project workflow has not yet reached the invoice-creation gate); the block falls back to the latest-issued-invoice summary or to an empty German placeholder `"Noch keine Rechnung"`.
+- **Stornorechnung indicator.** When the latest issued invoice has been cancelled (its `status = 'cancelled'` and a Storno sibling exists), the block renders a subtle indicator `"Storniert — siehe Rechnungsliste"` linking to the full invoice view ([invoices.md §8.16](invoices.md#816-invoices-view)). The project status is **not** auto-reverted by the cancellation, so a user staring at an `abgerechnet` project with a cancelled invoice sees the gap and can act on it (manual transition back).
+- **Cross-link to the full invoice view.** A `Alle Rechnungen anzeigen` affordance navigates to the invoice list ([invoices.md §8.16.1](invoices.md#8161-list-view)) pre-filtered to this project's `projectId`.
+- **Worker exclusion.** Workers do not hold `invoice:read` and never see this block. The page renders without the invoice section for worker callers.
+- **Realtime refresh.** Subscribes to the `invoice_changed` SSE event ([api.md §14.2.13](../api.md#14213-realtime-events)) so a fresh issuance from another session updates the block without a manual refresh.
 
 ---
 

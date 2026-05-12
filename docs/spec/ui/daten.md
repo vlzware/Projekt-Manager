@@ -72,3 +72,27 @@ Each value is rendered via the shared byte-formatting helper at the same precisi
 4. **`storage_usage_changed` SSE event** — the cross-session invalidation path ([api.md §14.2.13](../api.md#14213-realtime-events), [architecture.md §11.13](../architecture.md#1113-realtime-invalidation-channel)). Closes the always-open-observer gap that mount + `visibilitychange` + post-mutation alone leave open: when another session's worker uploads a photo from the field, the office observer's Footer badge and DatenView row both reflect the new total without manual refresh. This is THE multi-user value the SSE channel exists to deliver — verified by [AC-273](../verification.md#1529-storage-usage-ui).
 
 The refetch always re-issues the global `GET /api/storage-usage`; the SSE event is an invalidation hint, not a data payload ([ADR-0025](../../adr/0025-realtime-ui-invalidation-via-sse.md)).
+
+### 8.11.4 Company Profile
+
+An owner-only form persisting the singleton `company_profile` row ([data-model.md §5.17](../data-model.md#517-company-profile-entity)) — the source from which every issued invoice's `issuer` block is snapshotted. The form is the only UI surface that mutates the row; the API contract is [api.md §14.2.15](../api.md#14215-company-profile-operations).
+
+**Visibility.** The section is rendered to every authenticated role with read access; the editable surface (inputs enabled, save button visible) is owner-only. Office, worker, and bookkeeper see the section as a read-only summary — useful for verifying the values an invoice will snapshot, with no save affordance. The server is authoritative ([AC-301](../verification.md#1531-company-profile)).
+
+**Fields.**
+
+- `Firmenname` — required, non-empty.
+- `Adresse` — three components `Straße`, `PLZ`, `Ort`; all three required, non-empty (no all-or-none toggle here; an address with one or two components is meaningless on an invoice).
+- `Steuernummer` — required, non-empty.
+- `USt-IdNr.` — required when `defaultTaxMode` is `standard` or `reverse_charge`; optional for `kleinunternehmer`. The form re-renders the requiredness asterisk when `defaultTaxMode` changes.
+- `IBAN` — optional structurally; the renderer emits a payment block when present.
+- `Logo` — optional image upload. Uses the existing binary descriptor pipeline ([data-model.md §5.13](../data-model.md#513-attachment), [ADR-0024](../../adr/0024-binary-attachment-e2e-encryption.md)); the form stores only the descriptor id. Accepts `image/png`, `image/jpeg`, `image/webp` per the existing MIME whitelist.
+- `Akzentfarbe` — optional hex color; falls back to the brand accent ([architecture.md §12.5](../architecture.md#125-theming-model)).
+- `Fußzeile` — optional free German text printed at the foot of every rendered invoice.
+- `Standard-Steuermodus` (`defaultTaxMode`) — three-way dropdown (`Regulär`, `Kleinunternehmer §19`, `Reverse-Charge §13b`). Pre-fills new invoice drafts ([invoices.md §8.16.2](invoices.md#8162-draft-form)).
+
+**Validation.** Required-field validation runs client-side as a UX affordance; the server re-validates and remains authoritative ([AC-303](../verification.md#1531-company-profile)). The save button is disabled while any required field is empty or any in-flight save is pending ([behavior.md §9.5](behavior.md#95-asynchronous-mutation-behavior)).
+
+**Save.** A single `Speichern` action dispatches `PUT /api/company-profile`. On success the form re-renders with the persisted values; the audit log records the mutation per [AC-302](../verification.md#1531-company-profile). On rejection (e.g. `422 VALIDATION_ERROR` from a required-when-mode violation) the German error message names the offending fields and the form retains the user's typed values.
+
+**No deletion.** The row is a singleton ([AC-300](../verification.md#1531-company-profile)) — no delete affordance exists.
