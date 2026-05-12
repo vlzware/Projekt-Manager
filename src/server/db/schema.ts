@@ -40,6 +40,8 @@ export const AUDIT_ENTITY_TYPES = [
   'user',
   'project_worker',
   'attachment',
+  'invoice',
+  'company_profile',
 ] as const;
 export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES)[number];
 
@@ -61,6 +63,8 @@ export const AUDIT_ENTITY_TO_TABLE = {
   user: { sqlName: 'users', drizzleExport: 'users' },
   project_worker: { sqlName: 'project_workers', drizzleExport: 'projectWorkers' },
   attachment: { sqlName: 'attachments', drizzleExport: 'attachments' },
+  invoice: { sqlName: 'invoices', drizzleExport: 'invoices' },
+  company_profile: { sqlName: 'company_profile', drizzleExport: 'companyProfile' },
 } as const satisfies Record<AuditEntityType, { sqlName: string; drizzleExport: string }>;
 
 // ---------------------------------------------------------------
@@ -134,6 +138,11 @@ export const customers = pgTable('customers', {
     zip: string;
     city: string;
   } | null>(),
+  // USt-IdNr. — data-model.md §5.6, AC-306 / AC-289. Structurally
+  // optional; the requiredness gate fires at invoice issuance when
+  // the draft's taxMode = 'reverse_charge'. Pre-fills the recipient
+  // ustId on new invoice drafts when set. ADR-0026.
+  ustId: text('ust_id'),
   notes: text('notes'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -319,7 +328,7 @@ export const auditLog = pgTable(
     check('audit_log_actor_kind_valid', sql`${table.actorKind} IN ('user', 'system')`),
     check(
       'audit_log_entity_type_valid',
-      sql`${table.entityType} IN ('project', 'customer', 'user', 'project_worker', 'attachment')`,
+      sql`${table.entityType} IN ('project', 'customer', 'user', 'project_worker', 'attachment', 'invoice', 'company_profile')`,
     ),
     // Ancestor type must be one of the same closed set, OR NULL (top-
     // level entities). Kept in lock-step with `audit_log_entity_type_valid`
@@ -327,7 +336,7 @@ export const auditLog = pgTable(
     check(
       'audit_log_ancestor_type_valid',
       sql`${table.ancestorEntityType} IS NULL
-          OR ${table.ancestorEntityType} IN ('project', 'customer', 'user', 'project_worker', 'attachment')`,
+          OR ${table.ancestorEntityType} IN ('project', 'customer', 'user', 'project_worker', 'attachment', 'invoice', 'company_profile')`,
     ),
     // Both ancestor columns must be NULL or both non-NULL — a partial
     // ancestor is meaningless and would break the compound-index lookup.
@@ -624,6 +633,223 @@ export const projectStorageUsage = pgTable(
     check(
       'project_storage_usage_non_negative',
       sql`${table.spaceReadyBytes} >= 0 AND ${table.spaceHiddenBytes} >= 0 AND ${table.ciphertextReadyBytes} >= 0 AND ${table.ciphertextHiddenBytes} >= 0`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------
+// Company profile (data-model.md §5.17, ADR-0026)
+//
+// Singleton table — exactly one row carrying the issuing company's
+// identity. Distinct from meta_backup_status (§5.9) in one respect:
+// `company_profile` IS audited (AUDIT_ENTITY_TYPES above, AC-302) and
+// `audit_log.entity_id` is `uuid NOT NULL`, so the row needs a real
+// UUID identity in addition to the singleton-enforcement plumbing. The
+// shape is:
+//   - `id uuid PRIMARY KEY DEFAULT gen_random_uuid()` carries the audit
+//     identity — every `audit_log` row written by a PUT carries this id.
+//   - `singleton boolean NOT NULL DEFAULT true UNIQUE CHECK (singleton
+//     = true)` enforces the singleton invariant: every row MUST have
+//     `singleton = true`, and UNIQUE on `singleton` means only one row
+//     can carry the value — so the table holds at most one row.
+//   - A BEFORE DELETE trigger in the baseline migration tail rejects
+//     removals (AC-300) so the singleton can never go below one.
+// The row is pre-seeded by the baseline migration with empty mandatory
+// fields so write paths are always upserts.
+//
+// Owner-only mutation surface, but every authenticated role may read
+// (route-layer role check — no dedicated company_profile:* permission
+// keys). At invoice issuance the row's contents are snapshotted onto
+// the invoice row and never re-derived.
+// ---------------------------------------------------------------
+export const companyProfile = pgTable(
+  'company_profile',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    // Singleton-enforcement discriminator. NOT a PK — `id` is the PK so
+    // audit_log.entity_id has a UUID target. UNIQUE on the boolean +
+    // CHECK (singleton = true) means only one row may exist.
+    singleton: boolean('singleton').notNull().default(true).unique(),
+    companyName: text('company_name').notNull().default(''),
+    // {street, zip, city} — all three required at issuance for §14 UStG;
+    // structurally optional at the column level so the baseline seed
+    // can insert an empty row.
+    address: jsonb('address')
+      .$type<{ street: string; zip: string; city: string }>()
+      .notNull()
+      .default(sql`'{"street":"","zip":"","city":""}'::jsonb`),
+    taxId: text('tax_id').notNull().default(''),
+    ustId: text('ust_id'),
+    iban: text('iban'),
+    accentColor: text('accent_color'),
+    footerText: text('footer_text'),
+    logoBinaryDescriptorId: uuid('logo_binary_descriptor_id'),
+    defaultTaxMode: text('default_tax_mode').notNull().default('standard'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (table) => [
+    check('company_profile_singleton', sql`${table.singleton} = true`),
+    check(
+      'company_profile_default_tax_mode_valid',
+      sql`${table.defaultTaxMode} IN ('standard', 'kleinunternehmer', 'reverse_charge')`,
+    ),
+  ],
+);
+
+// ---------------------------------------------------------------
+// Invoice sequence (data-model.md §5.16, ADR-0026 §Data model)
+//
+// Gapless year-scoped counter feeding `invoices.number` allocation at
+// issuance time. One row per (year, kind); allocations are
+// `SELECT … FOR UPDATE` on the matching row inside the issuance
+// transaction. The lock is held until commit, so a rollback returns
+// the value to the sequence — the canonical Postgres gapless-counter
+// pattern (§6.13). SERIAL / IDENTITY is incompatible by design: they
+// advance on rollback.
+//
+// `nextValue` is bigint so a deployment cannot mathematically exhaust
+// a year's namespace; the four-digit-minimum number format widens
+// past 9999 without a schema migration.
+// ---------------------------------------------------------------
+export const invoiceSequence = pgTable(
+  'invoice_sequence',
+  {
+    year: smallint('year').notNull(),
+    // 'invoice' for RE-YYYY-NNNN; 'storno' for ST-YYYY-NNNN. The two
+    // sub-sequences are independent — a Storno does not consume an
+    // invoice number and vice versa.
+    kind: text('kind').notNull(),
+    nextValue: bigint('next_value', { mode: 'number' }).notNull().default(1),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.year, table.kind] }),
+    check('invoice_sequence_kind_valid', sql`${table.kind} IN ('invoice', 'storno')`),
+  ],
+);
+
+// ---------------------------------------------------------------
+// Invoices (data-model.md §5.15, ADR-0026)
+//
+// Immutable issued snapshots — every contributing value (issuer,
+// recipient, lines, taxMode, profile) is copied onto the row at
+// issuance and frozen thereafter. A correction is a fresh
+// draft → issued cycle; cancellation creates a sibling Stornorechnung
+// row with `cancellationOf` set, NEVER mutates the original beyond
+// the `issued → cancelled` status flip.
+//
+// Issued rows are write-once at the persistence layer (AC-294,
+// §6.14). The route layer rejects mutations on issued rows with
+// INVOICE_FROZEN; the DB-level immutability backstop is a row-level
+// trigger added in the baseline migration tail (parity with the
+// project_storage_usage triggers — drizzle-kit does not emit
+// triggers, hand-edited at regen time).
+//
+// `number` CHECK pins the canonical RE-YYYY-NNNN / ST-YYYY-NNNN
+// shape; null is allowed for drafts. A partial unique index over
+// non-null numbers enforces uniqueness on issued+cancelled rows.
+// ---------------------------------------------------------------
+export const invoices = pgTable(
+  'invoices',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    status: text('status').notNull().default('draft'),
+    // Null while status = 'draft'; pinned to RE-YYYY-NNNN or
+    // ST-YYYY-NNNN by the regex CHECK below once issued.
+    number: text('number'),
+    // Rechnungsdatum per §14 UStG — set at issuance, frozen thereafter.
+    // Date (not timestamp): §14 UStG anchors the invoice date as a
+    // calendar date, not a moment. Matches data-model.md §5.15 line
+    // 546 (`issueDate?: string; // ISO 8601 date`).
+    issueDate: date('issue_date', { mode: 'date' }),
+    // Leistungsdatum per §14 UStG — editable in draft, required at
+    // issuance, frozen thereafter. Date (not timestamp) — a calendar
+    // date is the right granularity for §14 UStG.
+    performanceDate: date('performance_date', { mode: 'date' }),
+    taxMode: text('tax_mode').notNull().default('standard'),
+    // ZUGFeRD profile snapshot — v1 always 'zugferd-en16931'; future
+    // 'xrechnung' lands without schema migration.
+    profile: text('profile').notNull().default('zugferd-en16931'),
+    // Snapshotted blocks — JSONB, frozen at issuance.
+    issuer: jsonb('issuer')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    recipient: jsonb('recipient')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    lines: jsonb('lines')
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    totals: jsonb('totals')
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    // Self-FK — non-null only on Storno rows. Cascade-restrict on the
+    // original is enforced at the API layer (delete rejected when a
+    // Storno row references it; mirrors the FK semantic without
+    // forcing the cascade rule to live in DDL).
+    cancellationOf: uuid('cancellation_of').references(
+      (): import('drizzle-orm/pg-core').AnyPgColumn => invoices.id,
+      {
+        onDelete: 'restrict',
+      },
+    ),
+    cancellationReason: text('cancellation_reason'),
+    // FK to the rendered ZUGFeRD PDF/A-3 binary descriptor. No FK
+    // constraint at the DB layer — binary_descriptors is the
+    // attachments table here (an attachment row carries the descriptor
+    // shape); the renderer writes a free-standing row referenced by
+    // this column without a foreign-key tie so a future binary-only
+    // descriptor table extraction does not need a schema migration.
+    // The application enforces existence at issuance.
+    renderedPdfBinaryDescriptorId: uuid('rendered_pdf_binary_descriptor_id'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid('created_by').references(() => users.id, { onDelete: 'set null' }),
+    updatedBy: uuid('updated_by').references(() => users.id, { onDelete: 'set null' }),
+  },
+  (table) => [
+    index('invoices_project_id_idx').on(table.projectId),
+    index('invoices_status_idx').on(table.status),
+    index('invoices_cancellation_of_idx').on(table.cancellationOf),
+    // Partial unique index — invoice numbers are unique across the
+    // non-draft set. Drafts have null number; many drafts may coexist
+    // per project.
+    uniqueIndex('invoices_number_uq')
+      .on(table.number)
+      .where(sql`${table.number} IS NOT NULL`),
+    check('invoices_status_valid', sql`${table.status} IN ('draft', 'issued', 'cancelled')`),
+    check(
+      'invoices_tax_mode_valid',
+      sql`${table.taxMode} IN ('standard', 'kleinunternehmer', 'reverse_charge')`,
+    ),
+    check('invoices_profile_valid', sql`${table.profile} IN ('zugferd-en16931')`),
+    // Defense-in-depth backstop on direct DB writes (seed scripts,
+    // migrations, manual SQL). The route layer formats from
+    // invoice_sequence so this CHECK is unreachable in steady state;
+    // the regex is the structural anchor (AC-295).
+    check(
+      'invoices_number_format',
+      sql`${table.number} IS NULL
+          OR ${table.number} ~ '^(RE|ST)-[0-9]{4}-[0-9]{4,}$'`,
+    ),
+    // A draft has no number; an issued or cancelled row MUST have one.
+    check(
+      'invoices_number_required_when_not_draft',
+      sql`(${table.status} = 'draft' AND ${table.number} IS NULL)
+          OR (${table.status} IN ('issued', 'cancelled') AND ${table.number} IS NOT NULL)`,
+    ),
+    // Storno rows MUST carry an ST- prefix; non-Storno rows MUST NOT.
+    // `cancellationOf IS NOT NULL` ↔ `number LIKE 'ST-%'`. Drafts can
+    // never be Storno rows (cancellation creates a sibling on an
+    // issued original, never on a draft).
+    check(
+      'invoices_cancellation_pair',
+      sql`(${table.cancellationOf} IS NULL AND (${table.number} IS NULL OR ${table.number} LIKE 'RE-%'))
+          OR (${table.cancellationOf} IS NOT NULL AND ${table.number} LIKE 'ST-%')`,
     ),
   ],
 );

@@ -293,10 +293,12 @@ async function extractFacturXml(buf: Buffer): Promise<string> {
   // The exact API name varies by pdf-lib version; the assertion code
   // accepts either. The implementer picks the version pinned in
   // package.json.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const list: Array<{ name: string; data: Uint8Array }> = (doc.embeddedFiles ??
-    doc.attachments ??
-    []) as any;
+  type EmbeddedFile = { name: string; data: Uint8Array };
+  const docExt = doc as {
+    embeddedFiles?: EmbeddedFile[];
+    attachments?: EmbeddedFile[];
+  };
+  const list: EmbeddedFile[] = docExt.embeddedFiles ?? docExt.attachments ?? [];
   const target = list.find((f) => f.name === 'factur-x.xml');
   if (!target) {
     throw new Error('extractFacturXml — no factur-x.xml embedded file in PDF/A-3');

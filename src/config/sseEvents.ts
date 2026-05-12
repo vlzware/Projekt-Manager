@@ -13,4 +13,9 @@ export const STORAGE_USAGE_CHANGED = 'storage_usage_changed' as const;
 
 export const PROJECT_CHANGED = 'project_changed' as const;
 
-export type SseEventName = typeof STORAGE_USAGE_CHANGED | typeof PROJECT_CHANGED;
+export const INVOICE_CHANGED = 'invoice_changed' as const;
+
+export type SseEventName =
+  | typeof STORAGE_USAGE_CHANGED
+  | typeof PROJECT_CHANGED
+  | typeof INVOICE_CHANGED;

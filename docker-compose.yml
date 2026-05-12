@@ -125,6 +125,12 @@ services:
       ATTACHMENT_HIDDEN_REAPER_TTL_MINUTES: ${ATTACHMENT_HIDDEN_REAPER_TTL_MINUTES:-}
       ATTACHMENT_HIDDEN_REAPER_INTERVAL_MINUTES: ${ATTACHMENT_HIDDEN_REAPER_INTERVAL_MINUTES:-}
       ATTACHMENT_WORKER_SELF_DELETE_GRACE_MINUTES: ${ATTACHMENT_WORKER_SELF_DELETE_GRACE_MINUTES:-}
+      # Invoice retention (ADR-0026, architecture.md §12.2). Object-Lock
+      # days for rendered invoice PDF/A-3 binaries; 0 disables the
+      # boot-time retention assertion (dev), 3650 in production (§147 AO).
+      # The boot-time bucket-safety probe refuses to start when the
+      # deployed bucket retention envelope is less than this value.
+      INVOICE_OBJECT_LOCK_DAYS: ${INVOICE_OBJECT_LOCK_DAYS:-}
       # Realtime invalidation channel heartbeat (ADR-0025,
       # api.md §14.2.13). Defaults to 25 s; integration tests override
       # to drive heartbeat assertions in milliseconds.

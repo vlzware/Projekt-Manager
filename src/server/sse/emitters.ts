@@ -7,7 +7,7 @@
  * transaction has already resolved.
  */
 
-import { PROJECT_CHANGED, STORAGE_USAGE_CHANGED } from '../../config/sseEvents.js';
+import { INVOICE_CHANGED, PROJECT_CHANGED, STORAGE_USAGE_CHANGED } from '../../config/sseEvents.js';
 import { broadcast } from './bus.js';
 
 /**
@@ -26,4 +26,13 @@ export function emitStorageUsageChanged(): void {
  */
 export function emitProjectChanged(): void {
   broadcast(PROJECT_CHANGED);
+}
+
+/**
+ * Broadcast `invoice_changed` (ADR-0026, api.md §14.2.13). Emit AFTER
+ * the issuance / cancellation transaction commits — a rollback must
+ * leak no event. Mirrors `emitProjectChanged` (architecture.md §11.13).
+ */
+export function emitInvoiceChanged(): void {
+  broadcast(INVOICE_CHANGED);
 }
