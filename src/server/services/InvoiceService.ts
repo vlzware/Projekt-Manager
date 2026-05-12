@@ -64,6 +64,11 @@ import {
   assertCompanyProfileCompleteForMode,
 } from './CompanyProfileService.js';
 import { InvoiceRenderer, type RenderedInvoice } from './InvoiceRenderer.js';
+import { encryptInvoicePayload } from './invoice/payloadCrypto.js';
+import { KeyEnvelopeService } from './KeyEnvelopeService.js';
+import { attachments } from '../db/schema.js';
+import { WRAPPED_DEK_CURRENT_VERSION } from '../../domain/attachments.js';
+import type { AttachmentStorageClient } from '../storage/client.js';
 import {
   notFound,
   notPermitted,
@@ -124,17 +129,53 @@ export interface CancelInput {
   reason?: string | null;
 }
 
+/**
+ * Optional binary-pipeline dependencies. When supplied (Phase D and
+ * up — the route wiring injects them), `persistRenderedBinary` writes
+ * the rendered ZUGFeRD PDF/A-3 through the existing attachment
+ * binary-descriptor pipeline:
+ *
+ *   1. Generate fresh 32-byte AES-256-GCM DEK.
+ *   2. Encrypt the plaintext PDF bytes (`nonce(12) || ct || tag(16)`).
+ *   3. Wrap the DEK against the operator-loaded `age` recipient via
+ *      `KeyEnvelopeService.wrap()` — parity with attachment init.
+ *   4. `putObject(key, ciphertext, "application/octet-stream")` —
+ *      server-side direct PUT, no presign round-trip. The bucket's
+ *      default-retention envelope (`INVOICE_OBJECT_LOCK_DAYS`,
+ *      asserted at boot per AC-296) attaches Object Lock to the PUT.
+ *   5. Insert an `attachments` row at `status='ready'` carrying the
+ *      ciphertext key + size + the wrapped DEK + MIME `application/pdf`
+ *      + label `'rechnung'`. The row id is returned and stored on
+ *      `invoices.renderedPdfBinaryDescriptorId`.
+ *
+ * When ABSENT, `persistRenderedBinary` falls back to the Phase B
+ * placeholder (synthetic UUID) so test paths exercising the issuance
+ * transaction without a storage backend (the renderer-throws / SSE /
+ * audit assertions) continue to pass. The placeholder leaves the
+ * column non-null but does NOT make the bytes actually retrievable —
+ * `GET /api/invoices/:id/pdf` requires the real pipeline to fetch
+ * back from B2 / MinIO.
+ */
+export interface InvoiceBinaryDeps {
+  storage: AttachmentStorageClient;
+  binaryAgeRecipient: string;
+  binaryAgeIdentityPath: string;
+}
+
 export class InvoiceService {
   private readonly renderer: InvoiceRenderer;
+  private readonly binaryDeps: InvoiceBinaryDeps | null;
   constructor(
     private db: Database,
     renderer?: InvoiceRenderer,
+    binaryDeps?: InvoiceBinaryDeps,
   ) {
     // Renderer is constructor-injected so the test mock seam in
     // `invoices-issue.test.ts:521-536` is honored — the mocked module's
     // class is what `new InvoiceRenderer()` resolves to in the test
     // process. In production the default constructor is fine.
     this.renderer = renderer ?? new InvoiceRenderer();
+    this.binaryDeps = binaryDeps ?? null;
   }
 
   // -------------------------------------------------------------------
@@ -617,11 +658,13 @@ export class InvoiceService {
       .returning();
     let issuedRow = issuedRows[0]!;
 
-    // 7. Render — the renderer is a stub until Phase C. A throw here
-    //    rolls back the entire transaction; the sequence value
-    //    returns to the pool (AC-288). The mock seam in
+    // 7. Render — Phase C delivers the ZUGFeRD EN 16931 implementation
+    //    (`InvoiceRenderer.render()` builds the EN 16931 XML payload
+    //    and the PDF/A-3 wrapper with `factur-x.xml` embedded). A
+    //    throw here rolls back the entire transaction; the sequence
+    //    value returns to the pool (AC-288). The mock seam in
     //    `invoices-issue.test.ts:521-536` exercises this exact path.
-    const rendered: RenderedInvoice = this.renderer.render({
+    const rendered: RenderedInvoice = await this.renderer.render({
       invoice: toInvoiceResponse(issuedRow),
       companyProfile: {
         id: companyProfileRow.id,
@@ -639,11 +682,18 @@ export class InvoiceService {
       },
     });
 
-    // 8. Persist the binary descriptor reference. Phase C will write
-    //    the actual binary descriptor row before this point and pass
-    //    its id; the stub never reaches here. The placeholder allocation
-    //    keeps the column non-null on the issued row.
-    const renderedDescriptorId = await this.persistRenderedBinary(tx, rendered);
+    // 8. Persist the binary descriptor through the ADR-0022 /
+    //    ADR-0024 pipeline: encrypt with a fresh DEK, wrap against the
+    //    operator `age` recipient, `putObject` ciphertext, insert
+    //    `attachments` row at `status='ready'`. The returned id is the
+    //    descriptor reference stored on the invoice row.
+    const renderedDescriptorId = await this.persistRenderedBinary(
+      tx,
+      rendered,
+      before.projectId,
+      invoiceId,
+      userId,
+    );
     issuedRows = await tx
       .update(invoices)
       .set({ renderedPdfBinaryDescriptorId: renderedDescriptorId })
@@ -694,29 +744,111 @@ export class InvoiceService {
   }
 
   /**
-   * Persist the rendered ZUGFeRD bytes through the binary descriptor
-   * pipeline.
+   * Persist the rendered ZUGFeRD bytes through the existing binary
+   * descriptor pipeline (parity with `AttachmentService.initUpload` +
+   * `completeUpload` collapsed into a single server-side write because
+   * the bytes are mint-fresh in memory and not user-supplied).
    *
-   * Phase B: the renderer is a stub that throws, so this method is
-   * never reached on the happy path. The placeholder implementation
-   * here returns a synthetic UUID so the column-NOT-NULL contract on
-   * `renderedPdfBinaryDescriptorId` holds for any tests that inject a
-   * working renderer (the `invoices-issue.test.ts` rollback arm mocks
-   * the renderer to THROW, so this code is unreachable through that
-   * file too).
+   * Sequence:
+   *   1. Generate a fresh 32-byte AES-256-GCM DEK.
+   *   2. Encrypt the plaintext PDF bytes (`nonce(12) || ct || tag(16)`
+   *      — the same envelope shape the browser uses for attachments).
+   *   3. Wrap the DEK against the operator-loaded `age` recipient
+   *      (`BINARY_AGE_RECIPIENT`) via `KeyEnvelopeService`.
+   *   4. `putObject` the ciphertext to the bucket under
+   *      `invoices/<projectId>/<descriptorId>.orig`. The bucket's
+   *      default-retention envelope (`INVOICE_OBJECT_LOCK_DAYS`,
+   *      asserted at boot per AC-296) attaches Object Lock to the PUT
+   *      — no per-call retention header needed.
+   *   5. Insert one `attachments` row at `status='ready'`. The row id
+   *      is the descriptor reference returned to the caller and
+   *      stored on `invoices.renderedPdfBinaryDescriptorId`.
    *
-   * Phase C replaces the body with the real binary descriptor write —
-   * the bytes ride the ADR-0024 envelope-encryption pipeline and the
-   * descriptor reference is what lands on the invoice row. The return
-   * type is unchanged.
+   * Fallback: when no `binaryDeps` are wired (test paths that exercise
+   * the issuance audit / SSE invariants without a storage backend),
+   * the method returns a synthetic UUID so the
+   * `renderedPdfBinaryDescriptorId` column lands non-null. The bytes
+   * are NOT retrievable in that mode — Phase D's PDF download route
+   * requires the real path.
+   *
+   * The whole call runs inside the issuance transaction so a fault
+   * after the bucket PUT rolls back the row insert; the orphaned
+   * object is reaped by the existing attachment-orphan reaper because
+   * the row never reached `ready` from the reaper's perspective
+   * (no row, no claim — the reaper sweeps storage paths matching the
+   * `invoices/` prefix on the same schedule).
    */
   private async persistRenderedBinary(
-    _tx: MutatingDatabase,
-    _rendered: RenderedInvoice,
+    tx: MutatingDatabase,
+    rendered: RenderedInvoice,
+    projectId: string,
+    invoiceId: string,
+    userId: string,
   ): Promise<string> {
-    // Synthetic UUID for the Phase B path. Phase C swaps this for the
-    // real descriptor insert.
-    return crypto.randomUUID();
+    if (!this.binaryDeps) {
+      // Phase B fallback — synthetic UUID. Leaves the column non-null
+      // for tests that don't drive the storage backend. The route
+      // layer's PDF download path will surface a 404 / 500 on the
+      // missing key; this is intended (the fallback is a test seam,
+      // not a production path).
+      return crypto.randomUUID();
+    }
+
+    const { storage, binaryAgeRecipient, binaryAgeIdentityPath } = this.binaryDeps;
+
+    // 1 + 2. Encrypt the plaintext PDF bytes under a fresh DEK.
+    const { ciphertext, dek } = encryptInvoicePayload(rendered.pdfBytes);
+
+    // 3. Wrap the DEK against the operator-loaded recipient.
+    const envelope = new KeyEnvelopeService({
+      recipient: binaryAgeRecipient,
+      identityPath: binaryAgeIdentityPath,
+    });
+    const wrappedDek = await envelope.wrap(dek);
+    const wrappedDekBase64 = Buffer.from(wrappedDek).toString('base64');
+
+    // 4. PUT the ciphertext. The key shape mirrors the attachment
+    // convention so the lifecycle / safety probe surfaces both paths
+    // under a predictable prefix.
+    const descriptorId = crypto.randomUUID();
+    const originalKey = `invoices/${projectId}/${descriptorId}.orig`;
+    await storage.putObject(originalKey, ciphertext, 'application/octet-stream');
+
+    // 5. Insert the attachments row at `status='ready'`. The schema's
+    // `attachments_wrapped_dek_required_when_ready` CHECK demands the
+    // wrapped envelope + ciphertext size are non-null at this status.
+    // The filename carries the invoice number — the rendered PDF surfaces
+    // to the operator under that name when downloaded.
+    const filename = `invoice-${invoiceId}.pdf`;
+    await tx.insert(attachments).values({
+      id: descriptorId,
+      projectId,
+      status: 'ready',
+      kind: 'binary',
+      label: 'rechnung',
+      filename,
+      mimeType: 'application/pdf',
+      sizeBytes: rendered.pdfBytes.byteLength,
+      originalKey,
+      thumbKey: null,
+      thumbSizeBytes: null,
+      hasThumbnail: false,
+      ciphertextSizeBytes: ciphertext.byteLength,
+      ciphertextThumbSizeBytes: null,
+      // ServerSide PUT does not return a VersionId from `putObject`
+      // (we don't HEAD the just-written object). Versioned buckets
+      // still issue a VersionId per write; capture it via HEAD post-
+      // PUT so the Papierkorb restore primitive can address the
+      // current version later. The HEAD is cheap (no body fetch).
+      versionId: (await storage.headObject(originalKey)).versionId ?? null,
+      thumbVersionId: null,
+      wrappedDek: wrappedDekBase64,
+      wrappedThumbDek: null,
+      wrappedDekVersion: WRAPPED_DEK_CURRENT_VERSION,
+      hiddenAt: null,
+      createdBy: userId,
+    });
+    return descriptorId;
   }
 
   // -------------------------------------------------------------------
@@ -789,15 +921,22 @@ export class InvoiceService {
         .returning();
       let stornoRow = stornoInsert[0]!;
 
-      // 3. Render the Storno PDF. The stub throws — rolls back the
-      //    whole cancel atom, including the sequence allocation.
+      // 3. Render the Storno PDF — same toolchain as the issue path.
+      //    A throw here rolls back the whole cancel atom, including
+      //    the sequence allocation.
       const profileService = new CompanyProfileService(this.db);
       const profile = await profileService.get();
-      const rendered = this.renderer.render({
+      const rendered = await this.renderer.render({
         invoice: toInvoiceResponse(stornoRow),
         companyProfile: profile,
       });
-      const stornoDescriptor = await this.persistRenderedBinary(tx, rendered);
+      const stornoDescriptor = await this.persistRenderedBinary(
+        tx,
+        rendered,
+        before.projectId,
+        stornoId,
+        userId,
+      );
       const stornoFinal = await tx
         .update(invoices)
         .set({ renderedPdfBinaryDescriptorId: stornoDescriptor })

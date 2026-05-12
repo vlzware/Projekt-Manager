@@ -285,25 +285,71 @@ async function extractPdfText(buf: Buffer): Promise<string> {
  * this file parse-clean pre-impl.
  */
 async function extractFacturXml(buf: Buffer): Promise<string> {
+  // pdf-lib v1.17.x does not expose `embeddedFiles` publicly, so we walk
+  // the catalog name tree directly: `/Catalog → /Names → /EmbeddedFiles
+  // → /Names` is the PDF/A-3 convention. Each pair is
+  // `(filename, filespec)`, where the filespec's `/EF/F` ref points at
+  // the embedded-file stream.
   const path = 'pdf-lib';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { PDFDocument } = (await import(/* @vite-ignore */ path)) as any;
+  const lib = (await import(/* @vite-ignore */ path)) as any;
+  const {
+    PDFDocument,
+    PDFName,
+    PDFDict,
+    PDFArray,
+    PDFStream,
+    PDFRawStream,
+    PDFHexString,
+    PDFString,
+    decodePDFRawStream,
+  } = lib;
   const doc = await PDFDocument.load(new Uint8Array(buf));
-  // pdf-lib exposes attachments via PDFDocument.attachments / embeddedFiles.
-  // The exact API name varies by pdf-lib version; the assertion code
-  // accepts either. The implementer picks the version pinned in
-  // package.json.
-  type EmbeddedFile = { name: string; data: Uint8Array };
-  const docExt = doc as {
-    embeddedFiles?: EmbeddedFile[];
-    attachments?: EmbeddedFile[];
-  };
-  const list: EmbeddedFile[] = docExt.embeddedFiles ?? docExt.attachments ?? [];
-  const target = list.find((f) => f.name === 'factur-x.xml');
-  if (!target) {
-    throw new Error('extractFacturXml — no factur-x.xml embedded file in PDF/A-3');
+  const catalog = doc.catalog;
+  const namesDict = catalog.lookup(PDFName.of('Names'), PDFDict) as
+    | InstanceType<typeof PDFDict>
+    | undefined;
+  if (!namesDict) {
+    throw new Error('extractFacturXml — /Catalog has no /Names dictionary');
   }
-  return new TextDecoder('utf-8').decode(target.data);
+  const embeddedFilesDict = namesDict.lookup(PDFName.of('EmbeddedFiles'), PDFDict) as
+    | InstanceType<typeof PDFDict>
+    | undefined;
+  if (!embeddedFilesDict) {
+    throw new Error('extractFacturXml — /Names has no /EmbeddedFiles subtree');
+  }
+  const namesArr = embeddedFilesDict.lookup(PDFName.of('Names'), PDFArray) as
+    | InstanceType<typeof PDFArray>
+    | undefined;
+  if (!namesArr) {
+    throw new Error('extractFacturXml — /EmbeddedFiles has no /Names array');
+  }
+  const decodeString = (obj: unknown): string => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (obj instanceof PDFString) return (obj as any).decodeText() as string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if (obj instanceof PDFHexString) return (obj as any).decodeText() as string;
+    return String(obj);
+  };
+  const size: number = namesArr.size();
+  for (let i = 0; i < size; i += 2) {
+    const nameStr = decodeString(namesArr.get(i));
+    if (nameStr !== 'factur-x.xml') continue;
+    const filespec = namesArr.lookup(i + 1, PDFDict) as InstanceType<typeof PDFDict>;
+    const ef = filespec.lookup(PDFName.of('EF'), PDFDict) as InstanceType<typeof PDFDict>;
+    const fileStream = ef.lookup(PDFName.of('F'), PDFStream) as InstanceType<typeof PDFStream>;
+    let bytes: Uint8Array;
+    if (fileStream instanceof PDFRawStream) {
+      bytes = decodePDFRawStream(fileStream).decode();
+    } else {
+      // Fallback — pdf-lib normalises to PDFRawStream on load; the
+      // branch is here as a safety net only.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      bytes = (fileStream as any).getContents() as Uint8Array;
+    }
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+  throw new Error('extractFacturXml — no factur-x.xml embedded file in PDF/A-3');
 }
 
 /**
@@ -329,11 +375,17 @@ async function validateAgainstEn16931Xsd(
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = path.dirname(__filename);
   // Convention: the EN 16931 XSD root file lives at this path. The
-  // impl team adds the fixture in step 5 (the XSD is a published
-  // standard, redistributable under EN 16931 / UN/CEFACT terms).
+  // XSD bundle is the canonical Factur-X 1.07.2 / EN 16931 Comfort
+  // schema set (mirrored from akretion/factur-x at commit d7fa1e7).
+  // The bundle ships 4 files; the root entry imports the other three
+  // by relative path, so all four must coexist in the same directory.
+  // The test was originally drafted against a placeholder version
+  // string (`1.0.07`) which does not exist upstream; the staged
+  // version `1.07.2` is the EN 16931-mandate version closest to the
+  // ZUGFeRD 2.x line in production today.
   const xsdPath = path.resolve(
     __dirname,
-    '../../test/fixtures/en16931/Factur-X_1.0.07_EN16931.xsd',
+    '../../test/fixtures/en16931/Factur-X_1.07.2_EN16931.xsd',
   );
   if (!fs.existsSync(xsdPath)) {
     throw new Error(
