@@ -51,6 +51,7 @@ import { startApp, stopApp, login, authGet, authPost, authPut } from '../../test
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import { InvoiceRenderer } from '../services/InvoiceRenderer.js';
+import { validateFacturXml } from '../services/invoice/xsdValidator.js';
 
 const year = new Date().getFullYear();
 
@@ -355,58 +356,6 @@ async function extractFacturXml(buf: Buffer): Promise<string> {
     return new TextDecoder('utf-8').decode(bytes);
   }
   throw new Error('extractFacturXml — no factur-x.xml embedded file in PDF/A-3');
-}
-
-/**
- * Validate an XML payload against the EN 16931 XSD. Uses `libxmljs2`
- * lazily.
- *
- * If the XSD isn't trivially reachable at test runtime (the official
- * schema lives at https://standards.cen.eu under EN 16931; UN/CEFACT
- * Cross-Industry Invoice schema), the impl team mirrors a copy into
- * `src/test/fixtures/en16931/` and points this helper at it. Until
- * the fixture lands, the helper throws — the AT-117 test fails at
- * step-3 (the intended TDD signal).
- */
-async function validateAgainstEn16931Xsd(
-  xml: string,
-): Promise<{ valid: boolean; errors: string[] }> {
-  const xmlPath = 'libxmljs2';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const lib = (await import(/* @vite-ignore */ xmlPath)) as any;
-  const fs = await import('node:fs');
-  const path = await import('node:path');
-  const { fileURLToPath } = await import('node:url');
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-  // Convention: the EN 16931 XSD root file lives at this path. The
-  // XSD bundle is the canonical Factur-X 1.07.2 / EN 16931 Comfort
-  // schema set (mirrored from akretion/factur-x at commit d7fa1e7).
-  // The bundle ships 4 files; the root entry imports the other three
-  // by relative path, so all four must coexist in the same directory.
-  // The test was originally drafted against a placeholder version
-  // string (`1.0.07`) which does not exist upstream; the staged
-  // version `1.07.2` is the EN 16931-mandate version closest to the
-  // ZUGFeRD 2.x line in production today.
-  const xsdPath = path.resolve(
-    __dirname,
-    '../../test/fixtures/en16931/Factur-X_1.07.2_EN16931.xsd',
-  );
-  if (!fs.existsSync(xsdPath)) {
-    throw new Error(
-      `validateAgainstEn16931Xsd — XSD not present at ${xsdPath}. The implementer adds it in step 5 (mirror the EN 16931 / Factur-X schema bundle from official sources, distribute as a test fixture).`,
-    );
-  }
-  // baseUrl is load-bearing: the Factur-X 1.07.2 EN 16931 XSD imports
-  // three sibling UN/CEFACT schemas (QualifiedDataType, Reusable...,
-  // UnqualifiedDataType). Without baseUrl libxmljs2 cannot resolve
-  // them and validation throws before reaching the actual schema check.
-  const xsdDoc = lib.parseXml(fs.readFileSync(xsdPath, 'utf-8'), { baseUrl: xsdPath });
-  const xmlDoc = lib.parseXml(xml);
-  const valid = xmlDoc.validate(xsdDoc);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const errors = (xmlDoc.validationErrors ?? []).map((e: any) => String(e.message ?? e));
-  return { valid: Boolean(valid), errors };
 }
 
 // ---------------------------------------------------------------------
@@ -1017,11 +966,9 @@ describe('Invoice issuance — ZUGFeRD EN 16931 conformance (AT-117 / AC-293)', 
     const xml = await extractFacturXml(bytes);
     expect(xml).toContain('<rsm:CrossIndustryInvoice');
 
-    const { valid, errors } = await validateAgainstEn16931Xsd(xml);
-    if (!valid) {
-      // Surface the validation errors so the impl team sees what failed.
-      throw new Error(`XSD validation failed:\n${errors.join('\n')}`);
-    }
-    expect(valid).toBe(true);
+    // Round-trip XSD check: the renderer validates at issuance, but
+    // this asserts the embedded XML survives the PDF/A-3 attachment
+    // pipeline without corruption. Throws on schema violation.
+    expect(() => validateFacturXml(xml)).not.toThrow();
   });
 });

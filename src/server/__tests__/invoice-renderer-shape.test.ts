@@ -19,14 +19,9 @@
  *     (AT-117 load-bearing assertion).
  */
 import { describe, it, expect } from 'vitest';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { InvoiceRenderer } from '../services/InvoiceRenderer.js';
+import { validateFacturXml } from '../services/invoice/xsdValidator.js';
 import type { CompanyProfile, Invoice, TaxMode } from '../../domain/invoice.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const profile: CompanyProfile = {
   id: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
@@ -174,22 +169,11 @@ describe('InvoiceRenderer — factur-x.xml + EN 16931 XSD (AT-117 shape, route-f
     }
     expect(found).toBe(true);
 
-    // Validate the XML against the EN 16931 Comfort XSD.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const lib = (await import('libxmljs2')) as any;
-    const xsdPath = path.resolve(
-      __dirname,
-      '../../test/fixtures/en16931/Factur-X_1.07.2_EN16931.xsd',
-    );
-    const xsdDoc = lib.parseXml(fs.readFileSync(xsdPath, 'utf-8'), { baseUrl: xsdPath });
-    const xmlDoc = lib.parseXml(out.facturXml);
-    const valid = Boolean(xmlDoc.validate(xsdDoc));
-    if (!valid) {
-      const errors = (xmlDoc.validationErrors ?? []).map((e: { message?: string }) =>
-        String(e.message ?? e),
-      );
-      throw new Error(`XSD validation failed:\n${errors.join('\n')}`);
-    }
-    expect(valid).toBe(true);
+    // Explicit AT-117 anchor: assert the embedded XML validates
+    // against the EN 16931 Comfort XSD. The renderer also validates
+    // internally and would throw before returning — this re-check
+    // pins the assertion even if the internal step is ever
+    // refactored away.
+    expect(() => validateFacturXml(out.facturXml)).not.toThrow();
   });
 });

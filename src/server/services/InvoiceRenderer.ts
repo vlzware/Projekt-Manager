@@ -6,9 +6,9 @@
  * structural wrapper, embedded `factur-x.xml`, German-language
  * human-readable body carrying the per-tax-mode boilerplate. The
  * pure-Node toolchain is pinned at `pdf-lib` (PDF generation +
- * embedded-file attachment) + `libxmljs2` (defensive XSD validation
- * inside the issuance transaction so a malformed XML aborts the
- * issuance atom rather than landing a non-conformant binary on B2).
+ * embedded-file attachment) + `libxmljs2` (per-render XSD validation
+ * against EN 16931 so a non-conformant XML aborts the issuance atom
+ * rather than landing on B2; see `invoice/xsdValidator.ts`).
  *
  * Why pure-Node instead of Mustangproject / JVM: the alternative would
  * pull a JVM and a 300 MB native dependency into the `app` service for
@@ -23,8 +23,9 @@
  * `render()` shapes are async — pdf-lib's `embedFont` /
  * `doc.save()` are async by construction.
  *
- * Split across three sibling files for readability:
+ * Split across four sibling files for readability:
  *   - `invoice/facturXmlBuilder.ts` — EN 16931 CII-100 XML builder.
+ *   - `invoice/xsdValidator.ts`     — per-render EN 16931 XSD check.
  *   - `invoice/pdfDrawer.ts`        — pdf-lib drawing + attach().
  *   - `invoice/boilerplate.ts`      — per-tax-mode legal strings.
  */
@@ -32,16 +33,18 @@
 import type { CompanyProfile, Invoice } from '../../domain/invoice.js';
 import { buildFacturXml } from './invoice/facturXmlBuilder.js';
 import { drawInvoicePdf } from './invoice/pdfDrawer.js';
+import { validateFacturXml } from './invoice/xsdValidator.js';
 
 /**
  * What the renderer hands back to the issuance transaction. The bytes
  * ride the existing binary descriptor pipeline (ADR-0022 / ADR-0024)
  * via `InvoiceService.persistRenderedBinary`; the XML payload is
- * exposed separately so the test harness can XSD-validate it without
- * re-extracting from the PDF/A-3 envelope (AT-117 has its own pdf-lib
- * extraction path; this is the convenience seam for any pre-storage
- * pipeline step that needs the XML — e.g. defensive validation
- * inside the issuance transaction).
+ * exposed separately so the test harness can re-assert AT-117 without
+ * re-extracting from the PDF/A-3 envelope. `render()` already runs the
+ * EN 16931 XSD check against the XML before this struct is returned —
+ * a non-conformant payload throws and the caller's transaction rolls
+ * back. The exposed `facturXml` is therefore always a valid Comfort-
+ * profile payload at the point the caller sees it.
  */
 export interface RenderedInvoice {
   pdfBytes: Uint8Array;
@@ -81,6 +84,7 @@ export class InvoiceRenderer {
   async render(input: InvoiceRenderInput): Promise<RenderedInvoice> {
     void input.companyProfile;
     const facturXml = buildFacturXml(input.invoice);
+    validateFacturXml(facturXml);
     const pdfBytes = await drawInvoicePdf(input.invoice, facturXml);
     return { pdfBytes, facturXml };
   }
