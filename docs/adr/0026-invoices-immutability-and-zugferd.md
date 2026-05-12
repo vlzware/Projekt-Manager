@@ -54,7 +54,7 @@ We will model invoices as **immutable issued snapshots with a gapless year-scope
 ### Storage and retention
 
 - PDF/A-3 (ZUGFeRD-wrapped) stored via the existing binary descriptor flow — same init/complete pipeline as attachments, same E2E envelope ([ADR-0024](0024-binary-attachment-e2e-encryption.md)) so B2 sees only ciphertext.
-- **Object Lock retention is env-driven.** `INVOICE_OBJECT_LOCK_DAYS` defaults to `3650` (10 years, §147 AO); `.env.example` ships `0` to disable retention in dev so binaries can be cleaned up freely. The boot-time bucket configuration assertion ([ADR-0022](0022-binary-storage-b2-compliance-object-lock.md) `assertStorageBucketSafe()`) is extended to verify the invoice retention envelope against the env value — misconfiguration refuses to start (project principle: refuse to serve when an integrity criterion cannot be met).
+- **Object Lock retention is env-driven.** `INVOICE_OBJECT_LOCK_DAYS` defaults to `3650` (10 years, §147 AO); `.env.example` ships `0` to disable retention in dev so binaries can be cleaned up freely. The boot-time bucket configuration assertion ([ADR-0022](0022-binary-storage-b2-compliance-object-lock.md) `assertStorageBucketSafe()`) is extended to verify the invoice retention envelope covers the env value (bucket retention ≥ env) — under-retention refuses to start (project principle: refuse to serve when an integrity criterion cannot be met); over-retention is accepted (the env declares the minimum, not an equality).
 - Lifecycle and capability split from ADR-0022 are reused unchanged — the bucket primitives operate on opaque bytes, so the Object Lock window defends ciphertext exactly as it defends attachment ciphertext.
 
 ### Tax modes
@@ -137,7 +137,7 @@ Keep `company_profile.defaultTaxMode` plus a `taxModeOverride boolean` on the in
 
 - Schema delta lands as edits to `src/server/db/schema.ts` + a regenerated baseline migration (project convention: no incremental Drizzle migration files, no production data to preserve). The new `invoices`, `invoice_sequence`, and `company_profile` tables, the `AUDIT_ENTITY_TYPES` extension, the `AUDIT_ENTITY_TO_TABLE` map entry, and the two `audit_log_*_type_valid` CHECK updates land in the same edit.
 - New env var `INVOICE_OBJECT_LOCK_DAYS` and corresponding entries in `.env.production.example` + the env-drift gate (`scripts/check-env-drift.sh`). Dev `.env.example` ships `0`.
-- The boot-time `assertStorageBucketSafe()` is extended to verify the invoice retention envelope; misconfiguration refuses to start the `app` service.
+- The boot-time `assertStorageBucketSafe()` is extended to verify the invoice retention envelope covers the env value (bucket retention ≥ env); under-retention refuses to start the `app` service, over-retention is accepted.
 - New SSE event name `invoice_changed` registered with the event-name registry — no `/api/events` route change.
 - New permission keys `invoice:read` and `invoice:write` added to the permission registry; the bookkeeper role (currently a stub) gains `invoice:read`.
 - ZUGFeRD generation is a new server-side dependency (`Mustangproject` or equivalent — exact package picked in spec). Build-image surface grows by the JVM / native dep that ships with the chosen library.
