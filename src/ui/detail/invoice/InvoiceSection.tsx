@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { STRINGS } from '@/config/strings';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Invoice } from '@/domain/invoice';
+import { orderInvoicesWithStornoGrouping } from '@/domain/invoiceGrouping';
 import { formatCurrencyDE, formatDateDE } from '@/domain/dateFormat';
 import { useInvoiceStore } from '@/state/invoiceStore';
 import { useProjectStore } from '@/state/projectStore';
@@ -74,39 +75,11 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
     return map;
   }, [invoices]);
 
-  // Client-side grouping per ui/invoices.md §8.16.1: a Storno sibling
-  // renders visually subordinated UNDER its `cancellationOf` original.
-  // The server returns rows by `issueDate DESC, createdAt DESC` — for
-  // an original + Storno issued on the same day, that puts the Storno
-  // (newer createdAt) ABOVE the original; the spec wants the inverse.
-  // Re-thread the list so every Storno row immediately follows its
-  // referenced original. Orphan Stornos (`cancellationOf` resolves to
-  // nothing in the current list — shouldn't happen in practice but
-  // keeps the render total-coverage on a stale snapshot) fall back to
-  // server order at the end.
-  const orderedInvoices = useMemo(() => {
-    const list = invoices ?? [];
-    const seen = new Set<string>();
-    const result: Invoice[] = [];
-    for (const inv of list) {
-      if (seen.has(inv.id)) continue;
-      // Originals (non-Storno) emit first, then any Storno siblings
-      // that reference them.
-      if (inv.cancellationOf) continue;
-      result.push(inv);
-      seen.add(inv.id);
-      for (const sibling of list) {
-        if (sibling.cancellationOf === inv.id && !seen.has(sibling.id)) {
-          result.push(sibling);
-          seen.add(sibling.id);
-        }
-      }
-    }
-    for (const inv of list) {
-      if (!seen.has(inv.id)) result.push(inv);
-    }
-    return result;
-  }, [invoices]);
+  // Storno grouping rule (ui/invoices.md §8.16.1) — see helper docstring.
+  const orderedInvoices = useMemo(
+    () => orderInvoicesWithStornoGrouping(invoices ?? []),
+    [invoices],
+  );
 
   if (!canRead) return null;
 

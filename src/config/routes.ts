@@ -48,6 +48,7 @@ export type RouteView =
   | 'kalender'
   | 'kunden'
   | 'projekte'
+  | 'rechnungen'
   | 'benutzer'
   | 'daten'
   | 'aktivitaet'
@@ -152,6 +153,22 @@ export const ROUTES: readonly RouteEntry[] = [
     path: '/customers',
     label: STRINGS.ui.viewCustomers,
     canAccess: (u) => hasRole(u, 'owner', 'office', 'bookkeeper'),
+    isDefaultFor: () => false,
+  },
+  {
+    // Standalone Rechnungen list view (ui/invoices.md §8.16.1) — gated
+    // on `invoice:read` (owner / office / bookkeeper under the default
+    // matrix). Worker holds no invoice permission and the repository
+    // scope predicate (ADR-0019) returns the empty set, so worker is
+    // structurally excluded both client- and server-side.
+    view: 'rechnungen',
+    path: '/rechnungen',
+    label: STRINGS.ui.viewInvoices,
+    canAccess: (u) => hasPermission(u.roles, 'invoice:read'),
+    // Bookkeeper currently lands on `/projects` (see landsOnProjects);
+    // keep that — the spec does not pin Rechnungen as bookkeeper's
+    // landing view, and changing it would be silently scope-creeping
+    // outside this chunk.
     isDefaultFor: () => false,
   },
   {

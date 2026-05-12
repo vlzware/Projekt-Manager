@@ -215,6 +215,7 @@ import type {
   Invoice,
   InvoiceLine,
   InvoiceRecipientSnapshot,
+  InvoiceStatus,
   TaxMode,
 } from '@/domain/invoice';
 
@@ -843,7 +844,30 @@ export interface InvoiceCancelResult {
   storno: Invoice;
 }
 
+/**
+ * Query parameters for `GET /api/invoices` (api.md §14.2.14). Mirrors
+ * the server's route schema in `src/server/routes/invoices.ts` — fields
+ * are optional and AND-compose. The wire shape encodes `includeCancelled`
+ * as a string enum to match the route's `{ enum: ['true', 'false'] }`
+ * schema (Fastify rejects raw booleans on querystrings).
+ */
+export interface ListInvoicesParams {
+  offset?: number;
+  limit?: number;
+  status?: InvoiceStatus;
+  year?: number;
+  projectId?: string;
+  customerId?: string;
+  includeCancelled?: 'true' | 'false';
+  search?: string;
+}
+
 export const invoicesApi = {
+  list: (params: ListInvoicesParams = {}) =>
+    apiCall<InvoiceListResponse>(
+      '/api/invoices' + toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
+
   listByProject: (projectId: string) =>
     apiCall<InvoiceListResponse>('/api/invoices' + toQuery({ projectId })),
 

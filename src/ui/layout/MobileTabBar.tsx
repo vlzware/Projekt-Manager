@@ -20,6 +20,7 @@ import { TAB_BAR_ICONS } from './tabBarIconMap';
 import styles from './MobileTabBar.module.css';
 
 const SECONDARY_VIEWS: readonly RouteView[] = [
+  'rechnungen',
   'benutzer',
   'daten',
   'aktivitaet',

@@ -23,6 +23,7 @@ import { AuditManagement } from '@/ui/audit/AuditManagement';
 import { NotificationRulesManagement } from '@/ui/management/NotificationRulesManagement';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { ProjectDetailPage } from '@/ui/detail/ProjectDetailPage';
+import { InvoiceListView } from '@/ui/invoices/InvoiceListView';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
 import { ToastContainer } from '@/ui/common/ToastContainer';
@@ -108,6 +109,7 @@ const VIEW_ELEMENTS: Record<ViewMode, ReactElement> = {
   kalender: <CalendarView />,
   kunden: <CustomerManagement />,
   projekte: <ProjectManagement />,
+  rechnungen: <InvoiceListView />,
   benutzer: <UserManagement />,
   daten: <DatenView />,
   aktivitaet: <AuditManagement />,

@@ -28,7 +28,14 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
 // lower-frequency surfaces for the roles that see them; keeping them out
 // of the primary row keeps the header compact when the summary area is
 // wide.
+//
+// `rechnungen` is included here so owner / office surface it under
+// Verwaltung (their secondary bucket has ≥2 entries). Bookkeeper has
+// only `rechnungen` in their secondary bucket — the "≥2 to render the
+// menu" rule below routes it inline alongside Projekte / Kunden, which
+// matches the ui/invoices.md §8.16 "primary for bookkeeper" line.
 const SECONDARY_VIEWS: readonly RouteView[] = [
+  'rechnungen',
   'benutzer',
   'daten',
   'aktivitaet',

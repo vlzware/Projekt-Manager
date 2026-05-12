@@ -39,16 +39,29 @@ function setAuthUser(roles: string[]): void {
 // (deep-link and server-side scoping still work), but the tab is not
 // surfaced because worker-visible rows are too narrow to justify the
 // nav slot (see Header.tsx comment + docs/spec/ui/index.md §8.7.1 note).
+// `rechnungen` (invoice:read) — owner / office surface it via Verwaltung;
+// bookkeeper renders it inline (only secondary entry → menu suppressed).
 const MATRIX: Record<string, readonly string[]> = {
-  owner: ['kanban', 'kalender', 'projekte', 'kunden', 'benutzer', 'daten', 'aktivitaet'],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
+  owner: [
+    'kanban',
+    'kalender',
+    'projekte',
+    'kunden',
+    'rechnungen',
+    'benutzer',
+    'daten',
+    'aktivitaet',
+  ],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'rechnungen', 'daten', 'aktivitaet'],
   worker: ['kanban', 'kalender'],
-  bookkeeper: ['projekte', 'kunden'],
+  bookkeeper: ['projekte', 'kunden', 'rechnungen'],
 };
 
 // Roles whose secondary bucket has ≥2 items — those get the "Verwaltung"
 // menu trigger. Others render their (zero or one) secondary routes
-// inline, so no trigger is rendered.
+// inline, so no trigger is rendered. Bookkeeper has only `rechnungen` in
+// its secondary bucket, so no menu — see the SECONDARY_VIEWS rationale
+// in Header.tsx.
 const ROLES_WITH_ADMIN_MENU = new Set(['owner', 'office']);
 
 const ALL_VIEWS = [
@@ -56,6 +69,7 @@ const ALL_VIEWS = [
   'kalender',
   'projekte',
   'kunden',
+  'rechnungen',
   'benutzer',
   'daten',
   'aktivitaet',

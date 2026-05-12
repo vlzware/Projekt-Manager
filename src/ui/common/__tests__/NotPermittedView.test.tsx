@@ -147,6 +147,8 @@ const FORBIDDEN: readonly ForbiddenCase[] = [
   { role: 'worker', path: '/customers' }, // AC-149 example
   { role: 'worker', path: '/users' },
   { role: 'worker', path: '/daten' },
+  // Worker lacks `invoice:read`; the Rechnungen route is forbidden.
+  { role: 'worker', path: '/rechnungen' },
   { role: 'office', path: '/users' },
   { role: 'bookkeeper', path: '/kanban' },
   { role: 'bookkeeper', path: '/calendar' },

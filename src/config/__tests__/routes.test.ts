@@ -32,21 +32,23 @@ const caller = (role: RoleName): RouteCaller => ({ roles: [role] });
 // Aktivität (audit:read) is visible to owner / office only under the
 // current matrix; worker and bookkeeper lack `audit:read` and do not
 // see the tab. Benachrichtigungen (notifications:manage) is owner-only
-// per api.md §14.3 + ADR-0023 + AC-198.
+// per api.md §14.3 + ADR-0023 + AC-198. Rechnungen (invoice:read) is
+// visible to owner / office / bookkeeper; worker is excluded.
 const MATRIX: Record<RoleName, readonly string[]> = {
   owner: [
     'kanban',
     'kalender',
     'projekte',
     'kunden',
+    'rechnungen',
     'benutzer',
     'daten',
     'aktivitaet',
     'benachrichtigungen',
   ],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'rechnungen', 'daten', 'aktivitaet'],
   worker: ['meineProjekte', 'kanban', 'kalender'],
-  bookkeeper: ['projekte', 'kunden'],
+  bookkeeper: ['projekte', 'kunden', 'rechnungen'],
 };
 
 const LANDINGS: Record<RoleName, string> = {

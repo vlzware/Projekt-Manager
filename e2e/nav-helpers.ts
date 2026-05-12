@@ -20,6 +20,7 @@ export type NavViewKey =
   | 'kalender'
   | 'projekte'
   | 'kunden'
+  | 'rechnungen'
   | 'benutzer'
   | 'daten'
   | 'aktivitaet'

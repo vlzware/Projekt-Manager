@@ -54,6 +54,8 @@ interface RoleCase {
   canRestoreData: boolean;
   /** `notifications:manage` — gates Benachrichtigungen tab visibility (AC-198). */
   canManageNotifications: boolean;
+  /** `invoice:read` — gates Rechnungen tab visibility (ui/invoices.md §8.16.1). */
+  canReadInvoices: boolean;
 }
 
 /**
@@ -80,6 +82,7 @@ const roleCases: Record<Role, RoleCase> = {
     canExportData: true,
     canRestoreData: true,
     canManageNotifications: true,
+    canReadInvoices: true,
   },
   office: {
     username: 'buero',
@@ -104,6 +107,7 @@ const roleCases: Record<Role, RoleCase> = {
     canExportData: true,
     canRestoreData: false,
     canManageNotifications: false,
+    canReadInvoices: true,
   },
   worker: {
     username: 'arbeiter1',
@@ -123,6 +127,7 @@ const roleCases: Record<Role, RoleCase> = {
     canExportData: false,
     canRestoreData: false,
     canManageNotifications: false,
+    canReadInvoices: false,
   },
   bookkeeper: {
     username: 'buchhalter',
@@ -142,6 +147,7 @@ const roleCases: Record<Role, RoleCase> = {
     canExportData: false,
     canRestoreData: false,
     canManageNotifications: false,
+    canReadInvoices: true,
   },
 };
 
@@ -158,6 +164,7 @@ test.describe('AC-121: permission-based UI visibility', () => {
       await expectViewReachable(page, 'kanban', c.canSeeKanban);
       await expectViewReachable(page, 'projekte', c.canSeeManagement);
       await expectViewReachable(page, 'kunden', c.canSeeManagement);
+      await expectViewReachable(page, 'rechnungen', c.canReadInvoices);
       await expectViewReachable(page, 'benutzer', c.canReadUsers);
       // AC-198 — Notification Rules view (Benachrichtigungen tab)
       // gated on notifications:manage (owner only under default matrix).

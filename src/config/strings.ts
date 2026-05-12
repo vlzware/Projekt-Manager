@@ -270,6 +270,7 @@ export const STRINGS = {
     viewData: 'Daten',
     viewAudit: 'Aktivität',
     viewNotifications: 'Benachrichtigungen',
+    viewInvoices: 'Rechnungen',
     myProjectsToday: 'Heute',
     myProjectsUpcoming: 'Demnächst',
     myProjectsOther: 'Weitere',
@@ -510,6 +511,16 @@ export const STRINGS = {
     errorCompanyProfileRequired:
       'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
     errorPdfDownload: 'Die PDF konnte nicht geladen werden.',
+
+    // Standalone /rechnungen list view (ui/invoices.md §8.16.1).
+    listViewTitle: 'Rechnungen',
+    listEmpty: 'Keine Rechnungen',
+    filterYear: 'Jahr',
+    filterStatus: 'Status',
+    filterSearchPlaceholder: 'Suche…',
+    filterYearAll: 'Alle Jahre',
+    filterStatusAll: 'Alle',
+    loadMore: 'Weitere laden',
   },
 
   aging: {
