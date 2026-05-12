@@ -250,11 +250,12 @@ describe('Invoice cancellation — happy path (AT-114 / AC-290)', () => {
       expect(cancelRes.statusCode).toBe(200);
 
       const body = cancelRes.json();
-      // Wire shape per api.md §14.2.14 "Cancel invoice — `{ original, storno }` pair".
-      const original = (body.original ?? body.cancelled ?? body) as Record<string, unknown>;
-      const storno = (body.storno ?? body.sibling) as Record<string, unknown>;
-      expect(original).toBeDefined();
-      expect(storno).toBeDefined();
+      // Wire shape per api.md §14.2.14: pinned exactly as `{ original, storno }`.
+      // No fallback — a regression to a different shape must surface.
+      expect(body.original).toBeDefined();
+      expect(body.storno).toBeDefined();
+      const original = body.original as Record<string, unknown>;
+      const storno = body.storno as Record<string, unknown>;
 
       // Storno sibling assertions.
       expect(storno.id).toBeDefined();

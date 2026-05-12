@@ -291,6 +291,29 @@ describe('Invoice routes — integration (issue #109)', () => {
       expect(body.recipient).toBeDefined();
       expect(typeof body.recipient.name).toBe('string');
       expect(body.recipient.name.length).toBeGreaterThan(0);
+
+      // AC-285: "produces one `audit_log` row via `mutate()` with
+      // `entityType = 'invoice'`, `action = 'create'`, ancestor
+      // `('project', projectId)`". Mirrors the AT-110 DELETE audit
+      // pattern below — without this assertion an impl that skips
+      // audit on POST would pass green.
+      const { db, pool } = createDatabase();
+      try {
+        const r = await db.execute(sql`
+          SELECT entity_type, action, ancestor_entity_type, ancestor_entity_id
+            FROM audit_log
+           WHERE entity_id = ${body.id as string}
+           ORDER BY created_at DESC
+        `);
+        expect(r.rows.length).toBe(1);
+        const row = r.rows[0] as Record<string, string>;
+        expect(row.entity_type).toBe('invoice');
+        expect(row.action).toBe('create');
+        expect(row.ancestor_entity_type).toBe('project');
+        expect(row.ancestor_entity_id).toBe(projectId);
+      } finally {
+        await pool.end();
+      }
     });
 
     it('office creates a draft (holds invoice:write)', async () => {
