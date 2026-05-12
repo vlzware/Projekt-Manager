@@ -2,10 +2,10 @@
  * Project repository — read & create operations.
  */
 
-import { eq, count, inArray, and, ilike, or, isNull, desc } from 'drizzle-orm';
+import { eq, count, inArray, and, ilike, or, isNull, desc, sql, type SQL } from 'drizzle-orm';
 import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
 import { projects, projectWorkers, users, customers } from '../db/schema.js';
-import type { WorkflowState } from '../../config/stateConfig.js';
+import { STATE_KEYS, type WorkflowState } from '../../config/stateConfig.js';
 import { STRINGS } from '../../config/strings.js';
 import { formatDateOnly } from '../../domain/dateFormat.js';
 import type { AuthUser } from '../middleware/auth.js';
@@ -160,6 +160,62 @@ async function fetchCustomersForProjects(
   return map;
 }
 
+/**
+ * Columns the project list endpoint may be sorted by. The route schema
+ * uses this as a JSON-schema `enum`, and the repo's order-by builder
+ * dispatches on it. `customer` sorts by the joined `customers.name`;
+ * `status` sorts by workflow ordinal (STATE_KEYS index) rather than
+ * the alphabetic key, so users see the natural pipeline order.
+ */
+export const PROJECT_SORT_KEYS = [
+  'number',
+  'title',
+  'customer',
+  'status',
+  'plannedStart',
+  'estimatedValue',
+] as const;
+export type ProjectSortKey = (typeof PROJECT_SORT_KEYS)[number];
+
+/** Sort keys that require the customers table to be joined. */
+const SORT_REQUIRES_CUSTOMER_JOIN: ReadonlySet<ProjectSortKey> = new Set(['customer']);
+
+/**
+ * Build the ORDER BY fragment for a project list query. Nullable columns
+ * use NULLS LAST in both directions so undated/un-valued projects sit at
+ * the bottom regardless of direction. Every clause appends a `createdAt
+ * DESC, id` tiebreaker so pagination remains stable when the primary
+ * column has ties.
+ *
+ * `status` sorts by the position in STATE_KEYS, not the alphabetic key:
+ * the user-facing intent is "follow the workflow", not "sort by string".
+ * Implemented as an inline CASE so it composes with the standard
+ * direction toggle.
+ */
+function projectOrderBy(sortBy: ProjectSortKey, sortDir: 'asc' | 'desc'): SQL {
+  const dir = sql.raw(sortDir === 'desc' ? 'DESC' : 'ASC');
+  const tiebreak = sql`, ${projects.createdAt} DESC, ${projects.id} ASC`;
+  switch (sortBy) {
+    case 'number':
+      return sql`${projects.number} ${dir}${tiebreak}`;
+    case 'title':
+      return sql`${projects.title} ${dir}${tiebreak}`;
+    case 'customer':
+      return sql`${customers.name} ${dir}${tiebreak}`;
+    case 'status': {
+      const cases = sql.join(
+        STATE_KEYS.map((key, idx) => sql`WHEN ${key} THEN ${idx}`),
+        sql` `,
+      );
+      return sql`CASE ${projects.status} ${cases} END ${dir}${tiebreak}`;
+    }
+    case 'plannedStart':
+      return sql`${projects.plannedStart} ${dir} NULLS LAST${tiebreak}`;
+    case 'estimatedValue':
+      return sql`${projects.estimatedValue} ${dir} NULLS LAST${tiebreak}`;
+  }
+}
+
 export interface ListProjectsOpts {
   offset?: number;
   limit?: number;
@@ -173,6 +229,27 @@ export interface ListProjectsOpts {
    * with all other filters via AND.
    */
   includeArchived?: boolean;
+  /**
+   * Filter by assigned worker (Mitarbeiter). Matches projects where ANY
+   * of the listed user ids appears in `project_workers` (OR semantics —
+   * the natural shape for an assignee filter, mirroring GitHub / Jira /
+   * Linear). Empty or absent → no filter.
+   *
+   * Combines with `includeUnassigned` via OR at the predicate level:
+   * a project matches when it is assigned to any of these workers OR
+   * (when the flag is set) has zero workers. AND-composes with every
+   * other filter (status, search, customerId, archived, scope).
+   */
+  assignedWorkerIds?: string[];
+  /**
+   * When true, projects with zero assigned workers are included in the
+   * result. Composes with `assignedWorkerIds` via OR — see that field's
+   * comment. Maps to the "Nicht zugewiesen" checkbox in the filter
+   * popover; useful for spotting unstaffed projects.
+   */
+  includeUnassigned?: boolean;
+  sortBy?: ProjectSortKey;
+  sortDir?: 'asc' | 'desc';
 }
 
 export async function listProjects(
@@ -206,6 +283,39 @@ export async function listProjects(
     conditions.push(eq(projects.customerId, opts.customerId));
   }
 
+  // Mitarbeiter filter — assignedWorkerIds (OR across IDs) + optional
+  // includeUnassigned. Both branches are EXISTS-style subqueries on
+  // project_workers, so the rows themselves stay in the projects table
+  // and no JOIN/DISTINCT is needed. The two branches OR together so the
+  // user can pick "Anna" + "Bernd" + "Nicht zugewiesen" and see the
+  // union — projects assigned to either worker OR with zero workers.
+  const workerBranches: SQL[] = [];
+  if (opts.assignedWorkerIds && opts.assignedWorkerIds.length > 0) {
+    // Parameterise each id individually via sql.join so the driver binds
+    // them as bind values rather than string-interpolating the array.
+    const idList = sql.join(
+      opts.assignedWorkerIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    workerBranches.push(
+      sql`EXISTS (SELECT 1 FROM project_workers pw_f
+                  WHERE pw_f.project_id = projects.id
+                    AND pw_f.user_id IN (${idList}))`,
+    );
+  }
+  if (opts.includeUnassigned) {
+    workerBranches.push(
+      sql`NOT EXISTS (SELECT 1 FROM project_workers pw_f
+                      WHERE pw_f.project_id = projects.id)`,
+    );
+  }
+  if (workerBranches.length === 1) {
+    conditions.push(workerBranches[0]!);
+  } else if (workerBranches.length > 1) {
+    const combined = or(...workerBranches);
+    if (combined) conditions.push(combined);
+  }
+
   // AC-145: apply per-caller read scope. Owner/office/bookkeeper → null
   // (no additional filter); worker → EXISTS-predicate over project_workers.
   const scope = projectScopeForCaller(caller);
@@ -213,22 +323,37 @@ export async function listProjects(
 
   const whereClause = and(...conditions);
 
-  // For search, we need to join customers to search across customer name.
-  // We always join to hydrate customer data anyway.
-  if (opts.search) {
-    const pattern = `%${escapeLike(opts.search)}%`;
-    const searchCondition = or(
-      ilike(projects.number, pattern),
-      ilike(projects.title, pattern),
-      ilike(customers.name, pattern),
-    );
+  // Default order preserves the historical "newest first" behavior for
+  // callers that did not specify a sort. Once a sort is asked for, the
+  // builder takes over with its NULLS-LAST + stable tiebreaker rules.
+  const orderBy = opts.sortBy
+    ? projectOrderBy(opts.sortBy, opts.sortDir ?? 'asc')
+    : desc(projects.createdAt);
+
+  // The customers table must be joined when search is active (we match
+  // on customer.name) or when sorting by a customer column. Outside of
+  // those, we keep the lighter non-join path and hydrate customers in a
+  // single batched IN-query afterwards.
+  const needsCustomerJoin =
+    !!opts.search || (opts.sortBy ? SORT_REQUIRES_CUSTOMER_JOIN.has(opts.sortBy) : false);
+
+  if (needsCustomerJoin) {
+    const searchCondition = opts.search
+      ? or(
+          ilike(projects.number, `%${escapeLike(opts.search)}%`),
+          ilike(projects.title, `%${escapeLike(opts.search)}%`),
+          ilike(customers.name, `%${escapeLike(opts.search)}%`),
+        )
+      : undefined;
+
+    const joinedWhere = searchCondition ? and(whereClause, searchCondition) : whereClause;
 
     const baseQuery = db
       .select({ project: projects, customer: customers })
       .from(projects)
       .innerJoin(customers, eq(projects.customerId, customers.id))
-      .where(and(whereClause, searchCondition))
-      .orderBy(desc(projects.createdAt));
+      .where(joinedWhere)
+      .orderBy(orderBy);
 
     const paginatedQuery =
       opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
@@ -237,7 +362,7 @@ export async function listProjects(
       .select({ value: count() })
       .from(projects)
       .innerJoin(customers, eq(projects.customerId, customers.id))
-      .where(and(whereClause, searchCondition));
+      .where(joinedWhere);
 
     const [rows, countResult] = await Promise.all([paginatedQuery, countQuery]);
     const total = countResult[0]?.value ?? 0;
@@ -253,8 +378,8 @@ export async function listProjects(
     return { data, total };
   }
 
-  // No search — simpler query path
-  const baseQuery = db.select().from(projects).where(whereClause).orderBy(desc(projects.createdAt));
+  // No-join path — sort columns live on the projects table only.
+  const baseQuery = db.select().from(projects).where(whereClause).orderBy(orderBy);
   const paginatedQuery =
     opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;
 

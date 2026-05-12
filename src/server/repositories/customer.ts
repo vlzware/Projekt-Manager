@@ -2,7 +2,7 @@
  * Customer repository — CRUD operations.
  */
 
-import { eq, and, count, ilike, asc, sql } from 'drizzle-orm';
+import { eq, and, count, ilike, sql, type SQL } from 'drizzle-orm';
 import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
 import { customers, projects } from '../db/schema.js';
 import type { AuthUser } from '../middleware/auth.js';
@@ -17,6 +17,47 @@ import {
 /** Escape LIKE-pattern metacharacters so user input is treated literally. */
 function escapeLike(value: string): string {
   return value.replace(/[%_\\]/g, '\\$&');
+}
+
+/**
+ * Columns the customer list endpoint may be sorted by. The route schema
+ * uses this as a JSON-schema `enum`, and the repo's order-by builder
+ * dispatches on it — keeping the source of truth here means a new
+ * column can be added in one place.
+ */
+export const CUSTOMER_SORT_KEYS = ['name', 'phone', 'email', 'city'] as const;
+export type CustomerSortKey = (typeof CUSTOMER_SORT_KEYS)[number];
+
+/**
+ * Build the ORDER BY fragment for a customer list query. Nullable columns
+ * use NULLS LAST in both directions so empty cells sit at the bottom
+ * regardless of ascending/descending — a fixed sink keeps the order of
+ * non-null rows readable as the user toggles direction.
+ *
+ * The `name` tiebreaker keeps the result deterministic when the primary
+ * column has ties (e.g. many customers in the same city); without it,
+ * pagination would drift between requests.
+ */
+function customerOrderBy(sortBy: CustomerSortKey, sortDir: 'asc' | 'desc'): SQL {
+  const dir = sql.raw(sortDir === 'desc' ? 'DESC' : 'ASC');
+  // Non-primary clauses tiebreak on name; the name branch is its own
+  // primary, so it falls through to `id` instead — `customers.name` is
+  // notNull but not unique, so two rows with identical names would
+  // otherwise drift between paginated requests.
+  const tiebreakByName = sql`, ${customers.name} ASC, ${customers.id} ASC`;
+  const tiebreakById = sql`, ${customers.id} ASC`;
+  switch (sortBy) {
+    case 'name':
+      return sql`${customers.name} ${dir}${tiebreakById}`;
+    case 'phone':
+      return sql`${customers.phone} ${dir} NULLS LAST${tiebreakByName}`;
+    case 'email':
+      return sql`${customers.email} ${dir} NULLS LAST${tiebreakByName}`;
+    case 'city':
+      // `address` is a JSONB column; `->>'city'` extracts city as text.
+      // Whole address can be NULL, hence NULLS LAST.
+      return sql`(${customers.address}->>'city') ${dir} NULLS LAST${tiebreakByName}`;
+  }
 }
 
 export type CustomerRow = typeof customers.$inferSelect;
@@ -39,7 +80,13 @@ export function toCustomerResponse(row: CustomerRow) {
 export async function listCustomers(
   db: Database,
   caller: AuthUser,
-  opts: { offset?: number; limit?: number; search?: string } = {},
+  opts: {
+    offset?: number;
+    limit?: number;
+    search?: string;
+    sortBy?: CustomerSortKey;
+    sortDir?: 'asc' | 'desc';
+  } = {},
 ): Promise<{ customers: ReturnType<typeof toCustomerResponse>[]; total: number }> {
   // AC-146: apply per-caller read scope. Worker sees only customers linked
   // through non-deleted projects they're assigned to; owner/office/bookkeeper
@@ -54,9 +101,11 @@ export async function listCustomers(
       ? and(searchCondition, scopeCondition)
       : (searchCondition ?? scopeCondition);
 
+  const orderBy = customerOrderBy(opts.sortBy ?? 'name', opts.sortDir ?? 'asc');
+
   const baseQuery = whereClause
-    ? db.select().from(customers).where(whereClause).orderBy(asc(customers.name))
-    : db.select().from(customers).orderBy(asc(customers.name));
+    ? db.select().from(customers).where(whereClause).orderBy(orderBy)
+    : db.select().from(customers).orderBy(orderBy);
 
   const paginatedQuery =
     opts.limit !== undefined ? baseQuery.limit(opts.limit).offset(opts.offset ?? 0) : baseQuery;

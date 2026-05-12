@@ -32,7 +32,18 @@ import {
   ProjectNotArchivedForRestoreError,
 } from '../repositories/project.js';
 import { listKeysForProject } from '../repositories/attachment.js';
-import type { ListProjectsOpts, ProjectRow } from '../repositories/project-read.js';
+import {
+  PROJECT_SORT_KEYS,
+  type ListProjectsOpts,
+  type ProjectRow,
+  type ProjectSortKey,
+} from '../repositories/project-read.js';
+
+// Re-export the sort allowlist + key type so routes can validate the
+// `sortBy` querystring without crossing the routes→repository boundary
+// (architecture.md §11.2).
+export { PROJECT_SORT_KEYS };
+export type { ProjectSortKey };
 import { customers, projects } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { WORKFLOW_ORDER, STATE_KEYS } from '../../config/stateConfig.js';

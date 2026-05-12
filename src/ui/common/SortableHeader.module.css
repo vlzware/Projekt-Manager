@@ -1,0 +1,56 @@
+/* Sortable header cell. The `<th>` keeps the table-cell layout from
+   Management.module.css; the inner button strips its default styling so
+   the header looks like plain text but the entire cell behaves as a
+   clickable affordance with keyboard focus support. */
+
+.header {
+  /* Inherit the surrounding .table th styling (padding, background,
+     border). The button stretches edge-to-edge so the whole cell is
+     activatable. */
+  padding: 0 !important;
+}
+
+.button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  /* Match the .table th typography exactly so the click target is
+     visually indistinguishable from a non-sortable header until the
+     hover/focus reveal. */
+  font-weight: 600;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.button:hover {
+  background: var(--color-surface-base);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+.label {
+  flex: 1;
+}
+
+.indicator {
+  font-size: 0.7rem;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.15s;
+}
+
+.button[data-active='true'] .indicator {
+  opacity: 1;
+  color: var(--color-accent);
+}

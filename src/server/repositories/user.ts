@@ -2,7 +2,7 @@
  * User repository — database operations for the users table.
  */
 
-import { eq, count, asc } from 'drizzle-orm';
+import { eq, count, asc, and, sql } from 'drizzle-orm';
 import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
 import { users } from '../db/schema.js';
 import type { ThemePreference } from '../../config/themeStorage.js';
@@ -35,6 +35,31 @@ export function toUserResponse(row: UserRow) {
     createdBy: row.createdBy ?? null,
     updatedBy: row.updatedBy ?? null,
   };
+}
+
+/**
+ * Minimal projection used by the assignee-filter dropdown on the project
+ * management page: active users that hold the `worker` role, ordered by
+ * displayName. The shape matches `Project.assignedWorkers` so the UI can
+ * use a single type for both the assignment chips and the filter options.
+ *
+ * Pool-of-eligibles, not pool-of-currently-assigned: a worker with zero
+ * project assignments still appears so the dropdown matches the existing
+ * assignment-picker semantics (parity with AssignedWorkerEditor).
+ *
+ * Not caller-scoped — a worker viewing the filter sees the full pool but
+ * their results list still narrows via `projectScopeForCaller`. The
+ * dropdown is a UI-side picker, not a data-disclosure surface.
+ */
+export async function listAssignableWorkers(
+  db: Database,
+): Promise<{ userId: string; displayName: string }[]> {
+  const rows = await db
+    .select({ userId: users.id, displayName: users.displayName })
+    .from(users)
+    .where(and(eq(users.active, true), sql`'worker' = ANY(${users.roles})`))
+    .orderBy(asc(users.displayName));
+  return rows;
 }
 
 export async function listUsers(

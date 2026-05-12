@@ -324,6 +324,107 @@ test.describe('Management flows', () => {
   });
 
   // ---------------------------------------------------------------
+  // Mitarbeiter (assignee) filter on the project management page.
+  // Drives the popover that wraps GET /api/workers + the
+  // assignedWorkerIds / includeUnassigned query params on
+  // GET /api/projects. Three flows: (1) filter narrows to one
+  // worker, (2) "Nicht zugewiesen" ORs in unassigned projects,
+  // (3) clear chip restores the full list.
+  //
+  // Assertions are anchored on "every visible row matches the
+  // selection" rather than on absolute counts — earlier serial
+  // tests mutate the seed (create / edit / archive), so a fixed
+  // count would be brittle. The seeded worker `Jan Nowak` is the
+  // assignment anchor: stable across the suite because no test
+  // touches his assignments.
+  // ---------------------------------------------------------------
+  test('Mitarbeiter filter narrows the list to the selected worker', async ({ page }) => {
+    await page.getByTestId('view-toggle-projekte').click();
+    await expect(page.getByTestId('project-table')).toBeVisible();
+
+    await page.getByTestId('worker-filter-toggle').click();
+    await expect(page.getByTestId('worker-filter-popover')).toBeVisible();
+
+    // Pick Jan Nowak — the seed assigns him to several projects, so the
+    // resulting list is non-empty even after earlier serial tests have
+    // touched the seed.
+    const janOption = page.getByTestId('worker-filter-popover').getByText('Jan Nowak');
+    await janOption.click();
+
+    // Toggle button label flips to "Mitarbeiter (1)" with the count.
+    await expect(page.getByTestId('worker-filter-toggle')).toContainText('Mitarbeiter (1)');
+
+    // Close the popover so the table is the only visible source of
+    // worker-name text — otherwise the popover's option labels would
+    // also satisfy the row-cell assertions below.
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('worker-filter-popover')).toBeHidden();
+
+    const rows = page.getByTestId('project-table').locator('tbody tr');
+    await expect(rows.first()).toBeVisible();
+
+    // Every visible row must show Jan Nowak in the Mitarbeiter cell.
+    // The cell is the 4th td (Nummer / Titel / Kunde / Mitarbeiter).
+    const workerCells = rows.locator('td:nth-child(4)');
+    const count = await workerCells.count();
+    expect(count).toBeGreaterThan(0);
+    for (let i = 0; i < count; i++) {
+      await expect(workerCells.nth(i)).toContainText('Jan Nowak');
+    }
+  });
+
+  test('Mitarbeiter filter ORs in unassigned projects via "Nicht zugewiesen"', async ({ page }) => {
+    await page.getByTestId('view-toggle-projekte').click();
+    await expect(page.getByTestId('project-table')).toBeVisible();
+
+    await page.getByTestId('worker-filter-toggle').click();
+    await page.getByTestId('worker-filter-popover').getByText('Jan Nowak').click();
+    // Capture the Jan-only count so we can assert the union grows.
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('worker-filter-popover')).toBeHidden();
+    const rows = page.getByTestId('project-table').locator('tbody tr');
+    const janOnlyCount = await rows.count();
+
+    // Re-open the popover and add the unassigned branch.
+    await page.getByTestId('worker-filter-toggle').click();
+    await page.getByTestId('worker-filter-option-unassigned').getByRole('checkbox').check();
+    await expect(page.getByTestId('worker-filter-toggle')).toContainText('Mitarbeiter (2)');
+    await page.keyboard.press('Escape');
+
+    const unionCount = await rows.count();
+    expect(unionCount).toBeGreaterThan(janOnlyCount);
+
+    // Every row matches Jan Nowak OR has an empty workers cell ("—").
+    const workerCells = rows.locator('td:nth-child(4)');
+    const total = await workerCells.count();
+    for (let i = 0; i < total; i++) {
+      const text = (await workerCells.nth(i).textContent())?.trim() ?? '';
+      expect(text === '—' || text.includes('Jan Nowak')).toBe(true);
+    }
+  });
+
+  test('Mitarbeiter filter clear chip restores the full list', async ({ page }) => {
+    await page.getByTestId('view-toggle-projekte').click();
+    await expect(page.getByTestId('project-table')).toBeVisible();
+
+    const rows = page.getByTestId('project-table').locator('tbody tr');
+    await expect(rows.first()).toBeVisible();
+    const fullCount = await rows.count();
+
+    await page.getByTestId('worker-filter-toggle').click();
+    await page.getByTestId('worker-filter-popover').getByText('Jan Nowak').click();
+    await page.keyboard.press('Escape');
+
+    const filteredCount = await rows.count();
+    expect(filteredCount).toBeLessThan(fullCount);
+
+    // Click the × adjacent to the toggle to wipe the selection.
+    await page.getByTestId('worker-filter-clear').click();
+    await expect(page.getByTestId('worker-filter-toggle')).toHaveText('Mitarbeiter filtern');
+    await expect(rows).toHaveCount(fullCount);
+  });
+
+  // ---------------------------------------------------------------
   // AC-123: Backdrop click does not close form modals. Protects
   // against accidental loss of typed data.
   // ---------------------------------------------------------------

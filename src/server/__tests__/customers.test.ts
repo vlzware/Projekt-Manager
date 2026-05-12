@@ -358,4 +358,215 @@ describe('Customer CRUD Operations', () => {
       expect(res.json().code).toBe('NOT_FOUND');
     });
   });
+
+  // ---------------------------------------------------------------
+  // Sort customers — server-side sortBy/sortDir allowlist.
+  // Each test creates a small fixture set with a unique tag in the
+  // name so the assertion can filter the sorted result down to the
+  // rows under test, ignoring any seed customers that happened to
+  // share the global ordering.
+  // ---------------------------------------------------------------
+  describe('Sort customers', () => {
+    it('sorts by name ascending then descending', async () => {
+      const tag = `SORT-NAME-${Date.now()}`;
+      const names = [`${tag}-Bravo`, `${tag}-Alpha`, `${tag}-Charlie`];
+      for (const name of names) {
+        const res = await authPost(ownerToken, '/api/customers', { name });
+        expect(res.statusCode).toBe(201);
+      }
+
+      const ascRes = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc`,
+      );
+      expect(ascRes.statusCode).toBe(200);
+      expect(ascRes.json().customers.map((c: { name: string }) => c.name)).toEqual([
+        `${tag}-Alpha`,
+        `${tag}-Bravo`,
+        `${tag}-Charlie`,
+      ]);
+
+      const descRes = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=desc`,
+      );
+      expect(descRes.statusCode).toBe(200);
+      expect(descRes.json().customers.map((c: { name: string }) => c.name)).toEqual([
+        `${tag}-Charlie`,
+        `${tag}-Bravo`,
+        `${tag}-Alpha`,
+      ]);
+    });
+
+    it('sorts by city via JSONB extract and pushes NULL city last', async () => {
+      const tag = `SORT-CITY-${Date.now()}`;
+      const fixtures: {
+        name: string;
+        address: { street: string; zip: string; city: string } | null;
+      }[] = [
+        { name: `${tag}-Z`, address: { street: 'S1', zip: '00001', city: 'Aachen' } },
+        { name: `${tag}-Y`, address: null },
+        { name: `${tag}-X`, address: { street: 'S2', zip: '00002', city: 'Mannheim' } },
+      ];
+      for (const f of fixtures) {
+        const res = await authPost(ownerToken, '/api/customers', f);
+        expect(res.statusCode).toBe(201);
+      }
+
+      const ascRes = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=city&sortDir=asc`,
+      );
+      expect(ascRes.statusCode).toBe(200);
+      const ascNames = ascRes.json().customers.map((c: { name: string }) => c.name);
+      // Aachen → Mannheim → NULL (NULLS LAST holds for both directions)
+      expect(ascNames).toEqual([`${tag}-Z`, `${tag}-X`, `${tag}-Y`]);
+
+      const descRes = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=city&sortDir=desc`,
+      );
+      expect(descRes.statusCode).toBe(200);
+      const descNames = descRes.json().customers.map((c: { name: string }) => c.name);
+      // Mannheim → Aachen → NULL (still last in DESC)
+      expect(descNames).toEqual([`${tag}-X`, `${tag}-Z`, `${tag}-Y`]);
+    });
+
+    // Fastify maps querystring schema violations to 422 via the project's
+    // error handler (server/app.ts). 422 is the right status — the
+    // request was syntactically valid, it just carried a value the route
+    // refuses.
+    it('rejects unknown sortBy column with 422', async () => {
+      const res = await authGet(ownerToken, '/api/customers?sortBy=notes&sortDir=asc');
+      expect(res.statusCode).toBe(422);
+    });
+
+    it('rejects invalid sortDir with 422', async () => {
+      const res = await authGet(ownerToken, '/api/customers?sortBy=name&sortDir=sideways');
+      expect(res.statusCode).toBe(422);
+    });
+
+    // LIKE-pattern metacharacters (`%`, `_`, `\`) and quote / semicolon
+    // shapes are escaped at the repository boundary (`escapeLike`) so
+    // user input is treated as literal text. Without escape, `%` and `_`
+    // would expand the wildcard space and a malicious `'); DROP …`
+    // would never reach the SQL — drizzle's tagged-template still binds
+    // the value — but the escape contract is the first line of defense.
+    describe('LIKE-pattern escape (search safety)', () => {
+      it('treats % as a literal character, not a wildcard', async () => {
+        const tag = `ESC-PCT-${Date.now()}`;
+        const literal = `${tag}-50%-off`;
+        const decoy = `${tag}-plain`;
+        for (const name of [literal, decoy]) {
+          const res = await authPost(ownerToken, '/api/customers', { name });
+          expect(res.statusCode).toBe(201);
+        }
+        // Search for `%` should match only the literal-% row, not the
+        // decoy. Without escaping, `%` would match every row.
+        const res = await authGet(
+          ownerToken,
+          `/api/customers?search=${encodeURIComponent('%')}-off`,
+        );
+        expect(res.statusCode).toBe(200);
+        const names = res.json().customers.map((c: { name: string }) => c.name);
+        expect(names).toContain(literal);
+        expect(names).not.toContain(decoy);
+      });
+
+      it('treats _ as a literal character, not a single-char wildcard', async () => {
+        const tag = `ESC-UND-${Date.now()}`;
+        const literal = `${tag}-foo_bar`;
+        const decoy = `${tag}-fooXbar`;
+        for (const name of [literal, decoy]) {
+          const res = await authPost(ownerToken, '/api/customers', { name });
+          expect(res.statusCode).toBe(201);
+        }
+        const res = await authGet(
+          ownerToken,
+          `/api/customers?search=${encodeURIComponent('foo_bar')}`,
+        );
+        expect(res.statusCode).toBe(200);
+        const names = res.json().customers.map((c: { name: string }) => c.name);
+        expect(names).toContain(literal);
+        expect(names).not.toContain(decoy);
+      });
+
+      it('treats \\ as a literal character', async () => {
+        const tag = `ESC-BS-${Date.now()}`;
+        const literal = `${tag}-back\\slash`;
+        const res = await authPost(ownerToken, '/api/customers', { name: literal });
+        expect(res.statusCode).toBe(201);
+        const search = await authGet(
+          ownerToken,
+          `/api/customers?search=${encodeURIComponent('back\\slash')}`,
+        );
+        expect(search.statusCode).toBe(200);
+        const names = search.json().customers.map((c: { name: string }) => c.name);
+        expect(names).toContain(literal);
+      });
+
+      it('treats SQL-injection-shaped input as plain text', async () => {
+        const tag = `ESC-SQLI-${Date.now()}`;
+        const literal = `${tag}-'); DROP TABLE customers; --`;
+        const createRes = await authPost(ownerToken, '/api/customers', { name: literal });
+        expect(createRes.statusCode).toBe(201);
+        const res = await authGet(
+          ownerToken,
+          `/api/customers?search=${encodeURIComponent('); DROP TABLE')}`,
+        );
+        expect(res.statusCode).toBe(200);
+        const names = res.json().customers.map((c: { name: string }) => c.name);
+        expect(names).toContain(literal);
+        // Sanity: the table still exists — the next list query succeeds
+        // and returns a non-empty result set.
+        const sanity = await authGet(ownerToken, '/api/customers?limit=1');
+        expect(sanity.statusCode).toBe(200);
+        expect(sanity.json().customers.length).toBeGreaterThan(0);
+      });
+    });
+
+    // `customers.name` is notNull but not unique, so ties on the primary
+    // sort column would otherwise leave pagination order to the planner.
+    // The repo appends `, id ASC` as a stable tiebreaker.
+    it('produces deterministic pagination when name ties', async () => {
+      const tag = `SORT-TIE-${Date.now()}`;
+      const duplicateName = `${tag}-Same`;
+      const createdIds: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        const res = await authPost(ownerToken, '/api/customers', { name: duplicateName });
+        expect(res.statusCode).toBe(201);
+        createdIds.push(res.json().id as string);
+      }
+
+      const page1 = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc&limit=1&offset=0`,
+      );
+      const page2 = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc&limit=1&offset=1`,
+      );
+      const page3 = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc&limit=1&offset=2`,
+      );
+
+      const ids = [
+        page1.json().customers[0].id,
+        page2.json().customers[0].id,
+        page3.json().customers[0].id,
+      ];
+      expect(new Set(ids).size).toBe(3);
+      const sortedById = [...createdIds].sort();
+      expect(ids).toEqual(sortedById);
+
+      // A second pass over the same query returns the same order — the
+      // tiebreaker is stable, not just deterministic for one snapshot.
+      const repeat1 = await authGet(
+        ownerToken,
+        `/api/customers?search=${tag}&sortBy=name&sortDir=asc&limit=1&offset=0`,
+      );
+      expect(repeat1.json().customers[0].id).toBe(ids[0]);
+    });
+  });
 });

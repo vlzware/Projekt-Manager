@@ -14,6 +14,8 @@ import {
   ProjectCrudService,
   ProjectTransitionService,
   ProjectDatesService,
+  PROJECT_SORT_KEYS,
+  type ProjectSortKey,
 } from '../services/project.js';
 import { STATE_KEYS, type WorkflowState } from '../../config/stateConfig.js';
 import { createStorageClient } from '../storage/client.js';
@@ -61,6 +63,21 @@ export function projectRoutes(db: Database) {
               hasNoDates: { type: 'string' },
               customerId: { type: 'string', format: 'uuid' },
               includeArchived: { type: 'string' },
+              // Mitarbeiter filter (assignee). Modelled as an array of
+              // UUIDs; Fastify's querystring Ajv runs `coerceTypes: 'array'`
+              // so a single `?assignedWorkerIds=u1` is coerced to `[u1]`
+              // and `?assignedWorkerIds=u1&assignedWorkerIds=u2` arrives
+              // as `[u1, u2]`. `items.format: 'uuid'` enforces the shape
+              // at the route boundary so malformed input returns 422
+              // VALIDATION_ERROR up front rather than a SQLSTATE 22P02
+              // → 500 from the DB driver.
+              assignedWorkerIds: {
+                type: 'array',
+                items: { type: 'string', format: 'uuid' },
+              },
+              includeUnassigned: { type: 'string' },
+              sortBy: { type: 'string', enum: [...PROJECT_SORT_KEYS] },
+              sortDir: { type: 'string', enum: ['asc', 'desc'] },
             },
           },
         },
@@ -75,7 +92,15 @@ export function projectRoutes(db: Database) {
           hasNoDates?: string;
           customerId?: string;
           includeArchived?: string;
+          assignedWorkerIds?: string[];
+          includeUnassigned?: string;
+          sortBy?: ProjectSortKey;
+          sortDir?: 'asc' | 'desc';
         };
+        // Schema-coerced to `string[]` regardless of whether Fastify saw
+        // one query param or several. Empty/undefined → omit so the repo
+        // treats it as "no worker filter".
+        const workerIds = query.assignedWorkerIds;
         const result = await crudService.listProjects(request.user!, {
           offset: query.offset,
           limit: query.limit,
@@ -84,6 +109,10 @@ export function projectRoutes(db: Database) {
           hasNoDates: query.hasNoDates === 'true',
           customerId: query.customerId,
           includeArchived: query.includeArchived === 'true',
+          assignedWorkerIds: workerIds,
+          includeUnassigned: query.includeUnassigned === 'true',
+          sortBy: query.sortBy,
+          sortDir: query.sortDir,
         });
 
         return reply.code(200).send({ data: result.data, total: result.total });

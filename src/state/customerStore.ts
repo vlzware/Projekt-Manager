@@ -7,9 +7,21 @@
 
 import { create } from 'zustand';
 import type { Customer } from '@/domain/types';
-import { customerApi } from '@/api/client';
+import { customerApi, type CustomerSortKey, type SortDir } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 import { useStorageUsageStore } from './storageUsageStore';
+
+// Re-export the sort-key/direction types so UI components reach them
+// through the state layer (the API client is off-limits to UI per
+// ESLint `no-restricted-imports`).
+export type { CustomerSortKey, SortDir };
+
+// Monotonic sequence for fetchCustomers. Each call captures a fresh
+// number; if a newer call has since been issued the older response is
+// dropped instead of overwriting the user's current list. Guards against
+// (a) two debounced searches racing on the wire, and (b) an SSE-driven
+// refetch overlapping with a user-triggered one.
+let customerFetchSeq = 0;
 
 /**
  * Result of `createCustomer`. `'ok'` — row committed (fresh or idempotent
@@ -36,10 +48,22 @@ interface CustomerState {
   total: number;
   loading: boolean;
   error: string | null;
+  /**
+   * Toolbar search and column sort. Lifted into the store so background
+   * refetches — e.g. `createCustomer`'s post-commit refresh — keep the
+   * user's view intact instead of resetting to default-order unfiltered.
+   * `sortBy` defaults to `'name'` and `sortDir` to `'asc'` to match the
+   * baseline established at mount.
+   */
+  search: string;
+  sortBy: CustomerSortKey;
+  sortDir: SortDir;
 
-  fetchCustomers: (search?: string) => Promise<void>;
+  fetchCustomers: () => Promise<void>;
   fetchCustomerDetail: (id: string) => Promise<CustomerDetail | null>;
   searchCustomers: (search: string) => Promise<Customer[]>;
+  setSearch: (v: string) => void;
+  setSort: (by: CustomerSortKey, dir: SortDir) => void;
   createCustomer: (data: {
     id?: string;
     name: string;
@@ -67,10 +91,29 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
   total: 0,
   loading: false,
   error: null,
+  search: '',
+  sortBy: 'name',
+  sortDir: 'asc',
 
-  fetchCustomers: async (search?: string) => {
+  fetchCustomers: async () => {
+    const seq = ++customerFetchSeq;
     set({ loading: true, error: null });
-    const result = await customerApi.list(search ? { search } : undefined);
+    const { search, sortBy, sortDir } = get();
+    const params: { search?: string; sortBy?: CustomerSortKey; sortDir?: SortDir } = {
+      sortBy,
+      sortDir,
+    };
+    // Trim before forwarding — preserves the user's typed text in the
+    // input while keeping whitespace-only queries off the wire (mirrors
+    // `searchCustomers`).
+    const trimmedSearch = search.trim();
+    if (trimmedSearch) params.search = trimmedSearch;
+    const result = await customerApi.list(params);
+
+    // Drop superseded responses — including the error path, so a slow-
+    // failing old request can't flash an error after the user has moved
+    // on to a fresh search/sort.
+    if (seq !== customerFetchSeq) return;
 
     if (!result.ok) {
       if (result.sessionExpired) {
@@ -192,6 +235,14 @@ export const useCustomerStore = create<CustomerState>((set, get) => ({
       return null;
     }
     return result.data;
+  },
+
+  setSearch: (v: string) => {
+    set({ search: v });
+  },
+
+  setSort: (by, dir) => {
+    set({ sortBy: by, sortDir: dir });
   },
 
   clearError: () => set({ error: null }),

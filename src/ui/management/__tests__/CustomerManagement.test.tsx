@@ -84,7 +84,15 @@ beforeEach(() => {
     authError: null,
     sessionChecked: true,
   });
-  useCustomerStore.setState({ customers: [], total: 0, loading: false, error: null });
+  useCustomerStore.setState({
+    customers: [],
+    total: 0,
+    loading: false,
+    error: null,
+    search: '',
+    sortBy: 'name',
+    sortDir: 'asc',
+  });
 });
 
 describe('CustomerManagement — create form UUID lifecycle', () => {
@@ -260,6 +268,92 @@ describe('CustomerManagement — soft-confirm double-click protection', () => {
     // Give any phantom second call room to fire, then assert stability.
     await new Promise((r) => setTimeout(r, 50));
     expect(customerCreateMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CustomerManagement — list search', () => {
+  it('debounces typing in the toolbar search and refetches with the search param', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<CustomerManagement />);
+
+      // Mount fetch goes out with the default sort baseline.
+      await waitFor(() => expect(customerListMock).toHaveBeenCalled());
+      customerListMock.mockClear();
+      customerListMock.mockResolvedValue(ok({ customers: [], total: 0 }));
+
+      const searchInput = screen.getByTestId('customer-search');
+      fireEvent.change(searchInput, { target: { value: 'M' } });
+      fireEvent.change(searchInput, { target: { value: 'Mu' } });
+      fireEvent.change(searchInput, { target: { value: 'Mue' } });
+
+      // No fetch before the debounce window expires.
+      expect(customerListMock).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+
+      // One coalesced call carrying the final value plus the active sort.
+      expect(customerListMock).toHaveBeenCalledTimes(1);
+      expect(customerListMock).toHaveBeenCalledWith({
+        search: 'Mue',
+        sortBy: 'name',
+        sortDir: 'asc',
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('CustomerManagement — sortable headers', () => {
+  it('clicking a header refetches with that column ascending', async () => {
+    render(<CustomerManagement />);
+
+    await waitFor(() => expect(customerListMock).toHaveBeenCalled());
+    customerListMock.mockClear();
+    customerListMock.mockResolvedValue(ok({ customers: [], total: 0 }));
+
+    await userEvent.click(screen.getByTestId('customer-sort-phone'));
+
+    await waitFor(() => expect(customerListMock).toHaveBeenCalledTimes(1));
+    expect(customerListMock).toHaveBeenCalledWith({ sortBy: 'phone', sortDir: 'asc' });
+  });
+
+  it('second click on the active header flips direction to descending', async () => {
+    render(<CustomerManagement />);
+
+    await waitFor(() => expect(customerListMock).toHaveBeenCalled());
+    customerListMock.mockClear();
+    customerListMock.mockResolvedValue(ok({ customers: [], total: 0 }));
+
+    // First click: switch to phone ASC.
+    await userEvent.click(screen.getByTestId('customer-sort-phone'));
+    await waitFor(() => expect(customerListMock).toHaveBeenCalledTimes(1));
+
+    // Second click on the same header: flip to DESC.
+    await userEvent.click(screen.getByTestId('customer-sort-phone'));
+    await waitFor(() => expect(customerListMock).toHaveBeenCalledTimes(2));
+    expect(customerListMock).toHaveBeenLastCalledWith({ sortBy: 'phone', sortDir: 'desc' });
+  });
+
+  it('clicking a different header resets direction to ascending', async () => {
+    render(<CustomerManagement />);
+
+    await waitFor(() => expect(customerListMock).toHaveBeenCalled());
+    customerListMock.mockClear();
+    customerListMock.mockResolvedValue(ok({ customers: [], total: 0 }));
+
+    // Activate phone DESC first.
+    await userEvent.click(screen.getByTestId('customer-sort-phone'));
+    await userEvent.click(screen.getByTestId('customer-sort-phone'));
+    await waitFor(() => expect(customerListMock).toHaveBeenCalledTimes(2));
+
+    // Now switch to email — must come back as ASC, not inherit DESC.
+    await userEvent.click(screen.getByTestId('customer-sort-email'));
+    await waitFor(() => expect(customerListMock).toHaveBeenCalledTimes(3));
+    expect(customerListMock).toHaveBeenLastCalledWith({ sortBy: 'email', sortDir: 'asc' });
   });
 });
 

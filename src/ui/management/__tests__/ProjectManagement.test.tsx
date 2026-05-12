@@ -105,6 +105,12 @@ beforeEach(() => {
     customers: [],
     loading: false,
     error: null,
+    showArchived: false,
+    assignedWorkerIds: [],
+    includeUnassigned: false,
+    search: '',
+    sortBy: null,
+    sortDir: 'asc',
   });
 });
 
@@ -248,6 +254,67 @@ describe('ProjectManagement — number preflight', () => {
 
     expect(screen.queryByTestId('project-number-taken')).not.toBeInTheDocument();
     expect(screen.getByTestId('project-number-available')).toBeInTheDocument();
+  });
+});
+
+describe('ProjectManagement — sortable headers', () => {
+  it('clicking a header refetches with that column ascending', async () => {
+    renderWithRouter(<ProjectManagement />);
+
+    // Mount: one fetch with no sort params.
+    await waitFor(() => expect(projectListMock).toHaveBeenCalled());
+    projectListMock.mockClear();
+    projectListMock.mockResolvedValue(ok({ data: [], total: 0 }));
+
+    await userEvent.click(screen.getByTestId('project-sort-title'));
+
+    await waitFor(() => expect(projectListMock).toHaveBeenCalledTimes(1));
+    expect(projectListMock).toHaveBeenCalledWith({ sortBy: 'title', sortDir: 'asc' });
+  });
+
+  it('second click on the active header flips direction to descending', async () => {
+    renderWithRouter(<ProjectManagement />);
+
+    await waitFor(() => expect(projectListMock).toHaveBeenCalled());
+    projectListMock.mockClear();
+    projectListMock.mockResolvedValue(ok({ data: [], total: 0 }));
+
+    await userEvent.click(screen.getByTestId('project-sort-title'));
+    await waitFor(() => expect(projectListMock).toHaveBeenCalledTimes(1));
+
+    await userEvent.click(screen.getByTestId('project-sort-title'));
+    await waitFor(() => expect(projectListMock).toHaveBeenCalledTimes(2));
+    expect(projectListMock).toHaveBeenLastCalledWith({ sortBy: 'title', sortDir: 'desc' });
+  });
+
+  it('status header sorts by workflow ordinal under the hood (sends sortBy=status)', async () => {
+    renderWithRouter(<ProjectManagement />);
+
+    await waitFor(() => expect(projectListMock).toHaveBeenCalled());
+    projectListMock.mockClear();
+    projectListMock.mockResolvedValue(ok({ data: [], total: 0 }));
+
+    await userEvent.click(screen.getByTestId('project-sort-status'));
+    await waitFor(() => expect(projectListMock).toHaveBeenCalledTimes(1));
+    expect(projectListMock).toHaveBeenCalledWith({ sortBy: 'status', sortDir: 'asc' });
+  });
+
+  it('clicking a different header after a DESC sort resets to ASC on the new column', async () => {
+    renderWithRouter(<ProjectManagement />);
+
+    await waitFor(() => expect(projectListMock).toHaveBeenCalled());
+    projectListMock.mockClear();
+    projectListMock.mockResolvedValue(ok({ data: [], total: 0 }));
+
+    // Title ASC → Title DESC.
+    await userEvent.click(screen.getByTestId('project-sort-title'));
+    await userEvent.click(screen.getByTestId('project-sort-title'));
+    await waitFor(() => expect(projectListMock).toHaveBeenCalledTimes(2));
+
+    // Switch column — must come back as ASC.
+    await userEvent.click(screen.getByTestId('project-sort-customer'));
+    await waitFor(() => expect(projectListMock).toHaveBeenCalledTimes(3));
+    expect(projectListMock).toHaveBeenLastCalledWith({ sortBy: 'customer', sortDir: 'asc' });
   });
 });
 

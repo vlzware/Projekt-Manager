@@ -12,9 +12,11 @@ import { STRINGS } from '@/config/strings';
 import { STATE_CONFIGS, STATE_FALLBACK_COLOR } from '@/config/stateConfig';
 import type { Project } from '@/domain/types';
 import { usePermission } from '@/hooks/usePermission';
-import { useProjectManagementStore } from '@/state/projectManagementStore';
+import { useProjectManagementStore, type ProjectSortKey } from '@/state/projectManagementStore';
 import { useConfirmStore } from '@/state/confirmStore';
+import { SortableHeader, type SortDirection } from '@/ui/common/SortableHeader';
 import { ProjectCreateForm } from './ProjectCreateForm';
+import { WorkerFilter } from './WorkerFilter';
 import styles from './Management.module.css';
 
 export function ProjectManagement() {
@@ -25,16 +27,22 @@ export function ProjectManagement() {
   const loading = useProjectManagementStore((s) => s.loading);
   const error = useProjectManagementStore((s) => s.error);
   const showArchived = useProjectManagementStore((s) => s.showArchived);
+  const assignedWorkerIds = useProjectManagementStore((s) => s.assignedWorkerIds);
+  const includeUnassigned = useProjectManagementStore((s) => s.includeUnassigned);
+  const search = useProjectManagementStore((s) => s.search);
+  const sortBy = useProjectManagementStore((s) => s.sortBy);
+  const sortDir = useProjectManagementStore((s) => s.sortDir);
   const fetchProjects = useProjectManagementStore((s) => s.fetchProjects);
   const fetchCustomers = useProjectManagementStore((s) => s.fetchCustomers);
   const setShowArchived = useProjectManagementStore((s) => s.setShowArchived);
+  const setSearch = useProjectManagementStore((s) => s.setSearch);
+  const setSort = useProjectManagementStore((s) => s.setSort);
   const deleteProject = useProjectManagementStore((s) => s.deleteProject);
   const purgeProject = useProjectManagementStore((s) => s.purgeProject);
   const clearError = useProjectManagementStore((s) => s.clearError);
   const requestConfirm = useConfirmStore((s) => s.request);
   const navigate = useNavigate();
 
-  const [search, setSearch] = useState('');
   const [formOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
@@ -48,10 +56,18 @@ export function ProjectManagement() {
     if (search === prevSearch.current) return;
     prevSearch.current = search;
     const timer = setTimeout(() => {
-      fetchProjects(search || undefined);
+      fetchProjects();
     }, 300);
     return () => clearTimeout(timer);
   }, [search, fetchProjects]);
+
+  // Sort change — no debounce, click is discrete.
+  const prevSort = useRef({ sortBy, sortDir });
+  useEffect(() => {
+    if (prevSort.current.sortBy === sortBy && prevSort.current.sortDir === sortDir) return;
+    prevSort.current = { sortBy, sortDir };
+    fetchProjects();
+  }, [sortBy, sortDir, fetchProjects]);
 
   // Refetch when showArchived toggles. The store reads `showArchived` from
   // its own state at request time, so we only need to trigger a refetch
@@ -60,8 +76,29 @@ export function ProjectManagement() {
   useEffect(() => {
     if (showArchived === prevShowArchived.current) return;
     prevShowArchived.current = showArchived;
-    fetchProjects(search || undefined);
-  }, [showArchived, fetchProjects, search]);
+    fetchProjects();
+  }, [showArchived, fetchProjects]);
+
+  // Refetch when the Mitarbeiter (assignee) filter changes. The selection
+  // is a SET — reordering the same ids must not refetch. Compare by
+  // Set membership so [a,b] and [b,a] are equivalent.
+  const prevAssignedWorkerIds = useRef(assignedWorkerIds);
+  const prevIncludeUnassigned = useRef(includeUnassigned);
+  useEffect(() => {
+    const prevSet = new Set(prevAssignedWorkerIds.current);
+    const idsChanged =
+      prevAssignedWorkerIds.current.length !== assignedWorkerIds.length ||
+      assignedWorkerIds.some((id) => !prevSet.has(id));
+    const flagChanged = prevIncludeUnassigned.current !== includeUnassigned;
+    if (!idsChanged && !flagChanged) return;
+    prevAssignedWorkerIds.current = assignedWorkerIds;
+    prevIncludeUnassigned.current = includeUnassigned;
+    fetchProjects();
+  }, [assignedWorkerIds, includeUnassigned, fetchProjects]);
+
+  const handleSort = (column: ProjectSortKey, direction: SortDirection) => {
+    setSort(column, direction);
+  };
 
   const handleArchive = async (e: React.MouseEvent, project: Project) => {
     e.stopPropagation();
@@ -122,9 +159,11 @@ export function ProjectManagement() {
           />
           {STRINGS.projects.showArchived}
         </label>
+        <WorkerFilter />
         <input
           className={styles.searchInput}
           placeholder={STRINGS.ui.search}
+          aria-label={STRINGS.ui.search}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           data-testid="project-search"
@@ -136,13 +175,61 @@ export function ProjectManagement() {
       <table className={styles.table} data-testid="project-table">
         <thead>
           <tr>
-            <th>{STRINGS.ui.number}</th>
-            <th>{STRINGS.ui.title}</th>
-            <th>{STRINGS.ui.customer}</th>
+            <SortableHeader<ProjectSortKey>
+              column="number"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-number"
+            >
+              {STRINGS.ui.number}
+            </SortableHeader>
+            <SortableHeader<ProjectSortKey>
+              column="title"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-title"
+            >
+              {STRINGS.ui.title}
+            </SortableHeader>
+            <SortableHeader<ProjectSortKey>
+              column="customer"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-customer"
+            >
+              {STRINGS.ui.customer}
+            </SortableHeader>
             <th>{STRINGS.ui.workers}</th>
-            <th>{STRINGS.ui.status}</th>
-            <th>{STRINGS.ui.dates}</th>
-            <th>{STRINGS.ui.value}</th>
+            <SortableHeader<ProjectSortKey>
+              column="status"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-status"
+            >
+              {STRINGS.ui.status}
+            </SortableHeader>
+            <SortableHeader<ProjectSortKey>
+              column="plannedStart"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-dates"
+            >
+              {STRINGS.ui.dates}
+            </SortableHeader>
+            <SortableHeader<ProjectSortKey>
+              column="estimatedValue"
+              activeColumn={sortBy}
+              direction={sortDir}
+              onSort={handleSort}
+              testId="project-sort-value"
+            >
+              {STRINGS.ui.value}
+            </SortableHeader>
             {(canDelete || canPurge) && <th>{STRINGS.ui.actions}</th>}
           </tr>
         </thead>

@@ -5,7 +5,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
-import { CustomerService } from '../services/CustomerService.js';
+import {
+  CustomerService,
+  CUSTOMER_SORT_KEYS,
+  type CustomerSortKey,
+} from '../services/CustomerService.js';
 
 export function customerRoutes(db: Database) {
   return async function (app: FastifyInstance): Promise<void> {
@@ -26,13 +30,21 @@ export function customerRoutes(db: Database) {
               offset: { type: 'integer', minimum: 0 },
               limit: { type: 'integer', minimum: 1, maximum: 200 },
               search: { type: 'string' },
+              sortBy: { type: 'string', enum: [...CUSTOMER_SORT_KEYS] },
+              sortDir: { type: 'string', enum: ['asc', 'desc'] },
             },
           },
         },
         preHandler: requirePermission('customer:read'),
       },
       async (request, reply) => {
-        const query = request.query as { offset?: number; limit?: number; search?: string };
+        const query = request.query as {
+          offset?: number;
+          limit?: number;
+          search?: string;
+          sortBy?: CustomerSortKey;
+          sortDir?: 'asc' | 'desc';
+        };
         const result = await customerService.listCustomers(request.user!, query);
         return reply.code(200).send(result);
       },

@@ -246,12 +246,28 @@ interface UserListResponse {
   total: number;
 }
 
-/** Build a query string from an object, skipping undefined values. */
-function toQuery(params?: Record<string, string | number | boolean | undefined>): string {
+/**
+ * Build a query string from an object, skipping undefined values.
+ * Array values are emitted as repeated `key=v1&key=v2&...` parameters
+ * (matches Fastify's default querystring parser, which surfaces those as
+ * `string[]` on the server side — see `/api/projects?status=...&status=...`
+ * and the Mitarbeiter filter's `assignedWorkerIds`).
+ */
+function toQuery(
+  params?: Record<string, string | number | boolean | string[] | undefined>,
+): string {
   if (!params) return '';
-  const entries = Object.entries(params).filter(([, v]) => v !== undefined);
-  if (entries.length === 0) return '';
-  return '?' + new URLSearchParams(entries.map(([k, v]) => [k, String(v)])).toString();
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined) continue;
+    if (Array.isArray(v)) {
+      for (const item of v) usp.append(k, item);
+    } else {
+      usp.append(k, String(v));
+    }
+  }
+  const s = usp.toString();
+  return s ? '?' + s : '';
 }
 
 export const authApi = {
@@ -275,6 +291,23 @@ export const authApi = {
     apiCall<LoginResponse>('/api/auth/me', { method: 'PATCH', body: patch }),
 };
 
+/**
+ * Sortable columns for the project list. Mirrors the server-side
+ * `PROJECT_SORT_KEYS` allowlist — keep them in sync.
+ */
+export type ProjectSortKey =
+  | 'number'
+  | 'title'
+  | 'customer'
+  | 'status'
+  | 'plannedStart'
+  | 'estimatedValue';
+
+/** Sortable columns for the customer list. Mirrors `CUSTOMER_SORT_KEYS`. */
+export type CustomerSortKey = 'name' | 'phone' | 'email' | 'city';
+
+export type SortDir = 'asc' | 'desc';
+
 export const projectApi = {
   list: (params?: {
     status?: string;
@@ -282,10 +315,16 @@ export const projectApi = {
     customerId?: string;
     hasNoDates?: boolean;
     includeArchived?: boolean;
-  }) =>
-    apiCall<ProjectListResponse>(
-      '/api/projects' + toQuery(params as Record<string, string | number | boolean | undefined>),
-    ),
+    /**
+     * Mitarbeiter (assignee) filter — OR semantics across the supplied
+     * user ids (see ListProjectsOpts.assignedWorkerIds on the server).
+     * Combine with `includeUnassigned` to OR a "Nicht zugewiesen" branch.
+     */
+    assignedWorkerIds?: string[];
+    includeUnassigned?: boolean;
+    sortBy?: ProjectSortKey;
+    sortDir?: SortDir;
+  }) => apiCall<ProjectListResponse>('/api/projects' + toQuery(params)),
 
   get: (id: string) => apiCall<Project>(`/api/projects/${id}`),
 
@@ -366,7 +405,13 @@ export const projectApi = {
 };
 
 export const customerApi = {
-  list: (params?: { offset?: number; limit?: number; search?: string }) =>
+  list: (params?: {
+    offset?: number;
+    limit?: number;
+    search?: string;
+    sortBy?: CustomerSortKey;
+    sortDir?: SortDir;
+  }) =>
     apiCall<CustomerListResponse>(
       '/api/customers' + toQuery(params as Record<string, string | number | boolean | undefined>),
     ),
@@ -398,6 +443,20 @@ export const customerApi = {
 
   delete: (id: string) =>
     apiCall<{ success: boolean }>(`/api/customers/${id}`, { method: 'DELETE' }),
+};
+
+/**
+ * Assignee (Mitarbeiter) pool for the project-management filter dropdown.
+ * Distinct from `userApi` because the gate is `project:read` (every role
+ * that can list projects can populate the filter), not `user:read`
+ * (admin-only). The shape matches `Project.assignedWorkers`.
+ */
+interface WorkerListResponse {
+  data: { userId: string; displayName: string }[];
+}
+
+export const workerApi = {
+  list: () => apiCall<WorkerListResponse>('/api/workers'),
 };
 
 export const userApi = {

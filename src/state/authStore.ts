@@ -98,6 +98,13 @@ function readCachedPreference(): ThemePreference | null {
  * in, a same-tab cross-session leak that the review (C F-6) flagged
  * as a latent privacy concern.
  *
+ * The reset covers payload data (projects, customers, ...) AND the
+ * view's filter/sort/search state. The latter is store-owned for the
+ * management surfaces (so SSE / post-mutation refreshes keep the
+ * user's view intact); a logout that left it behind would let user A's
+ * "show archived + filter by Anna + sort by Title desc" preferences
+ * survive into user B's first paint on the same browser.
+ *
  * Kept inside authStore rather than imported from store.ts to avoid
  * the circular-via-barrel pattern: projectStore already imports
  * authStore for handleSessionExpired, and a second path through
@@ -119,6 +126,9 @@ function clearDownstreamState(): void {
     total: 0,
     loading: false,
     error: null,
+    search: '',
+    sortBy: 'name',
+    sortDir: 'asc',
   });
   useUserStore.setState({
     users: [],
@@ -129,8 +139,15 @@ function clearDownstreamState(): void {
   useProjectManagementStore.setState({
     projects: [],
     customers: [],
+    workers: [],
     loading: false,
     error: null,
+    showArchived: false,
+    assignedWorkerIds: [],
+    includeUnassigned: false,
+    search: '',
+    sortBy: null,
+    sortDir: 'asc',
   });
   // No audit-store reset: the factory-based `createAuditStore()` yields
   // per-component instances (see `src/state/auditStore.ts`), so audit
