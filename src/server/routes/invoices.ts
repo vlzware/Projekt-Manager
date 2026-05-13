@@ -179,10 +179,22 @@ export function invoiceRoutes(db: Database) {
             additionalProperties: false,
             properties: {
               projectId: { type: 'string', format: 'uuid' },
-              lines: { type: 'array', items: lineSchema },
+              // `maxItems` caps renderer-CPU amplification on a single
+              // accepted request. 500 is the practical upper bound on a
+              // single invoice (a long-form construction project at one
+              // unit per line); routes that exceed it should be split.
+              lines: { type: 'array', items: lineSchema, maxItems: 500 },
               recipient: recipientSchema,
               taxMode: { type: 'string', enum: [...TAX_MODES] },
-              performanceDate: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              // ISO-8601 calendar date. The month/day groups are pinned
+              // here (rather than via Ajv `format: 'date'`, which the
+              // route plugin does not register `ajv-formats` for) so the
+              // route layer rejects `9999-19-39` outright instead of
+              // forwarding a malformed value to the service.
+              performanceDate: {
+                type: ['string', 'null'],
+                pattern: '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$',
+              },
             },
           },
         },
@@ -230,10 +242,14 @@ export function invoiceRoutes(db: Database) {
             type: 'object',
             additionalProperties: false,
             properties: {
-              lines: { type: 'array', items: lineSchema },
+              // See POST handler — same `maxItems` + ISO-8601 rationale.
+              lines: { type: 'array', items: lineSchema, maxItems: 500 },
               recipient: recipientSchema,
               taxMode: { type: 'string', enum: [...TAX_MODES] },
-              performanceDate: { type: ['string', 'null'], pattern: '^\\d{4}-\\d{2}-\\d{2}$' },
+              performanceDate: {
+                type: ['string', 'null'],
+                pattern: '^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$',
+              },
             },
           },
         },
