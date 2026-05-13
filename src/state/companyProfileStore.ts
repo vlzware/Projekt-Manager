@@ -41,6 +41,20 @@ export type SaveOutcome =
 interface CompanyProfileState {
   data: CompanyProfile | null;
   loading: boolean;
+  /**
+   * Error from the most recent `fetch()`. Distinct from `saveError`
+   * because the form (the only `saveError` consumer) is not mounted
+   * until `data` is non-null — a failed initial GET would otherwise hide
+   * the diagnostic behind an empty section. Surfaced by the section's
+   * `!data` branch with a retry affordance. Cleared at the start of
+   * every `fetch()` attempt.
+   */
+  fetchError: string | null;
+  /**
+   * Error from the most recent `save()`. Surfaced inline by the form.
+   * Cleared at the start of every save attempt and exposed via
+   * `clearSaveError()` for the caller's dismiss affordance.
+   */
   saveError: string | null;
 
   fetch: () => Promise<void>;
@@ -61,17 +75,19 @@ function extractMissingFields(details: unknown): string[] {
 export const useCompanyProfileStore = create<CompanyProfileState>((set) => ({
   data: null,
   loading: false,
+  fetchError: null,
   saveError: null,
 
   fetch: async () => {
-    set({ loading: true });
+    set({ loading: true, fetchError: null });
     const result = await companyProfileApi.get();
     if (!result.ok) {
       if (result.sessionExpired) {
         handleSessionExpired();
+        set({ loading: false });
         return;
       }
-      set({ loading: false, saveError: result.error.message });
+      set({ loading: false, fetchError: result.error.message });
       return;
     }
     set({ data: result.data, loading: false });

@@ -374,6 +374,13 @@ export const STRINGS = {
     save: 'Speichern',
     ustIdRequiredForMode:
       'USt-IdNr. ist für den gewählten Steuermodus erforderlich. Bitte ausfüllen.',
+    /**
+     * Fetch-error fallback in the `!data` branch of the section. Surfaces
+     * when `GET /api/company-profile` fails so the user sees a diagnostic
+     * instead of an empty block.
+     */
+    fetchErrorHeading: 'Firmendaten konnten nicht geladen werden.',
+    fetchRetry: 'Erneut versuchen',
   },
 
   /**

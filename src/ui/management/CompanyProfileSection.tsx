@@ -80,6 +80,7 @@ interface FieldSpec {
 
 export function CompanyProfileSection() {
   const data = useCompanyProfileStore((s) => s.data);
+  const fetchError = useCompanyProfileStore((s) => s.fetchError);
   const fetchProfile = useCompanyProfileStore((s) => s.fetch);
 
   useEffect(() => {
@@ -90,11 +91,33 @@ export function CompanyProfileSection() {
   // `key={profile.updatedAt}` re-mounts the form when the server
   // returns a refreshed snapshot after a successful save — `useState`
   // initializer re-runs against the new data without a setState-in-effect.
+  //
+  // Until then, surface the fetch error explicitly. The form is the only
+  // place `saveError` is rendered, so a failed initial GET would
+  // otherwise hide the diagnostic behind an empty section. The retry
+  // button re-dispatches `fetch()` so the user can recover without a
+  // full page reload.
   if (!data) {
     return (
       <section className={styles.section}>
         <h3 className={styles.heading}>{STRINGS.companyProfile.heading}</h3>
         <p className={styles.description}>{STRINGS.companyProfile.description}</p>
+        {fetchError && (
+          <div className={styles.fetchError} role="alert" data-testid="company-profile-fetch-error">
+            <span className={styles.fetchErrorHeading}>
+              {STRINGS.companyProfile.fetchErrorHeading}
+            </span>
+            <span>{fetchError}</span>
+            <button
+              type="button"
+              className={styles.fetchErrorRetry}
+              onClick={() => void fetchProfile()}
+              data-testid="company-profile-fetch-retry"
+            >
+              {STRINGS.companyProfile.fetchRetry}
+            </button>
+          </div>
+        )}
       </section>
     );
   }

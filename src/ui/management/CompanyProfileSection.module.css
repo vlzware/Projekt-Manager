@@ -87,6 +87,42 @@
   font-size: 0.875rem;
 }
 
+/* Fetch-error block in the `!data` branch — no grid context, so its
+   layout properties differ from the in-form `.error` banner above.
+   Includes a retry affordance the user can dispatch without reloading. */
+.fetchError {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-border);
+  border-radius: 6px;
+  color: var(--color-danger-text);
+  font-size: 0.875rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.fetchErrorHeading {
+  font-weight: 500;
+}
+
+.fetchErrorRetry {
+  padding: 6px 14px;
+  border: 1px solid var(--color-danger-border);
+  border-radius: 6px;
+  background: var(--color-surface-raised);
+  color: var(--color-danger-text);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.fetchErrorRetry:hover {
+  background: var(--color-surface-muted);
+}
+
 .actions {
   grid-column: 1 / -1;
   display: flex;
