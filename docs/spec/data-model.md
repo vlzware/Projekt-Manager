@@ -589,9 +589,9 @@ interface InvoiceSequence {
 Design notes:
 
 - **Composite primary key `(year, kind)`.** One row per `(calendar year, sequence kind)` pair; allocations are scoped to that key. A new `(year, kind)` row is **upserted on first use** in the same transaction as the first issuance of the year — the sequence table has no pre-seeding obligation.
-- **Allocation is `SELECT … FOR UPDATE` inside the issuance transaction.** The service reads the matching row with `FOR UPDATE`, increments `nextValue`, formats the resulting `number`, and writes the invoice row — all inside one DB transaction. The row lock is held until commit; a rollback returns the value to the sequence (the increment never persists), which is the gapless guarantee.
+- **Allocation is an atomic `UPDATE invoice_sequence … RETURNING next_value` inside the issuance transaction.** Postgres takes a row-exclusive lock on the matching row (equivalent to `SELECT FOR UPDATE` for serialization purposes), reads and increments `nextValue` in one statement, and returns the post-increment value. The formatted `number` is derived from the pre-increment value; the invoice row is written in the same transaction. The row lock is held until commit; a rollback returns the value to the sequence (the increment never persists), which is the gapless guarantee.
 - **`bigint` for headroom.** `nextValue` is bigint so a deployment cannot mathematically exhaust a year's namespace; the four-digit-minimum format in §5.15 widens past 9999 without a schema migration.
-- **Persistence principle.** The `FOR UPDATE` pattern is generalized in [§6.13](#613-gapless-sequence-allocation) so future gapless counters can reuse the shape without re-arguing the choice against `SERIAL`.
+- **Persistence principle.** The atomic-UPDATE pattern is generalized in [§6.13](#613-gapless-sequence-allocation) so future gapless counters can reuse the shape without re-arguing the choice against `SERIAL`.
 
 ### 5.17 Company Profile Entity
 
@@ -721,7 +721,7 @@ Timestamp ownership rules are defined in section 5.5. Additionally, `statusChang
 ### 6.13 Gapless Sequence Allocation
 
 - A gapless sequence is an integer counter whose advancement is **coupled to the commit of a using transaction** — a rollback returns the value to the pool, never leaving a gap. Postgres `SERIAL` / `IDENTITY` is incompatible by design (they advance on every insert attempt, including rolled-back ones).
-- The canonical pattern is a dedicated counter table whose row is selected `FOR UPDATE` inside the using transaction. The lock is held until the transaction commits; the row's `nextValue` is incremented and read inside the same transaction; if the transaction rolls back, the increment never persists.
+- The canonical pattern is a dedicated counter table whose row is allocated by a single `UPDATE … RETURNING` inside the using transaction — Postgres takes a row-exclusive lock equivalent to `SELECT FOR UPDATE` for the duration of the transaction. The lock is held until commit; the row's `nextValue` is incremented and read atomically in the same statement; if the transaction rolls back, the increment never persists.
 - The pattern is reusable for any future counter with gapless semantics. The current consumer is `invoice_sequence` ([§5.16](#516-invoice-sequence-entity)) per [ADR-0026](../adr/0026-invoices-immutability-and-zugferd.md); allocations are scoped to `(year, kind)` composite keys.
 - The using transaction commits the counter increment, the using row's insert, the audit row, and any byte-side write (e.g., a rendered artifact's binary descriptor) atomically. Splitting the counter advancement out of the using transaction breaks the gapless guarantee.
 

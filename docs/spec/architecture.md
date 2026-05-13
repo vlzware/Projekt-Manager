@@ -286,7 +286,7 @@ The transaction shape and supporting topology for the invoice domain ([data-mode
 
 **Issuance transaction.** A single DB transaction wraps every step of the `draft → issued` transition:
 
-1. `SELECT … FOR UPDATE` on the `invoice_sequence` row matching `(year, 'invoice')` — upsert when the row is missing, then increment `nextValue`.
+1. Atomic `UPDATE invoice_sequence … RETURNING next_value` on the row matching `(year, 'invoice')` — Postgres takes a row-exclusive lock for the duration of the transaction (equivalent to `SELECT FOR UPDATE`); upsert when the row is missing.
 2. Format the resulting `Invoice.number` as `RE-YYYY-NNNN`.
 3. Snapshot `issuer` from the live `company_profile` row, `recipient` from the live `customers` row (looked up via `project.customerId`); freeze `lines`, `taxMode`, `profile` from the draft's current values; compute `totals` server-side from `lines` + `taxMode`.
 4. Render the PDF/A-3 with embedded `factur-x.xml` (ZUGFeRD EN 16931 Comfort profile) — the render happens inside the transaction so a render failure rolls back the sequence allocation.
@@ -295,13 +295,13 @@ The transaction shape and supporting topology for the invoice domain ([data-mode
 7. Update the parent `Project.status` to `abgerechnet` via the standard transition path; the transition's audit row is co-committed in the same transaction.
 8. Write the `audit_log` row through the single-write-path helper ([§11.3](#113-state-layer-behavioral-contract)) with `entityType = 'invoice'`, `action = 'invoice:issue'`, ancestor `('project', projectId)`.
 9. Commit.
-10. Post-commit, emit the `invoice_changed` SSE event ([§11.13](#1113-realtime-invalidation-channel)).
+10. Post-commit, emit the `invoice_changed` and `project_changed` SSE events ([§11.13](#1113-realtime-invalidation-channel)) — the project status changed, so both consumer surfaces (invoice list, project list / kanban) invalidate.
 
 A failure at any step rolls back the entire transaction: the sequence increment never persists (gapless guarantee — [§6.13](data-model.md#613-gapless-sequence-allocation)), no binary is left orphaned (the descriptor write rolls back), the project status stays at `rechnung_faellig`, and the draft remains editable.
 
 **Stornorechnung issuance transaction.** Cancellation of an issued invoice runs its own single transaction:
 
-1. `SELECT … FOR UPDATE` on `invoice_sequence` `(year, 'storno')`; increment.
+1. Atomic `UPDATE invoice_sequence … RETURNING next_value` on the row matching `(year, 'storno')`.
 2. Format `ST-YYYY-NNNN`.
 3. Insert a new `Invoice` row carrying `cancellationOf = <original.id>`, `issuer` / `recipient` / `taxMode` / `profile` / `performanceDate` snapshotted from the original, `lines` with sign-flipped `unitPrice` and `lineTotal`, totals re-derived from the negated lines, `cancellationReason` from the cancel call body, `status = 'issued'` (Storno rows are born issued).
 4. Render the PDF/A-3 with embedded `factur-x.xml` for the Storno using the same toolchain; write bytes through the binary pipeline.
