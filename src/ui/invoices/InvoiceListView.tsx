@@ -23,6 +23,7 @@ import { STRINGS } from '@/config/strings';
 import { usePermission } from '@/hooks/usePermission';
 import { orderInvoicesWithStornoGrouping } from '@/domain/invoiceGrouping';
 import { useInvoiceListStore } from '@/state/invoiceListStore';
+import { useProjectStore } from '@/state/projectStore';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
 import { InvoiceListFilterBar } from './InvoiceListFilterBar';
 import { InvoiceListRow } from './InvoiceListRow';
@@ -79,6 +80,20 @@ export function InvoiceListView() {
     // projectId, and the filter-effect for year/status takes over for
     // subsequent runtime changes.
   }, [urlProjectId, filters.projectId, setFilter]);
+
+  // Project chip resolves number/title from the project store so the user
+  // sees *which* project the filter constrains, not just that one is set.
+  // Deep-linking /rechnungen?projectId=… may land before the project is
+  // cached, so we trigger a fetch when missing — `fetchProject` upserts
+  // into the same store the lookup reads from.
+  const filterProject = useProjectStore((s) =>
+    filters.projectId ? (s.projects.find((p) => p.id === filters.projectId) ?? null) : null,
+  );
+  const fetchProject = useProjectStore((s) => s.fetchProject);
+  useEffect(() => {
+    if (!filters.projectId || filterProject) return;
+    void fetchProject(filters.projectId);
+  }, [filters.projectId, filterProject, fetchProject]);
 
   // Initial fetch. Subsequent fetches are triggered by the
   // year/status/projectId effects below and by the SSE subscription in
@@ -150,7 +165,12 @@ export function InvoiceListView() {
 
       {filters.projectId && (
         <div className={styles.projectChip} data-testid="invoice-list-project-chip">
-          <span>{STRINGS.invoices.filterProjectChip}</span>
+          <span className={styles.projectChipLabel}>{STRINGS.invoices.filterProjectChip}</span>
+          {filterProject ? (
+            <span className={styles.projectChipValue} data-testid="invoice-list-project-chip-name">
+              {filterProject.number} — {filterProject.title}
+            </span>
+          ) : null}
           <button
             type="button"
             className={styles.projectChipClear}

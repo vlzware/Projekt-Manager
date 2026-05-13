@@ -31,7 +31,7 @@
   padding: 6px 12px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
   font-weight: 500;
   cursor: pointer;
@@ -76,7 +76,7 @@
   padding: 10px 12px;
   border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
 }
 
 .rowStorno {
@@ -88,7 +88,10 @@
   opacity: 0.85;
 }
 
-@media (max-width: 700px) {
+/* See InvoiceListView.module.css — the 6-column layout needs ~900px
+   to fit its fixed widths plus action buttons; falling to a 2-column
+   stack below avoids the 700–900px squeeze. */
+@media (max-width: 900px) {
   .row {
     grid-template-columns: 1fr 1fr;
   }
@@ -157,7 +160,7 @@
   padding: 4px 10px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
   font-size: 0.85rem;
   cursor: pointer;
@@ -187,7 +190,7 @@
 }
 
 .formPanel {
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 20px;
@@ -254,7 +257,7 @@
   padding: 6px 10px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
   font: inherit;
 }
@@ -286,7 +289,7 @@
   padding: 4px 6px;
   border: 1px solid var(--color-border);
   border-radius: 3px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
   font: inherit;
   box-sizing: border-box;
@@ -344,7 +347,7 @@
 }
 
 .secondaryButton {
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
 }
 
@@ -360,7 +363,7 @@
 }
 
 .cancelDialog {
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   border: 1px solid var(--color-border);
   border-radius: 8px;
   padding: 20px;
@@ -386,7 +389,7 @@
   padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
   font: inherit;
   resize: vertical;

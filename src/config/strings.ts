@@ -523,8 +523,10 @@ export const STRINGS = {
     loadMore: 'Weitere laden',
     /** Active project filter chip on the /rechnungen toolbar — set when the
      *  view is opened with `?projectId=…` from the per-project block's
-     *  cross-link (ui/project-detail.md §8.15.11). */
-    filterProjectChip: 'Projekt-Filter aktiv',
+     *  cross-link (ui/project-detail.md §8.15.11). The label introduces a
+     *  resolved `{project.number} — {project.title}` value next to it so
+     *  the user sees *which* project constrains the list. */
+    filterProjectChip: 'Projekt-Filter:',
     filterProjectClear: 'Filter aufheben',
 
     // Cross-link from the per-project block to the standalone view

@@ -32,7 +32,7 @@
   padding: 6px 10px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
   font: inherit;
 }
@@ -75,7 +75,7 @@
   padding: 10px 12px;
   border: 1px solid var(--color-border-subtle);
   border-radius: 6px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   text-align: left;
   cursor: pointer;
   font: inherit;
@@ -95,7 +95,13 @@
   opacity: 0.85;
 }
 
-@media (max-width: 700px) {
+/* The 6-column row needs roughly 900px to lay out its fixed widths
+   (number 120, status 110, date 110, recipient 160, total 120) plus the
+   action buttons and column gaps without squeezing. Below that we fall
+   to a 2-column stack so the row stays legible — the previous 700px
+   breakpoint left a 700–900px band where the buttons collapsed into
+   each other. */
+@media (max-width: 900px) {
   .row {
     grid-template-columns: 1fr 1fr;
   }
@@ -164,7 +170,7 @@
   padding: 4px 10px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
   font-size: 0.85rem;
   cursor: pointer;
@@ -180,8 +186,8 @@
 }
 
 /* Active project filter chip — surfaces the URL-driven `?projectId=`
-   filter as a removable indicator so the user sees why the list is
-   constrained. Clearing strips the query param and refetches. */
+   filter as a removable indicator so the user sees *which* project the
+   list is constrained to. Clearing strips the query param and refetches. */
 .projectChip {
   display: inline-flex;
   align-items: center;
@@ -192,6 +198,22 @@
   border-radius: 999px;
   font-size: 0.85rem;
   align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.projectChipLabel {
+  color: var(--color-text-subtle);
+  white-space: nowrap;
+}
+
+.projectChipValue {
+  color: var(--color-text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .projectChipClear {
@@ -201,6 +223,7 @@
   cursor: pointer;
   font: inherit;
   text-decoration: underline;
+  flex-shrink: 0;
 }
 
 .projectChipClear:hover {
@@ -212,7 +235,7 @@
   padding: 6px 14px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-surface);
+  background: var(--color-surface-raised);
   color: var(--color-text);
   font: inherit;
   cursor: pointer;
