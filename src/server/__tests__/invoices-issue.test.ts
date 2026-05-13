@@ -45,13 +45,19 @@
  * present (the implementer adds them in step 5).
  */
 
+import crypto from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { startApp, stopApp, login, authGet, authPost, authPut } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
-import { createDatabase } from '../db/connection.js';
-import { InvoiceRenderer } from '../services/InvoiceRenderer.js';
+import { createDatabase, type Database } from '../db/connection.js';
+import { InvoiceRenderer, type RenderedInvoice } from '../services/InvoiceRenderer.js';
 import { validateFacturXml } from '../services/invoice/xsdValidator.js';
+import { InvoiceIssueService } from '../services/InvoiceIssueService.js';
+import { InvoiceBinaryService, type InvoiceBinaryDeps } from '../services/InvoiceBinaryService.js';
+import { createStorageClient } from '../storage/client.js';
+import { getEnv } from '../config/env.js';
+import type { ServiceLogger } from '../services/Logger.js';
 
 const year = new Date().getFullYear();
 
@@ -578,6 +584,326 @@ describe('Invoice issuance — gapless sequence (AT-112 / AC-288)', () => {
     const okNumber = ok.json().number as string;
     const okValue = Number(okNumber.split('-').pop());
     expect(okValue).toBe(expectedRolledBack);
+  });
+});
+
+// ---------------------------------------------------------------------
+// Concurrent-issue race against TWO real Postgres connections
+// (security-audit finding S5 / AC-288).
+//
+// The existing gapless-sequence tests above cover the sequential and
+// rollback paths only — both arms run on a single connection so the
+// `invoice_sequence` row-level lock is never actually contended. This
+// block fills that gap by racing `service1.issueDraft(...)` and
+// `service2.issueDraft(...)` via `Promise.all`, with each service wired
+// to its OWN `pg.Pool` + Drizzle handle pointing at the same per-PID
+// test Postgres database. Two independent pools → two independent
+// physical connections → two independent transactions → genuine row-
+// lock contention on `invoice_sequence (year, 'invoice')`.
+//
+// Mechanism under test (invoice-read.ts:allocateNextSequenceValue):
+//   1. First UPDATE on the sequence row takes the row lock and returns
+//      the post-increment `next_value`; the caller hands out
+//      `next_value - 1`.
+//   2. A concurrent UPDATE on the same row blocks until the first
+//      transaction commits or rolls back.
+//   3. On commit: the waiter resumes against the new `next_value` and
+//      claims the next slot — gapless consecutive numbers.
+//   4. On rollback: the increment reverts; the waiter claims what the
+//      failed call would have claimed — still gapless.
+//
+// Why direct service calls instead of HTTP:
+//   The Fastify app instance holds ONE `db` (one pool). Two parallel
+//   `authPost(... /issue)` calls would serialize at that pool's
+//   connection cap or — if they hit different connections from the same
+//   pool — exercise the same mechanism, but the test would also be
+//   testing the route layer's middleware stack, error mapping, etc.,
+//   which obscures the load-bearing assertion. Calling
+//   `InvoiceIssueService.issueDraft(...)` directly with two distinct
+//   `db` handles isolates the concurrency primitive.
+//
+// Flake mitigation:
+//   - No timing assertions. `Promise.all` resolution order does not
+//     map to commit order; the lock-acquisition order is
+//     non-deterministic. The load-bearing facts are the persisted
+//     `invoice_sequence.next_value` row and the SET of returned
+//     `number` strings — both are deterministic post-commit.
+//   - Each test reads the sequence baseline before acting, so the
+//     assertions are robust to earlier tests in the same describe
+//     block having advanced the counter.
+//   - Pools are torn down in `afterAll` so the per-PID DB does not
+//     accumulate idle connections across describe blocks.
+// ---------------------------------------------------------------------
+
+describe('Invoice issuance — concurrent race on two real PG connections (S5 / AC-288)', () => {
+  let ownerToken: string;
+  let ownerId: string;
+  let customerId: string;
+
+  // Independent connection pairs — one per racing service. The test app
+  // (started by `startApp()`) keeps its own pool; these two are
+  // additional, on the same per-PID DATABASE_URL.
+  let connA: { db: Database; pool: import('pg').Pool };
+  let connB: { db: Database; pool: import('pg').Pool };
+
+  /**
+   * Mint a fresh project directly in `rechnung_faellig`. The seed ships
+   * three such projects (used by sibling describe blocks above); this
+   * helper keeps the new tests independent of that count — case 2 alone
+   * needs three fresh `rechnung_faellig` projects (A, B, then a third
+   * after the rollback), and stacking on top of the seed's three would
+   * couple the test to seed shape. POST /api/projects accepts an
+   * explicit `status` field (routes/projects.ts:138), so we can land in
+   * `rechnung_faellig` without walking the transition graph.
+   */
+  async function mintRechnungFaelligProject(): Promise<string> {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const res = await authPost(ownerToken, '/api/projects', {
+      number: `RACE-${suffix}`,
+      title: `Race fixture ${suffix}`,
+      customerId,
+      status: 'rechnung_faellig',
+    });
+    if (res.statusCode !== 201) {
+      throw new Error(`mintRechnungFaelligProject failed ${res.statusCode} ${res.body}`);
+    }
+    return res.json().id as string;
+  }
+
+  /**
+   * No-op logger — direct service calls don't go through Fastify, so we
+   * don't have `request.log`. Matches the sibling pattern in
+   * `attachments-storage-usage-events.test.ts`.
+   */
+  const noopLog: ServiceLogger = {
+    info: () => undefined,
+    error: () => undefined,
+  };
+
+  /**
+   * Inline replica of `InvoiceService.ts`'s private `buildInvoiceBinaryDeps`.
+   * Kept local rather than re-exported because (a) the test is the only
+   * other caller and (b) extending the production surface for a test-only
+   * concern is the wrong direction. The boot probe
+   * (`assertAppServerEnv`) already ran in `startApp()`, so every env
+   * value below is guaranteed present.
+   */
+  function buildIssueServiceFor(db: Database, renderer?: InvoiceRenderer): InvoiceIssueService {
+    const env = getEnv();
+    const storage = createStorageClient({
+      endpoint: env.STORAGE_ENDPOINT!,
+      publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
+      bucket: env.STORAGE_BUCKET,
+      accessKey: env.STORAGE_ACCESS_KEY!,
+      secretKey: env.STORAGE_SECRET_KEY!,
+      region: env.STORAGE_REGION,
+    });
+    const deps: InvoiceBinaryDeps = {
+      storage,
+      binaryAgeRecipient: env.BINARY_AGE_RECIPIENT!,
+      binaryAgeIdentityPath: env.BINARY_AGE_IDENTITY_PATH!,
+    };
+    const binary = new InvoiceBinaryService(db, deps);
+    return new InvoiceIssueService(db, binary, renderer);
+  }
+
+  beforeAll(async () => {
+    await startApp();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    await ensureCompanyProfileComplete(ownerToken, 'standard');
+
+    // Resolve owner userId + an arbitrary customer id from the seed.
+    // The auth path doesn't surface userId through the API helpers,
+    // and `mintRechnungFaelligProject` needs a customerId to satisfy
+    // the FK. One lookup pool, closed immediately.
+    const lookup = createDatabase();
+    try {
+      const userRows = await lookup.db.execute(
+        sql`SELECT id FROM users WHERE username = ${SEED_USERS.owner.username} LIMIT 1`,
+      );
+      if (userRows.rows.length === 0) {
+        throw new Error('seed missing owner user');
+      }
+      ownerId = (userRows.rows[0] as { id: string }).id;
+
+      const customerRows = await lookup.db.execute(sql`SELECT id FROM customers LIMIT 1`);
+      if (customerRows.rows.length === 0) {
+        throw new Error('seed missing any customer');
+      }
+      customerId = (customerRows.rows[0] as { id: string }).id;
+    } finally {
+      await lookup.pool.end();
+    }
+
+    // Two INDEPENDENT pools against the per-PID test DB. Each
+    // `createDatabase()` call returns a fresh `pg.Pool` — see
+    // `db/connection.ts`. The pools share connection string but NOT
+    // any underlying connection; `Promise.all` of `db.transaction(...)`
+    // on the two handles produces two physical sessions in Postgres.
+    connA = createDatabase();
+    connB = createDatabase();
+  });
+
+  afterAll(async () => {
+    if (connA) await connA.pool.end();
+    if (connB) await connB.pool.end();
+    await stopApp();
+  });
+
+  it('happy-path race — both succeed; numbers form a consecutive gapless pair', async () => {
+    // Two FRESH rechnung_faellig projects so the test exercises the
+    // sequence-row contention without dragging the project-status
+    // pre-condition into the picture. Two drafts on the SAME project
+    // would also work under READ COMMITTED (both txs read the pre-flip
+    // status before either commits), but distinct projects keep the
+    // post-conditions cleaner — each draft's issuance flips its OWN
+    // project to `abgerechnet`, and the test asserts both end-states
+    // independently.
+    const projectAId = await mintRechnungFaelligProject();
+    const projectBId = await mintRechnungFaelligProject();
+
+    const draftA = await createDraft(ownerToken, projectAId);
+    const draftB = await createDraft(ownerToken, projectBId);
+
+    const serviceA = buildIssueServiceFor(connA.db);
+    const serviceB = buildIssueServiceFor(connB.db);
+
+    // Capture the sequence value the first allocation will claim.
+    // `null` means the row doesn't exist yet — first allocation INSERTs
+    // and hands out 1.
+    const before = await readInvoiceSequenceNextValue();
+    const expectedFirst = before ?? 1;
+
+    // Race. `Promise.all` schedules both promise bodies in the same
+    // event-loop turn; whichever query lands at Postgres first acquires
+    // the row lock, the other blocks until the first commits.
+    const [resultA, resultB] = await Promise.all([
+      serviceA.issueDraft(draftA, ownerId, noopLog, null),
+      serviceB.issueDraft(draftB, ownerId, noopLog, null),
+    ]);
+
+    // Both numbers conform to the wire shape (AC-295). `Invoice.number`
+    // is `string | null` (drafts carry null); after a successful issue
+    // it's always non-null — the assertion above narrows the union.
+    const numberPattern = new RegExp(`^RE-${year}-\\d{4,}$`);
+    expect(resultA.number).toMatch(numberPattern);
+    expect(resultB.number).toMatch(numberPattern);
+    expect(resultA.number).not.toBeNull();
+    expect(resultB.number).not.toBeNull();
+
+    // Both succeeded; the SET of allocated values is { expectedFirst,
+    // expectedFirst+1 }. We don't assert which service got which
+    // number — Promise.all resolution order is not the load-bearing
+    // fact. The sequence-row state is.
+    const valA = Number(resultA.number!.split('-').pop());
+    const valB = Number(resultB.number!.split('-').pop());
+    const allocated = [valA, valB].sort((a, b) => a - b);
+    expect(allocated).toEqual([expectedFirst, expectedFirst + 1]);
+
+    // Persisted sequence state: `next_value` is post-increment, so
+    // after two allocations starting from `expectedFirst` the row
+    // carries `expectedFirst + 2`.
+    const after = await readInvoiceSequenceNextValue();
+    expect(after).toBe(expectedFirst + 2);
+
+    // Sanity — the two invoices are distinct DB rows on distinct
+    // projects, both flipped to `issued`.
+    expect(resultA.id).not.toBe(resultB.id);
+    expect(resultA.status).toBe('issued');
+    expect(resultB.status).toBe('issued');
+    expect(new Set([resultA.projectId, resultB.projectId])).toEqual(
+      new Set([projectAId, projectBId]),
+    );
+  });
+
+  it('one renderer fault — failure rolls back the slot; third issue claims it (gapless)', async () => {
+    // ServiceB uses a fake renderer that throws AFTER allocation
+    // (allocation happens in step 4 of `runIssueInsideTx`, render in
+    // step 6). The throw rolls back ServiceB's transaction; whatever
+    // sequence value ServiceB claimed returns to the row.
+    //
+    // ServiceA uses a real renderer and is expected to succeed.
+    //
+    // Lock-order is non-deterministic — whichever UPDATE hits Postgres
+    // first acquires the row lock. Both interleavings yield the same
+    // observable outcome:
+    //   - ServiceA wins the lock: A increments to N+1 (hands out N),
+    //     commits. B unblocks, increments to N+2 (hands out N+1),
+    //     throws on render, rolls back — row reverts to N+1. A
+    //     succeeded with N. Next issuance claims N+1.
+    //   - ServiceB wins the lock: B increments to N+1 (hands out N),
+    //     throws on render, rolls back — row reverts to N. A unblocks,
+    //     increments to N+1 (hands out N), commits. A succeeded with N.
+    //     Next issuance claims N+1.
+    // Both paths: exactly one slot consumed (`N`), next issuance gets
+    // `N+1`, sequence ends at `N+2`.
+
+    const projectAId = await mintRechnungFaelligProject();
+    const projectBId = await mintRechnungFaelligProject();
+    const draftA = await createDraft(ownerToken, projectAId);
+    const draftB = await createDraft(ownerToken, projectBId);
+
+    // Faulty renderer — extends the real class so the constructor's
+    // `renderer?: InvoiceRenderer` parameter type-checks without a
+    // structural cast. The `render` override throws synchronously
+    // (mirrors the existing rollback test's `mockImplementation` style
+    // at line 545-547 above).
+    class FaultyInvoiceRenderer extends InvoiceRenderer {
+      async render(): Promise<RenderedInvoice> {
+        throw new Error('test-injected-render-fault');
+      }
+    }
+
+    const serviceA = buildIssueServiceFor(connA.db); // real renderer.
+    const serviceB = buildIssueServiceFor(connB.db, new FaultyInvoiceRenderer());
+
+    const before = await readInvoiceSequenceNextValue();
+    const expectedFirst = before ?? 1;
+
+    const [resA, resB] = await Promise.allSettled([
+      serviceA.issueDraft(draftA, ownerId, noopLog, null),
+      serviceB.issueDraft(draftB, ownerId, noopLog, null),
+    ]);
+
+    // Exactly ONE fulfilled, ONE rejected. ServiceA's renderer is real;
+    // ServiceB's throws. By construction A succeeds and B rejects.
+    expect(resA.status).toBe('fulfilled');
+    expect(resB.status).toBe('rejected');
+    if (resA.status !== 'fulfilled' || resB.status !== 'rejected') {
+      // Narrow the union for TypeScript — the asserts above already
+      // failed if we reach here.
+      throw new Error('unreachable — assertions above failed');
+    }
+
+    // A's allocated number equals the baseline. Whether A won or lost
+    // the lock race, the post-rollback state hands A the same value.
+    expect(resA.value.number).not.toBeNull();
+    const allocatedA = Number(resA.value.number!.split('-').pop());
+    expect(allocatedA).toBe(expectedFirst);
+
+    // The failed call did NOT consume a slot: persisted `next_value`
+    // after both transactions complete is `expectedFirst + 1`.
+    const midway = await readInvoiceSequenceNextValue();
+    expect(midway).toBe(expectedFirst + 1);
+
+    // Third issuance — claims the next consecutive value, proving the
+    // failed call rolled back cleanly (AC-288 gapless).
+    const projectCId = await mintRechnungFaelligProject();
+    const draftC = await createDraft(ownerToken, projectCId);
+    const serviceC = buildIssueServiceFor(connA.db); // reuse connA's pool.
+    const resC = await serviceC.issueDraft(draftC, ownerId, noopLog, null);
+    expect(resC.number).not.toBeNull();
+    const allocatedC = Number(resC.number!.split('-').pop());
+    expect(allocatedC).toBe(expectedFirst + 1);
+
+    const after = await readInvoiceSequenceNextValue();
+    expect(after).toBe(expectedFirst + 2);
+
+    // Sanity — B's rejection carries the sentinel error so a
+    // regression that masked the throw (catch-and-resolve, retry loop,
+    // …) surfaces here rather than silently passing on the
+    // post-conditions alone.
+    expect(String(resB.reason)).toContain('test-injected-render-fault');
   });
 });
 
