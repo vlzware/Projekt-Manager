@@ -17,7 +17,7 @@
  * per the spec's "Future-work seam" note.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import { usePermission } from '@/hooks/usePermission';
@@ -64,21 +64,18 @@ export function InvoiceListView() {
   // the GET only fires after the user stops for `SEARCH_DEBOUNCE_MS`.
   const [searchInput, setSearchInput] = useState(filters.search);
 
-  // F7 — sync the URL's `?projectId=` query into the store filter so the
-  // cross-link from the per-project block lands a pre-filtered view. The
-  // chip in the toolbar makes the filter explicit; clearing the chip
-  // strips the query and falls through here to reset the filter.
+  // URL → store, one-way. The `?projectId=` query is set by the per-
+  // project block's cross-link; the chip's clear button strips the param
+  // and re-runs this effect to null the filter. The store is never the
+  // source of truth for `projectId` — only the URL is — so there is no
+  // bidirectional risk. The fetch effect below picks up the resulting
+  // filter change.
   const [searchParams, setSearchParams] = useSearchParams();
   const urlProjectId = searchParams.get('projectId');
   useEffect(() => {
     if (filters.projectId !== urlProjectId) {
       setFilter('projectId', urlProjectId);
     }
-    // We intentionally do not fetch here — the initial-fetch effect below
-    // observes the synced filter and dispatches a single GET. Splitting
-    // sync + fetch avoids a double-fetch when the view mounts with a URL
-    // projectId, and the filter-effect for year/status takes over for
-    // subsequent runtime changes.
   }, [urlProjectId, filters.projectId, setFilter]);
 
   // Project chip resolves number/title from the project store so the user
@@ -95,28 +92,17 @@ export function InvoiceListView() {
     void fetchProject(filters.projectId);
   }, [filters.projectId, filterProject, fetchProject]);
 
-  // Initial fetch. Subsequent fetches are triggered by the
-  // year/status/projectId effects below and by the SSE subscription in
-  // App.tsx. The dependency on `filters.projectId` covers the URL-sync
-  // path: the URL effect above flushes the filter, then this effect's
-  // re-run picks it up.
+  // Unified refetch — one effect keyed on every filter dimension the
+  // server cares about plus the read-permission gate. Replaces the
+  // previous split between an "initial fetch" effect, a prev-ref dance
+  // for year/status, and a debounced search effect. The search debounce
+  // (below) writes `filters.search` after a 250 ms idle, which then
+  // re-triggers this effect; the chain stays clear. SSE invalidation
+  // (App.tsx subscription) is independent of this effect.
   useEffect(() => {
     if (!canRead) return;
     void fetch();
-    // Initial fetch — triggered by canRead and any URL-driven projectId
-    // change. Year/status/search have their own effects.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canRead, filters.projectId]);
-
-  // Year / status changes are discrete clicks → fire immediately.
-  const prevYear = useRef(filters.year);
-  const prevStatus = useRef(filters.status);
-  useEffect(() => {
-    if (prevYear.current === filters.year && prevStatus.current === filters.status) return;
-    prevYear.current = filters.year;
-    prevStatus.current = filters.status;
-    void fetch();
-  }, [filters.year, filters.status, fetch]);
+  }, [canRead, filters.projectId, filters.year, filters.status, filters.search, fetch]);
 
   const clearProjectFilter = () => {
     const next = new URLSearchParams(searchParams);
@@ -124,15 +110,16 @@ export function InvoiceListView() {
     setSearchParams(next, { replace: true });
   };
 
-  // Search is debounced to avoid hammering the endpoint while typing.
+  // Search is debounced so typing does not hammer the endpoint. The
+  // debounce only writes `filters.search` to the store; the unified
+  // fetch effect above observes the change and dispatches the GET.
   useEffect(() => {
     if (searchInput === filters.search) return;
     const timer = setTimeout(() => {
       setFilter('search', searchInput);
-      void fetch();
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [searchInput, filters.search, setFilter, fetch]);
+  }, [searchInput, filters.search, setFilter]);
 
   const years = useMemo(() => yearsFromInvoices(invoices.map((i) => i.issueDate)), [invoices]);
 
