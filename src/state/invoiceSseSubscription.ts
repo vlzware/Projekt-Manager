@@ -8,7 +8,7 @@
  *     invalidation hint only), so the handler refreshes every project
  *     the user has already loaded.
  *   - `useInvoiceListStore` — cross-project list view. Refreshed only
- *     once an entry exists (`initialLoad === false` — the user has
+ *     once an entry exists (`hasInitialized === true` — the user has
  *     visited `/rechnungen` at least once); skipping the initial fetch
  *     keeps an idle login from issuing a list query the user hasn't
  *     asked for.
@@ -35,7 +35,7 @@ export function subscribeInvoiceStoreToSse(): () => void {
     for (const projectId of projectIds) {
       void useInvoiceStore.getState().fetchByProject(projectId);
     }
-    if (!useInvoiceListStore.getState().initialLoad) {
+    if (useInvoiceListStore.getState().hasInitialized) {
       void useInvoiceListStore.getState().fetch();
     }
     useInvoiceDetailStore.getState().refreshAll();

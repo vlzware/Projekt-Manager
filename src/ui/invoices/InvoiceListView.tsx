@@ -53,7 +53,7 @@ export function InvoiceListView() {
   const total = useInvoiceListStore((s) => s.total);
   const loading = useInvoiceListStore((s) => s.loading);
   const error = useInvoiceListStore((s) => s.error);
-  const initialLoad = useInvoiceListStore((s) => s.initialLoad);
+  const hasInitialized = useInvoiceListStore((s) => s.hasInitialized);
   const setFilter = useInvoiceListStore((s) => s.setFilter);
   const fetch = useInvoiceListStore((s) => s.fetch);
   const fetchMore = useInvoiceListStore((s) => s.fetchMore);
@@ -133,7 +133,7 @@ export function InvoiceListView() {
 
   if (!canRead) return <NotPermittedView />;
 
-  const showEmpty = !initialLoad && !loading && ordered.length === 0;
+  const showEmpty = hasInitialized && !loading && ordered.length === 0;
   const hasMore = invoices.length < total;
 
   return (

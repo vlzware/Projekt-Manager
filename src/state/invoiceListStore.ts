@@ -42,8 +42,13 @@ interface InvoiceListState {
   total: number;
   loading: boolean;
   error: string | null;
-  /** `true` between fetch start and arrival of the first page only. */
-  initialLoad: boolean;
+  /**
+   * `false` until the first `fetch()` settles (success or error), then
+   * permanently `true`. Distinguishes "never asked" from "asked but still
+   * loading"; the empty-state banner must wait for `true` to avoid a
+   * flicker while the very first response is in flight.
+   */
+  hasInitialized: boolean;
 
   setFilter: <K extends keyof InvoiceListFilters>(key: K, value: InvoiceListFilters[K]) => void;
   fetch: () => Promise<void>;
@@ -69,7 +74,7 @@ export const useInvoiceListStore = create<InvoiceListState>((set, get) => ({
   total: 0,
   loading: false,
   error: null,
-  initialLoad: true,
+  hasInitialized: false,
 
   setFilter: (key, value) => {
     set((s) => ({ filters: { ...s.filters, [key]: value } }));
@@ -84,14 +89,14 @@ export const useInvoiceListStore = create<InvoiceListState>((set, get) => ({
         handleSessionExpired();
         return;
       }
-      set({ loading: false, initialLoad: false, error: result.error.message });
+      set({ loading: false, hasInitialized: true, error: result.error.message });
       return;
     }
     set({
       invoices: result.data.data,
       total: result.data.total,
       loading: false,
-      initialLoad: false,
+      hasInitialized: true,
     });
   },
 
