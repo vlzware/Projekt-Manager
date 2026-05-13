@@ -37,7 +37,8 @@ const addressSchema = {
 // growth cannot land in audit payloads, the rendered PDF footer, or the
 // embedded `factur-x.xml` metadata. `footerText` is the highest-impact
 // because it lands verbatim in every rendered PDF; `accentColor` is also
-// pattern-pinned to the `#RRGGBB` shape the renderer expects.
+// pattern-pinned to the CSS hex shapes the renderer expects (3-char
+// shorthand `#RGB` or full form `#RRGGBB`).
 const profileBodySchema = {
   type: 'object',
   // PUT semantics — the always-required block must be present. Optional
@@ -52,7 +53,11 @@ const profileBodySchema = {
     taxId: { type: 'string', maxLength: 50 },
     ustId: { type: ['string', 'null'], maxLength: 50 },
     iban: { type: ['string', 'null'], maxLength: 50 },
-    accentColor: { type: ['string', 'null'], maxLength: 7, pattern: '^#[0-9A-Fa-f]{6}$' },
+    accentColor: {
+      type: ['string', 'null'],
+      maxLength: 7,
+      pattern: '^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$',
+    },
     footerText: { type: ['string', 'null'], maxLength: 2000 },
     logoBinaryDescriptorId: { type: ['string', 'null'], format: 'uuid' },
     defaultTaxMode: { type: 'string', enum: [...TAX_MODES] },
