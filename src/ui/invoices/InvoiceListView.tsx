@@ -7,14 +7,14 @@
  * in `App.tsx` — defense in depth; the server's repository predicate
  * (ADR-0019) is authoritative.
  *
- * The row's `Öffnen` action navigates to `/projects/:id` (the per-project
- * detail page) rather than `/rechnungen/:id` — the per-invoice viewer
- * surface is deferred to a follow-up (Chunk D backlog). The PDF download
- * affordance lives inline on each non-draft row.
+ * Row navigation: draft rows open `/projects/:projectId` (the only
+ * surface where a draft is editable); issued / cancelled / Storno rows
+ * open `/rechnungen/:id` — the per-invoice viewer (§8.16.3). The PDF
+ * download affordance lives inline on each non-draft row.
  *
- * Mutate actions (create / edit / issue / cancel) are NOT exposed here —
- * those live on the per-project block (Chunk B). This surface is
- * read-mostly per the spec's "Future-work seam" note.
+ * Mutate actions (create / edit / issue / cancel) are NOT exposed here
+ * — those live on the per-project block. This surface is read-mostly
+ * per the spec's "Future-work seam" note.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';

@@ -132,6 +132,9 @@ describe('ROUTES — path/view helpers', () => {
 
   it('routeByPath resolves parametrized paths by pattern', () => {
     expect(routeByPath('/projects/abc123')?.view).toBe('projektDetail');
+    // Per-invoice viewer (ui/invoices.md §8.16.3) — same parametrized
+    // shape, gated on invoice:read alongside the list view.
+    expect(routeByPath('/rechnungen/abc123')?.view).toBe('rechnungDetail');
   });
 
   it('routeByView throws for an unknown view', () => {

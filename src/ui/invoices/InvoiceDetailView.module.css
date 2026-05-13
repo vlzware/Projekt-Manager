@@ -1,0 +1,272 @@
+/* Per-invoice viewer at `/rechnungen/:id` (ui/invoices.md §8.16.3).
+   Visual register mirrors the management views' detail surfaces — a
+   stack of titled cards over a soft background, generous gutters,
+   tabular numerics for line items. Read-only by structure; no
+   inline editors. */
+
+.container {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.backLink {
+  font-size: 0.9rem;
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.backLink:hover {
+  text-decoration: underline;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.headerActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.actionButton {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.actionButton:hover {
+  background: var(--color-surface-muted);
+}
+
+.actionDanger {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+.errorBanner {
+  padding: 8px 12px;
+  background: var(--color-surface-muted);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.notFound {
+  padding: 32px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.card {
+  padding: 16px;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+}
+
+.cardHeading {
+  margin: 0 0 12px 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.metaGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+}
+
+@media (max-width: 600px) {
+  .metaGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.metaRow {
+  display: contents;
+}
+
+.metaLabel {
+  color: var(--color-text-subtle);
+  font-size: 0.85rem;
+}
+
+.metaValue {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.statusBadge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: var(--color-surface-muted);
+  color: var(--color-text-subtle);
+}
+
+.statusIssued {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.statusCancelled {
+  background: var(--color-surface-muted);
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.statusStorno {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.partyName {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.partyAddressLine {
+  color: var(--color-text-subtle);
+  font-size: 0.92rem;
+}
+
+.partyExtra {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  color: var(--color-text-subtle);
+}
+
+.linesTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.linesTableScroll {
+  overflow-x: auto;
+}
+
+.linesTable th,
+.linesTable td {
+  padding: 8px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 0.9rem;
+}
+
+.linesTable th {
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.linesTable td.numeric,
+.linesTable th.numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalsList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.totalsRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.95rem;
+}
+
+.totalsRow > dt {
+  color: var(--color-text-subtle);
+}
+
+.totalsRow > dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.totalsGrossRow {
+  font-weight: 600;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 6px;
+  font-size: 1.05rem;
+}
+
+.siblings {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.siblingRow {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  margin-left: 16px;
+  border-left: 3px solid var(--color-border);
+}
+
+.siblingChevron {
+  color: var(--color-text-muted);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.siblingLink {
+  color: var(--color-accent);
+  text-decoration: none;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.siblingLink:hover {
+  text-decoration: underline;
+}
+
+.viewOriginalLink {
+  display: inline-block;
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.viewOriginalLink:hover {
+  text-decoration: underline;
+}

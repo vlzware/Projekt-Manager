@@ -170,6 +170,50 @@ test.describe('Invoice lifecycle (AC-287, AC-290)', () => {
     expect(download.suggestedFilename()).toMatch(/\.pdf$/i);
   });
 
+  test('the list-row click opens the per-invoice viewer and the cancel dialog reaches it (§8.16.3)', async ({
+    page,
+  }) => {
+    // Per-invoice viewer at `/rechnungen/:id` — the list-row click
+    // for an issued row navigates here, and the viewer exposes the
+    // same `Stornorechnung erstellen` flow as the per-project block.
+    // The cancel is committed in the next test through the per-
+    // project block; here we only assert the viewer's surfaces and
+    // that the dialog opens with the spec-mandated warning copy.
+    await page.goto('/rechnungen');
+    await expect(page.getByTestId('invoice-list-view')).toBeVisible();
+
+    const issuedRow = page
+      .getByTestId('invoice-list-cross-project')
+      .locator('[data-testid^="invoice-row-"]')
+      .filter({ hasText: invoiceNumber })
+      .first();
+    await expect(issuedRow).toBeVisible();
+    await issuedRow.click();
+
+    await expect(page).toHaveURL(/\/rechnungen\/[a-f0-9-]+$/);
+    await expect(page.getByTestId('invoice-detail-view')).toBeVisible();
+    await expect(page.getByTestId('invoice-detail-number')).toHaveText(invoiceNumber);
+    await expect(page.getByTestId('invoice-detail-status')).toContainText('Ausgestellt');
+
+    // ZUGFeRD-profile rename of the PDF download action (§8.16.3).
+    await expect(page.getByTestId('invoice-detail-download-pdf')).toContainText(
+      'ZUGFeRD herunterladen',
+    );
+
+    // Stornorechnung dialog opens with the verbatim German warning
+    // pinned by ui/invoices.md §8.16.3 line 60.
+    await page.getByTestId('invoice-detail-cancel-button').click();
+    const dialog = page.getByTestId('invoice-cancel-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Diese Aktion erstellt eine Storno-Rechnung.');
+    await expect(dialog).toContainText('Der Projektstatus wird NICHT automatisch zurückgesetzt');
+
+    // Close without confirming so the next test sees the issued row
+    // still issued.
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+  });
+
   test('owner cancels the issued invoice with a cancellationReason (AC-290)', async ({ page }) => {
     await page.goto(`/projects/${projectId}`);
     await expect(page.getByTestId('project-detail-page')).toBeVisible();
@@ -236,5 +280,91 @@ test.describe('Invoice lifecycle (AC-287, AC-290)', () => {
     // Card is NOT back in rechnung_faellig.
     const rechnungFaellig = page.getByTestId('kanban-column-rechnung_faellig');
     await expect(rechnungFaellig.getByTestId(`project-card-${projectId}`)).toHaveCount(0);
+  });
+
+  test('the list-view row click opens the per-invoice viewer (ui/invoices.md §8.16.3)', async ({
+    page,
+  }) => {
+    // Standalone /rechnungen list — row click on an issued or
+    // cancelled row navigates to `/rechnungen/:id` (the per-invoice
+    // viewer). Drafts still navigate to their project. Here we
+    // exercise the cancelled-original row that the cancel test
+    // above left behind.
+    await page.goto('/rechnungen');
+    await expect(page.getByTestId('invoice-list-view')).toBeVisible();
+
+    const cancelledRow = page
+      .getByTestId('invoice-list-cross-project')
+      .locator('[data-testid^="invoice-row-"]')
+      .filter({ hasText: invoiceNumber })
+      .first();
+    await expect(cancelledRow).toBeVisible();
+
+    await cancelledRow.click();
+    await expect(page).toHaveURL(/\/rechnungen\/[a-f0-9-]+$/);
+    await expect(page.getByTestId('invoice-detail-view')).toBeVisible();
+    await expect(page.getByTestId('invoice-detail-number')).toHaveText(invoiceNumber);
+  });
+
+  test('the per-invoice viewer downloads the PDF and exposes the cancel dialog', async ({
+    page,
+  }) => {
+    // Use the already-cancelled original from the cancel test — its
+    // viewer renders the PDF download affordance and the back-to-
+    // list link. We assert the download fires (browser-level event)
+    // and that the page navigates correctly back. The cancel dialog
+    // itself is not opened from a cancelled row (the Stornieren
+    // action is hidden for non-issued rows); use a separate flow
+    // for the dialog assertion.
+    await page.goto('/rechnungen');
+    await expect(page.getByTestId('invoice-list-view')).toBeVisible();
+
+    const cancelledRow = page
+      .getByTestId('invoice-list-cross-project')
+      .locator('[data-testid^="invoice-row-"]')
+      .filter({ hasText: invoiceNumber })
+      .first();
+    await cancelledRow.click();
+    await expect(page.getByTestId('invoice-detail-view')).toBeVisible();
+
+    // PDF download from the viewer surface — same browser-event
+    // observable used in the per-project block test. The action is
+    // renamed to "ZUGFeRD herunterladen" because the seeded invoice
+    // ships the zugferd profile; the testid stays stable.
+    const downloadPromise = page.waitForEvent('download', { timeout: 15_000 });
+    await page.getByTestId('invoice-detail-download-pdf').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/\.pdf$/i);
+
+    // The cancelled original viewer also surfaces the storno
+    // siblings list — confirm the Storno row from the cancel test
+    // is linked.
+    const siblings = page.getByTestId('invoice-detail-storno-siblings');
+    await expect(siblings).toBeVisible();
+    await expect(siblings).toContainText(stornoNumber);
+  });
+
+  test('the Storno viewer links back to the original via Original anzeigen', async ({ page }) => {
+    // Deep-link a Storno row directly — the viewer must render the
+    // `Original anzeigen` affordance pointing to the `cancellationOf`
+    // original. The link is a real `<a href>` (Storno → original is
+    // pure navigation, no mutation), so we assert the href shape
+    // rather than clicking-and-waiting.
+    await page.goto('/rechnungen');
+    await expect(page.getByTestId('invoice-list-view')).toBeVisible();
+
+    const stornoRow = page
+      .getByTestId('invoice-list-cross-project')
+      .locator('[data-testid^="invoice-row-"]')
+      .filter({ hasText: stornoNumber })
+      .first();
+    await stornoRow.click();
+    await expect(page).toHaveURL(/\/rechnungen\/[a-f0-9-]+$/);
+    await expect(page.getByTestId('invoice-detail-view')).toBeVisible();
+    await expect(page.getByTestId('invoice-detail-status')).toContainText('Storno');
+
+    const link = page.getByTestId('invoice-detail-view-original');
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute('href', /\/rechnungen\/[a-f0-9-]+$/);
   });
 });

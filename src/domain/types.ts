@@ -112,6 +112,7 @@ export type ViewMode =
   | 'kunden'
   | 'projekte'
   | 'rechnungen'
+  | 'rechnungDetail'
   | 'benutzer'
   | 'daten'
   | 'aktivitaet'

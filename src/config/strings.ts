@@ -545,6 +545,33 @@ export const STRINGS = {
     companyProfileBannerHeading: 'Firmendaten unvollständig',
     companyProfileBannerBody: (fields: string) => `Fehlende Felder: ${fields}.`,
     companyProfileBannerLink: 'Firmendaten vervollständigen',
+
+    // Per-invoice viewer (ui/invoices.md §8.16.3) — read-only surface
+    // for status ∈ {issued, cancelled}. Drafts redirect to their parent
+    // project (only place a draft has an editable surface).
+    detailOpenAction: 'Öffnen',
+    detailBackToList: 'Zurück zur Übersicht',
+    detailLoading: 'Lade Rechnung…',
+    detailNotFound: 'Rechnung nicht gefunden.',
+    detailDraftRedirect: 'Entwürfe werden in der Projektansicht bearbeitet.',
+    detailHeadingIssuer: 'Aussteller',
+    detailHeadingRecipient: 'Empfänger',
+    detailHeadingMeta: 'Rechnungsdaten',
+    detailHeadingLines: 'Positionen',
+    detailHeadingTotals: 'Summen',
+    detailLabelNumber: 'Nr.',
+    detailLabelStatus: 'Status',
+    detailLabelIssueDate: 'Ausstellungsdatum',
+    detailLabelPerformanceDate: 'Leistungsdatum',
+    detailLabelTaxMode: 'Steuermodus',
+    detailLabelCancellationReason: 'Storno-Grund',
+    /** Rendered next to a `RE-…` original that has at least one Storno
+     *  sibling. The list of siblings follows as indented chevrons. */
+    detailStornoSiblings: 'Storno-Rechnungen zu dieser Rechnung',
+    /** Link affordance on a Storno row pointing back to its `cancellationOf` original. */
+    detailViewOriginal: 'Original anzeigen',
+    /** Programmatic-download action label — renamed when the invoice profile is ZUGFeRD. */
+    downloadZugferdAction: 'ZUGFeRD herunterladen',
   },
 
   aging: {

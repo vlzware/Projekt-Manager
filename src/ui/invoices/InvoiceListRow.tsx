@@ -3,16 +3,20 @@
  *
  * The row is a clickable container — `<div role="button">` with explicit
  * keyboard handling — so action affordances can sit as DOM siblings
- * (HTML forbids `<a>` and `<button>` inside `<button>`). Click anywhere
- * on the row navigates to the project detail page where the per-project
- * block (ui/project-detail.md §8.15.11) hosts the issue / cancel flows;
- * action clicks `stopPropagation` so they do not double-fire navigation.
+ * (HTML forbids `<a>` and `<button>` inside `<button>`). Action clicks
+ * `stopPropagation` so they do not double-fire navigation.
+ *
+ * Navigation per topology:
+ *   - draft  → `/projects/:projectId` (the per-project block hosts the
+ *               only editable surface for a draft).
+ *   - issued → `/rechnungen/:id` (the per-invoice viewer, §8.16.3).
+ *   - storno → `/rechnungen/:id`.
+ *   - cancelled original → `/rechnungen/:id`.
  *
  * Row actions per topology:
  *   - draft  → `Bearbeiten` (navigate to the project block, which owns
  *               the form), `Verwerfen` (delete draft inline).
- *   - issued → `PDF herunterladen`.
- *   - storno → `PDF herunterladen`.
+ *   - issued / storno / cancelled → `PDF herunterladen`.
  *
  * `Ausstellen` is intentionally NOT exposed here — issuing requires the
  * project context (status flip via project store, refetch of the
@@ -82,6 +86,11 @@ export function InvoiceListRow({ invoice, originalNumber }: Props) {
   const showDownload = invoice.status !== 'draft';
 
   const navigateToProject = () => navigate(`/projects/${invoice.projectId}`);
+  const navigateToDetail = () => navigate(`/rechnungen/${invoice.id}`);
+  // Drafts open in the per-project block (the only place a draft is
+  // editable). Issued / cancelled / Storno rows open in the per-invoice
+  // viewer (§8.16.3). Both are deep-linkable surfaces.
+  const navigateOnRowClick = isDraft ? navigateToProject : navigateToDetail;
 
   // Programmatic download via an invisible `<a download>` — the same
   // trick the per-project block uses. Keeps the row's action a button
@@ -110,11 +119,11 @@ export function InvoiceListRow({ invoice, originalNumber }: Props) {
       role="button"
       tabIndex={0}
       className={attrs.rowClassName}
-      onClick={navigateToProject}
+      onClick={navigateOnRowClick}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          navigateToProject();
+          navigateOnRowClick();
         }
       }}
       data-testid={`invoice-row-${invoice.id}`}
