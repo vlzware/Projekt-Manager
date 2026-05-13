@@ -269,3 +269,43 @@ export function formatInvoiceNumber(
   const suffix = String(value).padStart(4, '0');
   return `${prefix}-${year}-${suffix}`;
 }
+
+/**
+ * Human-friendly PDF download filename for an issued / cancelled invoice.
+ *
+ * Shape: `{number}_{recipient}.pdf` — e.g. `RE-2026-0001_Mustermann-GmbH.pdf`.
+ * The number-prefix (`RE-` regular, `ST-` Storno) already discriminates the
+ * kind at a glance; including the recipient gives the user a meaningful
+ * label when scanning a downloads folder.
+ *
+ * Sanitisation rules (intentionally conservative — the filename leaves
+ * the server boundary and lands on arbitrary user filesystems):
+ *  - Whitespace collapses to `-`.
+ *  - Path separators and control bytes are stripped.
+ *  - The recipient slug is trimmed to 40 chars so the full name stays
+ *    on-screen in most browsers' download confirmation dialogs.
+ *  - Falls back to `{number}.pdf` when the recipient name is missing
+ *    or sanitises to empty, and to `invoice-{id}.pdf` when the number
+ *    is null (defensive — issued invoices always have a number).
+ */
+export function buildInvoiceDownloadFilename(
+  invoice: Pick<Invoice, 'id' | 'number' | 'recipient'>,
+): string {
+  const numberPart = invoice.number ?? `invoice-${invoice.id}`;
+  const recipientSlug = sanitiseFilenameSegment(invoice.recipient?.name ?? '');
+  return recipientSlug.length > 0 ? `${numberPart}_${recipientSlug}.pdf` : `${numberPart}.pdf`;
+}
+
+function sanitiseFilenameSegment(value: string): string {
+  return (
+    value
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x1f\x7f]/g, '')
+      .replace(/[/\\:*?"<>|]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^[.-]+|[.-]+$/g, '')
+      .slice(0, 40)
+  );
+}

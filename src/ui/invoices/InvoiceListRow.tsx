@@ -25,7 +25,7 @@
 
 import { useNavigate } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
-import type { Invoice } from '@/domain/invoice';
+import { buildInvoiceDownloadFilename, type Invoice } from '@/domain/invoice';
 import { formatCurrencyDE, formatDateDE } from '@/domain/dateFormat';
 import { useInvoiceListStore } from '@/state/invoiceListStore';
 import { useInvoiceStore } from '@/state/invoiceStore';
@@ -100,7 +100,7 @@ export function InvoiceListRow({ invoice, originalNumber }: Props) {
   const downloadPdf = () => {
     const anchor = document.createElement('a');
     anchor.href = `/api/invoices/${invoice.id}/pdf`;
-    anchor.download = `${invoice.number ?? invoice.id}.pdf`;
+    anchor.download = buildInvoiceDownloadFilename(invoice);
     anchor.rel = 'noopener';
     document.body.appendChild(anchor);
     anchor.click();

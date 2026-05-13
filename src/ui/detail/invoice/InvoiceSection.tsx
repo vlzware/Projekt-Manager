@@ -23,6 +23,7 @@ import { Link } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Invoice } from '@/domain/invoice';
+import { buildInvoiceDownloadFilename } from '@/domain/invoice';
 import { orderInvoicesWithStornoGrouping } from '@/domain/invoiceGrouping';
 import { formatCurrencyDE, formatDateDE } from '@/domain/dateFormat';
 import { useInvoiceStore } from '@/state/invoiceStore';
@@ -186,7 +187,7 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
     // observer (the E2E's `page.waitForEvent('download')`) fires.
     const anchor = document.createElement('a');
     anchor.href = `/api/invoices/${invoice.id}/pdf`;
-    anchor.download = `${invoice.number ?? invoice.id}.pdf`;
+    anchor.download = buildInvoiceDownloadFilename(invoice);
     anchor.rel = 'noopener';
     document.body.appendChild(anchor);
     anchor.click();

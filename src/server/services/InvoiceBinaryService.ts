@@ -22,6 +22,7 @@ import { WRAPPED_DEK_CURRENT_VERSION } from '../../domain/attachments.js';
 import type { AttachmentStorageClient } from '../storage/client.js';
 import { StorageObjectNotFoundError } from '../storage/client.js';
 import type { Invoice } from '../../domain/invoice.js';
+import { buildInvoiceDownloadFilename } from '../../domain/invoice.js';
 import type { RenderedInvoice } from './InvoiceRenderer.js';
 import { encryptInvoicePayload, decryptInvoicePayload } from './invoice/payloadCrypto.js';
 import { KeyEnvelopeService, KeyEnvelopeUnwrapError } from './KeyEnvelopeService.js';
@@ -220,6 +221,12 @@ export class InvoiceBinaryService {
     }
 
     const plaintext = decryptInvoicePayload(new Uint8Array(ciphertext), dek);
-    return { bytes: plaintext, filename: row.filename };
+    // Derive the download filename from the invoice on the fly rather
+    // than reading the row's stored label. `row.filename` is the
+    // pipeline's internal storage label (kept stable for the descriptor
+    // bookkeeping); the user-facing download name should follow the
+    // human-readable format and stay in sync with the helper so any
+    // future format changes apply to historical invoices too.
+    return { bytes: plaintext, filename: buildInvoiceDownloadFilename(invoice) };
   }
 }

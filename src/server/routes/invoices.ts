@@ -29,6 +29,7 @@ import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
 import { createInvoiceService, type ListInvoicesOpts } from '../services/InvoiceService.js';
 import type { InvoiceLine, InvoiceRecipientSnapshot, TaxMode } from '../../domain/invoice.js';
 import { TAX_MODES, INVOICE_STATUSES } from '../../domain/invoice.js';
+import { buildContentDisposition } from '../storage/client.js';
 
 /**
  * Shared JSON-schema fragment for an `InvoiceLine`. Routes accept the
@@ -384,7 +385,7 @@ export function invoiceRoutes(db: Database) {
         return reply
           .code(200)
           .header('Content-Type', 'application/pdf')
-          .header('Content-Disposition', `attachment; filename="${filename}"`)
+          .header('Content-Disposition', buildContentDisposition(filename))
           .header('Content-Length', String(bytes.byteLength))
           .send(Buffer.from(bytes));
       },

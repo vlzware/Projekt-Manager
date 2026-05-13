@@ -23,7 +23,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import type { Invoice } from '@/domain/invoice';
-import { labelForTaxMode } from '@/domain/invoice';
+import { buildInvoiceDownloadFilename, labelForTaxMode } from '@/domain/invoice';
 import { formatCurrencyDE, formatDateDE } from '@/domain/dateFormat';
 import { usePermission } from '@/hooks/usePermission';
 import { useInvoiceDetailStore } from '@/state/invoiceDetailStore';
@@ -163,7 +163,7 @@ export function InvoiceDetailView() {
     // browser's download observer fires under E2E.
     const anchor = document.createElement('a');
     anchor.href = `/api/invoices/${invoice.id}/pdf`;
-    anchor.download = `${invoice.number ?? invoice.id}.pdf`;
+    anchor.download = buildInvoiceDownloadFilename(invoice);
     anchor.rel = 'noopener';
     document.body.appendChild(anchor);
     anchor.click();
