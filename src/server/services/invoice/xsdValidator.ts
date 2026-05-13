@@ -37,9 +37,23 @@ const XSD_ROOT = path.resolve(__dirname, './xsd/Factur-X_1.07.2_EN16931.xsd');
  */
 let cachedXsdDoc: libxml.Document | null = null;
 
+/**
+ * Defense-in-depth parser flags. The XML we parse is server-built
+ * (`facturXmlBuilder.ts`), not attacker-supplied, so no exploit path
+ * exists today; pinning the flags makes the contract explicit and
+ * insulates the validator from a future libxml2 default flip:
+ *   - `noent: false`   — keep entity references unexpanded (no XXE)
+ *   - `nonet: true`    — refuse network fetches for external resources
+ *   - `dtdload: false` — refuse to load external DTDs
+ */
+const SAFE_PARSE_OPTIONS = { noent: false, nonet: true, dtdload: false } as const;
+
 function getXsdDoc(): libxml.Document {
   if (cachedXsdDoc) return cachedXsdDoc;
-  cachedXsdDoc = libxml.parseXml(readFileSync(XSD_ROOT, 'utf-8'), { baseUrl: XSD_ROOT });
+  cachedXsdDoc = libxml.parseXml(readFileSync(XSD_ROOT, 'utf-8'), {
+    baseUrl: XSD_ROOT,
+    ...SAFE_PARSE_OPTIONS,
+  });
   return cachedXsdDoc;
 }
 
@@ -59,7 +73,7 @@ export class FacturXValidationError extends Error {
  */
 export function validateFacturXml(xml: string): void {
   const xsdDoc = getXsdDoc();
-  const xmlDoc = libxml.parseXml(xml);
+  const xmlDoc = libxml.parseXml(xml, SAFE_PARSE_OPTIONS);
   if (!xmlDoc.validate(xsdDoc)) {
     const errors = (xmlDoc.validationErrors ?? []).map((e) => String(e.message ?? e));
     throw new FacturXValidationError(errors);
