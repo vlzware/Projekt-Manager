@@ -4,11 +4,13 @@
  * The issuance transaction is the load-bearing primitive — one DB
  * transaction commits:
  *
- *   1. Atomic `UPDATE invoice_sequence … RETURNING next_value` on
- *      `(year, 'invoice')` (or INSERT on first-of-year). Postgres
- *      takes a row-exclusive lock on the row, equivalent to
- *      `SELECT FOR UPDATE`, held until commit — a rollback returns
- *      the value to the sequence (gapless property).
+ *   1. Atomic `INSERT … ON CONFLICT (year, kind) DO UPDATE
+ *      … RETURNING next_value` on `invoice_sequence` for
+ *      `(year, 'invoice')` — single statement covers both
+ *      first-of-year and steady-state. Postgres takes a row-exclusive
+ *      lock on the row, equivalent to `SELECT FOR UPDATE`, held until
+ *      commit — a rollback returns the value to the sequence (gapless
+ *      property).
  *   2. Issuer snapshot from the live `company_profile` row.
  *   3. Recipient snapshot — live customer overlaid with body overrides.
  *   4. UPDATE the draft row to `status='issued'`, set `number`,

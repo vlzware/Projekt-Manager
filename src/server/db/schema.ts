@@ -701,10 +701,13 @@ export const companyProfile = pgTable(
 // Invoice sequence (data-model.md §5.16, ADR-0026 §Data model)
 //
 // Gapless year-scoped counter feeding `invoices.number` allocation at
-// issuance time. One row per (year, kind); allocation is an atomic
-// `UPDATE invoice_sequence … RETURNING next_value` on the matching
-// row inside the issuance transaction, which takes a row-exclusive
-// lock equivalent to `SELECT FOR UPDATE`. The lock is held until
+// issuance time. One row per (year, kind); allocation is a single
+// atomic `INSERT … ON CONFLICT (year, kind) DO UPDATE
+// SET next_value = next_value + 1 RETURNING next_value` inside the
+// issuance transaction — Postgres takes a row-exclusive lock
+// equivalent to `SELECT FOR UPDATE`. The single statement collapses
+// the first-of-year case (INSERT) and the steady-state case
+// (DO UPDATE) into one race-free path. The lock is held until
 // commit, so a rollback returns the value to the sequence — the
 // canonical Postgres gapless-counter pattern (§6.13). SERIAL /
 // IDENTITY is incompatible by design: they advance on rollback.

@@ -286,7 +286,7 @@ The transaction shape and supporting topology for the invoice domain ([data-mode
 
 **Issuance transaction.** A single DB transaction wraps every step of the `draft → issued` transition:
 
-1. Atomic `UPDATE invoice_sequence … RETURNING next_value` on the row matching `(year, 'invoice')` — Postgres takes a row-exclusive lock for the duration of the transaction (equivalent to `SELECT FOR UPDATE`); upsert when the row is missing.
+1. Atomic `INSERT … ON CONFLICT (year, kind) DO UPDATE … RETURNING next_value` on `invoice_sequence` `(year, 'invoice')` — single statement covers both first-of-year and steady-state; Postgres takes a row-exclusive lock for the duration of the transaction (equivalent to `SELECT FOR UPDATE`).
 2. Format the resulting `Invoice.number` as `RE-YYYY-NNNN`.
 3. Snapshot `issuer` from the live `company_profile` row, `recipient` from the live `customers` row (looked up via `project.customerId`); freeze `lines`, `taxMode`, `profile` from the draft's current values; compute `totals` server-side from `lines` + `taxMode`.
 4. Render the PDF/A-3 with embedded `factur-x.xml` (ZUGFeRD EN 16931 Comfort profile) — the render happens inside the transaction so a render failure rolls back the sequence allocation.
@@ -301,7 +301,7 @@ A failure at any step rolls back the entire transaction: the sequence increment 
 
 **Stornorechnung issuance transaction.** Cancellation of an issued invoice runs its own single transaction:
 
-1. Atomic `UPDATE invoice_sequence … RETURNING next_value` on the row matching `(year, 'storno')`.
+1. Atomic `INSERT … ON CONFLICT (year, kind) DO UPDATE … RETURNING next_value` on `invoice_sequence` `(year, 'storno')`.
 2. Format `ST-YYYY-NNNN`.
 3. Insert a new `Invoice` row carrying `cancellationOf = <original.id>`, `issuer` / `recipient` / `taxMode` / `profile` / `performanceDate` snapshotted from the original, `lines` with sign-flipped `unitPrice` and `lineTotal`, totals re-derived from the negated lines, `cancellationReason` from the cancel call body, `status = 'issued'` (Storno rows are born issued).
 4. Render the PDF/A-3 with embedded `factur-x.xml` for the Storno using the same toolchain; write bytes through the binary pipeline.
