@@ -18,7 +18,7 @@
 import crypto from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
-import { invoices, projects, customers } from '../db/schema.js';
+import { projects, customers } from '../db/schema.js';
 import type { AuthUser } from '../middleware/auth.js';
 import type { ServiceLogger } from './Logger.js';
 import { mutate } from './mutate.js';
@@ -37,6 +37,9 @@ import {
   listInvoices as listInvoicesRepo,
   getInvoice as getInvoiceRepo,
   getInvoiceRowForMutation,
+  insertInvoiceDraft,
+  updateInvoiceDraft,
+  deleteInvoiceDraft,
   type ListInvoicesOpts,
 } from '../repositories/invoice-read.js';
 import { CompanyProfileService } from './CompanyProfileService.js';
@@ -239,29 +242,19 @@ export class InvoiceService {
         entityType: 'invoice',
         action: 'create',
         run: async (tx) => {
-          const rows = await tx
-            .insert(invoices)
-            .values({
-              id,
-              projectId: input.projectId,
-              status: 'draft',
-              number: null,
-              issueDate: null,
-              performanceDate,
-              taxMode,
-              profile: profileLiteral,
-              issuer: placeholderIssuer,
-              recipient,
-              lines,
-              totals,
-              cancellationOf: null,
-              cancellationReason: null,
-              renderedPdfBinaryDescriptorId: null,
-              createdBy: userId,
-              updatedBy: userId,
-            })
-            .returning();
-          const row = rows[0]!;
+          const row = await insertInvoiceDraft(tx, {
+            id,
+            projectId: input.projectId,
+            performanceDate,
+            taxMode,
+            profile: profileLiteral,
+            issuer: placeholderIssuer,
+            recipient,
+            lines,
+            totals,
+            createdBy: userId,
+            updatedBy: userId,
+          });
           return {
             entityId: row.id,
             entityLabel: null,
@@ -344,20 +337,14 @@ export class InvoiceService {
             };
           }
 
-          const rows = await tx
-            .update(invoices)
-            .set({
-              taxMode: nextTaxMode,
-              lines: nextLines,
-              totals: nextTotals,
-              recipient: nextRecipient,
-              performanceDate: nextPerformanceDate,
-              updatedAt: new Date(),
-              updatedBy: userId,
-            })
-            .where(eq(invoices.id, id))
-            .returning();
-          const row = rows[0]!;
+          const row = await updateInvoiceDraft(tx, id, {
+            taxMode: nextTaxMode,
+            lines: nextLines,
+            totals: nextTotals,
+            recipient: nextRecipient,
+            performanceDate: nextPerformanceDate,
+            updatedBy: userId,
+          });
 
           // Capture only the changed fields in the audit payload —
           // matches the §5.10 "changed fields only" rule.
@@ -422,7 +409,7 @@ export class InvoiceService {
           if (!before) throw notFound(STRINGS.entities.invoice);
           if (before.status !== 'draft') throw invoiceFrozen();
 
-          await tx.delete(invoices).where(eq(invoices.id, id));
+          await deleteInvoiceDraft(tx, id);
 
           return {
             entityId: id,

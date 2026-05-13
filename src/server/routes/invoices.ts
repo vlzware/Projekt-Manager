@@ -353,12 +353,18 @@ export function invoiceRoutes(db: Database) {
     // ---------------------------------------------------------------
     // GET /api/invoices/:id/pdf — download rendered ZUGFeRD bytes.
     //
-    // Three-way auth response (200 / 403 / 404) follows the get path
-    // (AC-298). Draft → 409 INVOICE_NOT_ISSUED (AC-299). Bytes are
-    // retrieved by fetching the rendered-PDF attachment row, unwrapping
-    // its `wrappedDek` server-side, decrypting the ciphertext fetched
-    // from object storage, and streaming the plaintext as
-    // `application/pdf` with a Content-Disposition naming the invoice.
+    // Permission-gated via `requirePermission('invoice:read')` — workers
+    // hold no invoice permission and are rejected at the middleware
+    // boundary (403) before the service is reached. Authorized callers
+    // (owner / office / bookkeeper) are all unscoped, so the service's
+    // get-triage collapses to two-way: 200 (row resolved) or 404
+    // (unknown id; also surfaces when the descriptor reference is null
+    // or the attachment row is gone). Draft → 409 INVOICE_NOT_ISSUED
+    // (AC-299). Bytes are retrieved by fetching the rendered-PDF
+    // attachment row, unwrapping its `wrappedDek` server-side,
+    // decrypting the ciphertext fetched from object storage, and
+    // streaming the plaintext as `application/pdf` with a
+    // Content-Disposition naming the invoice.
     // ---------------------------------------------------------------
     app.get(
       '/api/invoices/:id/pdf',

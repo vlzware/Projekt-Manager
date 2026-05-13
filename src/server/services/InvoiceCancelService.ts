@@ -12,9 +12,7 @@
  */
 
 import crypto from 'node:crypto';
-import { eq } from 'drizzle-orm';
 import type { Database } from '../db/connection.js';
-import { invoices } from '../db/schema.js';
 import type { ServiceLogger } from './Logger.js';
 import { mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
@@ -32,6 +30,8 @@ import {
   toInvoiceResponse,
   getInvoiceRowForMutation,
   allocateInvoiceNumber,
+  insertStornoInvoice,
+  applyCancellationFlip,
 } from '../repositories/invoice-read.js';
 import { readSingleton, toCompanyProfileResponse } from './CompanyProfileService.js';
 import { InvoiceRenderer } from './InvoiceRenderer.js';
@@ -172,46 +172,27 @@ export class InvoiceCancelService {
         userId,
       );
 
-      const stornoInsert = await tx
-        .insert(invoices)
-        .values({
-          id: stornoId,
-          projectId: before.projectId,
-          status: 'issued',
-          number: stornoNumber,
-          issueDate: now,
-          performanceDate: before.performanceDate,
-          taxMode: before.taxMode,
-          profile: before.profile,
-          issuer: before.issuer,
-          recipient: before.recipient,
-          lines: stornoLines,
-          totals: stornoTotals,
-          cancellationOf: before.id,
-          cancellationReason,
-          renderedPdfBinaryDescriptorId: stornoDescriptor,
-          createdBy: userId,
-          updatedBy: userId,
-        })
-        .returning();
-      const stornoRow = stornoInsert[0]!;
+      const stornoRow = await insertStornoInvoice(tx, {
+        id: stornoId,
+        projectId: before.projectId,
+        number: stornoNumber,
+        issueDate: now,
+        performanceDate: before.performanceDate,
+        taxMode: before.taxMode as TaxMode,
+        profile: before.profile as InvoiceProfile,
+        issuer: before.issuer as InvoiceIssuerSnapshot,
+        recipient: before.recipient as InvoiceRecipientSnapshot,
+        lines: stornoLines,
+        totals: stornoTotals,
+        cancellationOf: before.id,
+        cancellationReason,
+        renderedPdfBinaryDescriptorId: stornoDescriptor,
+        createdBy: userId,
+        updatedBy: userId,
+      });
 
-      // 4. Flip the original to `cancelled`. The DB-level immutability
-      //    backstop (Phase A schema trigger) allows exactly this one
-      //    transition; touching any other column on an issued row
-      //    fails the constraint. We deliberately do NOT write
-      //    `cancellation_reason` on the original — the reason is
-      //    frozen on the Storno only (per the brief).
-      const originalUpdate = await tx
-        .update(invoices)
-        .set({
-          status: 'cancelled',
-          updatedAt: now,
-          updatedBy: userId,
-        })
-        .where(eq(invoices.id, id))
-        .returning();
-      const originalRow = originalUpdate[0]!;
+      // 4. Flip the original to `cancelled`.
+      const originalRow = await applyCancellationFlip(tx, id, userId, now);
 
       // 5. Two audit rows in one tx (AC-290). Project status is
       //    deliberately NOT flipped — AC-290 trailing clause.

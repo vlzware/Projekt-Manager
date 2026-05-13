@@ -25,7 +25,7 @@
 
 import { eq, and } from 'drizzle-orm';
 import type { Database, MutatingDatabase } from '../db/connection.js';
-import { invoices, projects } from '../db/schema.js';
+import { projects } from '../db/schema.js';
 import type { ServiceLogger } from './Logger.js';
 import { mutate } from './mutate.js';
 import {
@@ -40,6 +40,8 @@ import {
   toInvoiceResponse,
   getInvoiceRowForMutation,
   allocateInvoiceNumber,
+  applyIssuanceUpdate,
+  flipParentProjectStatusToAbgerechnet,
   type InvoiceRow,
 } from '../repositories/invoice-read.js';
 import { assertCompanyProfileCompleteForMode } from './CompanyProfileService.js';
@@ -268,41 +270,24 @@ export class InvoiceIssueService {
     //    in the same statement (so the immutability trigger sees a
     //    single transition from draft, not an UPDATE of an already-
     //    issued row).
-    const issuedRows = await tx
-      .update(invoices)
-      .set({
-        status: 'issued',
-        number,
-        issueDate,
-        issuer,
-        recipient,
-        lines,
-        totals,
-        taxMode,
-        profile: 'zugferd-en16931',
-        renderedPdfBinaryDescriptorId: renderedDescriptorId,
-        updatedAt: issueDate,
-        updatedBy: userId,
-      })
-      .where(eq(invoices.id, invoiceId))
-      .returning();
-    const issuedRow = issuedRows[0]!;
+    const issuedRow = await applyIssuanceUpdate(tx, invoiceId, {
+      number,
+      issueDate,
+      issuer,
+      recipient,
+      lines,
+      totals,
+      taxMode,
+      profile: 'zugferd-en16931',
+      renderedPdfBinaryDescriptorId: renderedDescriptorId,
+      updatedBy: userId,
+    });
 
     // 9. Flip the parent project's status to `abgerechnet` inside
     //    this same tx (the project transition is part of the issue
-    //    atom — AC-287). NO separate `mutate()` call: per ADR-0026
-    //    the project status flip is a side-effect of the issuance,
-    //    not its own audit event. The invoice audit row's ancestor
-    //    pair surfaces the change under the project's activity feed.
-    await tx
-      .update(projects)
-      .set({
-        status: 'abgerechnet',
-        statusChangedAt: issueDate,
-        updatedAt: issueDate,
-        updatedBy: userId,
-      })
-      .where(eq(projects.id, before.projectId));
+    //    atom — AC-287). The repo function holds the ADR-0026
+    //    rationale (side-effect of issuance, not its own audit event).
+    await flipParentProjectStatusToAbgerechnet(tx, before.projectId, userId, issueDate);
 
     return {
       entityId: invoiceId,

@@ -27,6 +27,7 @@ import { encryptInvoicePayload, decryptInvoicePayload } from './invoice/payloadC
 import { KeyEnvelopeService, KeyEnvelopeUnwrapError } from './KeyEnvelopeService.js';
 import { notFound, invoiceNotIssued, dekUnwrapFailed } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
+import { insertRenderedInvoiceBinary } from '../repositories/attachment.js';
 
 /**
  * Binary-pipeline dependencies. `persistRendered` uses these to
@@ -118,38 +119,27 @@ export class InvoiceBinaryService {
     const originalKey = `invoices/${projectId}/${descriptorId}.orig`;
     await storage.putObject(originalKey, ciphertext, 'application/octet-stream');
 
-    // 5. Insert the attachments row at `status='ready'`. The schema's
-    // `attachments_wrapped_dek_required_when_ready` CHECK demands the
-    // wrapped envelope + ciphertext size are non-null at this status.
-    // The filename carries the invoice number — the rendered PDF surfaces
-    // to the operator under that name when downloaded.
+    // 5. Insert the attachments row at `status='ready'` via the repo.
+    // The filename carries the invoice number — the rendered PDF
+    // surfaces to the operator under that name when downloaded.
+    //
+    // ServerSide PUT does not return a VersionId from `putObject`
+    // (we don't HEAD the just-written object). Versioned buckets
+    // still issue a VersionId per write; capture it via HEAD post-
+    // PUT so the Papierkorb restore primitive can address the
+    // current version later. The HEAD is cheap (no body fetch).
     const filename = `invoice-${invoiceId}.pdf`;
-    await tx.insert(attachments).values({
+    const versionId = (await storage.headObject(originalKey)).versionId ?? null;
+    await insertRenderedInvoiceBinary(tx, {
       id: descriptorId,
       projectId,
-      status: 'ready',
-      kind: 'binary',
-      label: 'rechnung',
       filename,
-      mimeType: 'application/pdf',
       sizeBytes: rendered.pdfBytes.byteLength,
       originalKey,
-      thumbKey: null,
-      thumbSizeBytes: null,
-      hasThumbnail: false,
       ciphertextSizeBytes: ciphertext.byteLength,
-      ciphertextThumbSizeBytes: null,
-      // ServerSide PUT does not return a VersionId from `putObject`
-      // (we don't HEAD the just-written object). Versioned buckets
-      // still issue a VersionId per write; capture it via HEAD post-
-      // PUT so the Papierkorb restore primitive can address the
-      // current version later. The HEAD is cheap (no body fetch).
-      versionId: (await storage.headObject(originalKey)).versionId ?? null,
-      thumbVersionId: null,
+      versionId,
       wrappedDek: wrappedDekBase64,
-      wrappedThumbDek: null,
       wrappedDekVersion: WRAPPED_DEK_CURRENT_VERSION,
-      hiddenAt: null,
       createdBy: userId,
     });
     return descriptorId;

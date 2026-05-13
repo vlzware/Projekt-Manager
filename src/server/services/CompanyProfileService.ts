@@ -19,7 +19,6 @@
  * so the two paths cannot drift.
  */
 
-import { sql } from 'drizzle-orm';
 import type { Database, TransactionalDatabase } from '../db/connection.js';
 import { companyProfile } from '../db/schema.js';
 import { mutate } from './mutate.js';
@@ -33,6 +32,7 @@ import {
 import { companyProfileRequired, validationError } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
 import type { ServiceLogger } from './Logger.js';
+import { updateCompanyProfileSingleton } from '../repositories/companyProfile.js';
 
 export type CompanyProfileRow = typeof companyProfile.$inferSelect;
 
@@ -169,30 +169,24 @@ export class CompanyProfileService {
         action: 'update',
         run: async (tx) => {
           const before = await readSingleton(tx);
-          const rows = await tx
-            .update(companyProfile)
-            .set({
-              companyName: input.companyName,
-              address: input.address,
-              taxId: input.taxId,
-              ustId: input.ustId ?? null,
-              iban: input.iban ?? null,
-              accentColor: input.accentColor ?? null,
-              footerText: input.footerText ?? null,
-              logoBinaryDescriptorId: input.logoBinaryDescriptorId ?? null,
-              defaultTaxMode: input.defaultTaxMode,
-              updatedAt: new Date(),
-              updatedBy: userId,
-            })
-            .where(sql`${companyProfile.singleton} = true`)
-            .returning();
+          const after = await updateCompanyProfileSingleton(tx, {
+            companyName: input.companyName,
+            address: input.address,
+            taxId: input.taxId,
+            ustId: input.ustId ?? null,
+            iban: input.iban ?? null,
+            accentColor: input.accentColor ?? null,
+            footerText: input.footerText ?? null,
+            logoBinaryDescriptorId: input.logoBinaryDescriptorId ?? null,
+            defaultTaxMode: input.defaultTaxMode,
+            updatedBy: userId,
+          });
 
-          if (rows.length === 0) {
+          if (!after) {
             // Should not be reachable — `readSingleton` would have
             // thrown above. Defense-in-depth.
             throw new Error('CompanyProfileService.upsert: singleton row missing after UPDATE');
           }
-          const after = rows[0]!;
 
           // Capture only the snapshotted fields the spec lists in §5.17
           // for `payload.before` / `payload.after` — id/updatedAt/

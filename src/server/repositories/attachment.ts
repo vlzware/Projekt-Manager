@@ -472,4 +472,85 @@ export async function deleteHiddenForReap(
   return rows[0];
 }
 
+/**
+ * Fields for the rendered-invoice-PDF descriptor row written by
+ * `InvoiceBinaryService.persistRendered`. The schema's
+ * `attachments_wrapped_dek_required_when_ready` CHECK demands the
+ * wrapped envelope + ciphertext size are non-null at `status='ready'`
+ * — the service computes both upfront (DEK wrap + AES-GCM ciphertext
+ * byte count) and passes them in here. The bucket's default-retention
+ * envelope (`INVOICE_OBJECT_LOCK_DAYS`, asserted at boot per AC-296)
+ * attaches Object Lock at PUT time; the row is just the descriptor.
+ */
+export interface InsertRenderedInvoiceBinaryFields {
+  id: string;
+  projectId: string;
+  filename: string;
+  sizeBytes: number;
+  originalKey: string;
+  ciphertextSizeBytes: number;
+  /**
+   * VersionId resolved by the service via a post-PUT HEAD against the
+   * bucket. The HEAD is cheap (no body fetch) and lets the Papierkorb
+   * restore primitive address the current version later. Null on
+   * unversioned buckets (defense in depth — boot-time assertions make
+   * those unreachable).
+   */
+  versionId: string | null;
+  /**
+   * Base64 of the operator-`age`-wrapped envelope of the per-blob DEK
+   * for the rendered PDF ciphertext (ADR-0024). Required at
+   * `status='ready'` by the schema CHECK; never persisted unwrapped.
+   */
+  wrappedDek: string;
+  wrappedDekVersion: number;
+  createdBy: string;
+}
+
+/**
+ * INSERT the rendered-invoice-PDF descriptor row at `status='ready'`.
+ * Called from inside the issuance / cancel transactions so a fault
+ * after the bucket PUT rolls back the row insert; the orphaned object
+ * is reaped by the attachment-orphan reaper because no row ever
+ * reached `ready` from its perspective.
+ *
+ * Pinned fields:
+ *   - `kind='binary'` / `label='rechnung'` — rendered invoice PDFs
+ *     are surfaced via `GET /api/invoices/:id/pdf`, NOT in the
+ *     generic attachment list (the list filters on the `invoices/`
+ *     key prefix; see `listByProject`).
+ *   - `mimeType='application/pdf'`.
+ *   - `hasThumbnail=false` / `thumb*` columns null — invoices have
+ *     no thumbnail today.
+ *   - `hiddenAt=null` — never enters the trash flow.
+ */
+export async function insertRenderedInvoiceBinary(
+  tx: MutatingDatabase,
+  fields: InsertRenderedInvoiceBinaryFields,
+): Promise<void> {
+  await tx.insert(attachments).values({
+    id: fields.id,
+    projectId: fields.projectId,
+    status: 'ready',
+    kind: 'binary',
+    label: 'rechnung',
+    filename: fields.filename,
+    mimeType: 'application/pdf',
+    sizeBytes: fields.sizeBytes,
+    originalKey: fields.originalKey,
+    thumbKey: null,
+    thumbSizeBytes: null,
+    hasThumbnail: false,
+    ciphertextSizeBytes: fields.ciphertextSizeBytes,
+    ciphertextThumbSizeBytes: null,
+    versionId: fields.versionId,
+    thumbVersionId: null,
+    wrappedDek: fields.wrappedDek,
+    wrappedThumbDek: null,
+    wrappedDekVersion: fields.wrappedDekVersion,
+    hiddenAt: null,
+    createdBy: fields.createdBy,
+  });
+}
+
 export type { AttachmentStatus };

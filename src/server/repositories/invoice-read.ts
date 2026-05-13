@@ -1,10 +1,13 @@
 /**
- * Invoice repository — read-side helpers.
+ * Invoice repository — reads + write primitives.
  *
- * Reads only. Writes ride through `InvoiceService` directly so the
- * audit + transaction boundary lives at the service layer (every
- * invoice mutation is single-write via `mutate()` / `mutateInTx()` —
- * ADR-0021 / ADR-0026 §Audit and realtime).
+ * Reads accept `Database | TransactionalDatabase`. Writes accept
+ * `MutatingDatabase` (a transaction handle only) so a caller bypassing
+ * the service-layer `mutate()` helper fails at tsc — AC-179's primary
+ * build-time seam (ADR-0021). The service layer captures
+ * `payload.before` / `payload.after` and feeds it to `mutate()`; the
+ * repo functions own the raw Drizzle calls and return the row(s) the
+ * service needs for the audit payload (ADR-0026 §Audit and realtime).
  *
  * Worker exclusion follows ADR-0019: there is no `project_worker` scope
  * path on invoices, so the worker predicate returns the empty set on
@@ -13,7 +16,7 @@
  */
 
 import { eq, and, desc, asc, inArray, count, sql, type SQL } from 'drizzle-orm';
-import type { Database, TransactionalDatabase } from '../db/connection.js';
+import type { Database, MutatingDatabase, TransactionalDatabase } from '../db/connection.js';
 import { invoices, projects } from '../db/schema.js';
 import type { AuthUser } from '../middleware/auth.js';
 import { isUnscoped, OUT_OF_SCOPE, type ScopedReadResult } from './scope.js';
@@ -328,4 +331,281 @@ export async function allocateInvoiceNumber(
 ): Promise<{ value: number; number: string }> {
   const value = await allocateNextSequenceValue(tx, year, kind);
   return { value, number: formatInvoiceNumber(kind, year, value) };
+}
+
+// ---------------------------------------------------------------------
+// Write functions — INSERT / UPDATE / DELETE primitives.
+//
+// All accept `MutatingDatabase` (transaction handle only). The
+// service-layer `mutate()` helper supplies the tx; the audit-row
+// payload is constructed by the service from `before`/`after` it has
+// in hand. Repo just writes.
+// ---------------------------------------------------------------------
+
+/**
+ * Fields for inserting a fresh draft invoice. The full schema row is
+ * constrained at insert time — every column needed for `status='draft'`
+ * is passed in by the service after it has resolved the project, the
+ * recipient overlay, and the placeholder issuer.
+ */
+export interface InsertInvoiceDraftFields {
+  id: string;
+  projectId: string;
+  performanceDate: Date | null;
+  taxMode: TaxMode;
+  profile: InvoiceProfile;
+  issuer: InvoiceIssuerSnapshot;
+  recipient: InvoiceRecipientSnapshot;
+  lines: InvoiceLine[];
+  totals: InvoiceTotals;
+  createdBy: string;
+  updatedBy: string;
+}
+
+/**
+ * INSERT a fresh draft row. The service supplies a pre-allocated id
+ * and the snapshotted columns; this just writes the row and returns
+ * it for the audit `after` payload.
+ */
+export async function insertInvoiceDraft(
+  tx: MutatingDatabase,
+  fields: InsertInvoiceDraftFields,
+): Promise<InvoiceRow> {
+  const rows = await tx
+    .insert(invoices)
+    .values({
+      id: fields.id,
+      projectId: fields.projectId,
+      status: 'draft',
+      number: null,
+      issueDate: null,
+      performanceDate: fields.performanceDate,
+      taxMode: fields.taxMode,
+      profile: fields.profile,
+      issuer: fields.issuer,
+      recipient: fields.recipient,
+      lines: fields.lines,
+      totals: fields.totals,
+      cancellationOf: null,
+      cancellationReason: null,
+      renderedPdfBinaryDescriptorId: null,
+      createdBy: fields.createdBy,
+      updatedBy: fields.updatedBy,
+    })
+    .returning();
+  return rows[0]!;
+}
+
+/**
+ * Fields to patch on an existing draft row. The service has already
+ * resolved overlays (recipient merge, totals re-derivation,
+ * performanceDate semantics) and passes the post-patch values verbatim.
+ */
+export interface UpdateInvoiceDraftFields {
+  taxMode: TaxMode;
+  lines: InvoiceLine[];
+  totals: InvoiceTotals;
+  recipient: InvoiceRecipientSnapshot;
+  performanceDate: Date | null;
+  updatedBy: string;
+}
+
+/**
+ * UPDATE a draft row with the post-patch values. The service is
+ * responsible for the status-frozen precondition (only drafts may be
+ * patched); the repo writes whatever the service hands in.
+ */
+export async function updateInvoiceDraft(
+  tx: MutatingDatabase,
+  id: string,
+  fields: UpdateInvoiceDraftFields,
+): Promise<InvoiceRow> {
+  const rows = await tx
+    .update(invoices)
+    .set({
+      taxMode: fields.taxMode,
+      lines: fields.lines,
+      totals: fields.totals,
+      recipient: fields.recipient,
+      performanceDate: fields.performanceDate,
+      updatedAt: new Date(),
+      updatedBy: fields.updatedBy,
+    })
+    .where(eq(invoices.id, id))
+    .returning();
+  return rows[0]!;
+}
+
+/**
+ * Hard-delete a draft row. The service is responsible for the
+ * status-frozen precondition; the repo just executes the DELETE.
+ */
+export async function deleteInvoiceDraft(tx: MutatingDatabase, id: string): Promise<void> {
+  await tx.delete(invoices).where(eq(invoices.id, id));
+}
+
+/**
+ * Fields written in the single combined UPDATE that flips a draft to
+ * `issued`. The service does all the snapshotting (issuer block from
+ * the live profile, totals re-derived from lines+taxMode, descriptor
+ * id from the binary-pipeline persistRendered call) and passes the
+ * final values verbatim.
+ */
+export interface ApplyIssuanceUpdateFields {
+  number: string;
+  issueDate: Date;
+  issuer: InvoiceIssuerSnapshot;
+  recipient: InvoiceRecipientSnapshot;
+  lines: InvoiceLine[];
+  totals: InvoiceTotals;
+  taxMode: TaxMode;
+  profile: InvoiceProfile;
+  renderedPdfBinaryDescriptorId: string;
+  updatedBy: string;
+}
+
+/**
+ * The single UPDATE that flips draft→issued and writes the descriptor
+ * in one statement (so the immutability trigger sees a single transition
+ * from draft, not an UPDATE of an already-issued row). Called from the
+ * issuance atom AFTER render + binary persist; ordering matters because
+ * the persistence-layer immutability trigger blocks UPDATE-after-INSERT
+ * on issued rows.
+ */
+export async function applyIssuanceUpdate(
+  tx: MutatingDatabase,
+  id: string,
+  fields: ApplyIssuanceUpdateFields,
+): Promise<InvoiceRow> {
+  const rows = await tx
+    .update(invoices)
+    .set({
+      status: 'issued',
+      number: fields.number,
+      issueDate: fields.issueDate,
+      issuer: fields.issuer,
+      recipient: fields.recipient,
+      lines: fields.lines,
+      totals: fields.totals,
+      taxMode: fields.taxMode,
+      profile: fields.profile,
+      renderedPdfBinaryDescriptorId: fields.renderedPdfBinaryDescriptorId,
+      updatedAt: fields.issueDate,
+      updatedBy: fields.updatedBy,
+    })
+    .where(eq(invoices.id, id))
+    .returning();
+  return rows[0]!;
+}
+
+/**
+ * Flip the parent project's status to `'abgerechnet'` inside the
+ * issuance transaction. NO separate `mutate()` call: per ADR-0026 the
+ * project status flip is a side-effect of the issuance, not its own
+ * audit event. The invoice audit row's ancestor pair surfaces the
+ * change under the project's activity feed.
+ */
+export async function flipParentProjectStatusToAbgerechnet(
+  tx: MutatingDatabase,
+  projectId: string,
+  userId: string,
+  when: Date,
+): Promise<void> {
+  await tx
+    .update(projects)
+    .set({
+      status: 'abgerechnet',
+      statusChangedAt: when,
+      updatedAt: when,
+      updatedBy: userId,
+    })
+    .where(eq(projects.id, projectId));
+}
+
+/**
+ * Fields for inserting a Storno (cancellation) sibling row. The service
+ * snapshots issuer/recipient/taxMode/profile/performanceDate from the
+ * original byte-for-byte (AC-290), negates the lines, re-derives totals,
+ * and pre-allocates a number from the `(year, 'storno')` sequence. The
+ * descriptor id comes from a separate render+persist that ran earlier
+ * in the cancel atom (same immutability-trigger reason as issuance:
+ * INSERT-then-UPDATE-descriptor is blocked).
+ */
+export interface InsertStornoInvoiceFields {
+  id: string;
+  projectId: string;
+  number: string;
+  issueDate: Date;
+  performanceDate: Date | null;
+  taxMode: typeof invoices.$inferInsert.taxMode;
+  profile: typeof invoices.$inferInsert.profile;
+  issuer: typeof invoices.$inferInsert.issuer;
+  recipient: typeof invoices.$inferInsert.recipient;
+  lines: typeof invoices.$inferInsert.lines;
+  totals: typeof invoices.$inferInsert.totals;
+  cancellationOf: string;
+  cancellationReason: string | null;
+  renderedPdfBinaryDescriptorId: string;
+  createdBy: string;
+  updatedBy: string;
+}
+
+/**
+ * INSERT a Storno (cancellation) sibling row at `status='issued'`. The
+ * service has resolved every snapshotted field; this just writes the
+ * row and returns it for the audit `after` payload.
+ */
+export async function insertStornoInvoice(
+  tx: MutatingDatabase,
+  fields: InsertStornoInvoiceFields,
+): Promise<InvoiceRow> {
+  const rows = await tx
+    .insert(invoices)
+    .values({
+      id: fields.id,
+      projectId: fields.projectId,
+      status: 'issued',
+      number: fields.number,
+      issueDate: fields.issueDate,
+      performanceDate: fields.performanceDate,
+      taxMode: fields.taxMode,
+      profile: fields.profile,
+      issuer: fields.issuer,
+      recipient: fields.recipient,
+      lines: fields.lines,
+      totals: fields.totals,
+      cancellationOf: fields.cancellationOf,
+      cancellationReason: fields.cancellationReason,
+      renderedPdfBinaryDescriptorId: fields.renderedPdfBinaryDescriptorId,
+      createdBy: fields.createdBy,
+      updatedBy: fields.updatedBy,
+    })
+    .returning();
+  return rows[0]!;
+}
+
+/**
+ * Flip an original from `'issued'` to `'cancelled'` inside the cancel
+ * atom. The DB-level immutability backstop (Phase A schema trigger)
+ * allows exactly this one transition; touching any other column on an
+ * issued row fails the constraint. `cancellation_reason` is deliberately
+ * NOT written on the original — the reason is frozen on the Storno only
+ * (per the brief).
+ */
+export async function applyCancellationFlip(
+  tx: MutatingDatabase,
+  id: string,
+  userId: string,
+  when: Date,
+): Promise<InvoiceRow> {
+  const rows = await tx
+    .update(invoices)
+    .set({
+      status: 'cancelled',
+      updatedAt: when,
+      updatedBy: userId,
+    })
+    .where(eq(invoices.id, id))
+    .returning();
+  return rows[0]!;
 }
