@@ -798,7 +798,13 @@ export interface CompanyProfileInput {
   iban: string | null;
   accentColor: string | null;
   footerText: string | null;
-  logoBinaryDescriptorId: string | null;
+  /**
+   * Optional — when omitted the server preserves the previously stored
+   * value (api.md §14.2.15). The current UI surface has no upload flow
+   * (#189 will add it), so the field is omitted from every save to avoid
+   * silently zeroing a descriptor reference set by a future caller.
+   */
+  logoBinaryDescriptorId?: string | null;
   defaultTaxMode: TaxMode;
 }
 

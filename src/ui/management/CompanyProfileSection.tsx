@@ -21,7 +21,10 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { STRINGS } from '@/config/strings';
 import { useAuthStore } from '@/state/authStore';
-import { useCompanyProfileStore } from '@/state/companyProfileStore';
+import {
+  useCompanyProfileStore,
+  type CompanyProfileSavePayload,
+} from '@/state/companyProfileStore';
 import { TAX_MODES, labelForTaxMode, type CompanyProfile, type TaxMode } from '@/domain/invoice';
 import styles from './CompanyProfileSection.module.css';
 
@@ -133,7 +136,13 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
     }
 
     setSubmitting(true);
-    const payload = {
+    // Logo upload is out of scope of this Chunk (#189) — there is no
+    // orphan (non-project) binary descriptor pipeline yet, and the form
+    // exposes no logo affordance. The save payload omits the field; the
+    // server's `undefined`-preserves-existing-value semantics keeps any
+    // previously stored descriptor reference intact. Re-add the field
+    // when #189 lands a real upload pipeline.
+    const payload: CompanyProfileSavePayload = {
       companyName: values.companyName.trim(),
       address: {
         street: values.street.trim(),
@@ -145,9 +154,6 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
       iban: values.iban.trim() || null,
       accentColor: values.accentColor.trim() || null,
       footerText: values.footerText.trim() || null,
-      // Logo upload is out of scope for this chunk — there is no orphan
-      // (non-project) binary descriptor pipeline yet.
-      logoBinaryDescriptorId: null,
       defaultTaxMode: values.defaultTaxMode,
     };
     await saveProfile(payload);

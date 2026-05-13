@@ -15,6 +15,17 @@ import { companyProfileApi, type CompanyProfileInput } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 
 /**
+ * Payload accepted by `save`. The store deliberately omits
+ * `logoBinaryDescriptorId` — logo upload is out of scope of this Chunk
+ * (tracked in #189) and there is no orphan binary-descriptor pipeline
+ * yet. Hard-coding `null` on every save would silently destroy any
+ * previously stored descriptor reference; omitting the field instead
+ * lets the server's `undefined`-preserves-existing-value contract leave
+ * the prior value untouched. Re-add the field when #189 lands.
+ */
+export type CompanyProfileSavePayload = Omit<CompanyProfileInput, 'logoBinaryDescriptorId'>;
+
+/**
  * Result of `save`. `'ok'` — PUT committed, `data` refreshed.
  * `'validation'` — server returned a 422 (VALIDATION_ERROR or
  * COMPANY_PROFILE_REQUIRED); the caller may inspect `saveError` for the
@@ -33,7 +44,7 @@ interface CompanyProfileState {
   saveError: string | null;
 
   fetch: () => Promise<void>;
-  save: (payload: CompanyProfileInput) => Promise<SaveOutcome>;
+  save: (payload: CompanyProfileSavePayload) => Promise<SaveOutcome>;
   clearSaveError: () => void;
 }
 
