@@ -71,7 +71,29 @@ const FONT_SIZE_TITLE = 18;
 const LINE_HEIGHT = 12;
 
 const COL_LEFT = MARGIN_LEFT;
-const COL_AMOUNT_WIDTH = 70;
+const COL_RIGHT = PAGE_WIDTH - MARGIN_RIGHT;
+
+/**
+ * Line-item table column layout. All numeric columns (`menge`, `einzelpreis`,
+ * `ust-satz`, `gesamt`) are RIGHT-aligned at the `*_RIGHT_X` anchors below;
+ * the text columns (`beschreibung`, `einheit`) are LEFT-aligned at their
+ * `*_X` anchors. The old layout drew everything left-aligned at fixed
+ * column starts, which collided whenever a value was longer than the
+ * column's nominal width — e.g. `Einzelpreis` running into `USt-Satz`
+ * and `19%` colliding with the line total.
+ *
+ * The chosen positions reserve enough room for typical German invoice
+ * values (`1.500,00 €` at 10pt is ~50pt wide) plus a small gap between
+ * columns; the `maxWidth` on the description column truncates long names
+ * rather than letting them invade `Menge`.
+ */
+const TABLE_DESC_X = COL_LEFT;
+const TABLE_QTY_RIGHT_X = COL_LEFT + 235;
+const TABLE_UNIT_X = COL_LEFT + 245;
+const TABLE_UNIT_PRICE_RIGHT_X = COL_LEFT + 360;
+const TABLE_TAX_RATE_RIGHT_X = COL_LEFT + 415;
+const TABLE_LINE_TOTAL_RIGHT_X = COL_RIGHT;
+const TABLE_DESC_MAX_WIDTH = TABLE_QTY_RIGHT_X - TABLE_DESC_X - 50;
 
 /**
  * Money formatter — euro symbol + DE-format thousands and decimals
@@ -95,6 +117,24 @@ function fmtDate(value: string | Date | null): string {
   const month = (d.getUTCMonth() + 1).toString().padStart(2, '0');
   const year = d.getUTCFullYear().toString();
   return `${day}.${month}.${year}`;
+}
+
+/**
+ * Right-align `text` so its right edge sits at `rightX`. `drawText` in
+ * pdf-lib is left-aligned only; the cell-layout code below relies on
+ * right alignment for every numeric column, so this helper is the
+ * single seam for that conversion.
+ */
+function drawRight(
+  page: PDFPage,
+  text: string,
+  rightX: number,
+  y: number,
+  size: number,
+  font: PDFFont,
+): void {
+  const width = font.widthOfTextAtSize(text, size);
+  page.drawText(text, { x: rightX - width, y, size, font });
 }
 
 function addPage(
@@ -283,54 +323,42 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
   // ----- Line items table -----
   ensureSpace(doc, cursor, font, pageNumberCount, 30);
   const colHeaderY = cursor.y;
-  const colDesc = COL_LEFT;
-  const colQty = COL_LEFT + 260;
-  const colUnit = colQty + 35;
-  const colUnitPrice = colUnit + 50;
-  const colTaxRate = colUnitPrice + 60;
-  const colLineTotal = PAGE_WIDTH - MARGIN_RIGHT - COL_AMOUNT_WIDTH;
   cursor.page.drawText('Beschreibung', {
-    x: colDesc,
+    x: TABLE_DESC_X,
     y: colHeaderY,
     size: FONT_SIZE_BODY,
     font: fontBold,
   });
-  cursor.page.drawText('Menge', {
-    x: colQty,
-    y: colHeaderY,
-    size: FONT_SIZE_BODY,
-    font: fontBold,
-  });
+  drawRight(cursor.page, 'Menge', TABLE_QTY_RIGHT_X, colHeaderY, FONT_SIZE_BODY, fontBold);
   cursor.page.drawText('Einheit', {
-    x: colUnit,
+    x: TABLE_UNIT_X,
     y: colHeaderY,
     size: FONT_SIZE_BODY,
     font: fontBold,
   });
-  cursor.page.drawText('Einzelpreis', {
-    x: colUnitPrice,
-    y: colHeaderY,
-    size: FONT_SIZE_BODY,
-    font: fontBold,
-  });
+  drawRight(
+    cursor.page,
+    'Einzelpreis',
+    TABLE_UNIT_PRICE_RIGHT_X,
+    colHeaderY,
+    FONT_SIZE_BODY,
+    fontBold,
+  );
   if (invoice.taxMode === 'standard') {
-    cursor.page.drawText('USt-Satz', {
-      x: colTaxRate,
-      y: colHeaderY,
-      size: FONT_SIZE_BODY,
-      font: fontBold,
-    });
+    drawRight(
+      cursor.page,
+      'USt-Satz',
+      TABLE_TAX_RATE_RIGHT_X,
+      colHeaderY,
+      FONT_SIZE_BODY,
+      fontBold,
+    );
   }
-  cursor.page.drawText('Gesamt', {
-    x: colLineTotal,
-    y: colHeaderY,
-    size: FONT_SIZE_BODY,
-    font: fontBold,
-  });
+  drawRight(cursor.page, 'Gesamt', TABLE_LINE_TOTAL_RIGHT_X, colHeaderY, FONT_SIZE_BODY, fontBold);
   cursor.y = colHeaderY - LINE_HEIGHT;
   cursor.page.drawLine({
     start: { x: COL_LEFT, y: cursor.y + 2 },
-    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursor.y + 2 },
+    end: { x: COL_RIGHT, y: cursor.y + 2 },
     thickness: 0.5,
     color: rgb(0.6, 0.6, 0.6),
   });
@@ -339,57 +367,70 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
   for (const line of invoice.lines) {
     ensureSpace(doc, cursor, font, pageNumberCount, LINE_HEIGHT + 4);
     cursor.page.drawText(sanitizeForWinAnsi(line.description), {
-      x: colDesc,
+      x: TABLE_DESC_X,
       y: cursor.y,
       size: FONT_SIZE_BODY,
       font,
-      maxWidth: colQty - colDesc - 10,
+      maxWidth: TABLE_DESC_MAX_WIDTH,
     });
-    cursor.page.drawText((Math.round(line.quantity * 100) / 100).toFixed(2), {
-      x: colQty,
-      y: cursor.y,
-      size: FONT_SIZE_BODY,
+    drawRight(
+      cursor.page,
+      (Math.round(line.quantity * 100) / 100).toFixed(2),
+      TABLE_QTY_RIGHT_X,
+      cursor.y,
+      FONT_SIZE_BODY,
       font,
-    });
+    );
     cursor.page.drawText(sanitizeForWinAnsi(line.unit), {
-      x: colUnit,
+      x: TABLE_UNIT_X,
       y: cursor.y,
       size: FONT_SIZE_BODY,
       font,
     });
-    cursor.page.drawText(fmtEur(line.unitPrice), {
-      x: colUnitPrice,
-      y: cursor.y,
-      size: FONT_SIZE_BODY,
+    drawRight(
+      cursor.page,
+      fmtEur(line.unitPrice),
+      TABLE_UNIT_PRICE_RIGHT_X,
+      cursor.y,
+      FONT_SIZE_BODY,
       font,
-    });
+    );
     if (invoice.taxMode === 'standard') {
-      cursor.page.drawText(`${line.taxRate}%`, {
-        x: colTaxRate,
-        y: cursor.y,
-        size: FONT_SIZE_BODY,
+      drawRight(
+        cursor.page,
+        `${line.taxRate}%`,
+        TABLE_TAX_RATE_RIGHT_X,
+        cursor.y,
+        FONT_SIZE_BODY,
         font,
-      });
+      );
     }
-    cursor.page.drawText(fmtEur(line.lineTotal), {
-      x: colLineTotal,
-      y: cursor.y,
-      size: FONT_SIZE_BODY,
+    drawRight(
+      cursor.page,
+      fmtEur(line.lineTotal),
+      TABLE_LINE_TOTAL_RIGHT_X,
+      cursor.y,
+      FONT_SIZE_BODY,
       font,
-    });
+    );
     cursor.y -= LINE_HEIGHT;
   }
   cursor.y -= 8;
   cursor.page.drawLine({
     start: { x: COL_LEFT, y: cursor.y },
-    end: { x: PAGE_WIDTH - MARGIN_RIGHT, y: cursor.y },
+    end: { x: COL_RIGHT, y: cursor.y },
     thickness: 0.5,
     color: rgb(0.6, 0.6, 0.6),
   });
   cursor.y -= 16;
 
   // ----- Totals block -----
-  const totalsLeft = colLineTotal - 120;
+  // The per-rate label can be wide ("zzgl. 19% USt auf 12.345,67 €");
+  // keeping it left-anchored and right-aligning the amount stops the
+  // label from running into the value column. The label start is set
+  // so that the longest expected line still leaves a small visual gap
+  // before the right-aligned amount column.
+  const totalsLeft = COL_LEFT + 220;
   ensureSpace(doc, cursor, font, pageNumberCount, 80);
   cursor.page.drawText('Nettobetrag', {
     x: totalsLeft,
@@ -397,12 +438,14 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
     size: FONT_SIZE_BODY,
     font,
   });
-  cursor.page.drawText(fmtEur(invoice.totals.netGrandTotal), {
-    x: colLineTotal,
-    y: cursor.y,
-    size: FONT_SIZE_BODY,
+  drawRight(
+    cursor.page,
+    fmtEur(invoice.totals.netGrandTotal),
+    TABLE_LINE_TOTAL_RIGHT_X,
+    cursor.y,
+    FONT_SIZE_BODY,
     font,
-  });
+  );
   cursor.y -= LINE_HEIGHT;
   if (invoice.taxMode === 'standard') {
     for (const band of invoice.totals.perRate) {
@@ -410,12 +453,14 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
         sanitizeForWinAnsi(`zzgl. ${band.taxRate}% USt auf ${fmtEur(band.netSubtotal)}`),
         { x: totalsLeft, y: cursor.y, size: FONT_SIZE_BODY, font },
       );
-      cursor.page.drawText(fmtEur(band.taxAmount), {
-        x: colLineTotal,
-        y: cursor.y,
-        size: FONT_SIZE_BODY,
+      drawRight(
+        cursor.page,
+        fmtEur(band.taxAmount),
+        TABLE_LINE_TOTAL_RIGHT_X,
+        cursor.y,
+        FONT_SIZE_BODY,
         font,
-      });
+      );
       cursor.y -= LINE_HEIGHT;
     }
     cursor.page.drawText('Gesamtsteuer', {
@@ -424,26 +469,31 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
       size: FONT_SIZE_BODY,
       font,
     });
-    cursor.page.drawText(fmtEur(invoice.totals.taxGrandTotal), {
-      x: colLineTotal,
-      y: cursor.y,
-      size: FONT_SIZE_BODY,
+    drawRight(
+      cursor.page,
+      fmtEur(invoice.totals.taxGrandTotal),
+      TABLE_LINE_TOTAL_RIGHT_X,
+      cursor.y,
+      FONT_SIZE_BODY,
       font,
-    });
+    );
     cursor.y -= LINE_HEIGHT;
   }
+  cursor.y -= 4;
   cursor.page.drawText('Bruttobetrag', {
     x: totalsLeft,
     y: cursor.y,
     size: FONT_SIZE_HEADING,
     font: fontBold,
   });
-  cursor.page.drawText(fmtEur(invoice.totals.grossGrandTotal), {
-    x: colLineTotal,
-    y: cursor.y,
-    size: FONT_SIZE_HEADING,
-    font: fontBold,
-  });
+  drawRight(
+    cursor.page,
+    fmtEur(invoice.totals.grossGrandTotal),
+    TABLE_LINE_TOTAL_RIGHT_X,
+    cursor.y,
+    FONT_SIZE_HEADING,
+    fontBold,
+  );
   cursor.y -= 24;
 
   // ----- Tax-mode boilerplate (the AT-116 anchor) -----
