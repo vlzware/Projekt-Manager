@@ -194,8 +194,10 @@ export async function listInvoices(
  * (AC-298 — `null` / OUT_OF_SCOPE / row), mirroring the project-scope
  * policy (AC-147).
  *
- * The row exists check runs before the scope check so we don't leak
- * row existence to a worker via the response code shape.
+ * Existence is not secret — workers receive 403 on hit, 404 on miss;
+ * this is the documented role-boundary policy per AC-147 (and AC-298
+ * for invoices). The row existence check runs before the scope check
+ * so the three-way semantic surfaces correctly.
  */
 export async function getInvoice(
   db: Database,
@@ -262,13 +264,16 @@ export async function countIssuedOrCancelledForCustomer(
  * Allocate the next value in the gapless `(year, kind)` sequence inside
  * the supplied transaction (data-model.md §6.13). Implementation pattern:
  *
- *   1. `SELECT … FOR UPDATE` on the matching row.
- *   2. If the row exists, increment `next_value` and RETURNING the
- *      pre-increment value (the one we hand out).
- *   3. If the row does not exist (first allocation of the year/kind),
+ *   1. Atomic `UPDATE invoice_sequence … RETURNING next_value` on the
+ *      matching row — Postgres takes a row-exclusive lock on the row
+ *      for the duration of the transaction (equivalent to
+ *      `SELECT FOR UPDATE` for serialization purposes).
+ *   2. If the UPDATE hits a row, hand out the pre-increment value
+ *      (post-increment `next_value` returned − 1).
+ *   3. If the UPDATE hits no row (first allocation of the year/kind),
  *      INSERT a fresh row at `next_value = 2` and hand out 1.
  *
- * The `FOR UPDATE` lock is held until the transaction commits — a
+ * The row-exclusive lock is held until the transaction commits — a
  * rollback returns the value to the sequence (AC-288 gapless guarantee).
  *
  * Caller passes the year and kind; the formatted string is built at the

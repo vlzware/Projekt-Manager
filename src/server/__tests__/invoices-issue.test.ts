@@ -7,8 +7,9 @@
  *
  *   POST /api/invoices/:id/issue
  *
- *   - Allocates `number` from `invoice_sequence` via `SELECT … FOR UPDATE`
- *     on `(year, 'invoice')` within the issuance transaction.
+ *   - Allocates `number` from `invoice_sequence` via an atomic
+ *     `UPDATE … RETURNING next_value` on `(year, 'invoice')` within the
+ *     issuance transaction (row-exclusive lock equivalent to FOR UPDATE).
  *   - Snapshots `issuer` / `recipient` / `lines` / `taxMode` / `profile`
  *     onto the row; computes `totals` server-side.
  *   - Renders the PDF/A-3 + factur-x.xml ZUGFeRD EN 16931 payload, writes

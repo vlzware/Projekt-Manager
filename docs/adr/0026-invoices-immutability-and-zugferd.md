@@ -29,14 +29,14 @@ We will model invoices as **immutable issued snapshots with a gapless year-scope
 ### Data model
 
 - **New `invoices` table — snapshot at issuance.** Issuer block (company name, address, tax id, USt-IdNr., IBAN, footer text), recipient block (customer name + address), line items as a JSONB array, tax aggregation, totals, dates (issue, performance/Leistungsdatum), identifiers (number, status), `taxMode` (snapshotted), `profile` (ZUGFeRD profile snapshotted), binary descriptor reference to the rendered PDF/A-3, `cancellationOf` (nullable self-FK to the original invoice for Stornorechnung rows). Issued rows are write-once after the issuance transaction commits.
-- **New `invoice_sequence` table — gapless allocation.** One row per `(year, kind)` where `kind ∈ {'invoice', 'storno'}` with `nextValue bigint NOT NULL`. Allocation is `SELECT … FOR UPDATE` on the matching row inside the same transaction that inserts the invoice; the lock is held until commit, so a rollback returns the value to the sequence. This is the canonical Postgres pattern for gapless counters and is incompatible with `SERIAL`/`IDENTITY`, which advance on rollback by design.
+- **New `invoice_sequence` table — gapless allocation.** One row per `(year, kind)` where `kind ∈ {'invoice', 'storno'}` with `nextValue bigint NOT NULL`. Allocation is a single `UPDATE invoice_sequence … RETURNING next_value` against the matching row inside the same transaction that inserts the invoice — Postgres takes a row-exclusive lock equivalent to `SELECT FOR UPDATE` for the duration of the transaction, so a rollback returns the value to the sequence. This is the canonical Postgres pattern for gapless counters and is incompatible with `SERIAL`/`IDENTITY`, which advance on rollback by design. The year segment is derived from issuance-time wall-clock UTC; a `(year, kind)` row is created on first issuance of the year.
 - **New `company_profile` table — single row.** Columns: company name, address, tax id, USt-IdNr., logo (binary descriptor reference), IBAN, accent color, footer text, `defaultTaxMode`. Singleton enforced by a CHECK on a constant primary key (same shape as `meta_backup_status.singleton`). Owner-only CRUD; the row is pre-seeded by the baseline migration so write paths upsert rather than first-write.
 - **New `AuditEntityType: 'invoice'`.** Added to the `AUDIT_ENTITY_TYPES` array and `AUDIT_ENTITY_TO_TABLE` map in `schema.ts`; the architecture check ([scripts/check-audit-mutations.sh](../../scripts/check-audit-mutations.sh)) derives the audited-tables list from this constant. The `audit_log_entity_type_valid` and `audit_log_ancestor_type_valid` CHECKs are extended in lock-step.
 
 ### State machine
 
 - **`draft`** — fully editable, no number assigned, deletable. Lines, recipient, tax mode all mutable.
-- **`issued`** — at the issuance transaction: number allocated from `invoice_sequence.FOR UPDATE`, content frozen (no UPDATE path on issued rows beyond the cancellation flag), PDF/A-3 + ZUGFeRD XML rendered, blob written through the [ADR-0022](0022-binary-storage-b2-compliance-object-lock.md)/[ADR-0024](0024-binary-attachment-e2e-encryption.md) pipeline, project status transitioned to `abgerechnet`, audit row written, SSE `invoice_changed` event emitted post-commit. All one transaction.
+- **`issued`** — at the issuance transaction: number allocated atomically from `invoice_sequence` (single `UPDATE … RETURNING next_value` taking a row-exclusive lock), content frozen (no UPDATE path on issued rows beyond the cancellation flag), PDF/A-3 + ZUGFeRD XML rendered, blob written through the [ADR-0022](0022-binary-storage-b2-compliance-object-lock.md)/[ADR-0024](0024-binary-attachment-e2e-encryption.md) pipeline, project status transitioned to `abgerechnet`, audit row written, SSE `invoice_changed` event emitted post-commit. All one transaction.
 - **`cancelled`** — a flag on the original issued row. Cancellation does not edit the original; it **inserts a sibling Stornorechnung row** with its own `ST-YYYY-NNNN` number from the `storno` sub-sequence, line amounts negated, mandatory `cancellationOf` pointing at the original. Both rows persist forever. A _corrected_ invoice is a fresh `draft → issued` cycle, not a Storno variant. Project status is **not** auto-reverted on cancellation — surfaced as a UI banner so the operator decides what to do with the project state.
 
 ### Numbering
@@ -100,7 +100,7 @@ Standard third-normal-form modeling: query-able historical line items, FK integr
 
 ### Postgres `SERIAL` / `IDENTITY` for the invoice number
 
-Trivially gapless-looking, well-supported. Ruled out: both leak gaps on rollback — the sequence advances even when the inserting transaction aborts, and the gap is permanent. Gapless numbering is anchored in §14 UStG audit practice (the auditor's default question is "why is RE-2026-0014 missing"), so a sequence model that produces gaps is a category error here. The `FOR UPDATE` row lock on `invoice_sequence` is the canonical Postgres pattern when gaplessness is required and writes are low-rate.
+Trivially gapless-looking, well-supported. Ruled out: both leak gaps on rollback — the sequence advances even when the inserting transaction aborts, and the gap is permanent. Gapless numbering is anchored in §14 UStG audit practice (the auditor's default question is "why is RE-2026-0014 missing"), so a sequence model that produces gaps is a category error here. The row-exclusive lock on `invoice_sequence` (via a single `UPDATE … RETURNING next_value`) is the canonical Postgres pattern when gaplessness is required and writes are low-rate.
 
 ### Soft-delete instead of immutability + Stornorechnung
 
@@ -120,7 +120,7 @@ Keep `company_profile.defaultTaxMode` plus a `taxModeOverride boolean` on the in
 
 - **Legal compliance from day 1.** §14, §14a, §147, §19, §13b, GoBD all anchored — receive-EN-16931 capability is met for 2025-01-01 and send-EN-16931 capability is met for 2027-01-01 without a follow-up program.
 - **Historical readability is structural.** Issued invoices render identically forever because the snapshot is on the row, not chased through joins against mutable parents.
-- **Gapless numbering survives rollback** by construction (`FOR UPDATE` on `invoice_sequence` inside the issuing transaction). No reconciliation pass, no "missing number" auditor question.
+- **Gapless numbering survives rollback** by construction (atomic `UPDATE invoice_sequence … RETURNING next_value` inside the issuing transaction takes a row-exclusive lock equivalent to `SELECT FOR UPDATE`). No reconciliation pass, no "missing number" auditor question.
 - **Immutability is storage-enforced**, not policy-enforced. Compliance Object Lock on the rendered PDF/A-3 means even a compromised app credential cannot destroy issued artifacts within the retention window.
 - **No new infrastructure.** Reuses audit, storage, encryption, SSE, and the scope predicate. The invoice domain is a fifth audited entity type, not a parallel stack.
 - **Stornorechnung is a regular row.** The cancellation primitive does not need special-casing in audit, storage, listing, or permissions — it is an invoice with `cancellationOf` set and a Storno prefix.
@@ -129,7 +129,7 @@ Keep `company_profile.defaultTaxMode` plus a `taxModeOverride boolean` on the in
 
 - **Manual line-item entry only in v1.** No import path; bookkeeper-facing pain on long line lists. The JSONB shape accommodates an importer without migration when the need is concrete.
 - **Single `company_profile` row constrains multi-entity tenants.** Acceptable under [ADR-0001](0001-generalized-system-with-configurable-customer-specifics.md); if a customer ever operates two issuing entities under one deployment, the singleton lifts to a row-per-entity with a `companyProfileId` FK on `invoices`.
-- **ZUGFeRD adds a toolchain surface.** PDF/A-3 generation, the `factur-x.xml` builder against the EN 16931 schema, per-render XSD validation via `libxmljs2`, and downstream interop with the official `Mustangproject` / KoSIT validators. A non-conformant XML aborts the issuance transaction at the validator step before any binary lands on B2 (`src/server/services/invoice/xsdValidator.ts`). Adds a native runtime dependency to the `app` image — alpine/musl prebuilts ship for Node 22, so no build-toolchain change.
+- **ZUGFeRD adds a toolchain surface.** PDF/A-3 generation, the `factur-x.xml` builder against the EN 16931 schema, and per-render XSD validation against the canonical EN 16931 schemas before embed. A non-conformant XML aborts the issuance transaction at the validator step before any binary lands on B2. The Node-native rendering pipeline (libraries, paths) is documented in [`ARCHITECTURE.md` § Invoices Module](../../ARCHITECTURE.md#invoices-module).
 - **Stornorechnung surfaces as a distinct row in invoice lists.** UI must group it visually under the original; bookkeeper exports include both. Acceptable — it is the artifact a tax auditor expects to see.
 - **Object Lock + Compliance retention is unforgiving.** A Storno-then-correct cycle is the only correction path; there is no "fix a typo on the issued invoice" door, by design.
 
@@ -140,8 +140,7 @@ Keep `company_profile.defaultTaxMode` plus a `taxModeOverride boolean` on the in
 - The boot-time `assertStorageBucketSafe()` is extended to verify the invoice retention envelope covers the env value (bucket retention ≥ env); under-retention refuses to start the `app` service, over-retention is accepted.
 - New SSE event name `invoice_changed` registered with the event-name registry — no `/api/events` route change.
 - New permission keys `invoice:read` and `invoice:write` added to the permission registry; the bookkeeper role (currently a stub) gains `invoice:read`.
-- ZUGFeRD generation is a new server-side dependency (`Mustangproject` or equivalent — exact package picked in spec). Build-image surface grows by the JVM / native dep that ships with the chosen library.
-- **Security audit not required.** Trigger evaluation against [CONTRIBUTING.md §Security audit](../../CONTRIBUTING.md#security-audit): authentication unchanged (existing session cookies), authorization is two new permission keys consumed by the existing predicate-and-permission registry, storage reuses the ADR-0022/ADR-0024 binary pipeline with no new key material or transport, external communication is unchanged (no new outbound surface — invoices are stored, not transmitted), network exposure adds no new endpoints beyond gated read/write routes that are structurally identical to existing entity routes. No trust boundary moves. User confirmation requested as a backstop per CONTRIBUTING §7–8.
+- ZUGFeRD generation lands as a Node-native rendering pipeline (PDF/A-3 + embedded `factur-x.xml` with per-render XSD validation against the EN 16931 schemas); concrete libraries and paths are documented in [`ARCHITECTURE.md` § Invoices Module](../../ARCHITECTURE.md#invoices-module). No JVM, no external service.
 
 ## References
 
@@ -162,4 +161,3 @@ Keep `company_profile.defaultTaxMode` plus a `taxModeOverride boolean` on the in
 - [EN 16931](https://standards.cen.eu/dyn/www/f?p=204:110:0::::FSP_PROJECT,FSP_LANG_ID:60602,25) — Electronic invoicing: semantic data model of the core elements of an electronic invoice.
 - [ZUGFeRD / Factur-X specification](https://www.ferd-net.de/standards/zugferd/) — hybrid PDF/A-3 + embedded EN 16931 XML.
 - [XRECHNUNG specification](https://www.xoev.de/xrechnung-16828) — public-sector profile; future-work seam.
-- [CONTRIBUTING.md §Security audit](../../CONTRIBUTING.md#security-audit) — trigger evaluated; audit proposed _not required_, user to confirm.
