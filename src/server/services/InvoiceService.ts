@@ -64,6 +64,33 @@ export type { InvoiceBinaryDeps };
 /** Re-export the cancel result so routes don't reach into the sibling service. */
 export type { CancelResult };
 
+/**
+ * Parse an ISO-8601 `YYYY-MM-DD` date with calendar validity. The route
+ * regex only enforces structural shape (`^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$`),
+ * which admits e.g. `2026-02-30`. Passing such a string to `new Date()`
+ * silently normalizes to `2026-03-02`; the shifted value would land in
+ * the immutable issued snapshot, `factur-x.xml`, and the rendered PDF —
+ * a §147 AO / GoBD data-integrity defect. Round-trip via `Date.UTC` and
+ * reject any input whose Y/M/D parts don't equal the constructed Date's
+ * Y/M/D parts.
+ */
+function parseCalendarDate(input: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(input);
+  if (!match) throw validationError(STRINGS.errors.invalidInput);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    throw validationError(STRINGS.errors.invalidInput);
+  }
+  return date;
+}
+
 /** Validate that every line's shape is the contract's. Server re-derives totals. */
 function validateInvoiceLines(lines: InvoiceLine[]): void {
   if (!Array.isArray(lines)) {
@@ -203,7 +230,7 @@ export class InvoiceService {
     const profileLiteral: InvoiceProfile = 'zugferd-en16931';
 
     const id = crypto.randomUUID();
-    const performanceDate = input.performanceDate ? new Date(input.performanceDate) : null;
+    const performanceDate = input.performanceDate ? parseCalendarDate(input.performanceDate) : null;
 
     const created = await mutate(
       this.db,
@@ -342,7 +369,7 @@ export class InvoiceService {
           const nextPerformanceDate =
             'performanceDate' in input
               ? input.performanceDate
-                ? new Date(input.performanceDate)
+                ? parseCalendarDate(input.performanceDate)
                 : null
               : before.performanceDate;
 

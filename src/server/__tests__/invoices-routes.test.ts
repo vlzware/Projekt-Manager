@@ -441,6 +441,38 @@ describe('Invoice routes — integration (issue #109)', () => {
       expect(res.json().code).toBe('NOT_FOUND');
     });
 
+    it('calendar-invalid performanceDate is rejected with 422 VALIDATION_ERROR (AC-289 — no silent normalization)', async () => {
+      // The route-layer regex (M9 hardening) only enforces structural
+      // YYYY-(01-12)-(01-31) shape; calendar-invalid dates like
+      // 2026-02-30 pass the regex. Without the service-layer round-trip
+      // check, `new Date('2026-02-30')` silently normalizes to
+      // 2026-03-02 — the shifted value would land in the immutable
+      // issued snapshot, factur-x.xml, and the rendered PDF. §147 AO /
+      // GoBD: dates on issued invoices must be exactly as the operator
+      // intended; silent normalization is a data-integrity defect.
+      for (const bad of ['2026-02-30', '2026-02-29', '2025-04-31', '2025-09-31']) {
+        const res = await authPost(ownerToken, '/api/invoices', {
+          projectId,
+          lines: [],
+          performanceDate: bad,
+        });
+        expect(res.statusCode, `expected ${bad} to be rejected`).toBe(422);
+        expect(res.json().code).toBe('VALIDATION_ERROR');
+      }
+    });
+
+    it('calendar-valid leap-day (2024-02-29) is accepted — round-trip preserves the date', async () => {
+      // Sibling positive arm to the calendar-invalid test. 2024 is a
+      // leap year; Feb 29 round-trips through Date.UTC unchanged.
+      const res = await authPost(ownerToken, '/api/invoices', {
+        projectId,
+        lines: [],
+        performanceDate: '2024-02-29',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().performanceDate).toBe('2024-02-29');
+    });
+
     it('explicit recipient overrides the project-customer pre-fill field-by-field', async () => {
       // AC-285 design note in api.md §14.2.14: "explicit `recipient` in
       // the body overrides field-by-field". Pinning the override path

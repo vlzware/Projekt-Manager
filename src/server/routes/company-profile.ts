@@ -34,11 +34,12 @@ const addressSchema = {
 } as const;
 
 // Owner-editable strings carry route-layer maxLength caps so unbounded
-// growth cannot land in audit payloads, the rendered PDF footer, or the
-// embedded `factur-x.xml` metadata. `footerText` is the highest-impact
-// because it lands verbatim in every rendered PDF; `accentColor` is also
-// pattern-pinned to the CSS hex shapes the renderer expects (3-char
-// shorthand `#RGB` or full form `#RRGGBB`).
+// growth cannot land in audit payloads or the rendered PDF. `footerText`
+// is the highest-impact because it lands verbatim in every rendered PDF
+// (the embedded `factur-x.xml` does NOT carry footerText — see
+// `facturXmlBuilder.ts`). `accentColor` is also pattern-pinned to the
+// CSS hex shapes the renderer expects (3-char shorthand `#RGB` or full
+// form `#RRGGBB`).
 const profileBodySchema = {
   type: 'object',
   // PUT semantics — the always-required block must be present. Optional
