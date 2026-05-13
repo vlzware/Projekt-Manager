@@ -262,7 +262,7 @@ export class InvoiceIssueService {
       tx,
       rendered,
       before.projectId,
-      invoiceId,
+      previewInvoice,
       userId,
     );
 

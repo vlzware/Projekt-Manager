@@ -97,7 +97,7 @@ export class InvoiceBinaryService {
     tx: MutatingDatabase,
     rendered: RenderedInvoice,
     projectId: string,
-    invoiceId: string,
+    invoice: Pick<Invoice, 'id' | 'number' | 'recipient'>,
     userId: string,
   ): Promise<string> {
     const { storage, binaryAgeRecipient, binaryAgeIdentityPath } = this.deps;
@@ -121,15 +121,17 @@ export class InvoiceBinaryService {
     await storage.putObject(originalKey, ciphertext, 'application/octet-stream');
 
     // 5. Insert the attachments row at `status='ready'` via the repo.
-    // The filename carries the invoice number — the rendered PDF
-    // surfaces to the operator under that name when downloaded.
+    // The stored filename is the human-readable label the operator
+    // sees on a fresh download — derived from the invoice via the
+    // shared helper so `attachments.filename` and the value the
+    // download endpoint computes can never diverge.
     //
     // ServerSide PUT does not return a VersionId from `putObject`
     // (we don't HEAD the just-written object). Versioned buckets
     // still issue a VersionId per write; capture it via HEAD post-
     // PUT so the Papierkorb restore primitive can address the
     // current version later. The HEAD is cheap (no body fetch).
-    const filename = `invoice-${invoiceId}.pdf`;
+    const filename = buildInvoiceDownloadFilename(invoice);
     const versionId = (await storage.headObject(originalKey)).versionId ?? null;
     await insertRenderedInvoiceBinary(tx, {
       id: descriptorId,

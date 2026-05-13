@@ -168,7 +168,7 @@ export class InvoiceCancelService {
         tx,
         rendered,
         before.projectId,
-        stornoId,
+        stornoPreview,
         userId,
       );
 
