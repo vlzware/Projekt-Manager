@@ -78,27 +78,39 @@ export function eventsRoutes(db: Database) {
       // setInterval handle can be `const`. The connection-close
       // listener at the bottom uses the same handle for the
       // tab-closed / network-drop path.
+      //
+      // `tickInFlight` mirrors `periodicSweeper.ts`'s `currentSweep`
+      // guard — if the previous `isSessionValid` await hasn't resolved
+      // by the time the next interval fires, skip the tick rather than
+      // stacking unbounded concurrent DB queries on a stalled backend.
+      let tickInFlight = false;
       const heartbeat = setInterval(() => {
+        if (tickInFlight) return;
+        tickInFlight = true;
         void (async () => {
-          let valid: boolean;
           try {
-            valid = await authService.isSessionValid(sessionToken);
-          } catch {
-            // Transient DB error — skip this tick and try again on
-            // the next. Disconnecting on a momentary blip would
-            // punish every active subscriber for a backend hiccup.
-            return;
-          }
-          if (!valid) {
-            clearInterval(heartbeat);
-            unsubscribe(conn);
-            reply.raw.end();
-            return;
-          }
-          try {
-            reply.raw.write(HEARTBEAT_FRAME);
-          } catch {
-            /* socket gone — close handler tears down */
+            let valid: boolean;
+            try {
+              valid = await authService.isSessionValid(sessionToken);
+            } catch {
+              // Transient DB error — skip this tick and try again on
+              // the next. Disconnecting on a momentary blip would
+              // punish every active subscriber for a backend hiccup.
+              return;
+            }
+            if (!valid) {
+              clearInterval(heartbeat);
+              unsubscribe(conn);
+              reply.raw.end();
+              return;
+            }
+            try {
+              reply.raw.write(HEARTBEAT_FRAME);
+            } catch {
+              /* socket gone — close handler tears down */
+            }
+          } finally {
+            tickInFlight = false;
           }
         })();
       }, heartbeatIntervalMs);

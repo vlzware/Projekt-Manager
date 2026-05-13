@@ -220,9 +220,13 @@ export const envSchema = z.object({
   // Integer ≥ 0 — bounds match architecture.md §12.2.
   // Independent from STORAGE_OBJECT_LOCK_DAYS (attachments).
   // ---------------------------------------------------------------
+  // `.max(36525)` is a 100-year sanity cap — catches operator typos like
+  // `36500` for the §147 AO 10-year window or values that exceed B2's
+  // legal-hold envelope. The legitimate ceiling is the §147 AO 10-year
+  // window (3650); the cap leaves an order of magnitude of headroom.
   INVOICE_OBJECT_LOCK_DAYS: z.preprocess(
     (v) => (v === '' ? undefined : v),
-    z.coerce.number().int().min(0).default(0),
+    z.coerce.number().int().min(0).max(36525).default(0),
   ),
   // ---------------------------------------------------------------
   // Realtime invalidation channel (ADR-0025, architecture.md §11.13).
