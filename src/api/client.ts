@@ -799,12 +799,13 @@ export interface CompanyProfileInput {
   accentColor: string | null;
   footerText: string | null;
   /**
-   * Optional — when omitted the server preserves the previously stored
-   * value (api.md §14.2.15). The current UI surface has no upload flow
-   * (#189 will add it), so the field is omitted from every save to avoid
-   * silently zeroing a descriptor reference set by a future caller.
+   * Required — PUT semantics demand every writable field be present
+   * (api.md §14.2.15). Callers that don't manage the descriptor must
+   * pass through the value loaded by GET; sending `null` clears it.
+   * The current UI has no upload affordance (#189), so the
+   * `CompanyProfileSection` round-trips the loaded value unchanged.
    */
-  logoBinaryDescriptorId?: string | null;
+  logoBinaryDescriptorId: string | null;
   defaultTaxMode: TaxMode;
 }
 

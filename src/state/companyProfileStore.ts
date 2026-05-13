@@ -15,15 +15,13 @@ import { companyProfileApi, type CompanyProfileInput } from '@/api/client';
 import { handleSessionExpired } from './sessionExpired';
 
 /**
- * Payload accepted by `save`. The store deliberately omits
- * `logoBinaryDescriptorId` — logo upload is out of scope of this Chunk
- * (tracked in #189) and there is no orphan binary-descriptor pipeline
- * yet. Hard-coding `null` on every save would silently destroy any
- * previously stored descriptor reference; omitting the field instead
- * lets the server's `undefined`-preserves-existing-value contract leave
- * the prior value untouched. Re-add the field when #189 lands.
+ * Payload accepted by `save`. The full `CompanyProfileInput` shape per
+ * api.md §14.2.15 (PUT — every writable field present, including
+ * `logoBinaryDescriptorId`). The Section round-trips the descriptor
+ * value loaded by GET back through PUT so any server-side state
+ * (logo upload pipeline lands in #189) survives an owner save.
  */
-export type CompanyProfileSavePayload = Omit<CompanyProfileInput, 'logoBinaryDescriptorId'>;
+export type CompanyProfileSavePayload = CompanyProfileInput;
 
 /**
  * Result of `save`. `'ok'` — PUT committed, `data` refreshed.

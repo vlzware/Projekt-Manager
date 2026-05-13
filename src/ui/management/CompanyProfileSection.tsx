@@ -161,10 +161,10 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
     setSubmitting(true);
     // Logo upload is out of scope of this Chunk (#189) — there is no
     // orphan (non-project) binary descriptor pipeline yet, and the form
-    // exposes no logo affordance. The save payload omits the field; the
-    // server's `undefined`-preserves-existing-value semantics keeps any
-    // previously stored descriptor reference intact. Re-add the field
-    // when #189 lands a real upload pipeline.
+    // exposes no logo affordance. PUT semantics require every writable
+    // field (api.md §14.2.15), so the save round-trips the descriptor
+    // from the loaded profile back to the server unchanged; any value
+    // set by a future flow (or out-of-band write) survives the save.
     const payload: CompanyProfileSavePayload = {
       companyName: values.companyName.trim(),
       address: {
@@ -177,6 +177,7 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
       iban: values.iban.trim() || null,
       accentColor: values.accentColor.trim() || null,
       footerText: values.footerText.trim() || null,
+      logoBinaryDescriptorId: profile.logoBinaryDescriptorId ?? null,
       defaultTaxMode: values.defaultTaxMode,
     };
     await saveProfile(payload);
@@ -270,7 +271,11 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
           inlineError={null}
         />
 
-        {saveError && <div className={styles.error}>{saveError}</div>}
+        {saveError && (
+          <div className={styles.error} role="alert">
+            {saveError}
+          </div>
+        )}
 
         {isOwner && (
           <div className={styles.actions}>
