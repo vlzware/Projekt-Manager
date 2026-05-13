@@ -7,15 +7,20 @@
  * `stopPropagation` so they do not double-fire navigation.
  *
  * Navigation per topology:
- *   - draft  → `/projects/:projectId` (the per-project block hosts the
- *               only editable surface for a draft).
+ *   - draft  → `/projects/:projectId?editDraft=:invoiceId`. The
+ *               per-project block hosts the only editable surface for a
+ *               draft, so the deep link carries the draft id; the
+ *               receiving `InvoiceSection` auto-opens its modal form on
+ *               that draft (otherwise the user lands mid-flow and has to
+ *               click `Bearbeiten` a second time).
  *   - issued → `/rechnungen/:id` (the per-invoice viewer, §8.16.3).
  *   - storno → `/rechnungen/:id`.
  *   - cancelled original → `/rechnungen/:id`.
  *
  * Row actions per topology:
- *   - draft  → `Bearbeiten` (navigate to the project block, which owns
- *               the form), `Verwerfen` (delete draft inline).
+ *   - draft  → `Bearbeiten` (same deep link as the row click — opens the
+ *               project block's draft form), `Verwerfen` (delete draft
+ *               inline).
  *   - issued / storno / cancelled → `PDF herunterladen`.
  *
  * `Ausstellen` is intentionally NOT exposed here — issuing requires the
@@ -85,12 +90,16 @@ export function InvoiceListRow({ invoice, originalNumber }: Props) {
   const isDraft = invoice.status === 'draft';
   const showDownload = invoice.status !== 'draft';
 
-  const navigateToProject = () => navigate(`/projects/${invoice.projectId}`);
+  // Deep link: the `editDraft` param tells `InvoiceSection` to open its
+  // modal form on this draft, so the user lands in the editor rather
+  // than on the bare project page expecting a second click.
+  const navigateToDraftEditor = () =>
+    navigate(`/projects/${invoice.projectId}?editDraft=${invoice.id}`);
   const navigateToDetail = () => navigate(`/rechnungen/${invoice.id}`);
   // Drafts open in the per-project block (the only place a draft is
   // editable). Issued / cancelled / Storno rows open in the per-invoice
   // viewer (§8.16.3). Both are deep-linkable surfaces.
-  const navigateOnRowClick = isDraft ? navigateToProject : navigateToDetail;
+  const navigateOnRowClick = isDraft ? navigateToDraftEditor : navigateToDetail;
 
   // Programmatic download via an invisible `<a download>` — the same
   // trick the per-project block uses. Keeps the row's action a button
@@ -152,7 +161,7 @@ export function InvoiceListRow({ invoice, originalNumber }: Props) {
             <button
               type="button"
               className={styles.actionButton}
-              onClick={navigateToProject}
+              onClick={navigateToDraftEditor}
               data-testid="invoice-draft-edit"
             >
               {STRINGS.invoices.editDraftAction}

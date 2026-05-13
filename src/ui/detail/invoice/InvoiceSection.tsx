@@ -29,7 +29,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import type { WorkflowState } from '@/config/stateConfig';
 import type { Invoice } from '@/domain/invoice';
@@ -109,6 +109,25 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
     if (!canRead) return;
     void fetchByProject(projectId);
   }, [canRead, fetchByProject, projectId]);
+
+  // Deep-link intent: `?editDraft=:invoiceId` on this route asks the
+  // section to open its modal form on that draft. Used by the standalone
+  // /rechnungen list to deliver the user straight into the editor for a
+  // draft row (the form lives here, not there). Derived — not pulled
+  // into local state via an effect — so the URL stays the source of
+  // truth: refresh re-opens, browser-back leaves the page cleanly. The
+  // param is stripped on `onClose` so the form doesn't reappear after
+  // the user dismisses it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlEditDraftId = searchParams.get('editDraft');
+  const urlEditDraft = useMemo(() => {
+    if (!urlEditDraftId || !invoices) return null;
+    return (
+      invoices.find(
+        (inv) => inv.id === urlEditDraftId && inv.status === 'draft' && !inv.cancellationOf,
+      ) ?? null
+    );
+  }, [urlEditDraftId, invoices]);
 
   // The Storno row's display number lookup. Map id -> Invoice so the
   // row can render `Storno zu RE-YYYY-NNNN` even when the original sits
@@ -309,10 +328,10 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
         </Link>
       </div>
 
-      {formOpen && (
+      {(formOpen || urlEditDraft !== null) && (
         <InvoiceDraftForm
           projectId={projectId}
-          draft={editingDraft}
+          draft={editingDraft ?? urlEditDraft}
           defaultPerformanceDate={project?.plannedEnd ?? null}
           fallbackRecipient={{
             name: project?.customer?.name ?? '',
@@ -323,6 +342,11 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
           onClose={() => {
             setFormOpen(false);
             setEditingDraft(null);
+            if (searchParams.has('editDraft')) {
+              const next = new URLSearchParams(searchParams);
+              next.delete('editDraft');
+              setSearchParams(next, { replace: true });
+            }
           }}
         />
       )}
