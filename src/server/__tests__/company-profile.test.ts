@@ -51,6 +51,9 @@ import {
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import type { Database } from '../db/connection.js';
+import { CompanyProfileService } from '../services/CompanyProfileService.js';
+import type { AuthUser } from '../middleware/auth.js';
+import type { ServiceLogger } from '../services/Logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(__dirname, '../db/migrations');
@@ -552,5 +555,198 @@ describe('AT-125 / AC-305: failed issue does not permanently advance the sequenc
     const okNumber = ok.json().number as string;
     const okValue = Number(okNumber.split('-').pop());
     expect(okValue).toBe(expected);
+  });
+});
+
+// ---------------------------------------------------------------------
+// M3 — Defense-in-depth role check on `CompanyProfileService.upsert`.
+//
+// The service's docstring (CompanyProfileService.ts:8-9) promises:
+//
+//   "owner only; enforced at the route layer, re-checked defensively at
+//    the service layer"
+//
+// As of this test's authorship the service does NOT re-check — it
+// accepts any caller who supplies a userId, trusting the route layer
+// to gate the call. That trust violates the defense-in-depth promise
+// in the docstring (and ADR-0026's owner-only invariant for the
+// `company_profile` singleton): a future caller that constructs the
+// service directly (a background job, a test fixture, a script using
+// the repository) can write the singleton on behalf of any role.
+//
+// Wave 3 closes the gap by changing the signature from
+//   `upsert(input, userId: string, log, correlationId)`
+// to
+//   `upsert(caller: AuthUser, input, log, correlationId)`
+// and rejecting non-`owner` callers with `notPermitted()` (the same
+// error the route emits, code = `NOT_PERMITTED`). Mirrors the
+// `InvoiceService.get(caller, id)` / `.list(caller, opts)` shape — the
+// service-layer call site receives the authenticated principal, not a
+// flat userId.
+//
+// Why this is appended here, not a sibling file: AT-121 / AC-301 in
+// this file already pins the route-layer permission matrix; this block
+// pins the service-layer backstop for the same invariant. Keeping
+// both pins in one file makes the "two layers, one rule" easy to read.
+//
+// AC pin: AC-297 (auth + permission gates on the company-profile
+// surface) — the surface here is the service entry point rather than
+// the route, but the load-bearing invariant is the same: a non-owner
+// principal cannot drive a successful upsert.
+// ---------------------------------------------------------------------
+
+describe('M3 / AC-297: CompanyProfileService.upsert defense-in-depth role check', () => {
+  // Post-fix expected shape: `upsert(caller: AuthUser, input, log, correlationId)`.
+  // The test uses a structural cast so the file still compiles against
+  // the current `(input, userId, log, correlationId)` signature — the
+  // test invocations themselves carry the load-bearing assertions and
+  // will fail at runtime against either signature: the current code
+  // accepts the non-owner call (test fails), the post-fix code rejects
+  // it (test passes).
+  interface UpsertWithCaller {
+    upsert(
+      caller: AuthUser,
+      input: Parameters<CompanyProfileService['upsert']>[0],
+      log: ServiceLogger,
+      correlationId?: string | null,
+    ): Promise<unknown>;
+  }
+
+  const noopLog: ServiceLogger = {
+    info: () => undefined,
+    error: () => undefined,
+  };
+
+  /**
+   * Build an `AuthUser` shape for a given role. The middleware attaches
+   * exactly this object to `request.user` (see middleware/auth.ts:17-25)
+   * — the service-layer fix consumes the same shape so the route and
+   * direct callers share one principal type.
+   */
+  function authUser(role: 'owner' | 'office' | 'worker' | 'bookkeeper'): AuthUser {
+    return {
+      id: crypto.randomUUID(),
+      username: `m3-${role}`,
+      displayName: `M3 ${role}`,
+      roles: [role],
+      email: null,
+      themePreference: 'system',
+      pushMuted: false,
+    };
+  }
+
+  let ownerToken: string;
+  let ownerId: string;
+  let db: Database;
+  let pool: import('pg').Pool;
+  let service: CompanyProfileService;
+
+  beforeAll(async () => {
+    await startApp();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    // Seed a complete profile via the route so subsequent direct calls
+    // don't trip the required-when-mode validation. The owner-arm
+    // success assertion below also exercises the validation path.
+    const seedPut = await authPut(ownerToken, '/api/company-profile', completeProfileBody);
+    expect([200, 204]).toContain(seedPut.statusCode);
+
+    const conn = createDatabase();
+    db = conn.db;
+    pool = conn.pool;
+    const userRows = await db.execute(
+      sql`SELECT id FROM users WHERE username = ${SEED_USERS.owner.username} LIMIT 1`,
+    );
+    if (userRows.rows.length === 0) throw new Error('seed missing owner user');
+    ownerId = (userRows.rows[0] as { id: string }).id;
+
+    service = new CompanyProfileService(db);
+  });
+
+  afterAll(async () => {
+    if (pool) await pool.end();
+    await stopApp();
+  });
+
+  it.each([['office'] as const, ['worker'] as const, ['bookkeeper'] as const])(
+    'non-owner caller (%s) is rejected by the service with NOT_PERMITTED — defense-in-depth, no route gate involved',
+    async ([role]) => {
+      // Snapshot pre-call state — a rejected upsert must leave the row
+      // untouched. The footerText is the canary: changing it would
+      // surface as a partial-write if the service-layer check ran AFTER
+      // the UPDATE (it must run before).
+      const beforeRow = await db.execute(sql`SELECT footer_text FROM company_profile LIMIT 1`);
+      const beforeFooter = (beforeRow.rows[0] as { footer_text: string | null }).footer_text;
+
+      const caller = authUser(role as 'office' | 'worker' | 'bookkeeper');
+      // Cast to the post-fix shape — `as unknown as UpsertWithCaller`
+      // documents that the call site assumes the Wave 3 signature.
+      const withCaller = service as unknown as UpsertWithCaller;
+
+      await expect(
+        withCaller.upsert(
+          caller,
+          {
+            ...completeProfileBody,
+            footerText: `SHOULD-NOT-LAND-${role}`,
+          },
+          noopLog,
+          null,
+        ),
+      ).rejects.toMatchObject({ code: 'NOT_PERMITTED' });
+
+      // No partial mutation — the canary field is unchanged.
+      const afterRow = await db.execute(sql`SELECT footer_text FROM company_profile LIMIT 1`);
+      expect((afterRow.rows[0] as { footer_text: string | null }).footer_text).toBe(beforeFooter);
+
+      // No audit row for the rejected call. Filter to the
+      // company_profile entity — sibling tests in this file write their
+      // own rows so we cannot anchor on the global count alone.
+      const auditRow = await db.execute(sql`
+        SELECT created_at, payload
+        FROM audit_log
+        WHERE entity_type = 'company_profile'
+        ORDER BY created_at DESC LIMIT 1
+      `);
+      // Either there are no audit rows at all (clean slate) or the
+      // most recent one is older than this test arm's start. The
+      // load-bearing check is "no NEW row from this call" — the
+      // payload's after.footerText must not carry the sentinel.
+      if (auditRow.rows.length > 0) {
+        const payload = (auditRow.rows[0] as { payload: { after?: { footerText?: string } } })
+          .payload;
+        expect(payload.after?.footerText).not.toBe(`SHOULD-NOT-LAND-${role}`);
+      }
+    },
+  );
+
+  it('owner caller succeeds — regression anchor for the happy path; the role check does not break authorised use', async () => {
+    // The non-owner arms above prove the gate fires for office /
+    // worker / bookkeeper. This arm proves the gate does NOT
+    // mis-classify the legitimate owner caller: a regression that
+    // collapsed the role check (e.g. inverted the predicate, gated on
+    // a removed permission key) would surface here as a false reject.
+    const caller: AuthUser = {
+      ...authUser('owner'),
+      id: ownerId, // use the real seed user so the FK on actor_id holds.
+    };
+    const withCaller = service as unknown as UpsertWithCaller;
+
+    const distinctFooter = `Owner-happy-path ${crypto.randomUUID().slice(0, 8)}`;
+    await expect(
+      withCaller.upsert(
+        caller,
+        {
+          ...completeProfileBody,
+          footerText: distinctFooter,
+        },
+        noopLog,
+        null,
+      ),
+    ).resolves.toBeDefined();
+
+    // Post-write state carries the new footer — the call actually
+    // landed, not just resolved.
+    const row = await db.execute(sql`SELECT footer_text FROM company_profile LIMIT 1`);
+    expect((row.rows[0] as { footer_text: string | null }).footer_text).toBe(distinctFooter);
   });
 });

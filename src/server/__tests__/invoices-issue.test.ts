@@ -108,6 +108,11 @@ function countInvoiceChanged(conn: SubscribedFake): number {
   return matches ? matches.length : 0;
 }
 
+function countProjectChanged(conn: SubscribedFake): number {
+  const matches = conn.chunks.join('').match(/event: project_changed\n/g);
+  return matches ? matches.length : 0;
+}
+
 /**
  * Wait until `predicate()` is true, polling every 10 ms up to `ms`
  * milliseconds. Mirrors the `waitFor` helper in
@@ -457,8 +462,20 @@ describe('Invoice issuance — happy path (AT-111 / AC-287)', () => {
       // Post-commit SSE — poll the subscriber rather than collapse
       // to a single microtask drain. Matches
       // `attachments-events-route.test.ts` pattern.
-      await waitFor(() => countInvoiceChanged(conn) === 1);
+      //
+      // AC-287 requires BOTH events post-commit:
+      //   - `invoice_changed` — a new issued row is visible.
+      //   - `project_changed` — the parent project's status flipped to
+      //     `abgerechnet` as part of the same transaction, so every
+      //     consumer surface on the project (Kanban, project list, the
+      //     project detail page) must invalidate.
+      // The two events MUST land exactly once each per the AT-111 pin
+      // (verification.md AT-111). A regression that emitted only one
+      // event would leave one of the two consumer surfaces stale until
+      // the next manual refresh / poll.
+      await waitFor(() => countInvoiceChanged(conn) === 1 && countProjectChanged(conn) === 1);
       expect(countInvoiceChanged(conn)).toBe(1);
+      expect(countProjectChanged(conn)).toBe(1);
     } finally {
       bus.unsubscribe(conn);
     }
@@ -909,6 +926,221 @@ describe('Invoice issuance — concurrent race on two real PG connections (S5 / 
 });
 
 // ---------------------------------------------------------------------
+// Concurrent FIRST-OF-YEAR allocation race (review finding M1 /
+// AC-288).
+//
+// The S5 race block above covers the "row already exists" path: both
+// racers hit the `UPDATE … RETURNING next_value` branch, Postgres
+// serializes them on the row lock, both succeed with consecutive
+// numbers. The path NOT covered there is the `(year, 'invoice')` row
+// not existing yet — the UPDATE misses, the code falls through to a
+// plain `INSERT INTO invoice_sequence (year, kind, next_value)
+// VALUES (year, kind, 2)`.
+//
+// Mechanism under test (invoice-read.ts:allocateNextSequenceValue):
+//   1. Both racers' UPDATE on the empty `(year, 'invoice')` row misses
+//      (no row to lock — the WHERE clause returns no rows, the
+//      UPDATE is a no-op).
+//   2. Both racers fall through to the INSERT branch.
+//   3. Postgres serializes on the primary key `(year, kind)`. The
+//      first INSERT wins; the second blocks until the first commits.
+//   4. On commit, the second INSERT fails with `23505 unique_violation`
+//      — a raw PG error. The current code does NOT retry on this and
+//      does NOT use `ON CONFLICT … DO UPDATE … RETURNING`, so the
+//      caller of the losing transaction receives a generic 5xx.
+//
+// Expected post-fix contract:
+//   - Both `issueDraft(...)` calls succeed (`200 OK`).
+//   - Numbers are { 1, 2 } (sorted) — gapless first allocation.
+//   - Neither caller observes a `23505` / `unique_violation` /
+//     generic 5xx surfacing the PG error.
+//
+// Expected CURRENT behavior (this test should FAIL on `main` as of
+// commit c3e1dde):
+//   - One of the two `Promise.allSettled` results rejects with the
+//     PG `23505` error bubbling out of `allocateNextSequenceValue`.
+//
+// Implementation strategy:
+//   - Use a FUTURE year that is guaranteed to have no row in
+//     `invoice_sequence` yet — avoids racing the seed / sibling tests
+//     for the current year. Stub `Date` so `new Date().getUTCFullYear()`
+//     in `runIssueInsideTx` resolves to that year. After the test,
+//     restore Date and clean up the row we inserted.
+//   - Mirror S5's two-pool service-direct pattern; the route path is
+//     unnecessary for this race (the failure surfaces at the repo
+//     layer regardless of transport).
+// ---------------------------------------------------------------------
+
+describe('Invoice issuance — concurrent first-of-year allocation (M1 / AC-288)', () => {
+  let ownerToken: string;
+  let ownerId: string;
+  let customerId: string;
+  let connA: { db: Database; pool: import('pg').Pool };
+  let connB: { db: Database; pool: import('pg').Pool };
+
+  /** Pick a future year that won't collide with the current year's seed/sibling data. */
+  const FUTURE_YEAR = new Date().getUTCFullYear() + 5;
+
+  async function mintRechnungFaelligProject(): Promise<string> {
+    const suffix = crypto.randomUUID().slice(0, 8);
+    const res = await authPost(ownerToken, '/api/projects', {
+      number: `M1-${suffix}`,
+      title: `M1 race fixture ${suffix}`,
+      customerId,
+      status: 'rechnung_faellig',
+    });
+    if (res.statusCode !== 201) {
+      throw new Error(`mintRechnungFaelligProject failed ${res.statusCode} ${res.body}`);
+    }
+    return res.json().id as string;
+  }
+
+  const noopLog: ServiceLogger = {
+    info: () => undefined,
+    error: () => undefined,
+  };
+
+  function buildIssueServiceFor(db: Database, renderer?: InvoiceRenderer): InvoiceIssueService {
+    const env = getEnv();
+    const storage = createStorageClient({
+      endpoint: env.STORAGE_ENDPOINT!,
+      publicEndpoint: env.STORAGE_PUBLIC_ENDPOINT,
+      bucket: env.STORAGE_BUCKET,
+      accessKey: env.STORAGE_ACCESS_KEY!,
+      secretKey: env.STORAGE_SECRET_KEY!,
+      region: env.STORAGE_REGION,
+    });
+    const deps: InvoiceBinaryDeps = {
+      storage,
+      binaryAgeRecipient: env.BINARY_AGE_RECIPIENT!,
+      binaryAgeIdentityPath: env.BINARY_AGE_IDENTITY_PATH!,
+    };
+    const binary = new InvoiceBinaryService(db, deps);
+    return new InvoiceIssueService(db, binary, renderer);
+  }
+
+  beforeAll(async () => {
+    await startApp();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    await ensureCompanyProfileComplete(ownerToken, 'standard');
+
+    const lookup = createDatabase();
+    try {
+      const userRows = await lookup.db.execute(
+        sql`SELECT id FROM users WHERE username = ${SEED_USERS.owner.username} LIMIT 1`,
+      );
+      ownerId = (userRows.rows[0] as { id: string }).id;
+      const customerRows = await lookup.db.execute(sql`SELECT id FROM customers LIMIT 1`);
+      customerId = (customerRows.rows[0] as { id: string }).id;
+
+      // Belt-and-braces: ensure the FUTURE_YEAR sequence row does NOT
+      // exist before the race. A residue from a previous failed run
+      // would force the UPDATE branch and mask the bug under test.
+      await lookup.db.execute(
+        sql`DELETE FROM invoice_sequence WHERE year = ${FUTURE_YEAR} AND kind = 'invoice'`,
+      );
+    } finally {
+      await lookup.pool.end();
+    }
+
+    connA = createDatabase();
+    connB = createDatabase();
+  });
+
+  afterAll(async () => {
+    // Clean up the row our race inserted so this describe block leaves
+    // no residue for the next run / sibling test files. The invoices
+    // themselves persist (write-once at the persistence layer); they
+    // are bound to FUTURE_YEAR projects we minted and won't collide
+    // with anything that walks the current year.
+    const cleanup = createDatabase();
+    try {
+      await cleanup.db.execute(
+        sql`DELETE FROM invoice_sequence WHERE year = ${FUTURE_YEAR} AND kind = 'invoice'`,
+      );
+    } finally {
+      await cleanup.pool.end();
+    }
+    if (connA) await connA.pool.end();
+    if (connB) await connB.pool.end();
+    await stopApp();
+  });
+
+  it('AC-288 — concurrent first-of-year issuance does not leak PG 23505 to the caller', async () => {
+    // Two fresh `rechnung_faellig` projects, two drafts, two services
+    // on independent pools. Stub Date so the issuance code's
+    // `new Date().getUTCFullYear()` resolves to FUTURE_YEAR for the
+    // duration of the race — that's the year with no row in
+    // `invoice_sequence`, so both racers' UPDATE will miss and they'll
+    // both attempt the INSERT, exercising the first-of-year race.
+    const projectAId = await mintRechnungFaelligProject();
+    const projectBId = await mintRechnungFaelligProject();
+    const draftA = await createDraft(ownerToken, projectAId);
+    const draftB = await createDraft(ownerToken, projectBId);
+
+    const serviceA = buildIssueServiceFor(connA.db);
+    const serviceB = buildIssueServiceFor(connB.db);
+
+    // Stub `Date` so `new Date()` returns a FUTURE_YEAR instant. The
+    // issuance code reads year from `new Date().getUTCFullYear()` in
+    // `runIssueInsideTx` step 4. We use vi's fake-Date facility so the
+    // stub is scoped to the test arm and `vi.useRealTimers()` in the
+    // `finally` restores normal Date behavior for sibling tests.
+    const futureInstant = new Date(`${FUTURE_YEAR}-06-15T12:00:00.000Z`);
+    vi.useFakeTimers({ now: futureInstant, toFake: ['Date'] });
+
+    try {
+      // Sanity — the row must not exist at race start. If a sibling
+      // test left residue, the bug under test is masked.
+      const rowCheck = await connA.db.execute(
+        sql`SELECT next_value FROM invoice_sequence WHERE year = ${FUTURE_YEAR} AND kind = 'invoice'`,
+      );
+      expect(rowCheck.rows.length).toBe(0);
+
+      // Race. Both UPDATEs miss; both fall through to INSERT; PK
+      // collision on `(year, kind)`. Under the current code one
+      // racer's INSERT fails with PG 23505 (unique_violation) bubbling
+      // up to the caller as a rejection.
+      const [resA, resB] = await Promise.allSettled([
+        serviceA.issueDraft(draftA, ownerId, noopLog, null),
+        serviceB.issueDraft(draftB, ownerId, noopLog, null),
+      ]);
+
+      // Load-bearing assertion: BOTH succeed. The expected-post-fix
+      // behavior is that `allocateNextSequenceValue` either retries on
+      // 23505 or uses `INSERT … ON CONFLICT … DO UPDATE … RETURNING`,
+      // so neither caller sees the raw PG error.
+      expect(resA.status).toBe('fulfilled');
+      expect(resB.status).toBe('fulfilled');
+      if (resA.status !== 'fulfilled' || resB.status !== 'fulfilled') {
+        throw new Error('unreachable — assertions above failed');
+      }
+
+      // Both numbers conform to wire shape with the FUTURE_YEAR prefix.
+      const numberPattern = new RegExp(`^RE-${FUTURE_YEAR}-\\d{4,}$`);
+      expect(resA.value.number).toMatch(numberPattern);
+      expect(resB.value.number).toMatch(numberPattern);
+
+      // The two numbers must be DISTINCT and form the set { 1, 2 } —
+      // first allocation hands out 1, second hands out 2 (gapless).
+      const valA = Number(resA.value.number!.split('-').pop());
+      const valB = Number(resB.value.number!.split('-').pop());
+      expect(new Set([valA, valB])).toEqual(new Set([1, 2]));
+
+      // Persisted sequence state: after two allocations starting from
+      // empty, `next_value` is 3 (post-increment after handing out 2).
+      const after = await connA.db.execute(
+        sql`SELECT next_value FROM invoice_sequence WHERE year = ${FUTURE_YEAR} AND kind = 'invoice'`,
+      );
+      expect(after.rows.length).toBe(1);
+      expect(Number((after.rows[0] as { next_value: string | number }).next_value)).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
 // AT-113 / AC-289 — Pre-condition rejection paths.
 //
 // Each (a) through (i) arm asserts:
@@ -1151,6 +1383,99 @@ describe('Invoice issuance — pre-condition rejections (AT-113(i) / AC-289)', (
 
       await waitFor(() => countInvoiceChanged(conn) > 0);
       expect(countInvoiceChanged(conn)).toBe(0);
+    } finally {
+      bus.unsubscribe(conn);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------
+// POST /api/invoices/:id/issue on an ALREADY-ISSUED row (review
+// finding M20 / AC-286).
+//
+// AC-286 freezes issued/cancelled rows at the route surface: any
+// mutation other than the cancel-flip path is rejected with
+// `INVOICE_FROZEN` (status 422 — see `errors.ts:invoiceFrozen`). The
+// service-layer guard at `InvoiceIssueService.ts:117-119` enforces
+// this for the issue path:
+//
+//   if (before.status !== 'draft') throw invoiceFrozen();
+//
+// Pin the contract end-to-end at the route surface: no second number
+// allocation, no second audit row, no second SSE event. (The
+// happy-path AT-111 test already pins the first issue's audit + SSE
+// shape; this test pins that calling /issue a SECOND time is a
+// rejection-only path.)
+// ---------------------------------------------------------------------
+
+describe('Invoice issuance — re-issue on issued row is frozen (M20 / AC-286)', () => {
+  let ownerToken: string;
+  let projectId: string;
+
+  beforeAll(async () => {
+    await startApp();
+    ownerToken = await login(SEED_USERS.owner.username, SEED_DEFAULT_PASSWORD);
+    await ensureCompanyProfileComplete(ownerToken, 'standard');
+    projectId = await rechnungFaelligProjectId(ownerToken);
+  });
+
+  afterAll(async () => {
+    await stopApp();
+  });
+
+  it('AC-286 — POST /issue on an issued row is rejected with INVOICE_FROZEN and persists nothing', async () => {
+    // 1. Issue a draft successfully — establishes the issued row that
+    //    the second POST will hit. Use direct authPost rather than
+    //    going through the SSE-subscribed window: the first issue is
+    //    the precondition, not the load-bearing assertion.
+    const draftId = await createDraft(ownerToken, projectId);
+    const firstIssue = await authPost(ownerToken, `/api/invoices/${draftId}/issue`);
+    expect(firstIssue.statusCode).toBe(200);
+    expect(firstIssue.json().status).toBe('issued');
+
+    // 2. Capture the post-issue invariants:
+    //    - sequence next_value (issued row already consumed a slot —
+    //      a second allocation would advance this further),
+    //    - audit-row count for this invoice id (the issue wrote one
+    //      `invoice:issue` row; a second issue would write a second).
+    //    - subscribe to the SSE bus so a stray emit during the
+    //      rejected call is observable.
+    const seqBefore = await readInvoiceSequenceNextValue();
+    const auditBefore = await countAuditRowsForInvoice(draftId);
+
+    const bus = await loadBus();
+    const conn = subscribeFake(bus);
+    try {
+      // 3. Second POST /issue — the load-bearing call. AC-286 + the
+      //    service guard at `InvoiceIssueService.ts:117` map this to
+      //    `INVOICE_FROZEN` at status 422 (`errors.ts:263-265`).
+      const reissue = await authPost(ownerToken, `/api/invoices/${draftId}/issue`);
+      expect(reissue.statusCode).toBe(422);
+      expect(reissue.json().code).toBe('INVOICE_FROZEN');
+
+      // 4. Sequence MUST NOT advance — the rejection happens BEFORE
+      //    `allocateInvoiceNumber()` (step 4 of `runIssueInsideTx`),
+      //    so no slot is consumed. A regression that ran the
+      //    allocation before the status check would surface here.
+      const seqAfter = await readInvoiceSequenceNextValue();
+      expect(seqAfter).toBe(seqBefore);
+
+      // 5. Audit table MUST NOT gain a row for this invoice — the
+      //    `mutate()` wrapper writes the audit row inside the same
+      //    tx, so a throw before commit rolls it back. The
+      //    `invoice:issue` row from the first call is still there;
+      //    the count is unchanged from `auditBefore`.
+      const auditAfter = await countAuditRowsForInvoice(draftId);
+      expect(auditAfter).toBe(auditBefore);
+
+      // 6. No SSE event — `emitInvoiceChanged()` runs only after
+      //    `mutate()` returns successfully (`InvoiceIssueService.ts:94`),
+      //    so a throw inside the tx body never reaches the emit. Wait
+      //    the full poll window so a fast errant emit cannot race the
+      //    assertion (negative-assertion pattern from the AT-113 block).
+      await waitFor(() => countInvoiceChanged(conn) > 0 || countProjectChanged(conn) > 0);
+      expect(countInvoiceChanged(conn)).toBe(0);
+      expect(countProjectChanged(conn)).toBe(0);
     } finally {
       bus.unsubscribe(conn);
     }
