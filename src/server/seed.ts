@@ -22,6 +22,7 @@ import type { Database } from './db/connection.js';
 import { users } from './db/schema.js';
 import { loadUsers } from './seed/users.js';
 import { loadBusiness } from './seed/business.js';
+import { loadInvoices } from './seed/invoices.js';
 import { loadNotificationRules } from './seed/notificationRules.js';
 import { SEED_DEFAULT_PASSWORD } from '../test/seedAssumptions.js';
 
@@ -109,6 +110,14 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
       "iban" = EXCLUDED."iban",
       "default_tax_mode" = EXCLUDED."default_tax_mode"
   `);
+
+  // Invoices land last because issuance pulls live snapshots from
+  // `users`, `customers`, `projects`, and the `company_profile`
+  // singleton — every dependency must already be seeded. The loader
+  // exercises the public `InvoiceService` surface end-to-end (draft →
+  // issue → optional cancel + reissue), so it mints real factur-x XML,
+  // real rendered PDFs, real binary descriptors, and real audit rows.
+  await loadInvoices(db, { now });
 
   console.warn(
     `⚠  Seed-Daten geladen. Alle Benutzer haben das Standardpasswort "${SEED_DEFAULT_PASSWORD}". ` +
