@@ -5,8 +5,10 @@
  * Exactly one row exists, pre-seeded by the baseline migration with
  * empty mandatory fields. The API exposes GET (every authenticated
  * role) + PUT (owner only; enforced at the route layer, re-checked
- * defensively at the service layer). No POST / DELETE — the row
- * cannot be created or removed (DB CHECK + BEFORE-DELETE trigger).
+ * defensively at the service layer — `upsert()` rejects any caller
+ * without the `owner` role with `notPermitted()`). No POST / DELETE —
+ * the row cannot be created or removed (DB CHECK + BEFORE-DELETE
+ * trigger).
  *
  * Every write rides `mutate()` (ADR-0021) with
  * `entityType = 'company_profile'`, `action = 'update'`, ancestor pair
@@ -21,6 +23,7 @@
 
 import type { Database, TransactionalDatabase } from '../db/connection.js';
 import { companyProfile } from '../db/schema.js';
+import type { AuthUser } from '../middleware/auth.js';
 import { mutate } from './mutate.js';
 import {
   companyProfileMissingFieldsForMode,
@@ -29,7 +32,7 @@ import {
   type CompanyProfile,
   type TaxMode,
 } from '../../domain/invoice.js';
-import { companyProfileRequired, validationError } from '../errors.js';
+import { companyProfileRequired, notPermitted, validationError } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
 import type { ServiceLogger } from './Logger.js';
 import { updateCompanyProfileSingleton } from '../repositories/companyProfile.js';
@@ -145,25 +148,41 @@ export class CompanyProfileService {
   }
 
   /**
-   * Upsert (PUT semantics). Routes pass the validated body; the
-   * service re-checks content-level invariants, opens a transaction,
-   * captures `payload.before` from the pre-write row, writes the
-   * UPDATE, and commits the audit row via `mutate()`.
+   * Upsert (PUT semantics). Routes pass the authenticated `caller` and
+   * the validated body; the service enforces the owner-only invariant
+   * as defense in depth (the route layer also gates it — M3 / AC-297),
+   * re-checks content-level invariants, opens a transaction, captures
+   * `payload.before` from the pre-write row, writes the UPDATE, and
+   * commits the audit row via `mutate()`.
+   *
+   * The owner check runs BEFORE validation / DB work so a non-owner
+   * caller cannot probe the validation surface or write any partial
+   * mutation. Throws `notPermitted()` (403 `NOT_PERMITTED`) — the same
+   * error shape the route emits when its pre-handler gate fires.
    *
    * `entityId` = the singleton row's UUID (Phase A seed). Ancestor
    * pair null per AC-302.
    */
   async upsert(
+    caller: AuthUser,
     input: CompanyProfileUpsertInput,
-    userId: string,
     log: ServiceLogger,
     correlationId?: string | null,
   ): Promise<CompanyProfile> {
+    // Defense-in-depth role check (M3 / AC-297). The route layer's
+    // pre-handler gates this surface to `owner` already; this rejects
+    // any direct service caller bypassing the route (background jobs,
+    // scripts, test fixtures, future internal consumers) on the same
+    // contract.
+    if (!caller.roles.includes('owner')) {
+      throw notPermitted();
+    }
+
     validateCompanyProfileUpsert(input);
 
     const updated = await mutate(
       this.db,
-      { actorKind: 'user', actorId: userId, correlationId: correlationId ?? null },
+      { actorKind: 'user', actorId: caller.id, correlationId: correlationId ?? null },
       {
         entityType: 'company_profile',
         action: 'update',
@@ -179,7 +198,7 @@ export class CompanyProfileService {
             footerText: input.footerText ?? null,
             logoBinaryDescriptorId: input.logoBinaryDescriptorId ?? null,
             defaultTaxMode: input.defaultTaxMode,
-            updatedBy: userId,
+            updatedBy: caller.id,
           });
 
           if (!after) {

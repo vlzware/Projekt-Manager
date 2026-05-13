@@ -51,7 +51,10 @@ import {
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
 import { createDatabase } from '../db/connection.js';
 import type { Database } from '../db/connection.js';
-import { CompanyProfileService } from '../services/CompanyProfileService.js';
+import {
+  CompanyProfileService,
+  type CompanyProfileUpsertInput,
+} from '../services/CompanyProfileService.js';
 import type { AuthUser } from '../middleware/auth.js';
 import type { ServiceLogger } from '../services/Logger.js';
 
@@ -597,16 +600,15 @@ describe('AT-125 / AC-305: failed issue does not permanently advance the sequenc
 
 describe('M3 / AC-297: CompanyProfileService.upsert defense-in-depth role check', () => {
   // Post-fix expected shape: `upsert(caller: AuthUser, input, log, correlationId)`.
-  // The test uses a structural cast so the file still compiles against
-  // the current `(input, userId, log, correlationId)` signature — the
-  // test invocations themselves carry the load-bearing assertions and
-  // will fail at runtime against either signature: the current code
-  // accepts the non-owner call (test fails), the post-fix code rejects
-  // it (test passes).
+  // The test casts to `UpsertWithCaller` to invoke the post-fix shape;
+  // load-bearing assertions are in the test invocations themselves.
+  // Body type is imported as `CompanyProfileUpsertInput` rather than
+  // derived from `Parameters<...>` so the cast survives the M3 signature
+  // change (where the body's parameter index shifted from [0] to [1]).
   interface UpsertWithCaller {
     upsert(
       caller: AuthUser,
-      input: Parameters<CompanyProfileService['upsert']>[0],
+      input: CompanyProfileUpsertInput,
       log: ServiceLogger,
       correlationId?: string | null,
     ): Promise<unknown>;

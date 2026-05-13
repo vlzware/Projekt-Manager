@@ -102,12 +102,7 @@ export function companyProfileRoutes(db: Database) {
           defaultTaxMode: TaxMode;
         };
 
-        const updated = await service.upsert(
-          body,
-          request.user.id,
-          request.log,
-          request.id ?? null,
-        );
+        const updated = await service.upsert(request.user, body, request.log, request.id ?? null);
         return reply.code(200).send(updated);
       },
     );
