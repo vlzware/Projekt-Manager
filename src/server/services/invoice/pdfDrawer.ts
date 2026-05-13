@@ -29,7 +29,7 @@
  * structural shape; the certified-PDF/A-3 gate is future work.
  */
 
-import type { PDFDocument, PDFFont, PDFPage } from 'pdf-lib';
+import type { PDFDocument, PDFFont, PDFPage, RGB } from 'pdf-lib';
 
 const pdfLibImport: Promise<typeof import('pdf-lib')> = import('pdf-lib');
 
@@ -120,6 +120,39 @@ function fmtDate(value: string | Date | null): string {
 }
 
 /**
+ * Greedy word-wrap a string so each output line fits within `maxWidth`
+ * at the given font/size. pdf-lib's `drawText` will wrap when given
+ * `maxWidth`, but it does not return the resulting line count, so the
+ * caller cannot advance the y cursor by the correct amount and the
+ * row's bottom rule ends up drawn through a wrapped line. Wrapping
+ * here gives the call site explicit control over `lines.length` and
+ * therefore over the row height.
+ *
+ * Greedy word-fitting matches what pdf-lib does internally — adequate
+ * for invoice descriptions; we do not attempt hyphenation. A single
+ * token wider than `maxWidth` is emitted on its own line and overruns
+ * — preferable to silently dropping content; future caller-side
+ * truncation is the right place to address that.
+ */
+function wrapTextToWidth(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+  const words = text.split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return [''];
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current.length === 0 ? word : `${current} ${word}`;
+    if (font.widthOfTextAtSize(candidate, size) <= maxWidth) {
+      current = candidate;
+    } else {
+      if (current.length > 0) lines.push(current);
+      current = word;
+    }
+  }
+  if (current.length > 0) lines.push(current);
+  return lines;
+}
+
+/**
  * Right-align `text` so its right edge sits at `rightX`. `drawText` in
  * pdf-lib is left-aligned only; the cell-layout code below relies on
  * right alignment for every numeric column, so this helper is the
@@ -135,6 +168,25 @@ function drawRight(
 ): void {
   const width = font.widthOfTextAtSize(text, size);
   page.drawText(text, { x: rightX - width, y, size, font });
+}
+
+/**
+ * Draw a horizontal hairline across the content area as a 1-pt-tall
+ * filled rectangle. `drawLine` at fractional y-coordinates can render
+ * with subtly different antialiasing across rules at different y
+ * positions (the table's top and bottom rules sit at non-integer y);
+ * a filled rectangle is single-primitive and renders identically at
+ * every position, so the two rules read as a true pair.
+ */
+const RULE_THICKNESS = 0.5;
+function drawHRule(page: PDFPage, y: number, color: RGB): void {
+  page.drawRectangle({
+    x: COL_LEFT,
+    y: y - RULE_THICKNESS / 2,
+    width: COL_RIGHT - COL_LEFT,
+    height: RULE_THICKNESS,
+    color,
+  });
 }
 
 function addPage(
@@ -356,22 +408,34 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
   }
   drawRight(cursor.page, 'Gesamt', TABLE_LINE_TOTAL_RIGHT_X, colHeaderY, FONT_SIZE_BODY, fontBold);
   cursor.y = colHeaderY - LINE_HEIGHT;
-  cursor.page.drawLine({
-    start: { x: COL_LEFT, y: cursor.y + 2 },
-    end: { x: COL_RIGHT, y: cursor.y + 2 },
-    thickness: 0.5,
-    color: rgb(0.6, 0.6, 0.6),
-  });
+  const ruleColor = rgb(0.6, 0.6, 0.6);
+  drawHRule(cursor.page, cursor.y + 2, ruleColor);
   cursor.y -= 4;
 
   for (const line of invoice.lines) {
-    ensureSpace(doc, cursor, font, pageNumberCount, LINE_HEIGHT + 4);
-    cursor.page.drawText(sanitizeForWinAnsi(line.description), {
-      x: TABLE_DESC_X,
-      y: cursor.y,
-      size: FONT_SIZE_BODY,
+    // Pre-wrap the description so we know the row's total height
+    // before any drawing. Without this, a description that wraps
+    // would be drawn below cursor.y while the cursor advances only
+    // one LINE_HEIGHT, leaving the bottom rule of the row painted
+    // through the wrapped line.
+    const descriptionLines = wrapTextToWidth(
+      sanitizeForWinAnsi(line.description),
       font,
-      maxWidth: TABLE_DESC_MAX_WIDTH,
+      FONT_SIZE_BODY,
+      TABLE_DESC_MAX_WIDTH,
+    );
+    const rowHeight = LINE_HEIGHT * descriptionLines.length;
+    ensureSpace(doc, cursor, font, pageNumberCount, rowHeight + 4);
+
+    // Numeric / single-line cells stay anchored to the row's first
+    // baseline; only the description spans the wrapped lines.
+    descriptionLines.forEach((descLine, idx) => {
+      cursor.page.drawText(descLine, {
+        x: TABLE_DESC_X,
+        y: cursor.y - idx * LINE_HEIGHT,
+        size: FONT_SIZE_BODY,
+        font,
+      });
     });
     drawRight(
       cursor.page,
@@ -413,15 +477,10 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
       FONT_SIZE_BODY,
       font,
     );
-    cursor.y -= LINE_HEIGHT;
+    cursor.y -= rowHeight;
   }
   cursor.y -= 8;
-  cursor.page.drawLine({
-    start: { x: COL_LEFT, y: cursor.y },
-    end: { x: COL_RIGHT, y: cursor.y },
-    thickness: 0.5,
-    color: rgb(0.6, 0.6, 0.6),
-  });
+  drawHRule(cursor.page, cursor.y, ruleColor);
   cursor.y -= 16;
 
   // ----- Totals block -----
