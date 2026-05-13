@@ -22,7 +22,10 @@
  *   9. UPDATE the parent project `status` to `'abgerechnet'`.
  *  10. Audit row via `mutate()` (action=`invoice:issue`,
  *      ancestor=`('project', projectId)`).
- *  11. Commit. Post-commit: `emitInvoiceChanged()`.
+ *  11. Commit. Post-commit: `emitInvoiceChanged()` AND
+ *      `emitProjectChanged()` (AC-287, AT-111 — the project status
+ *      flipped to `abgerechnet` in the same tx, so both surfaces
+ *      invalidate).
  */
 
 import { eq, and } from 'drizzle-orm';
@@ -50,7 +53,7 @@ import { assertCompanyProfileCompleteForMode } from './CompanyProfileService.js'
 import { InvoiceRenderer, type RenderedInvoice } from './InvoiceRenderer.js';
 import { notFound, validationError, invoiceFrozen, invoiceProjectState } from '../errors.js';
 import { STRINGS } from '../../config/strings.js';
-import { emitInvoiceChanged } from '../sse/emitters.js';
+import { emitInvoiceChanged, emitProjectChanged } from '../sse/emitters.js';
 import { InvoiceBinaryService } from './InvoiceBinaryService.js';
 
 export class InvoiceIssueService {
@@ -73,7 +76,12 @@ export class InvoiceIssueService {
    * so the route maps to the documented status / code combinations
    * (AC-289 + AT-113).
    *
-   * Post-commit emits ONE `invoice_changed` SSE event.
+   * Post-commit emits ONE `invoice_changed` SSE event AND ONE
+   * `project_changed` SSE event (AC-287, AT-111): a new issued row is
+   * visible, and the parent project's `status` flipped to
+   * `abgerechnet` inside the same transaction — both consumer surfaces
+   * (invoice list / per-invoice viewer, Kanban / project list /
+   * project detail) must invalidate.
    */
   async issueDraft(
     id: string,
@@ -92,6 +100,12 @@ export class InvoiceIssueService {
     );
     log.info({ invoiceId: id }, 'invoice_issued');
     emitInvoiceChanged();
+    // AC-287 / AT-111: the issuance flipped `projects.status` to
+    // `abgerechnet` as part of the same transaction, so the project
+    // surfaces must invalidate too. Cancellation deliberately does NOT
+    // emit this (AC-290 — the cancel atom does not modify project
+    // status).
+    emitProjectChanged();
     return toInvoiceResponse(issued);
   }
 
