@@ -159,6 +159,21 @@ export class InvoiceService {
    * taken at issuance — AC-285).
    *
    * Rejected on an archived project (mirrors AC-95) — 404 NOT_FOUND.
+   *
+   * TOCTOU safety: the project + customer lookups run INSIDE the
+   * `mutate()` transaction body so they share the same READ COMMITTED
+   * snapshot as the INSERT. A concurrent archive committed between
+   * route entry and the audit transaction's start is observed by the
+   * in-tx lookup and rejected — closing the M2 race window. Mirrors
+   * `CustomerService.deleteCustomer`, which moved its
+   * active-project / invoice-retention guards inside the tx for the
+   * same reason.
+   *
+   * The `company_profile.defaultTaxMode` read remains outside the tx:
+   * the resolved `taxMode` is what the draft carries until issuance,
+   * and a profile mutation racing the draft is benign — the issuance
+   * path re-reads the profile inside its own transaction and is the
+   * load-bearing snapshot point (AC-287, AC-304).
    */
   async createDraft(
     input: CreateDraftInput,
@@ -176,50 +191,6 @@ export class InvoiceService {
     const profileService = new CompanyProfileService(this.db);
     const profile = await profileService.get();
 
-    // Resolve the live customer for the project so we can pre-fill
-    // recipient defaults.
-    const projRows = await this.db
-      .select()
-      .from(projects)
-      .where(eq(projects.id, input.projectId))
-      .limit(1);
-    const project = projRows[0];
-    // AC-285: archived project → 404 (mirrors AC-95 for draft writes).
-    if (!project || project.deleted) {
-      throw notFound(STRINGS.entities.project);
-    }
-
-    const customerRows = await this.db
-      .select()
-      .from(customers)
-      .where(eq(customers.id, project.customerId))
-      .limit(1);
-    const customer = customerRows[0];
-
-    const taxMode: TaxMode = input.taxMode ?? profile.defaultTaxMode;
-
-    // Build the draft's recipient: the live customer's fields are the
-    // baseline; any field present in `input.recipient` overrides.
-    const customerRecipient: InvoiceRecipientSnapshot = customer
-      ? {
-          name: customer.name,
-          address: customer.address ?? null,
-          ustId: customer.ustId ?? null,
-        }
-      : { name: '', address: null, ustId: null };
-
-    const recipient: InvoiceRecipientSnapshot = input.recipient
-      ? {
-          name: input.recipient.name !== undefined ? input.recipient.name : customerRecipient.name,
-          address:
-            input.recipient.address !== undefined
-              ? input.recipient.address
-              : customerRecipient.address,
-          ustId:
-            input.recipient.ustId !== undefined ? input.recipient.ustId : customerRecipient.ustId,
-        }
-      : customerRecipient;
-
     // Issuer block on a draft row carries empty placeholders — the
     // snapshot freezes at issuance, not at draft create (data-model.md
     // §5.17 design note "Snapshot at issuance, not at draft creation").
@@ -229,7 +200,6 @@ export class InvoiceService {
       taxId: '',
     };
 
-    const totals = computeInvoiceTotals(lines, taxMode);
     const profileLiteral: InvoiceProfile = 'zugferd-en16931';
 
     const id = crypto.randomUUID();
@@ -242,6 +212,62 @@ export class InvoiceService {
         entityType: 'invoice',
         action: 'create',
         run: async (tx) => {
+          // Project + customer lookup INSIDE the tx — shares its
+          // snapshot with the INSERT below (AC-285 / M2). A concurrent
+          // archive committed before this tx started is visible here
+          // and triggers the 404; an archive committed AFTER this tx
+          // started cannot be observed by our snapshot and the INSERT
+          // proceeds against the row as we saw it.
+          const projRows = await tx
+            .select()
+            .from(projects)
+            .where(eq(projects.id, input.projectId))
+            .limit(1);
+          const project = projRows[0];
+          // AC-285: archived project → 404 (mirrors AC-95 for draft writes).
+          if (!project || project.deleted) {
+            throw notFound(STRINGS.entities.project);
+          }
+
+          const customerRows = await tx
+            .select()
+            .from(customers)
+            .where(eq(customers.id, project.customerId))
+            .limit(1);
+          const customer = customerRows[0];
+
+          const taxMode: TaxMode = input.taxMode ?? profile.defaultTaxMode;
+
+          // Build the draft's recipient: the live customer's fields are
+          // the baseline; any field present in `input.recipient`
+          // overrides.
+          const customerRecipient: InvoiceRecipientSnapshot = customer
+            ? {
+                name: customer.name,
+                address: customer.address ?? null,
+                ustId: customer.ustId ?? null,
+              }
+            : { name: '', address: null, ustId: null };
+
+          const recipient: InvoiceRecipientSnapshot = input.recipient
+            ? {
+                name:
+                  input.recipient.name !== undefined
+                    ? input.recipient.name
+                    : customerRecipient.name,
+                address:
+                  input.recipient.address !== undefined
+                    ? input.recipient.address
+                    : customerRecipient.address,
+                ustId:
+                  input.recipient.ustId !== undefined
+                    ? input.recipient.ustId
+                    : customerRecipient.ustId,
+              }
+            : customerRecipient;
+
+          const totals = computeInvoiceTotals(lines, taxMode);
+
           const row = await insertInvoiceDraft(tx, {
             id,
             projectId: input.projectId,
