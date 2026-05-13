@@ -220,7 +220,7 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
       </div>
 
       {error && (
-        <div className={styles.errorBanner} role="status">
+        <div className={styles.errorBanner} role="alert">
           {error}
         </div>
       )}
@@ -248,7 +248,7 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
         </div>
       )}
       {actionError && (
-        <div className={styles.errorBanner} role="status">
+        <div className={styles.errorBanner} role="alert">
           {actionError}
         </div>
       )}

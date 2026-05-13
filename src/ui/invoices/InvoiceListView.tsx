@@ -171,7 +171,7 @@ export function InvoiceListView() {
       )}
 
       {error && (
-        <div className={styles.error} role="status">
+        <div className={styles.error} role="alert">
           {error}
         </div>
       )}

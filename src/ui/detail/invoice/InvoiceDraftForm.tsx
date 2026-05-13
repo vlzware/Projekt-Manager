@@ -37,6 +37,14 @@ import styles from './InvoiceSection.module.css';
 
 const TITLE_ID = 'invoice-draft-form-title';
 
+/**
+ * Default VAT percentage pre-filled on every new line. 19 % is the
+ * German standard rate (UStG §12 (1)); 7 % (reduced) and 0 %
+ * (e.g. Kleinunternehmer §19) are also accepted by the input — the
+ * server validates the actual rate against the tax mode at issue time.
+ */
+const DEFAULT_TAX_RATE_PERCENT = '19';
+
 interface Props {
   projectId: string;
   /**
@@ -77,7 +85,13 @@ interface RecipientDraft {
 }
 
 function emptyLine(): LineDraft {
-  return { description: '', quantity: '1', unit: '', unitPrice: '', taxRate: '19' };
+  return {
+    description: '',
+    quantity: '1',
+    unit: '',
+    unitPrice: '',
+    taxRate: DEFAULT_TAX_RATE_PERCENT,
+  };
 }
 
 function linesFromInvoice(inv: Invoice): LineDraft[] {

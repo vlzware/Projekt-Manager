@@ -105,6 +105,12 @@ export const useInvoiceStore = create<InvoiceState>((set, get) => ({
     if (!result.ok) {
       if (result.sessionExpired) {
         handleSessionExpired();
+        // Reset the loading flag before bouncing so any re-render of
+        // the section after the session-expired toast does not get
+        // stuck on a stale spinner.
+        set((s) => ({
+          loadingByProject: { ...s.loadingByProject, [projectId]: false },
+        }));
         return;
       }
       set((s) => ({

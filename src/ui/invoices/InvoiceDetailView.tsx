@@ -1,6 +1,16 @@
 /**
  * Per-invoice viewer at `/rechnungen/:id` (ui/invoices.md §8.16.3).
  *
+ * Argumented C-SIZE exception (review/conventions-code.md §C-SIZE,
+ * 200 LOC guideline): this file is ~410 LOC. The viewer renders a
+ * single cohesive surface — header + meta + issuer + recipient + lines
+ * + totals + sibling block + cancel dialog — all reading from one
+ * `Invoice` snapshot. Splitting per section would scatter the
+ * read-only layout across four files without separating responsibility
+ * (no section has its own state or its own fetch). The single-file
+ * shape mirrors `InvoiceSection.tsx` and `InvoiceDraftForm.tsx` which
+ * carry the same documented exception in this module.
+ *
  * Read-only by structure for issued / cancelled rows — every field is
  * displayed without an edit affordance. Drafts are NOT in scope here
  * (§8.16.3 surfaces only `status ∈ {issued, cancelled}`); a draft

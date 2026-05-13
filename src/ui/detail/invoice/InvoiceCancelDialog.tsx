@@ -86,7 +86,7 @@ export function InvoiceCancelDialog({
           required
         />
         {(localError ?? errorMessage) && (
-          <div className={styles.errorBanner} role="status">
+          <div className={styles.errorBanner} role="alert">
             {localError ?? errorMessage}
           </div>
         )}
