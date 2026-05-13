@@ -493,6 +493,16 @@ export const STRINGS = {
     formTaxMode: 'Steuermodus',
     formPerformanceDate: 'Leistungsdatum',
 
+    /**
+     * Aggregate validation error fired by the draft form when the user
+     * submits without a single positional row that carries both a
+     * non-empty description and a non-zero unit price. Per-field
+     * validation is out of scope for this surface (AC-303 — the server
+     * remains authoritative on field-level rejections); this is the
+     * load-bearing "no usable line" case.
+     */
+    formEmptyLinesError: 'Bitte mindestens eine Position mit Beschreibung und Preis eingeben.',
+
     // Confirmation copies
     issueConfirmTitle: 'Rechnung jetzt ausstellen?',
     issueConfirmBody:

@@ -191,11 +191,24 @@ export function InvoiceDraftForm({
   const handleSave = async () => {
     if (submitting) return;
     setErrorMessage(null);
-    setSubmitting(true);
 
     const wireLines = toWireLines(lines);
     const wireRecipient = toWireRecipient(recipient);
     const wirePerformanceDate = performanceDate ? performanceDate : null;
+
+    // Client-side aggregate validation: block the submit if no line
+    // carries both a description and a non-zero unit price. Without
+    // this short-circuit the server returns 422 with the same intent
+    // but no actionable field hints; the inline German message is the
+    // affordance the user can act on. The server remains authoritative
+    // on field-level validation (AC-303).
+    const hasUsableLine = wireLines.some((l) => l.description.length > 0 && l.unitPrice !== 0);
+    if (!hasUsableLine) {
+      setErrorMessage(STRINGS.invoices.formEmptyLinesError);
+      return;
+    }
+
+    setSubmitting(true);
 
     const currentDraftId = draftIdRef.current;
     const outcome = currentDraftId
@@ -482,7 +495,7 @@ export function InvoiceDraftForm({
           </section>
 
           {errorMessage && (
-            <div className={styles.errorBanner} role="status">
+            <div className={styles.errorBanner} role="alert" data-testid="invoice-form-error">
               {errorMessage}
             </div>
           )}
