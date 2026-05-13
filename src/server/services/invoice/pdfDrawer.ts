@@ -70,6 +70,17 @@ const FONT_SIZE_HEADING = 14;
 const FONT_SIZE_TITLE = 18;
 const LINE_HEIGHT = 12;
 
+// Approximate glyph extents above/below the baseline for Helvetica /
+// Helvetica-Bold at FONT_SIZE_BODY. The table's horizontal rules are
+// positioned relative to these so the rule never cuts through the
+// adjacent row's text — pdf-lib's `drawText` anchors at the baseline,
+// not the visual bounding box, so the renderer has to do the offset
+// itself. Values are the standard-PDF-font metrics and are stable
+// across pdf-lib versions.
+const TEXT_CAP_HEIGHT_BODY = 7.15;
+const TEXT_DESCENDER_BODY = 2.1;
+const TABLE_RULE_PAD = 4;
+
 const COL_LEFT = MARGIN_LEFT;
 const COL_RIGHT = PAGE_WIDTH - MARGIN_RIGHT;
 
@@ -407,10 +418,15 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
     );
   }
   drawRight(cursor.page, 'Gesamt', TABLE_LINE_TOTAL_RIGHT_X, colHeaderY, FONT_SIZE_BODY, fontBold);
-  cursor.y = colHeaderY - LINE_HEIGHT;
+  // Upper rule sits TABLE_RULE_PAD below the header's descender end;
+  // the first data baseline sits TABLE_RULE_PAD + cap-height below the
+  // rule. This keeps the rule clear of both rows' glyphs by the same
+  // visual gap — the old layout used a fixed offset that put the data
+  // row's cap above the rule and produced a visible overlap.
   const ruleColor = rgb(0.6, 0.6, 0.6);
-  drawHRule(cursor.page, cursor.y + 2, ruleColor);
-  cursor.y -= 4;
+  cursor.y = colHeaderY - TEXT_DESCENDER_BODY - TABLE_RULE_PAD;
+  drawHRule(cursor.page, cursor.y, ruleColor);
+  cursor.y -= TABLE_RULE_PAD + TEXT_CAP_HEIGHT_BODY;
 
   for (const line of invoice.lines) {
     // Pre-wrap the description so we know the row's total height
@@ -479,9 +495,14 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
     );
     cursor.y -= rowHeight;
   }
-  cursor.y -= 8;
+  // After the loop, `cursor.y` is the would-be next baseline (one
+  // LINE_HEIGHT below the last drawn baseline). Reconstruct the last
+  // baseline so the lower rule sits TABLE_RULE_PAD below the last
+  // row's descender — symmetric with the upper rule above.
+  const lastBaseline = cursor.y + LINE_HEIGHT;
+  cursor.y = lastBaseline - TEXT_DESCENDER_BODY - TABLE_RULE_PAD;
   drawHRule(cursor.page, cursor.y, ruleColor);
-  cursor.y -= 16;
+  cursor.y -= TABLE_RULE_PAD + LINE_HEIGHT;
 
   // ----- Totals block -----
   // The per-rate label can be wide ("zzgl. 19% USt auf 12.345,67 €");
