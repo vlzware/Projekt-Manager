@@ -262,19 +262,39 @@ export async function countIssuedOrCancelledForCustomer(
 
 /**
  * Allocate the next value in the gapless `(year, kind)` sequence inside
- * the supplied transaction (data-model.md §6.13). Implementation pattern:
+ * the supplied transaction (data-model.md §6.13). Implementation pattern
+ * — a single atomic `INSERT … ON CONFLICT DO UPDATE … RETURNING`:
  *
- *   1. Atomic `UPDATE invoice_sequence … RETURNING next_value` on the
- *      matching row — Postgres takes a row-exclusive lock on the row
- *      for the duration of the transaction (equivalent to
- *      `SELECT FOR UPDATE` for serialization purposes).
- *   2. If the UPDATE hits a row, hand out the pre-increment value
- *      (post-increment `next_value` returned − 1).
- *   3. If the UPDATE hits no row (first allocation of the year/kind),
- *      INSERT a fresh row at `next_value = 2` and hand out 1.
+ *   INSERT INTO invoice_sequence (year, kind, next_value) VALUES (y, k, 2)
+ *     ON CONFLICT (year, kind) DO UPDATE
+ *       SET next_value = invoice_sequence.next_value + 1,
+ *           updated_at = NOW()
+ *     RETURNING next_value;
  *
- * The row-exclusive lock is held until the transaction commits — a
- * rollback returns the value to the sequence (AC-288 gapless guarantee).
+ * Whichever branch runs, the returned `next_value` is the POST-increment
+ * value; the caller hands out `next_value - 1`. The pattern is the
+ * canonical Postgres upsert for sequence-style claim:
+ *
+ *   - First allocation of `(year, kind)`: the INSERT succeeds at
+ *     `next_value = 2`; we return 1 (post-increment − 1).
+ *   - Subsequent allocation: the INSERT's PK collision triggers the
+ *     `DO UPDATE`, post-increment runs, `next_value` returned is the
+ *     new value; we return one less.
+ *
+ * Concurrency: the INSERT (or its conflict-triggered UPDATE) takes a
+ * row-exclusive lock on the inserted / updated row that is held until
+ * the transaction commits — equivalent to `SELECT FOR UPDATE` for
+ * serialization purposes. A concurrent first-of-year racer hitting the
+ * PK blocks on the existing INSERT's lock; when the first transaction
+ * commits, the second's `ON CONFLICT` branch runs against the now-
+ * existing row and produces the next value. A rollback returns the
+ * value to the sequence (AC-288 gapless guarantee).
+ *
+ * The previous two-step shape (UPDATE-then-INSERT-on-miss) leaked PG
+ * `23505 unique_violation` to the caller when two transactions raced
+ * the first-of-year INSERT path (review finding M1). The atomic upsert
+ * collapses both branches into one statement so PK contention is
+ * resolved inside Postgres, not at the application layer.
  *
  * Caller passes the year and kind; the formatted string is built at the
  * call site via `formatInvoiceNumber`. Returns the integer suffix value.
@@ -291,38 +311,20 @@ export async function allocateNextSequenceValue(
     throw new Error(`allocateNextSequenceValue: invalid kind ${String(kind)}`);
   }
 
-  // Try to lock-and-update an existing row. The `UPDATE … RETURNING`
-  // shape claims the value atomically when the row exists. Drizzle does
-  // not have first-class FOR UPDATE on UPDATE, but UPDATE itself takes
-  // a row lock equivalent to `SELECT FOR UPDATE` on the matching
-  // primary key — the gapless invariant holds because the lock is
-  // released only at transaction commit / rollback.
-  const updated = await tx.execute(
-    sql`UPDATE invoice_sequence
-           SET next_value = next_value + 1,
-               updated_at = NOW()
-         WHERE year = ${year} AND kind = ${kind}
-         RETURNING next_value`,
-  );
-
-  if (updated.rows.length > 0) {
-    // The returned `next_value` is the POST-increment value. The value
-    // we hand out is one less.
-    const post = Number((updated.rows[0] as { next_value: string | number }).next_value);
-    return post - 1;
-  }
-
-  // First allocation of (year, kind). INSERT the seed row at
-  // next_value = 2 and hand out 1. The INSERT itself takes a row-level
-  // lock on the new row inside the transaction; a concurrent first-
-  // allocation racer's INSERT hits the PK and blocks until commit — a
-  // ROLLBACK frees the slot, a COMMIT means the racer flips to the
-  // UPDATE branch on the next attempt.
-  await tx.execute(
+  // Single atomic upsert. The seed INSERT value is 2 so the
+  // post-increment subtraction below produces 1 on first allocation;
+  // the DO UPDATE branch increments by 1 every subsequent call.
+  const result = await tx.execute(
     sql`INSERT INTO invoice_sequence (year, kind, next_value)
-        VALUES (${year}, ${kind}, 2)`,
+        VALUES (${year}, ${kind}, 2)
+        ON CONFLICT (year, kind) DO UPDATE
+          SET next_value = invoice_sequence.next_value + 1,
+              updated_at = NOW()
+        RETURNING next_value`,
   );
-  return 1;
+
+  const post = Number((result.rows[0] as { next_value: string | number }).next_value);
+  return post - 1;
 }
 
 /**
