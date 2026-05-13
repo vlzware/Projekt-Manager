@@ -287,7 +287,7 @@ export function InvoiceDraftForm({
           }}
         >
           <h2 id={TITLE_ID} className={styles.formTitle}>
-            {STRINGS.invoices.newInvoice}
+            {draft ? STRINGS.invoices.editDraftTitle : STRINGS.invoices.newInvoice}
           </h2>
 
           <section className={styles.formSection}>

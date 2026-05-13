@@ -451,6 +451,7 @@ export const STRINGS = {
   invoices: {
     sectionHeading: 'Rechnungen',
     newInvoice: 'Neue Rechnung',
+    editDraftTitle: 'Entwurf bearbeiten',
     empty: 'Noch keine Rechnungen',
 
     statusDraft: 'Entwurf',
