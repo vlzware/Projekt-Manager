@@ -1,6 +1,15 @@
 /**
  * Standalone /rechnungen list view (ui/invoices.md §8.16.1).
  *
+ * Argumented C-SIZE exception (review/conventions-code.md §C-SIZE,
+ * 200 LOC guideline): this file is ~210 LOC. It hosts one cohesive
+ * list surface — filter bar, table, deep-link chip, debounced search,
+ * URL ⇄ filter sync, and the single refetch effect. SSE invalidation
+ * lives in `invoiceSseSubscription.ts`; the table row and filter bar
+ * are already extracted to sibling files. Further splitting would
+ * scatter the URL-sync + fetch responsibility without consolidating
+ * state ownership.
+ *
  * Cross-project, paginated table with year/status/search filters and the
  * Storno grouping rule shared with the per-project block (see
  * `@/domain/invoiceGrouping`). Permission gating mirrors the route guard

@@ -1,6 +1,16 @@
 /**
  * Per-project invoice block (ui/project-detail.md §8.15.11, ADR-0026).
  *
+ * Argumented C-SIZE exception (review/conventions-code.md §C-SIZE,
+ * 200 LOC guideline): this file is ~470 LOC. It assembles a single
+ * per-project invoice surface — invoices list, row-level actions
+ * (Bearbeiten / Verwerfen / Ausstellen / Stornieren / PDF download),
+ * `Neue Rechnung` CTA, COMPANY_PROFILE_REQUIRED banner, and the
+ * `Alle Rechnungen anzeigen` cross-link — all bound to one project's
+ * store slice. Splitting per affordance would scatter the surface
+ * across files without separating responsibility (no piece has its
+ * own state or fetch).
+ *
  * Surfaces the project's invoices as a list with row-level actions
  * (issue / cancel / PDF), the `Neue Rechnung` CTA, the inline draft
  * form, and the Storno confirmation dialog. Mounted from

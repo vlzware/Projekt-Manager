@@ -2,6 +2,15 @@
  * Company-profile section on the Daten view (ui/daten.md §8.11.4,
  * ADR-0026).
  *
+ * Argumented C-SIZE exception (review/conventions-code.md §C-SIZE,
+ * 200 LOC guideline): this file is ~340 LOC. It hosts one cohesive
+ * mutation surface — the section's permission gate + fetch-error
+ * fallback, the form's owner-vs-read-only field rendering with
+ * client-side validation, and the `LabeledInput` atom the form
+ * repeats per field. The atom could extract to a sibling file; the
+ * section + form are one round-trip and one state owner, so further
+ * splitting would scatter responsibility.
+ *
  * Owner-only mutation surface — every authenticated role sees the
  * section as a read-only summary so the values invoices will snapshot
  * are visible. The owner-vs-read-only gate is by ROLE (the server

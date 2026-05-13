@@ -1,6 +1,15 @@
 /**
  * Inline invoice-draft form (ui/invoices.md §8.16.2).
  *
+ * Argumented C-SIZE exception (review/conventions-code.md §C-SIZE,
+ * 200 LOC guideline): this file is ~540 LOC. It owns one cohesive
+ * editing surface — recipient block, line-items table, tax mode,
+ * performance date, totals preview, client-side validation, and
+ * modal-dialog plumbing — all riding through a single PATCH per save.
+ * Extracting `InvoiceLinesTable` is the obvious refinement and is
+ * tracked separately; the rest of the form is one round-trip and one
+ * state owner, so further splitting would split responsibility.
+ *
  * Mounted from `InvoiceSection` when the user clicks `+ Neue Rechnung` on
  * a project in `rechnung_faellig`. The form drives a two-call sequence:
  * first `createDraft` to mint the row server-side (which pre-fills the
