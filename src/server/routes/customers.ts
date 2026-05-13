@@ -97,8 +97,10 @@ export function customerRoutes(db: Database) {
               // USt-IdNr. — data-model.md §5.6 / AC-306. Structurally
               // optional at the route layer; the issuance-time
               // requiredness gate fires only when taxMode =
-              // 'reverse_charge' (see AC-289).
-              ustId: { type: ['string', 'null'] },
+              // 'reverse_charge' (see AC-289). Capped at 50 chars to
+              // bound the audit payload and the recipient-snapshot
+              // metadata embedded in rendered invoices.
+              ustId: { type: ['string', 'null'], maxLength: 50 },
               notes: { type: ['string', 'null'] },
             },
           },
@@ -155,7 +157,7 @@ export function customerRoutes(db: Database) {
               },
               // USt-IdNr. — see POST handler note above (AC-306).
               // PATCH with `ustId: null` clears the field.
-              ustId: { type: ['string', 'null'] },
+              ustId: { type: ['string', 'null'], maxLength: 50 },
               notes: { type: ['string', 'null'] },
             },
           },

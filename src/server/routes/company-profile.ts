@@ -27,12 +27,17 @@ const addressSchema = {
   additionalProperties: false,
   required: ['street', 'zip', 'city'],
   properties: {
-    street: { type: 'string' },
-    zip: { type: 'string' },
-    city: { type: 'string' },
+    street: { type: 'string', maxLength: 200 },
+    zip: { type: 'string', maxLength: 20 },
+    city: { type: 'string', maxLength: 200 },
   },
 } as const;
 
+// Owner-editable strings carry route-layer maxLength caps so unbounded
+// growth cannot land in audit payloads, the rendered PDF footer, or the
+// embedded `factur-x.xml` metadata. `footerText` is the highest-impact
+// because it lands verbatim in every rendered PDF; `accentColor` is also
+// pattern-pinned to the `#RRGGBB` shape the renderer expects.
 const profileBodySchema = {
   type: 'object',
   // PUT semantics — the always-required block must be present. Optional
@@ -42,13 +47,13 @@ const profileBodySchema = {
   required: ['companyName', 'address', 'taxId', 'defaultTaxMode'],
   additionalProperties: false,
   properties: {
-    companyName: { type: 'string' },
+    companyName: { type: 'string', maxLength: 200 },
     address: addressSchema,
-    taxId: { type: 'string' },
-    ustId: { type: ['string', 'null'] },
-    iban: { type: ['string', 'null'] },
-    accentColor: { type: ['string', 'null'] },
-    footerText: { type: ['string', 'null'] },
+    taxId: { type: 'string', maxLength: 50 },
+    ustId: { type: ['string', 'null'], maxLength: 50 },
+    iban: { type: ['string', 'null'], maxLength: 50 },
+    accentColor: { type: ['string', 'null'], maxLength: 7, pattern: '^#[0-9A-Fa-f]{6}$' },
+    footerText: { type: ['string', 'null'], maxLength: 2000 },
     logoBinaryDescriptorId: { type: ['string', 'null'], format: 'uuid' },
     defaultTaxMode: { type: 'string', enum: [...TAX_MODES] },
   },
