@@ -209,6 +209,26 @@ export const envSchema = z.object({
     z.coerce.number().int().positive().optional(),
   ),
   // ---------------------------------------------------------------
+  // Invoice retention (ADR-0026, architecture.md §12.2 / §11.14).
+  // Object-Lock days applied to every rendered invoice PDF/A-3
+  // binary descriptor; the boot-time bucket-safety probe (§11.4)
+  // refuses to start when the deployed bucket retention envelope
+  // is less than this value (only when > 0 — dev runs with 0 mean
+  // retention is disabled, and the check is skipped).
+  // .env.example ships 0 (dev — binaries are cleanable);
+  // .env.production.example ships 3650 (10 years, §147 AO).
+  // Integer ≥ 0 — bounds match architecture.md §12.2.
+  // Independent from STORAGE_OBJECT_LOCK_DAYS (attachments).
+  // ---------------------------------------------------------------
+  // `.max(36525)` is a 100-year sanity cap — catches operator typos like
+  // `36500` for the §147 AO 10-year window or values that exceed B2's
+  // legal-hold envelope. The legitimate ceiling is the §147 AO 10-year
+  // window (3650); the cap leaves an order of magnitude of headroom.
+  INVOICE_OBJECT_LOCK_DAYS: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.coerce.number().int().min(0).max(36525).default(0),
+  ),
+  // ---------------------------------------------------------------
   // Realtime invalidation channel (ADR-0025, architecture.md §11.13).
   // Heartbeat cadence on the held SSE response — `:` keepalive every
   // `n` ms. The default (25 s) is fixed in api.md §14.2.13 and aligns

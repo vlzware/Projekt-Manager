@@ -22,6 +22,7 @@ import type { Database } from './db/connection.js';
 import { users } from './db/schema.js';
 import { loadUsers } from './seed/users.js';
 import { loadBusiness } from './seed/business.js';
+import { loadInvoices } from './seed/invoices.js';
 import { loadNotificationRules } from './seed/notificationRules.js';
 import { SEED_DEFAULT_PASSWORD } from '../test/seedAssumptions.js';
 
@@ -53,6 +54,13 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   // The rule table is truncated separately below so the seed-supplied
   // v1 rule set lands cleanly even when notification_rule had prior
   // rows (force-reseed).
+  //
+  // `company_profile` is reseeded after the TRUNCATE: it has a FK
+  // (`updated_by → users.id`), so `TRUNCATE … users CASCADE` empties it
+  // as well. The singleton-row contract (data-model.md §5.17,
+  // ADR-0026) says the row MUST exist before any read — re-insert with
+  // `ON CONFLICT (singleton) DO NOTHING`, mirroring the baseline
+  // migration's seed line.
   await db.execute(
     sql`TRUNCATE TABLE notification_rule, project_workers, sessions, projects, customers, users CASCADE`,
   );
@@ -66,6 +74,50 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   await loadUsers(db);
   await loadBusiness(db, { now });
   await loadNotificationRules(db);
+
+  // Restore the company_profile singleton row that the TRUNCATE
+  // CASCADE above wiped. The seed ships a COMPLETE profile so the
+  // dev / E2E happy path can issue invoices without manual setup
+  // — the invoice issuance gate (AC-289 / COMPANY_PROFILE_REQUIRED)
+  // expects every mandatory field populated. Owner can still edit
+  // via `PUT /api/company-profile` (ui/daten.md §8.11.4). The
+  // baseline migration's empty defaults remain the production
+  // posture; the seed overrides them for the test fixture.
+  // The INSERT lists only the columns the fixture pins; the UPDATE
+  // clause mirrors the same column set so a re-seed over an existing
+  // row (force re-seed) overwrites exactly what the fixture asserts and
+  // leaves every other column at whatever the row already carried.
+  // `accent_color`, `footer_text`, and `logo_binary_descriptor_id` are
+  // intentionally absent: the fixture does not pin them, and the column
+  // defaults from the baseline migration are the right resting state
+  // (no accent override, no footer text, no logo).
+  await db.execute(sql`
+    INSERT INTO "company_profile"
+      ("company_name", "address", "tax_id", "ust_id", "iban", "default_tax_mode")
+    VALUES (
+      'Maler Berger GmbH',
+      '{"street":"Werkstr. 1","zip":"10115","city":"Berlin"}'::jsonb,
+      '111/222/33333',
+      'DE123456789',
+      'DE12 1000 0000 1234 5678 90',
+      'standard'
+    )
+    ON CONFLICT ("singleton") DO UPDATE SET
+      "company_name" = EXCLUDED."company_name",
+      "address" = EXCLUDED."address",
+      "tax_id" = EXCLUDED."tax_id",
+      "ust_id" = EXCLUDED."ust_id",
+      "iban" = EXCLUDED."iban",
+      "default_tax_mode" = EXCLUDED."default_tax_mode"
+  `);
+
+  // Invoices land last because issuance pulls live snapshots from
+  // `users`, `customers`, `projects`, and the `company_profile`
+  // singleton — every dependency must already be seeded. The loader
+  // exercises the public `InvoiceService` surface end-to-end (draft →
+  // issue → optional cancel + reissue), so it mints real factur-x XML,
+  // real rendered PDFs, real binary descriptors, and real audit rows.
+  await loadInvoices(db, { now });
 
   console.warn(
     `⚠  Seed-Daten geladen. Alle Benutzer haben das Standardpasswort "${SEED_DEFAULT_PASSWORD}". ` +

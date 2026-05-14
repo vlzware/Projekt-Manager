@@ -111,6 +111,8 @@ export type ViewMode =
   | 'kalender'
   | 'kunden'
   | 'projekte'
+  | 'rechnungen'
+  | 'rechnungDetail'
   | 'benutzer'
   | 'daten'
   | 'aktivitaet'

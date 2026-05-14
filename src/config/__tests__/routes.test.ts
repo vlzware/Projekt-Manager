@@ -32,21 +32,23 @@ const caller = (role: RoleName): RouteCaller => ({ roles: [role] });
 // Aktivität (audit:read) is visible to owner / office only under the
 // current matrix; worker and bookkeeper lack `audit:read` and do not
 // see the tab. Benachrichtigungen (notifications:manage) is owner-only
-// per api.md §14.3 + ADR-0023 + AC-198.
+// per api.md §14.3 + ADR-0023 + AC-198. Rechnungen (invoice:read) is
+// visible to owner / office / bookkeeper; worker is excluded.
 const MATRIX: Record<RoleName, readonly string[]> = {
   owner: [
     'kanban',
     'kalender',
     'projekte',
     'kunden',
+    'rechnungen',
     'benutzer',
     'daten',
     'aktivitaet',
     'benachrichtigungen',
   ],
-  office: ['kanban', 'kalender', 'projekte', 'kunden', 'daten', 'aktivitaet'],
+  office: ['kanban', 'kalender', 'projekte', 'kunden', 'rechnungen', 'daten', 'aktivitaet'],
   worker: ['meineProjekte', 'kanban', 'kalender'],
-  bookkeeper: ['projekte', 'kunden'],
+  bookkeeper: ['projekte', 'kunden', 'rechnungen'],
 };
 
 const LANDINGS: Record<RoleName, string> = {
@@ -124,12 +126,15 @@ describe('ROUTES — landing (ui/index.md §8.1.2)', () => {
 describe('ROUTES — path/view helpers', () => {
   it('routeByPath returns the matching entry', () => {
     expect(routeByPath('/kanban')?.view).toBe('kanban');
-    expect(routeByPath('/data')?.view).toBe('daten');
+    expect(routeByPath('/daten')?.view).toBe('daten');
     expect(routeByPath('/nowhere')).toBeUndefined();
   });
 
   it('routeByPath resolves parametrized paths by pattern', () => {
     expect(routeByPath('/projects/abc123')?.view).toBe('projektDetail');
+    // Per-invoice viewer (ui/invoices.md §8.16.3) — same parametrized
+    // shape, gated on invoice:read alongside the list view.
+    expect(routeByPath('/rechnungen/abc123')?.view).toBe('rechnungDetail');
   });
 
   it('routeByView throws for an unknown view', () => {

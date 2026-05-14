@@ -5,6 +5,7 @@ import { useAuthStore } from '@/state/authStore';
 import { useProjectStore } from '@/state/projectStore';
 import { useUIStore } from '@/state/uiStore';
 import { subscribeProjectStoresToSse } from '@/state/projectSseSubscription';
+import { subscribeInvoiceStoreToSse } from '@/state/invoiceSseSubscription';
 import { viewFromPath } from '@/hooks/useRouterNav';
 import { ROUTES, routeByPath, landingPathForUser } from '@/config/routes';
 import { isInsecureConnection } from '@/config/insecureConnection';
@@ -22,6 +23,8 @@ import { AuditManagement } from '@/ui/audit/AuditManagement';
 import { NotificationRulesManagement } from '@/ui/management/NotificationRulesManagement';
 import { ProjectDetailPanel } from '@/ui/detail/ProjectDetailPanel';
 import { ProjectDetailPage } from '@/ui/detail/ProjectDetailPage';
+import { InvoiceListView } from '@/ui/invoices/InvoiceListView';
+import { InvoiceDetailView } from '@/ui/invoices/InvoiceDetailView';
 import { LoginForm } from '@/ui/auth/LoginForm';
 import { ConfirmDialog } from '@/ui/common/ConfirmDialog';
 import { ToastContainer } from '@/ui/common/ToastContainer';
@@ -107,6 +110,8 @@ const VIEW_ELEMENTS: Record<ViewMode, ReactElement> = {
   kalender: <CalendarView />,
   kunden: <CustomerManagement />,
   projekte: <ProjectManagement />,
+  rechnungen: <InvoiceListView />,
+  rechnungDetail: <InvoiceDetailView />,
   benutzer: <UserManagement />,
   daten: <DatenView />,
   aktivitaet: <AuditManagement />,
@@ -172,6 +177,11 @@ export function App() {
   useEffect(() => {
     if (!authUser) return;
     return subscribeProjectStoresToSse();
+  }, [authUser]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    return subscribeInvoiceStoreToSse();
   }, [authUser]);
 
   if (authUser) {

@@ -38,6 +38,8 @@ import { mutate, mutateInTx, dispatchAuditRows } from './mutate.js';
 import type { AuditLogRow } from './audit-publisher.js';
 import { projectAuditLabel } from '../../domain/audit.js';
 import { emitProjectChanged, emitStorageUsageChanged } from '../sse/emitters.js';
+import { countIssuedOrCancelledForCustomer } from '../repositories/invoice-read.js';
+import { customerHasInvoices } from '../errors.js';
 
 /**
  * Fields captured in the audit payload for customer writes. Kept as a
@@ -51,6 +53,7 @@ function customerDiffFields(row: {
   phone: string | null;
   email: string | null;
   address: { street: string; zip: string; city: string } | null;
+  ustId: string | null;
   notes: string | null;
 }): CustomerDiff {
   return {
@@ -58,6 +61,7 @@ function customerDiffFields(row: {
     phone: row.phone ?? null,
     email: row.email ?? null,
     address: row.address ?? null,
+    ustId: row.ustId ?? null,
     notes: row.notes ?? null,
   };
 }
@@ -93,6 +97,7 @@ export class CustomerService {
       phone?: string | null;
       email?: string | null;
       address?: { street: string; zip: string; city: string } | null;
+      ustId?: string | null;
       notes?: string | null;
     },
     userId: string,
@@ -125,6 +130,7 @@ export class CustomerService {
               phone: inserted.phone,
               email: inserted.email,
               address: inserted.address,
+              ustId: inserted.ustId,
               notes: inserted.notes,
             }),
           };
@@ -141,6 +147,7 @@ export class CustomerService {
       phone?: string | null;
       email?: string | null;
       address?: { street: string; zip: string; city: string } | null;
+      ustId?: string | null;
       notes?: string | null;
     },
     id: string,
@@ -179,6 +186,7 @@ export class CustomerService {
                   phone: row.phone,
                   email: row.email,
                   address: row.address,
+                  ustId: row.ustId,
                   notes: row.notes,
                 }),
               };
@@ -204,6 +212,7 @@ export class CustomerService {
       phone?: string | null;
       email?: string | null;
       address?: { street: string; zip: string; city: string } | null;
+      ustId?: string | null;
       notes?: string | null;
     },
     userId: string,
@@ -292,6 +301,20 @@ export class CustomerService {
 
       if (activeProjects.length > 0) {
         throw conflict(STRINGS.customers.hasProjects);
+      }
+
+      // AC-307: any issued or cancelled invoice across the customer's
+      // project graph (active + archived) blocks the delete. Drafts
+      // cascade-delete with their parent project and DO NOT count.
+      // The check runs INSIDE the tx so a concurrent issue committed
+      // between the probe and the cascade is observed; the FK cascade
+      // path on `invoices.project_id` would have to wait for our locks
+      // anyway, but the explicit precondition makes the failure
+      // observable as a structured error rather than a constraint
+      // violation post-cascade.
+      const invoiceCount = await countIssuedOrCancelledForCustomer(tx, id);
+      if (invoiceCount > 0) {
+        throw customerHasInvoices({ invoiceCount });
       }
 
       // All referencing projects (if any) are archived. Purge them and
@@ -393,6 +416,7 @@ export class CustomerService {
               phone: priorRow.phone,
               email: priorRow.email,
               address: priorRow.address,
+              ustId: priorRow.ustId,
               notes: priorRow.notes,
             }),
             after: {},
@@ -438,6 +462,7 @@ function diffCustomerChange(
     phone: string | null;
     email: string | null;
     address: { street: string; zip: string; city: string } | null;
+    ustId: string | null;
     notes: string | null;
   },
   patch: {
@@ -445,6 +470,7 @@ function diffCustomerChange(
     phone?: string | null;
     email?: string | null;
     address?: { street: string; zip: string; city: string } | null;
+    ustId?: string | null;
     notes?: string | null;
   },
 ): { before: CustomerDiff; after: CustomerDiff } {
@@ -461,6 +487,10 @@ function diffCustomerChange(
   if ('email' in patch) {
     before.email = priorRow.email ?? null;
     after.email = patch.email ?? null;
+  }
+  if ('ustId' in patch) {
+    before.ustId = priorRow.ustId ?? null;
+    after.ustId = patch.ustId ?? null;
   }
   if ('address' in patch) {
     before.address = priorRow.address ?? null;

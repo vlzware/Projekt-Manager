@@ -53,7 +53,7 @@ import { fileURLToPath } from 'url';
 import type pg from 'pg';
 
 import { createDatabase } from '../db/connection.js';
-import { users, customers, projects, projectWorkers } from '../db/schema.js';
+import { users, customers, projects, projectWorkers, invoices } from '../db/schema.js';
 import { verifyPassword } from '../password.js';
 import { seed } from '../seed.js';
 import type { Database } from '../db/connection.js';
@@ -72,6 +72,19 @@ const EXPECTED_USER_COUNT = Object.keys(SEED_USERS).length;
 const EXPECTED_CUSTOMER_COUNT = 21;
 const EXPECTED_PROJECT_COUNT = 19;
 const EXPECTED_PROJECT_WORKER_COUNT = 7;
+// Invoice fixtures: 5 fresh issues + 1 cancellation pair (cancelled +
+// storno + reissued = 3 extra rows on the same project) + 5 drafts =
+// 12 invoice rows. By status: 5 draft + 6 issued (5 fresh issues + 1
+// storno + 1 reissue MINUS the one that got cancelled = 6) + 1
+// cancelled. The storno keeps `status='issued'` with `cancellationOf`
+// set (see `InvoiceCancelService.ts`).
+// The three `rechnung_faellig` project slots (013/014/015) are NOT
+// issued against here — they remain available to `invoices-routes.test.ts`
+// which claims them via `rechnungFaelligProjectId()`.
+const EXPECTED_INVOICE_COUNT = 12;
+const EXPECTED_INVOICE_DRAFT_COUNT = 5;
+const EXPECTED_INVOICE_ISSUED_COUNT = 6;
+const EXPECTED_INVOICE_CANCELLED_COUNT = 1;
 
 // Uses a raw DB connection (no Fastify) — mirrors db-constraints.test.ts
 // and bootstrap.test.ts because these tests exercise the seed loader
@@ -124,17 +137,26 @@ describe('Seed', () => {
 
     // AC-163a: row counts match the seed contract.
     it('AC-163a: row counts match the seed contract', async () => {
-      const [userRows, customerRows, projectRows, projectWorkerRows] = await Promise.all([
-        db.select({ id: users.id }).from(users),
-        db.select({ id: customers.id }).from(customers),
-        db.select({ id: projects.id }).from(projects),
-        db.select({ projectId: projectWorkers.projectId }).from(projectWorkers),
-      ]);
+      const [userRows, customerRows, projectRows, projectWorkerRows, invoiceRows] =
+        await Promise.all([
+          db.select({ id: users.id }).from(users),
+          db.select({ id: customers.id }).from(customers),
+          db.select({ id: projects.id }).from(projects),
+          db.select({ projectId: projectWorkers.projectId }).from(projectWorkers),
+          db.select({ id: invoices.id, status: invoices.status }).from(invoices),
+        ]);
 
       expect(userRows).toHaveLength(EXPECTED_USER_COUNT);
       expect(customerRows).toHaveLength(EXPECTED_CUSTOMER_COUNT);
       expect(projectRows).toHaveLength(EXPECTED_PROJECT_COUNT);
       expect(projectWorkerRows).toHaveLength(EXPECTED_PROJECT_WORKER_COUNT);
+
+      expect(invoiceRows).toHaveLength(EXPECTED_INVOICE_COUNT);
+      const byStatus = new Map<string, number>();
+      for (const r of invoiceRows) byStatus.set(r.status, (byStatus.get(r.status) ?? 0) + 1);
+      expect(byStatus.get('draft') ?? 0).toBe(EXPECTED_INVOICE_DRAFT_COUNT);
+      expect(byStatus.get('issued') ?? 0).toBe(EXPECTED_INVOICE_ISSUED_COUNT);
+      expect(byStatus.get('cancelled') ?? 0).toBe(EXPECTED_INVOICE_CANCELLED_COUNT);
     });
 
     // AC-163b part 1: usernames and `active` flags match SEED_USERS.

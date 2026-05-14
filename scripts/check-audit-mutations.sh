@@ -132,6 +132,17 @@ ALLOWLIST=(
   # via seed; routing it through mutate() would add six noise rows to
   # the activity feed on every fresh install.
   "src/server/seed/notificationRules.ts"
+  # Invoice seed loader — issuance/cancellation/draft writes all run
+  # through `createInvoiceService()` (audited). The single raw
+  # `.update(projects)` is fixture-shaping: to attach invoices to
+  # projects whose target demo state is `erledigt` / `abnahme`, the
+  # seed flips the project to `rechnung_faellig` (the only state
+  # `InvoiceIssueService` accepts), issues through the service, then
+  # flips the project to its target state. That second flip is not a
+  # legal state-machine transition (workflows.md §projectStatus); the
+  # seed steps outside the machine on purpose to compose a varied dev
+  # landscape. TRUNCATE has just run — no users observe the moves.
+  "src/server/seed/invoices.ts"
   # Audit retention — the only legitimate deleter of audit_log rows.
   # (audit_log is not in the audited-table set, but this job is the
   # archetypal allowlist case for parity with the helper.)

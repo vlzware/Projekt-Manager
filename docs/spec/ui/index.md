@@ -4,15 +4,16 @@ Section 8 of the [product spec](../index.md): UI surface. Split into per-subsyst
 
 ## Structure
 
-| File                                       | Sections          | Contents                                                                     |
-| ------------------------------------------ | ----------------- | ---------------------------------------------------------------------------- |
-| **index.md** (this file)                   | §8.1, §8.7        | Shell: top-level layout states, navigation matrix, user menu                 |
-| **[workflow-views.md](workflow-views.md)** | §8.2–§8.6         | Kanban, Calendar, Project Detail Panel, Summary, Color Coding                |
-| **[management.md](management.md)**         | §8.8–§8.10, §8.13 | Project, Customer, and User management tabular CRUD views; global Audit View |
-| **[daten.md](daten.md)**                   | §8.11             | Daten view — unified business-data restore + export                          |
-| **[email-intake.md](email-intake.md)**     | §8.12             | Email Data Intake — modal LLM extraction to customer + project               |
-| **[project-detail.md](project-detail.md)** | §8.15             | Project Detail Page — dedicated `/projects/:id` route with attachments       |
-| **[behavior.md](behavior.md)**             | §9, §10           | Cross-cutting behavioral rules + responsive column collapse                  |
+| File                                       | Sections          | Contents                                                                                             |
+| ------------------------------------------ | ----------------- | ---------------------------------------------------------------------------------------------------- |
+| **index.md** (this file)                   | §8.1, §8.7        | Shell: top-level layout states, navigation matrix, user menu                                         |
+| **[workflow-views.md](workflow-views.md)** | §8.2–§8.6         | Kanban, Calendar, Project Detail Panel, Summary, Color Coding                                        |
+| **[management.md](management.md)**         | §8.8–§8.10, §8.13 | Project, Customer, and User management tabular CRUD views; global Audit View                         |
+| **[daten.md](daten.md)**                   | §8.11             | Daten view — unified business-data restore + export, storage usage, company profile                  |
+| **[email-intake.md](email-intake.md)**     | §8.12             | Email Data Intake — modal LLM extraction to customer + project                                       |
+| **[project-detail.md](project-detail.md)** | §8.15             | Project Detail Page — dedicated `/projects/:id` route with attachments and per-project invoice block |
+| **[invoices.md](invoices.md)**             | §8.16             | Invoices View — list, draft form, issued-invoice viewer, Stornorechnung action                       |
+| **[behavior.md](behavior.md)**             | §9, §10           | Cross-cutting behavioral rules + responsive column collapse                                          |
 
 ---
 
@@ -85,8 +86,9 @@ The authenticated layout provides navigation between all available views. The na
 | Calendar      | "Kalender"           | Owner, office, worker (scoped — see below). Bookkeeper: hidden.                                                                                                                                                                                                                                                         | No                                               |
 | Projects      | "Projekte"           | Owner, office, bookkeeper. Worker: hidden.                                                                                                                                                                                                                                                                              | Yes for bookkeeper (landing view after login)    |
 | Customers     | "Kunden"             | Owner, office, bookkeeper. Worker: hidden.                                                                                                                                                                                                                                                                              | No                                               |
+| Invoices      | "Rechnungen"         | `invoice:read` permission required (owner, office, bookkeeper under the default matrix — see [api.md §14.3](../api.md#143-authorization-rules)). Worker: hidden. See [invoices.md §8.16](invoices.md#816-invoices-view).                                                                                                | No                                               |
 | Users         | "Benutzer"           | `user:manage` permission required (owner only under the default role set). Everyone else: hidden.                                                                                                                                                                                                                       | No                                               |
-| Daten         | "Daten"              | `data:export` permission required (owner, office under the default role set). Everyone else: hidden. Includes the deployment-wide storage usage row — see [daten.md §8.11.3](daten.md#8113-speichernutzung).                                                                                                            | No                                               |
+| Daten         | "Daten"              | `data:export` permission required (owner, office under the default role set). Everyone else: hidden. Includes the deployment-wide storage usage row ([daten.md §8.11.3](daten.md#8113-speichernutzung)) and, for the owner, the company-profile form ([daten.md §8.11.4](daten.md#8114-company-profile)).               | No                                               |
 | Audit         | "Aktivität"          | `audit:read` permission required (owner, office under the default matrix). Worker and bookkeeper do not hold `audit:read` — the tab is hidden and `/audit` deep-link returns the not-permitted surface. Office visibility is narrowed by the destructive-action predicate ([api.md §14.2.8](../api.md#1428-audit-log)). | No                                               |
 | Notifications | "Benachrichtigungen" | `notifications:manage` required (owner only under the default matrix — see [api.md §14.3](../api.md#143-authorization-rules)). Everyone else: hidden; `/benachrichtigungen` deep-link returns the not-permitted surface.                                                                                                | No                                               |
 

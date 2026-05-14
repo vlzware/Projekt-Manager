@@ -34,6 +34,7 @@ import { UploadCta } from './UploadCta';
 import { dateInputValue } from './dateInputValue';
 import { SiteAddressLine } from './SiteAddressLine';
 import { SiteAddressEditModal } from './SiteAddressEditModal';
+import { InvoiceSection } from './invoice/InvoiceSection';
 import styles from './ProjectDetail.module.css';
 
 type LoadState = { kind: 'loading' } | FetchProjectOutcome;
@@ -629,6 +630,8 @@ export function ProjectDetailPage() {
           <BinaryList projectId={project.id} archived={isArchived} />
         </>
       )}
+
+      <InvoiceSection projectId={project.id} projectStatus={project.status} />
 
       <section
         aria-label={STRINGS.attachments.activity}

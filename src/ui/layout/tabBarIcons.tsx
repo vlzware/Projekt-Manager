@@ -62,3 +62,10 @@ export const CustomersIcon = (props: IconProps) => (
     <path d="M21.5 18a4.5 4.5 0 0 0-7-3.7" />
   </Base>
 );
+
+export const InvoicesIcon = (props: IconProps) => (
+  <Base {...props}>
+    <path d="M6 3h10l3 3v15l-3-2-3 2-3-2-3 2-1-2V3z" />
+    <path d="M9 8h7M9 12h7M9 16h4" />
+  </Base>
+);

@@ -20,6 +20,8 @@ export type Permission =
   | 'attachment:write'
   | 'attachment:hide'
   | 'attachment:trash'
+  | 'invoice:read'
+  | 'invoice:write'
   | 'auth:change-password';
 
 export type Role =
@@ -77,6 +79,13 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     // the AC-215 grace window but do not browse or restore the trash.
     // Bookkeepers are read-only on attachments.
     'attachment:trash',
+    // invoice:read / invoice:write — ADR-0026. Owner + office hold
+    // write; owner / office / bookkeeper hold read. Worker holds
+    // neither — the repository-predicate scope (ADR-0019) returns
+    // the empty set for invoices on the worker role (no
+    // project_worker scope path), so worker exclusion is structural.
+    'invoice:read',
+    'invoice:write',
     'auth:change-password',
   ],
   office: [
@@ -95,6 +104,8 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'attachment:write',
     'attachment:hide',
     'attachment:trash',
+    'invoice:read',
+    'invoice:write',
     'auth:change-password',
   ],
   worker: [
@@ -105,7 +116,13 @@ const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
     'attachment:hide',
     'auth:change-password',
   ],
-  bookkeeper: ['project:read', 'customer:read', 'attachment:read', 'auth:change-password'],
+  bookkeeper: [
+    'project:read',
+    'customer:read',
+    'attachment:read',
+    'invoice:read',
+    'auth:change-password',
+  ],
   // Test-only — see the `Role` union comment above. Empty in
   // production builds (so a stray DB-direct-write of the role string
   // grants nothing); the one production-relevant permission is added

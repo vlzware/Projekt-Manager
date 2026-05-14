@@ -4,6 +4,7 @@ import {
   type IconProps,
   CalendarIcon,
   CustomersIcon,
+  InvoicesIcon,
   KanbanIcon,
   MyProjectsIcon,
   ProjectsIcon,
@@ -15,4 +16,5 @@ export const TAB_BAR_ICONS: Partial<Record<RouteView, ComponentType<IconProps>>>
   kalender: CalendarIcon,
   projekte: ProjectsIcon,
   kunden: CustomersIcon,
+  rechnungen: InvoicesIcon,
 };

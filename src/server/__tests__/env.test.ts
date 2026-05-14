@@ -67,6 +67,7 @@ function makeEnv(overrides: Partial<Env>): Env {
     VAPID_PRIVATE_KEY: undefined,
     VAPID_SUBJECT: undefined,
     SSE_HEARTBEAT_INTERVAL_MS: 25_000,
+    INVOICE_OBJECT_LOCK_DAYS: 0,
     ...overrides,
   };
 }

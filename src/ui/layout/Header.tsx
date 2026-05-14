@@ -4,7 +4,7 @@ import { useUIStore } from '@/state/uiStore';
 import { useBackupStatusRefresh } from '@/hooks/useBackupStatusRefresh';
 import { usePermission } from '@/hooks/usePermission';
 import { useRouterNav } from '@/hooks/useRouterNav';
-import { landingPathForUser, visibleRoutesForUser, type RouteView } from '@/config/routes';
+import { SECONDARY_VIEWS, landingPathForUser, visibleRoutesForUser } from '@/config/routes';
 import { BRANDING } from '@/config/brandingConfig';
 import { STRINGS } from '@/config/strings';
 import { BACKUP_THRESHOLDS } from '@/config/backupThresholds';
@@ -21,18 +21,6 @@ const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
   { value: 'light', label: STRINGS.theme.light },
   { value: 'dark', label: STRINGS.theme.dark },
   { value: 'system', label: STRINGS.theme.system },
-];
-
-// Views that live under the "Verwaltung" (administration) secondary menu
-// rather than the primary nav. Administration + audit observability are
-// lower-frequency surfaces for the roles that see them; keeping them out
-// of the primary row keeps the header compact when the summary area is
-// wide.
-const SECONDARY_VIEWS: readonly RouteView[] = [
-  'benutzer',
-  'daten',
-  'aktivitaet',
-  'benachrichtigungen',
 ];
 
 /** First letters of up to two whitespace-separated words, uppercased.

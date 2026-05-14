@@ -26,6 +26,8 @@ import { pushPublicRoutes } from './routes/push.js';
 import { attachmentRoutes } from './routes/attachments.js';
 import { storageUsageRoutes } from './routes/storage-usage.js';
 import { eventsRoutes } from './routes/events.js';
+import { invoiceRoutes } from './routes/invoices.js';
+import { companyProfileRoutes } from './routes/company-profile.js';
 import { configureSseBus } from './sse/bus.js';
 import { registerNotificationPublisher } from './services/notification-publisher.js';
 import { noopPushDispatcher, type PushDispatcher } from './services/PushDispatcher.js';
@@ -234,6 +236,8 @@ export function buildApp(opts: AppOptions = {}): FastifyInstance {
     app.register(pushSubscriptionRoutes(opts.db));
     app.register(attachmentRoutes(opts.db));
     app.register(storageUsageRoutes(opts.db));
+    app.register(invoiceRoutes(opts.db));
+    app.register(companyProfileRoutes(opts.db));
     // Wire the SSE bus singleton with the Fastify logger BEFORE registering
     // the route — otherwise the bus runs without a logger and the spec-
     // required structured-output on subscriber-write failures

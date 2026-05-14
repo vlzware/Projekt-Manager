@@ -48,6 +48,8 @@ export type RouteView =
   | 'kalender'
   | 'kunden'
   | 'projekte'
+  | 'rechnungen'
+  | 'rechnungDetail'
   | 'benutzer'
   | 'daten'
   | 'aktivitaet'
@@ -155,6 +157,35 @@ export const ROUTES: readonly RouteEntry[] = [
     isDefaultFor: () => false,
   },
   {
+    // Standalone Rechnungen list view (ui/invoices.md §8.16.1) — gated
+    // on `invoice:read` (owner / office / bookkeeper under the default
+    // matrix). Worker holds no invoice permission and the repository
+    // scope predicate (ADR-0019) returns the empty set, so worker is
+    // structurally excluded both client- and server-side.
+    view: 'rechnungen',
+    path: '/rechnungen',
+    label: STRINGS.ui.viewInvoices,
+    canAccess: (u) => hasPermission(u.roles, 'invoice:read'),
+    // Bookkeeper currently lands on `/projects` (see landsOnProjects);
+    // keep that — the spec does not pin Rechnungen as bookkeeper's
+    // landing view, and changing it would be silently scope-creeping
+    // outside this chunk.
+    isDefaultFor: () => false,
+  },
+  {
+    // Per-invoice viewer (ui/invoices.md §8.16.3) — gated on
+    // `invoice:read`, same as the list. Worker is excluded both
+    // client-side (no permission) and server-side (repository scope
+    // predicate, ADR-0019 + AC-298). Parametrized — deep-linkable,
+    // not a nav entry; excluded from `visibleRoutesForUser` by the
+    // `/:` filter alongside `projektDetail`.
+    view: 'rechnungDetail',
+    path: '/rechnungen/:id',
+    label: STRINGS.ui.viewInvoices,
+    canAccess: (u) => hasPermission(u.roles, 'invoice:read'),
+    isDefaultFor: () => false,
+  },
+  {
     view: 'benutzer',
     path: '/users',
     label: STRINGS.ui.viewUsers,
@@ -167,7 +198,7 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     view: 'daten',
-    path: '/data',
+    path: '/daten',
     label: STRINGS.ui.viewData,
     canAccess: (u) => hasPermission(u.roles, 'data:export'),
     isDefaultFor: () => false,
@@ -254,6 +285,32 @@ export function viewFromPath(pathname: string): RouteView {
 export function pathFromView(view: RouteView): string {
   return routeByView(view).path;
 }
+
+/**
+ * Views that live under the "Verwaltung" (administration) secondary menu
+ * rather than the primary nav. Administration + audit observability are
+ * lower-frequency surfaces for the roles that see them; keeping them out
+ * of the primary row keeps the header compact when the summary area is
+ * wide.
+ *
+ * `rechnungen` is included so owner / office surface it under Verwaltung
+ * (their secondary bucket has ≥2 entries). Bookkeeper has only
+ * `rechnungen` in their secondary bucket — the "≥2 to render the menu"
+ * rule in Header / MobileTabBar routes it inline alongside Projekte /
+ * Kunden, which matches the `docs/spec/ui/invoices.md §8.16` "primary for
+ * bookkeeper" line.
+ *
+ * Exported so Header and MobileTabBar consume a single source of truth;
+ * keep this list and the per-role nav matrix in `docs/spec/ui/index.md
+ * §8.7.1` in lockstep.
+ */
+export const SECONDARY_VIEWS: readonly RouteView[] = [
+  'rechnungen',
+  'benutzer',
+  'daten',
+  'aktivitaet',
+  'benachrichtigungen',
+];
 
 /** The nav set this caller sees, in matrix order. Parametrized paths are excluded — they're deep-linked, not nav entries. */
 export function visibleRoutesForUser(caller: RouteCaller): readonly RouteEntry[] {

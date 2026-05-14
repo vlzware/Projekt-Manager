@@ -226,7 +226,7 @@ test.describe('AC-273: storage usage propagates from worker mutations to office 
     // refresh" — every assertion below is allowed to consume only the
     // SSE-driven invalidation; no `goto`, `reload`, or visibility-change
     // after this initial mount.
-    await officePage.goto('/data');
+    await officePage.goto('/daten');
     await expect(officePage.getByTestId('daten-view')).toBeVisible();
     await expect(officePage.getByTestId('storage-usage-badge')).toBeVisible();
     await expect(officePage.getByTestId('daten-storage-row')).toBeVisible();

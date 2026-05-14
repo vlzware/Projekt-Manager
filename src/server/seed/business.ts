@@ -135,7 +135,12 @@ const CUSTOMER_SPECS: readonly CustomerSpec[] = [
   },
   {
     name: 'Herr Peters',
-    // Minimal — no address
+    // Address required even on minimal customers so the invoice issuance
+    // gate (AC-289) passes when this customer's project is the first
+    // `rechnung_faellig` row returned by the API ordering. The
+    // customer-minimal-data path is exercised by the no-address arm of
+    // `customers.test.ts` instead.
+    address: { street: 'Gartenweg 4', zip: '51465', city: 'Bergisch Gladbach' },
   },
   {
     name: 'Rheinisch-Bergischer Kreis',

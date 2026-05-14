@@ -50,9 +50,9 @@ CREATE TABLE "audit_log" (
 	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"correlation_id" text,
 	CONSTRAINT "audit_log_actor_kind_valid" CHECK ("audit_log"."actor_kind" IN ('user', 'system')),
-	CONSTRAINT "audit_log_entity_type_valid" CHECK ("audit_log"."entity_type" IN ('project', 'customer', 'user', 'project_worker', 'attachment')),
+	CONSTRAINT "audit_log_entity_type_valid" CHECK ("audit_log"."entity_type" IN ('project', 'customer', 'user', 'project_worker', 'attachment', 'invoice', 'company_profile')),
 	CONSTRAINT "audit_log_ancestor_type_valid" CHECK ("audit_log"."ancestor_entity_type" IS NULL
-          OR "audit_log"."ancestor_entity_type" IN ('project', 'customer', 'user', 'project_worker', 'attachment')),
+          OR "audit_log"."ancestor_entity_type" IN ('project', 'customer', 'user', 'project_worker', 'attachment', 'invoice', 'company_profile')),
 	CONSTRAINT "audit_log_ancestor_pair" CHECK (("audit_log"."ancestor_entity_type" IS NULL AND "audit_log"."ancestor_entity_id" IS NULL)
           OR ("audit_log"."ancestor_entity_type" IS NOT NULL AND "audit_log"."ancestor_entity_id" IS NOT NULL)),
 	CONSTRAINT "audit_log_actor_shape" CHECK ((
@@ -66,17 +66,77 @@ CREATE TABLE "audit_log" (
       ))
 );
 --> statement-breakpoint
+CREATE TABLE "company_profile" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"singleton" boolean DEFAULT true NOT NULL,
+	"company_name" text DEFAULT '' NOT NULL,
+	"address" jsonb DEFAULT '{"street":"","zip":"","city":""}'::jsonb NOT NULL,
+	"tax_id" text DEFAULT '' NOT NULL,
+	"ust_id" text,
+	"iban" text,
+	"accent_color" text,
+	"footer_text" text,
+	"logo_binary_descriptor_id" uuid,
+	"default_tax_mode" text DEFAULT 'standard' NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_by" uuid,
+	CONSTRAINT "company_profile_singleton_unique" UNIQUE("singleton"),
+	CONSTRAINT "company_profile_singleton" CHECK ("company_profile"."singleton" = true),
+	CONSTRAINT "company_profile_default_tax_mode_valid" CHECK ("company_profile"."default_tax_mode" IN ('standard', 'kleinunternehmer', 'reverse_charge'))
+);
+--> statement-breakpoint
 CREATE TABLE "customers" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"name" varchar(255) NOT NULL,
 	"phone" varchar(100),
 	"email" varchar(255),
 	"address" jsonb,
+	"ust_id" text,
 	"notes" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"created_by" uuid,
 	"updated_by" uuid
+);
+--> statement-breakpoint
+CREATE TABLE "invoice_sequence" (
+	"year" smallint NOT NULL,
+	"kind" text NOT NULL,
+	"next_value" bigint DEFAULT 1 NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "invoice_sequence_year_kind_pk" PRIMARY KEY("year","kind"),
+	CONSTRAINT "invoice_sequence_kind_valid" CHECK ("invoice_sequence"."kind" IN ('invoice', 'storno'))
+);
+--> statement-breakpoint
+CREATE TABLE "invoices" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"project_id" uuid NOT NULL,
+	"status" text DEFAULT 'draft' NOT NULL,
+	"number" text,
+	"issue_date" date,
+	"performance_date" date,
+	"tax_mode" text DEFAULT 'standard' NOT NULL,
+	"profile" text DEFAULT 'zugferd-en16931' NOT NULL,
+	"issuer" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"recipient" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"lines" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"totals" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	"cancellation_of" uuid,
+	"cancellation_reason" text,
+	"rendered_pdf_binary_descriptor_id" uuid,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"created_by" uuid,
+	"updated_by" uuid,
+	CONSTRAINT "invoices_status_valid" CHECK ("invoices"."status" IN ('draft', 'issued', 'cancelled')),
+	CONSTRAINT "invoices_tax_mode_valid" CHECK ("invoices"."tax_mode" IN ('standard', 'kleinunternehmer', 'reverse_charge')),
+	CONSTRAINT "invoices_profile_valid" CHECK ("invoices"."profile" IN ('zugferd-en16931')),
+	CONSTRAINT "invoices_number_format" CHECK ("invoices"."number" IS NULL
+          OR "invoices"."number" ~ '^(RE|ST)-[0-9]{4}-[0-9]{4,}$'),
+	CONSTRAINT "invoices_number_required_when_not_draft" CHECK (("invoices"."status" = 'draft' AND "invoices"."number" IS NULL)
+          OR ("invoices"."status" IN ('issued', 'cancelled') AND "invoices"."number" IS NOT NULL)),
+	CONSTRAINT "invoices_cancellation_pair" CHECK (("invoices"."cancellation_of" IS NULL AND ("invoices"."number" IS NULL OR "invoices"."number" LIKE 'RE-%'))
+          OR ("invoices"."cancellation_of" IS NOT NULL AND "invoices"."number" LIKE 'ST-%'))
 );
 --> statement-breakpoint
 CREATE TABLE "meta_backup_status" (
@@ -181,8 +241,13 @@ CREATE TABLE "users" (
 ALTER TABLE "attachments" ADD CONSTRAINT "attachments_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "attachments" ADD CONSTRAINT "attachments_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "audit_log" ADD CONSTRAINT "audit_log_actor_id_users_id_fk" FOREIGN KEY ("actor_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "company_profile" ADD CONSTRAINT "company_profile_updated_by_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "customers" ADD CONSTRAINT "customers_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "customers" ADD CONSTRAINT "customers_updated_by_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "invoices" ADD CONSTRAINT "invoices_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "invoices" ADD CONSTRAINT "invoices_cancellation_of_invoices_id_fk" FOREIGN KEY ("cancellation_of") REFERENCES "public"."invoices"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "invoices" ADD CONSTRAINT "invoices_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "invoices" ADD CONSTRAINT "invoices_updated_by_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notification_rule" ADD CONSTRAINT "notification_rule_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "notification_rule" ADD CONSTRAINT "notification_rule_updated_by_users_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "project_storage_usage" ADD CONSTRAINT "project_storage_usage_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -201,6 +266,10 @@ CREATE INDEX "audit_log_actor_idx" ON "audit_log" USING btree ("actor_id","creat
 CREATE INDEX "audit_log_created_at_idx" ON "audit_log" USING btree ("created_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "audit_log_ancestor_idx" ON "audit_log" USING btree ("ancestor_entity_type","ancestor_entity_id","created_at" DESC NULLS LAST,"id" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "audit_log_entity_label_trgm_idx" ON "audit_log" USING gin ("entity_label" gin_trgm_ops);--> statement-breakpoint
+CREATE INDEX "invoices_project_id_idx" ON "invoices" USING btree ("project_id");--> statement-breakpoint
+CREATE INDEX "invoices_status_idx" ON "invoices" USING btree ("status");--> statement-breakpoint
+CREATE INDEX "invoices_cancellation_of_idx" ON "invoices" USING btree ("cancellation_of");--> statement-breakpoint
+CREATE UNIQUE INDEX "invoices_number_uq" ON "invoices" USING btree ("number") WHERE "invoices"."number" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "idx_project_workers_user_id" ON "project_workers" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "idx_projects_status" ON "projects" USING btree ("status");--> statement-breakpoint
 CREATE INDEX "idx_projects_status_changed_at" ON "projects" USING btree ("status_changed_at");--> statement-breakpoint
@@ -213,6 +282,19 @@ CREATE INDEX "idx_sessions_user_id" ON "sessions" USING btree ("user_id");
 -- key (data-model.md §5.9, ADR-0020). Avoids a first-write vs nth-write
 -- distinction in the repository layer.
 INSERT INTO "meta_backup_status" ("singleton", "last_backup_ok") VALUES (TRUE, FALSE)
+	ON CONFLICT ("singleton") DO NOTHING;
+--> statement-breakpoint
+-- Pre-seed the single company_profile row (data-model.md §5.17,
+-- ADR-0026). The API exposes upsert (`PUT`) only — no `POST` /
+-- `DELETE` path — so the row MUST exist before the first write.
+-- Mandatory fields land empty; the issuance gate (AC-289 /
+-- COMPANY_PROFILE_REQUIRED) refuses to issue until the owner fills
+-- them via `PUT /api/company-profile`. The `id` defaults to
+-- gen_random_uuid() so audit_log.entity_id (uuid NOT NULL, AC-302)
+-- has a stable target without a hard-coded seed UUID. `singleton`
+-- defaults to TRUE; the UNIQUE constraint on it caps the table at one
+-- row.
+INSERT INTO "company_profile" DEFAULT VALUES
 	ON CONFLICT ("singleton") DO NOTHING;
 --> statement-breakpoint
 -- ---------------------------------------------------------------
@@ -351,3 +433,124 @@ CREATE TRIGGER attachments_storage_usage_delta
 AFTER INSERT OR UPDATE OR DELETE ON attachments
 FOR EACH ROW
 EXECUTE FUNCTION attachments_storage_usage_delta_fn();
+--> statement-breakpoint
+-- ---------------------------------------------------------------
+-- Invoices — issued-row immutability (data-model.md §6.14, AC-294).
+--
+-- Persistence-layer backstop on direct SQL writes that bypass the
+-- route layer (seed scripts, migrations, manual SQL). The route
+-- layer rejects with INVOICE_FROZEN; this trigger is the
+-- defense-in-depth layer ADR-0026 names as impl-defined.
+--
+-- Permitted mutations on an issued row:
+--   - status: 'issued' → 'cancelled'  (the cancellation flip)
+--   - updated_at, updated_by          (audit metadata bump)
+--
+-- `cancellation_reason` is NOT in the allow-list. Per
+-- data-model.md §5.15 ("null on non-Storno rows; frozen on the
+-- Storno row at issuance of the cancellation") and
+-- `invoices-cancel.test.ts:313` (`cancellation_reason` is listed in
+-- the original's `immutableFields` set), the original invoice's
+-- `cancellation_reason` stays NULL forever. The reason text is
+-- carried by the Storno sibling row, which is a fresh INSERT — this
+-- trigger fires only on UPDATE, so the Storno's `cancellation_reason`
+-- is set without touching the trigger.
+--
+-- Every other column UPDATE on an issued row is rejected. A
+-- 'cancelled' row is fully frozen — no further UPDATEs at all.
+-- Drafts are unconstrained; the route layer manages their lifecycle.
+-- ---------------------------------------------------------------
+CREATE OR REPLACE FUNCTION invoices_enforce_immutability_fn()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  -- Drafts: every column is mutable; the route layer is the only
+  -- gate. Short-circuit before the per-column comparisons.
+  IF OLD.status = 'draft' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Cancelled rows: write-once, no further mutation. The cancel
+  -- transaction flips status on the original; once cancelled, the
+  -- row is fully frozen.
+  IF OLD.status = 'cancelled' THEN
+    RAISE EXCEPTION USING
+      MESSAGE = 'invoices: cancelled rows are write-once at the persistence layer (data-model.md §6.14)',
+      ERRCODE = 'P0001';
+  END IF;
+
+  -- Issued rows: only the cancellation-flip path (status, updated_at,
+  -- updated_by) may mutate. Every other column must be byte-equal
+  -- between OLD and NEW.
+  IF OLD.status = 'issued' THEN
+    -- Status: must stay 'issued' OR flip to 'cancelled'.
+    IF NEW.status NOT IN ('issued', 'cancelled') THEN
+      RAISE EXCEPTION USING
+        MESSAGE = 'invoices: issued rows may only transition status to cancelled (data-model.md §6.14)',
+        ERRCODE = 'P0001';
+    END IF;
+
+    -- Pin every snapshot column. A regression that adds a new
+    -- snapshot column without listing it here would silently
+    -- mutate; the column-by-column equality check is the strictest
+    -- shape the mechanism can take.
+    IF NEW.id              <> OLD.id              THEN RAISE EXCEPTION 'invoices: id frozen on issued rows'              USING ERRCODE = 'P0001'; END IF;
+    IF NEW.project_id      <> OLD.project_id      THEN RAISE EXCEPTION 'invoices: project_id frozen on issued rows'      USING ERRCODE = 'P0001'; END IF;
+    IF NEW.number          <> OLD.number          THEN RAISE EXCEPTION 'invoices: number frozen on issued rows'          USING ERRCODE = 'P0001'; END IF;
+    IF NEW.issue_date      <> OLD.issue_date      THEN RAISE EXCEPTION 'invoices: issue_date frozen on issued rows'      USING ERRCODE = 'P0001'; END IF;
+    IF NEW.performance_date IS DISTINCT FROM OLD.performance_date
+       THEN RAISE EXCEPTION 'invoices: performance_date frozen on issued rows' USING ERRCODE = 'P0001'; END IF;
+    IF NEW.tax_mode        <> OLD.tax_mode        THEN RAISE EXCEPTION 'invoices: tax_mode frozen on issued rows'        USING ERRCODE = 'P0001'; END IF;
+    IF NEW.profile         <> OLD.profile         THEN RAISE EXCEPTION 'invoices: profile frozen on issued rows'         USING ERRCODE = 'P0001'; END IF;
+    IF NEW.issuer::text    <> OLD.issuer::text    THEN RAISE EXCEPTION 'invoices: issuer frozen on issued rows'          USING ERRCODE = 'P0001'; END IF;
+    IF NEW.recipient::text <> OLD.recipient::text THEN RAISE EXCEPTION 'invoices: recipient frozen on issued rows'       USING ERRCODE = 'P0001'; END IF;
+    IF NEW.lines::text     <> OLD.lines::text     THEN RAISE EXCEPTION 'invoices: lines frozen on issued rows'           USING ERRCODE = 'P0001'; END IF;
+    IF NEW.totals::text    <> OLD.totals::text    THEN RAISE EXCEPTION 'invoices: totals frozen on issued rows'          USING ERRCODE = 'P0001'; END IF;
+    IF NEW.cancellation_of IS DISTINCT FROM OLD.cancellation_of
+       THEN RAISE EXCEPTION 'invoices: cancellation_of frozen on issued rows' USING ERRCODE = 'P0001'; END IF;
+    IF NEW.cancellation_reason IS DISTINCT FROM OLD.cancellation_reason
+       THEN RAISE EXCEPTION 'invoices: cancellation_reason frozen on the original (written only on the Storno sibling, a fresh INSERT)' USING ERRCODE = 'P0001'; END IF;
+    IF NEW.rendered_pdf_binary_descriptor_id IS DISTINCT FROM OLD.rendered_pdf_binary_descriptor_id
+       THEN RAISE EXCEPTION 'invoices: rendered_pdf_binary_descriptor_id frozen on issued rows' USING ERRCODE = 'P0001'; END IF;
+    IF NEW.created_at      <> OLD.created_at      THEN RAISE EXCEPTION 'invoices: created_at frozen on issued rows'      USING ERRCODE = 'P0001'; END IF;
+    IF NEW.created_by      IS DISTINCT FROM OLD.created_by
+       THEN RAISE EXCEPTION 'invoices: created_by frozen on issued rows' USING ERRCODE = 'P0001'; END IF;
+    -- updated_at, updated_by are the only mutable columns on the
+    -- issued→cancelled path; status is checked above.
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER invoices_enforce_immutability
+BEFORE UPDATE ON invoices
+FOR EACH ROW
+EXECUTE FUNCTION invoices_enforce_immutability_fn();
+--> statement-breakpoint
+-- ---------------------------------------------------------------
+-- Company profile — singleton DELETE guard (AC-300).
+--
+-- The CHECK on (singleton = true) plus the UNIQUE on `singleton`
+-- caps the row count at one, but a DELETE leaves zero rows — also
+-- not a valid state for the singleton invariant (data-model.md
+-- §5.17). The application API exposes only GET + PUT; this trigger
+-- is the DB-layer backstop on direct DELETEs (seed scripts,
+-- migrations, manual SQL).
+-- ---------------------------------------------------------------
+CREATE OR REPLACE FUNCTION company_profile_block_delete_fn()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RAISE EXCEPTION USING
+    MESSAGE = 'company_profile: the singleton row cannot be deleted (data-model.md §5.17, ADR-0026)',
+    ERRCODE = 'P0001';
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER company_profile_block_delete
+BEFORE DELETE ON company_profile
+FOR EACH ROW
+EXECUTE FUNCTION company_profile_block_delete_fn();

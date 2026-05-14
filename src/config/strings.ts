@@ -41,6 +41,19 @@ export const STRINGS = {
       'Bestätigung fehlt oder stimmt nicht. Bitte den angezeigten Text exakt eingeben.',
     missingUserRefs:
       'Die Datei verweist auf Benutzer, die in der Zieldatenbank nicht vorhanden sind.',
+    // Invoice domain (ADR-0026 / api.md §14.4)
+    invoiceFrozen:
+      'Diese Rechnung ist bereits ausgestellt und kann nicht mehr geändert oder gelöscht werden.',
+    invoiceProjectState:
+      'Das Projekt steht nicht im Status „Rechnung fällig" — die Rechnung kann nicht ausgestellt werden.',
+    invoiceNotIssued: 'Die Rechnung ist noch ein Entwurf.',
+    invoiceAlreadyCancelled: 'Die Rechnung wurde bereits storniert.',
+    companyProfileRequired:
+      'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
+    customerHasInvoices:
+      'Der Kunde kann nicht gelöscht werden, da ausgestellte oder stornierte Rechnungen existieren.',
+    projectHasInvoices:
+      'Das Projekt kann nicht endgültig gelöscht werden, da ausgestellte oder stornierte Rechnungen existieren.',
   },
 
   entities: {
@@ -50,6 +63,8 @@ export const STRINGS = {
     audit: 'Audit-Eintrag',
     notificationRule: 'Benachrichtigungsregel',
     pushSubscription: 'Push-Abonnement',
+    invoice: 'Rechnung',
+    companyProfile: 'Firmendaten',
     resource: 'Ressource',
   },
 
@@ -255,6 +270,7 @@ export const STRINGS = {
     viewData: 'Daten',
     viewAudit: 'Aktivität',
     viewNotifications: 'Benachrichtigungen',
+    viewInvoices: 'Rechnungen',
     myProjectsToday: 'Heute',
     myProjectsUpcoming: 'Demnächst',
     myProjectsOther: 'Weitere',
@@ -338,6 +354,35 @@ export const STRINGS = {
     storageBucketHidden: 'Im Papierkorb',
   },
 
+  companyProfile: {
+    heading: 'Firmendaten',
+    description:
+      'Die Stammdaten des ausstellenden Unternehmens. Diese Werte werden auf jeder Rechnung beim Ausstellen eingefroren.',
+    companyName: 'Firmenname',
+    street: 'Straße',
+    zip: 'PLZ',
+    city: 'Ort',
+    taxId: 'Steuernummer',
+    ustId: 'USt-IdNr.',
+    iban: 'IBAN',
+    accentColor: 'Akzentfarbe',
+    footerText: 'Fußzeile',
+    defaultTaxMode: 'Standard-Steuermodus',
+    taxModeStandard: 'Regulär',
+    taxModeKleinunternehmer: 'Kleinunternehmer §19',
+    taxModeReverseCharge: 'Reverse-Charge §13b',
+    save: 'Speichern',
+    ustIdRequiredForMode:
+      'USt-IdNr. ist für den gewählten Steuermodus erforderlich. Bitte ausfüllen.',
+    /**
+     * Fetch-error fallback in the `!data` branch of the section. Surfaces
+     * when `GET /api/company-profile` fails so the user sees a diagnostic
+     * instead of an empty block.
+     */
+    fetchErrorHeading: 'Firmendaten konnten nicht geladen werden.',
+    fetchRetry: 'Erneut versuchen',
+  },
+
   /**
    * Data-exchange surface (ADR-0018, ui/daten.md §8.11). The takeout-zip
    * Export and Import actions are the only user-facing exchange flows;
@@ -393,6 +438,160 @@ export const STRINGS = {
     importValidationFailed: 'ZIP-Datei ungültig oder unvollständig.',
     restoreDestructiveNotice: 'Die bestehenden Daten werden unwiderruflich gelöscht.',
     restorePhrasePrompt: (phrase: string) => `Zur Bestätigung bitte „${phrase}" eingeben:`,
+  },
+
+  /**
+   * Per-project invoice block (ui/project-detail.md §8.15.11) and the
+   * inline draft form / cancel dialog (ui/invoices.md §8.16.2 / §8.16.3).
+   * Status labels live alongside `Invoice.status` from the domain types;
+   * the German display copy stays here so the wire vocabulary
+   * (`'draft' / 'issued' / 'cancelled'`) and the UX vocabulary
+   * (`'Entwurf' / 'Ausgestellt' / 'Storniert'`) never drift.
+   */
+  invoices: {
+    sectionHeading: 'Rechnungen',
+    newInvoice: 'Neue Rechnung',
+    editDraftTitle: 'Entwurf bearbeiten',
+    empty: 'Noch keine Rechnungen',
+
+    statusDraft: 'Entwurf',
+    statusIssued: 'Ausgestellt',
+    statusCancelled: 'Storniert',
+    statusStorno: 'Storno',
+
+    columnNumber: 'Nr.',
+    columnStatus: 'Status',
+    columnIssueDate: 'Datum',
+    columnRecipient: 'Kunde',
+    columnTotal: 'Summe',
+
+    issueAction: 'Ausstellen',
+    cancelAction: 'Stornieren',
+    downloadPdfAction: 'PDF herunterladen',
+    deleteDraftAction: 'Entwurf löschen',
+    editDraftAction: 'Bearbeiten',
+    saveAction: 'Speichern',
+    discardAction: 'Verwerfen',
+
+    stornoOfLabel: (number: string) => `Storno zu ${number}`,
+
+    // Form (§8.16.2)
+    formRecipientHeading: 'Empfänger',
+    formRecipientFrozenHint: 'Daten werden bei Ausstellung der Rechnung eingefroren.',
+    formRecipientName: 'Name',
+    formRecipientStreet: 'Straße',
+    formRecipientZip: 'PLZ',
+    formRecipientCity: 'Ort',
+    formLinesHeading: 'Positionen',
+    formLineDescription: 'Beschreibung',
+    formLineQuantity: 'Menge',
+    formLineUnit: 'Einheit',
+    formLineUnitPrice: 'Einzelpreis (€ netto)',
+    formLineTaxRate: 'MwSt %',
+    formLineTotal: 'Position (€ netto)',
+    formAddLine: '+ Position hinzufügen',
+    formRemoveLine: 'Entfernen',
+    formTaxMode: 'Steuermodus',
+    formPerformanceDate: 'Leistungsdatum',
+
+    /**
+     * Aggregate validation error fired by the draft form when the user
+     * submits without a single positional row that carries both a
+     * non-empty description and a non-zero unit price. Per-field
+     * validation is out of scope for this surface (AC-303 — the server
+     * remains authoritative on field-level rejections); this is the
+     * load-bearing "no usable line" case.
+     */
+    formEmptyLinesError: 'Bitte mindestens eine Position mit Beschreibung und Preis eingeben.',
+
+    // Confirmation copies
+    issueConfirmTitle: 'Rechnung jetzt ausstellen?',
+    issueConfirmBody:
+      'Diese Aktion ist unwiderruflich. Nach dem Ausstellen kann die Rechnung nur noch storniert werden.',
+    issueConfirmOk: 'Ausstellen',
+    deleteDraftConfirm: 'Entwurf endgültig löschen?',
+
+    // Cancel dialog (§8.16.3)
+    cancelDialogTitle: 'Stornorechnung erstellen',
+    cancelDialogWarning:
+      'Diese Aktion erstellt eine Storno-Rechnung. Beide Rechnungen bleiben dauerhaft erhalten. Der Projektstatus wird NICHT automatisch zurückgesetzt — bitte separat anpassen.',
+    cancelReasonLabel: 'Grund',
+    cancelReasonPlaceholder: 'Grund',
+    cancelConfirm: 'Stornieren',
+    cancelReasonRequired: 'Bitte einen Grund angeben.',
+
+    // Error decodes for the 4xx/5xx envelope responses (api.md §14.4).
+    errorFrozen: 'Diese Rechnung ist bereits ausgestellt und kann nicht mehr geändert werden.',
+    errorNotIssued: 'Die Rechnung ist noch ein Entwurf.',
+    errorAlreadyCancelled: 'Die Rechnung wurde bereits storniert.',
+    errorProjectState:
+      'Das Projekt steht nicht im Status „Rechnung fällig" — die Rechnung kann nicht ausgestellt werden.',
+    errorCompanyProfileRequired:
+      'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
+    errorPdfDownload: 'Die PDF konnte nicht geladen werden.',
+
+    // Standalone /rechnungen list view (ui/invoices.md §8.16.1).
+    listViewTitle: 'Rechnungen',
+    listEmpty: 'Keine Rechnungen',
+    filterYear: 'Jahr',
+    filterStatus: 'Status',
+    filterSearchPlaceholder: 'Suche…',
+    filterYearAll: 'Alle Jahre',
+    filterStatusAll: 'Alle',
+    loadMore: 'Weitere laden',
+    /** Active project filter chip on the /rechnungen toolbar — set when the
+     *  view is opened with `?projectId=…` from the per-project block's
+     *  cross-link (ui/project-detail.md §8.15.11). The label introduces a
+     *  resolved `{project.number} — {project.title}` value next to it so
+     *  the user sees *which* project constrains the list. */
+    filterProjectChip: 'Projekt-Filter:',
+    filterProjectClear: 'Filter aufheben',
+
+    // Cross-link from the per-project block to the standalone view
+    // (ui/project-detail.md §8.15.11).
+    crossLinkToList: 'Alle Rechnungen anzeigen',
+
+    // Totals preview (ui/invoices.md §8.16.2 — server re-derives at issue
+    // time, the form's block is a UX preview only).
+    totalsHeading: 'Summen',
+    totalsNet: 'Nettosumme',
+    totalsTaxAt: (rate: number) => `MwSt ${rate}%`,
+    totalsGross: 'Bruttosumme',
+
+    // COMPANY_PROFILE_REQUIRED banner (ui/project-detail.md §8.15.11) —
+    // surfaces when the issue call returns 422 with that code. The banner
+    // names the missing fields and links to the Daten view's company-
+    // profile form so the user can fix them inline.
+    companyProfileBannerHeading: 'Firmendaten unvollständig',
+    companyProfileBannerBody: (fields: string) => `Fehlende Felder: ${fields}.`,
+    companyProfileBannerLink: 'Firmendaten vervollständigen',
+
+    // Per-invoice viewer (ui/invoices.md §8.16.3) — read-only surface
+    // for status ∈ {issued, cancelled}. Drafts redirect to their parent
+    // project (only place a draft has an editable surface).
+    detailOpenAction: 'Öffnen',
+    detailBackToList: 'Zurück zur Übersicht',
+    detailLoading: 'Lade Rechnung…',
+    detailNotFound: 'Rechnung nicht gefunden.',
+    detailDraftRedirect: 'Entwürfe werden in der Projektansicht bearbeitet.',
+    detailHeadingIssuer: 'Aussteller',
+    detailHeadingRecipient: 'Empfänger',
+    detailHeadingMeta: 'Rechnungsdaten',
+    detailHeadingLines: 'Positionen',
+    detailHeadingTotals: 'Summen',
+    detailLabelNumber: 'Nr.',
+    detailLabelStatus: 'Status',
+    detailLabelIssueDate: 'Ausstellungsdatum',
+    detailLabelPerformanceDate: 'Leistungsdatum',
+    detailLabelTaxMode: 'Steuermodus',
+    detailLabelCancellationReason: 'Storno-Grund',
+    /** Rendered next to a `RE-…` original that has at least one Storno
+     *  sibling. The list of siblings follows as indented chevrons. */
+    detailStornoSiblings: 'Storno-Rechnungen zu dieser Rechnung',
+    /** Link affordance on a Storno row pointing back to its `cancellationOf` original. */
+    detailViewOriginal: 'Original anzeigen',
+    /** Programmatic-download action label — renamed when the invoice profile is ZUGFeRD. */
+    downloadZugferdAction: 'ZUGFeRD herunterladen',
   },
 
   aging: {

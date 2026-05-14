@@ -1,5 +1,5 @@
 {
-  "id": "ede8ae6e-c388-4d30-a3d1-76b1929f8f01",
+  "id": "68c5d2d1-ac9c-419c-9910-faa03096c8fc",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -470,11 +470,11 @@
         },
         "audit_log_entity_type_valid": {
           "name": "audit_log_entity_type_valid",
-          "value": "\"audit_log\".\"entity_type\" IN ('project', 'customer', 'user', 'project_worker', 'attachment')"
+          "value": "\"audit_log\".\"entity_type\" IN ('project', 'customer', 'user', 'project_worker', 'attachment', 'invoice', 'company_profile')"
         },
         "audit_log_ancestor_type_valid": {
           "name": "audit_log_ancestor_type_valid",
-          "value": "\"audit_log\".\"ancestor_entity_type\" IS NULL\n          OR \"audit_log\".\"ancestor_entity_type\" IN ('project', 'customer', 'user', 'project_worker', 'attachment')"
+          "value": "\"audit_log\".\"ancestor_entity_type\" IS NULL\n          OR \"audit_log\".\"ancestor_entity_type\" IN ('project', 'customer', 'user', 'project_worker', 'attachment', 'invoice', 'company_profile')"
         },
         "audit_log_ancestor_pair": {
           "name": "audit_log_ancestor_pair",
@@ -483,6 +483,135 @@
         "audit_log_actor_shape": {
           "name": "audit_log_actor_shape",
           "value": "(\n        (\"audit_log\".\"actor_kind\" = 'user'\n          AND \"audit_log\".\"actor_reason\" IS NULL)\n        OR\n        (\"audit_log\".\"actor_kind\" = 'system'\n          AND \"audit_log\".\"actor_id\" IS NULL\n          AND \"audit_log\".\"actor_reason\" IS NOT NULL\n          AND length(trim(\"audit_log\".\"actor_reason\")) > 0)\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.company_profile": {
+      "name": "company_profile",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "singleton": {
+          "name": "singleton",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "company_name": {
+          "name": "company_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "address": {
+          "name": "address",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{\"street\":\"\",\"zip\":\"\",\"city\":\"\"}'::jsonb"
+        },
+        "tax_id": {
+          "name": "tax_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "ust_id": {
+          "name": "ust_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "iban": {
+          "name": "iban",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "accent_color": {
+          "name": "accent_color",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "footer_text": {
+          "name": "footer_text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "logo_binary_descriptor_id": {
+          "name": "logo_binary_descriptor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "default_tax_mode": {
+          "name": "default_tax_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'standard'"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "company_profile_updated_by_users_id_fk": {
+          "name": "company_profile_updated_by_users_id_fk",
+          "tableFrom": "company_profile",
+          "tableTo": "users",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "company_profile_singleton_unique": {
+          "name": "company_profile_singleton_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "singleton"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "company_profile_singleton": {
+          "name": "company_profile_singleton",
+          "value": "\"company_profile\".\"singleton\" = true"
+        },
+        "company_profile_default_tax_mode_valid": {
+          "name": "company_profile_default_tax_mode_valid",
+          "value": "\"company_profile\".\"default_tax_mode\" IN ('standard', 'kleinunternehmer', 'reverse_charge')"
         }
       },
       "isRLSEnabled": false
@@ -519,6 +648,12 @@
         "address": {
           "name": "address",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ust_id": {
+          "name": "ust_id",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },
@@ -588,6 +723,335 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.invoice_sequence": {
+      "name": "invoice_sequence",
+      "schema": "",
+      "columns": {
+        "year": {
+          "name": "year",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "next_value": {
+          "name": "next_value",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "invoice_sequence_year_kind_pk": {
+          "name": "invoice_sequence_year_kind_pk",
+          "columns": [
+            "year",
+            "kind"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "invoice_sequence_kind_valid": {
+          "name": "invoice_sequence_kind_valid",
+          "value": "\"invoice_sequence\".\"kind\" IN ('invoice', 'storno')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.invoices": {
+      "name": "invoices",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "project_id": {
+          "name": "project_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "number": {
+          "name": "number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "issue_date": {
+          "name": "issue_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "performance_date": {
+          "name": "performance_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tax_mode": {
+          "name": "tax_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'standard'"
+        },
+        "profile": {
+          "name": "profile",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'zugferd-en16931'"
+        },
+        "issuer": {
+          "name": "issuer",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "recipient": {
+          "name": "recipient",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "lines": {
+          "name": "lines",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "totals": {
+          "name": "totals",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "cancellation_of": {
+          "name": "cancellation_of",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cancellation_reason": {
+          "name": "cancellation_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rendered_pdf_binary_descriptor_id": {
+          "name": "rendered_pdf_binary_descriptor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "invoices_project_id_idx": {
+          "name": "invoices_project_id_idx",
+          "columns": [
+            {
+              "expression": "project_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "invoices_status_idx": {
+          "name": "invoices_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "invoices_cancellation_of_idx": {
+          "name": "invoices_cancellation_of_idx",
+          "columns": [
+            {
+              "expression": "cancellation_of",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "invoices_number_uq": {
+          "name": "invoices_number_uq",
+          "columns": [
+            {
+              "expression": "number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"invoices\".\"number\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "invoices_project_id_projects_id_fk": {
+          "name": "invoices_project_id_projects_id_fk",
+          "tableFrom": "invoices",
+          "tableTo": "projects",
+          "columnsFrom": [
+            "project_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "invoices_cancellation_of_invoices_id_fk": {
+          "name": "invoices_cancellation_of_invoices_id_fk",
+          "tableFrom": "invoices",
+          "tableTo": "invoices",
+          "columnsFrom": [
+            "cancellation_of"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "invoices_created_by_users_id_fk": {
+          "name": "invoices_created_by_users_id_fk",
+          "tableFrom": "invoices",
+          "tableTo": "users",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "invoices_updated_by_users_id_fk": {
+          "name": "invoices_updated_by_users_id_fk",
+          "tableFrom": "invoices",
+          "tableTo": "users",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "invoices_status_valid": {
+          "name": "invoices_status_valid",
+          "value": "\"invoices\".\"status\" IN ('draft', 'issued', 'cancelled')"
+        },
+        "invoices_tax_mode_valid": {
+          "name": "invoices_tax_mode_valid",
+          "value": "\"invoices\".\"tax_mode\" IN ('standard', 'kleinunternehmer', 'reverse_charge')"
+        },
+        "invoices_profile_valid": {
+          "name": "invoices_profile_valid",
+          "value": "\"invoices\".\"profile\" IN ('zugferd-en16931')"
+        },
+        "invoices_number_format": {
+          "name": "invoices_number_format",
+          "value": "\"invoices\".\"number\" IS NULL\n          OR \"invoices\".\"number\" ~ '^(RE|ST)-[0-9]{4}-[0-9]{4,}$'"
+        },
+        "invoices_number_required_when_not_draft": {
+          "name": "invoices_number_required_when_not_draft",
+          "value": "(\"invoices\".\"status\" = 'draft' AND \"invoices\".\"number\" IS NULL)\n          OR (\"invoices\".\"status\" IN ('issued', 'cancelled') AND \"invoices\".\"number\" IS NOT NULL)"
+        },
+        "invoices_cancellation_pair": {
+          "name": "invoices_cancellation_pair",
+          "value": "(\"invoices\".\"cancellation_of\" IS NULL AND (\"invoices\".\"number\" IS NULL OR \"invoices\".\"number\" LIKE 'RE-%'))\n          OR (\"invoices\".\"cancellation_of\" IS NOT NULL AND \"invoices\".\"number\" LIKE 'ST-%')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.meta_backup_status": {

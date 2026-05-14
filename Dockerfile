@@ -23,6 +23,17 @@ COPY --from=build /app/dist ./dist
 # Copy migration SQL files (read at runtime by Drizzle migrator)
 COPY --from=build /app/src/server/db/migrations ./dist/server/db/migrations
 
+# Copy EN 16931 XSD bundle (read at issuance time by InvoiceRenderer
+# for per-render schema validation — defense-in-depth against builder
+# regressions; see ARCHITECTURE.md § Invoices Module). After esbuild
+# bundling, the validator code is inlined into start.js; its
+# `import.meta.url` resolves to `dist/server/start.js`, so the
+# computed `path.resolve(__dirname, './xsd/...')` lands at
+# `dist/server/xsd/` — that's why the COPY destination flattens the
+# source tree's `services/invoice/` segment (same pattern as the
+# migrations COPY above).
+COPY --from=build /app/src/server/services/invoice/xsd ./dist/server/xsd
+
 # `age` binary — required by KeyEnvelopeService at every download-url /
 # bulk-fetch unwrap (ADR-0024). The boot probe reads age-keygen at
 # startup; both must be on PATH before the process forks them.

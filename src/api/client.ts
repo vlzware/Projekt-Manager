@@ -51,6 +51,14 @@ export interface ApiFailure {
    * where a redirect would be a no-op.
    */
   sessionExpired: boolean;
+  /**
+   * Server-supplied machine-readable detail block (api.md §14.4 — every
+   * `AppError` may carry an opaque `details` field, e.g. `missingFields`
+   * for `VALIDATION_ERROR` / `COMPANY_PROFILE_REQUIRED`). Surfaced raw
+   * so consumers can branch on the shape they expect; absent when the
+   * server omitted the key.
+   */
+  details?: unknown;
 }
 
 export type ApiResult<T> = ApiSuccess<T> | ApiFailure;
@@ -160,6 +168,7 @@ export async function apiCall<T>(url: string, opts: RequestOptions = {}): Promis
       },
       category,
       sessionExpired,
+      details: data.details,
     };
   }
 
@@ -201,6 +210,14 @@ import type { Envelope, DryRunPreview, ImportResult } from '@/domain/dataExchang
 import type { BackupStatus } from '@/domain/backupBadge';
 import type { AuditEntry, AuditListParams, AuditListResponse } from '@/domain/audit';
 import type { NotificationRule, NotificationRuleInput } from '@/domain/notifications';
+import type {
+  CompanyProfile,
+  Invoice,
+  InvoiceLine,
+  InvoiceRecipientSnapshot,
+  InvoiceStatus,
+  TaxMode,
+} from '@/domain/invoice';
 
 interface AuthUser {
   id: string;
@@ -765,6 +782,124 @@ export interface StorageUsageDto {
 
 export const storageUsageApi = {
   getGlobal: () => apiCall<StorageUsageDto>('/api/storage-usage'),
+};
+
+/**
+ * Company-profile singleton (api.md §14.2.15, ADR-0026). GET is open
+ * to every authenticated role; PUT is owner-only (enforced server-
+ * side). The body excludes `id`, `updatedAt`, `updatedBy` — those are
+ * server-managed projections on every response.
+ */
+export interface CompanyProfileInput {
+  companyName: string;
+  address: { street: string; zip: string; city: string };
+  taxId: string;
+  ustId: string | null;
+  iban: string | null;
+  accentColor: string | null;
+  footerText: string | null;
+  /**
+   * Required — PUT semantics demand every writable field be present
+   * (api.md §14.2.15). Callers that don't manage the descriptor must
+   * pass through the value loaded by GET; sending `null` clears it.
+   * The current UI has no upload affordance (#189), so the
+   * `CompanyProfileSection` round-trips the loaded value unchanged.
+   */
+  logoBinaryDescriptorId: string | null;
+  defaultTaxMode: TaxMode;
+}
+
+export const companyProfileApi = {
+  get: () => apiCall<CompanyProfile>('/api/company-profile'),
+
+  put: (payload: CompanyProfileInput) =>
+    apiCall<CompanyProfile>('/api/company-profile', { method: 'PUT', body: payload }),
+};
+
+/**
+ * Invoice endpoints (api.md §14.2.14, ADR-0026). The list endpoint
+ * returns `{ data, total }` mirroring the server's repository shape;
+ * the per-id read / mutation endpoints return a single `Invoice` row.
+ * Cancel returns `{ original, storno }` — both rows in one envelope so
+ * the client never has to round-trip for the Storno sibling.
+ *
+ * `pdfUrl` is a URL-builder helper (not a fetch); the caller drives the
+ * download via an `<a download>` click handler so the browser surfaces
+ * the file the same way as any other binary download.
+ */
+export interface InvoiceListResponse {
+  data: Invoice[];
+  total: number;
+}
+
+export interface InvoiceCreateDraftInput {
+  lines?: InvoiceLine[];
+  recipient?: InvoiceRecipientSnapshot;
+  taxMode?: TaxMode;
+  performanceDate?: string | null;
+}
+
+export interface InvoiceUpdateDraftInput {
+  lines?: InvoiceLine[];
+  recipient?: InvoiceRecipientSnapshot;
+  taxMode?: TaxMode;
+  performanceDate?: string | null;
+}
+
+export interface InvoiceCancelResult {
+  original: Invoice;
+  storno: Invoice;
+}
+
+/**
+ * Query parameters for `GET /api/invoices` (api.md §14.2.14). Mirrors
+ * the server's route schema in `src/server/routes/invoices.ts` — fields
+ * are optional and AND-compose. The wire shape encodes `includeCancelled`
+ * as a string enum to match the route's `{ enum: ['true', 'false'] }`
+ * schema (Fastify rejects raw booleans on querystrings).
+ */
+export interface ListInvoicesParams {
+  offset?: number;
+  limit?: number;
+  status?: InvoiceStatus;
+  year?: number;
+  projectId?: string;
+  customerId?: string;
+  includeCancelled?: 'true' | 'false';
+  search?: string;
+}
+
+export const invoicesApi = {
+  list: (params: ListInvoicesParams = {}) =>
+    apiCall<InvoiceListResponse>(
+      '/api/invoices' + toQuery(params as Record<string, string | number | boolean | undefined>),
+    ),
+
+  listByProject: (projectId: string) =>
+    apiCall<InvoiceListResponse>('/api/invoices' + toQuery({ projectId })),
+
+  getById: (id: string) => apiCall<Invoice>(`/api/invoices/${id}`),
+
+  createDraft: (projectId: string, payload: InvoiceCreateDraftInput) =>
+    apiCall<Invoice>('/api/invoices', {
+      method: 'POST',
+      body: { projectId, ...payload },
+    }),
+
+  updateDraft: (id: string, payload: InvoiceUpdateDraftInput) =>
+    apiCall<Invoice>(`/api/invoices/${id}`, { method: 'PATCH', body: payload }),
+
+  deleteDraft: (id: string) => apiCall<null>(`/api/invoices/${id}`, { method: 'DELETE' }),
+
+  issue: (id: string) => apiCall<Invoice>(`/api/invoices/${id}/issue`, { method: 'POST' }),
+
+  cancel: (id: string, reason: string) =>
+    apiCall<InvoiceCancelResult>(`/api/invoices/${id}/cancel`, {
+      method: 'POST',
+      body: { reason },
+    }),
+
+  pdfUrl: (id: string) => `/api/invoices/${id}/pdf`,
 };
 
 export type { AuthUser };
