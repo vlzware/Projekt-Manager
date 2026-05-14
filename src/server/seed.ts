@@ -61,8 +61,13 @@ export async function seed(db: Database, opts: { force?: boolean } = {}): Promis
   // ADR-0026) says the row MUST exist before any read — re-insert with
   // `ON CONFLICT (singleton) DO NOTHING`, mirroring the baseline
   // migration's seed line.
+  //
+  // `invoice_sequence` is reset so a force-reseed gets clean
+  // `RE-YYYY-0001` numbering. The cascade from `projects` already
+  // empties `invoices`, but the sequence table has no FK and would
+  // otherwise carry forward the high-water mark of every prior run.
   await db.execute(
-    sql`TRUNCATE TABLE notification_rule, project_workers, sessions, projects, customers, users CASCADE`,
+    sql`TRUNCATE TABLE notification_rule, project_workers, sessions, projects, customers, users, invoice_sequence CASCADE`,
   );
 
   // Reference moment for every relative date downstream. Captured once so

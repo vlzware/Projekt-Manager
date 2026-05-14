@@ -90,6 +90,12 @@ export class InvoiceIssueService {
     userId: string,
     log: ServiceLogger,
     correlationId?: string | null,
+    // Clock seam — defaults to the wall clock in production. The seed
+    // and tests inject a fixed Date to control `issueDate` AND the
+    // gapless number-year allocation (both must agree, otherwise a
+    // backdated `issueDate` would desync from the `RE-YYYY-NNNN`
+    // sequence).
+    now: Date = new Date(),
   ): Promise<Invoice> {
     const issued = await mutate(
       this.db,
@@ -97,7 +103,7 @@ export class InvoiceIssueService {
       {
         entityType: 'invoice',
         action: 'invoice:issue',
-        run: async (tx) => this.runIssueInsideTx(tx, id, userId),
+        run: async (tx) => this.runIssueInsideTx(tx, id, userId, now),
       },
     );
     log.info({ invoiceId: id }, 'invoice_issued');
@@ -121,6 +127,7 @@ export class InvoiceIssueService {
     tx: MutatingDatabase,
     invoiceId: string,
     userId: string,
+    now: Date,
   ): Promise<{
     entityId: string;
     entityLabel: string | null;
@@ -193,8 +200,10 @@ export class InvoiceIssueService {
     const companyProfileRow = await assertCompanyProfileCompleteForMode(tx, taxMode);
 
     // 4. Allocate `number` from the gapless `(year, 'invoice')`
-    //    sequence. The row lock survives until commit.
-    const year = new Date().getUTCFullYear();
+    //    sequence. The row lock survives until commit. The year MUST
+    //    come from `now` (the clock seam) — not the wall clock — so a
+    //    backdated `issueDate` stays consistent with `RE-YYYY-NNNN`.
+    const year = now.getUTCFullYear();
     const { number } = await allocateInvoiceNumber(tx, year, 'invoice');
 
     // 5. Build the snapshot blocks (issuer is frozen from the live
@@ -210,7 +219,7 @@ export class InvoiceIssueService {
     };
 
     const totals = computeInvoiceTotals(lines, taxMode);
-    const issueDate = new Date();
+    const issueDate = now;
 
     // 6. Render BEFORE the UPDATE — the persistence-layer immutability
     //    trigger (data-model.md §6.14, baseline migration) blocks every

@@ -43,6 +43,22 @@
   max-width: 400px;
 }
 
+.filterReset {
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-subtle);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.filterReset:hover {
+  background: var(--color-surface-muted);
+  color: var(--color-text);
+}
+
 .error {
   padding: 8px 12px;
   background: var(--color-surface-muted);
@@ -65,11 +81,46 @@
   gap: 6px;
 }
 
+/* Bulk-export toolbar — single button that flips between "Alle
+   herunterladen" and "n ausgewählte herunterladen" based on the row
+   selection state (see InvoiceListView.tsx). */
+.exportBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.exportButton {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-surface-raised);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.exportButton:hover:not(:disabled) {
+  background: var(--color-surface-muted);
+}
+
+.exportButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.exportError {
+  color: var(--color-danger);
+  font-size: 0.85rem;
+}
+
 /* Row visuals — same pattern as the per-project block so the Storno
-   subordination reads identically on both surfaces. */
+   subordination reads identically on both surfaces. The leading
+   checkbox column is fixed-width so the rest of the row reads as a
+   stable register. */
 .row {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) 110px 110px minmax(160px, 1.5fr) 120px auto;
+  grid-template-columns: 28px minmax(120px, 1fr) 110px 110px minmax(160px, 1.5fr) 120px auto;
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
@@ -80,6 +131,22 @@
   cursor: pointer;
   font: inherit;
   color: inherit;
+}
+
+.cellSelect {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.selectCheckbox {
+  cursor: pointer;
+  width: 16px;
+  height: 16px;
+}
+
+.selectCheckbox:disabled {
+  cursor: not-allowed;
 }
 
 .row:hover {
@@ -103,7 +170,7 @@
    each other. */
 @media (max-width: 900px) {
   .row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 28px 1fr 1fr;
   }
   .rowStorno {
     margin-left: 12px;

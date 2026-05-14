@@ -123,6 +123,10 @@ export function InvoiceListRow({ invoice, originalNumber }: Props) {
     if (outcome.status === 'ok') void fetchList();
   };
 
+  const selectedIds = useInvoiceListStore((s) => s.selectedIds);
+  const toggleSelection = useInvoiceListStore((s) => s.toggleSelection);
+  const isSelected = selectedIds.has(invoice.id);
+
   return (
     <div
       role="button"
@@ -137,6 +141,18 @@ export function InvoiceListRow({ invoice, originalNumber }: Props) {
       }}
       data-testid={`invoice-row-${invoice.id}`}
     >
+      <div className={styles.cellSelect} onClick={(e) => e.stopPropagation()}>
+        <input
+          type="checkbox"
+          className={styles.selectCheckbox}
+          checked={isSelected}
+          disabled={isDraft}
+          onChange={() => toggleSelection(invoice.id)}
+          aria-label={STRINGS.invoices.selectRowAria(invoice.number)}
+          title={isDraft ? STRINGS.invoices.draftNotExportableTooltip : undefined}
+          data-testid="invoice-select"
+        />
+      </div>
       <div>
         <div className={styles.cellNumber} data-testid="invoice-number">
           {invoice.number ?? '—'}

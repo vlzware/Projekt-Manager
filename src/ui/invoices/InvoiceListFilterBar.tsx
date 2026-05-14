@@ -17,9 +17,13 @@ interface Props {
   year: number | null;
   status: InvoiceStatus | null;
   search: string;
+  /** True iff at least one filter (incl. URL `projectId`) is active.
+   *  Controls visibility of the reset-all button. */
+  hasAnyFilter: boolean;
   onYearChange: (year: number | null) => void;
   onStatusChange: (status: InvoiceStatus | null) => void;
   onSearchChange: (search: string) => void;
+  onResetAll: () => void;
 }
 
 export function InvoiceListFilterBar({
@@ -27,9 +31,11 @@ export function InvoiceListFilterBar({
   year,
   status,
   search,
+  hasAnyFilter,
   onYearChange,
   onStatusChange,
   onSearchChange,
+  onResetAll,
 }: Props) {
   return (
     <div className={styles.toolbar} data-testid="invoice-list-toolbar">
@@ -80,6 +86,16 @@ export function InvoiceListFilterBar({
         onChange={(e) => onSearchChange(e.target.value)}
         data-testid="invoice-list-filter-search"
       />
+      {hasAnyFilter && (
+        <button
+          type="button"
+          className={styles.filterReset}
+          onClick={onResetAll}
+          data-testid="invoice-list-filter-reset"
+        >
+          {STRINGS.invoices.filterResetAll}
+        </button>
+      )}
     </div>
   );
 }

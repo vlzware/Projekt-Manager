@@ -35,6 +35,7 @@ import {
 import {
   toInvoiceResponse,
   listInvoices as listInvoicesRepo,
+  listInvoiceYears as listInvoiceYearsRepo,
   getInvoice as getInvoiceRepo,
   getInvoiceRowForMutation,
   insertInvoiceDraft,
@@ -145,6 +146,16 @@ export class InvoiceService {
   }
 
   /**
+   * Distinct years that appear in `issueDate` across the caller's
+   * visible invoices. Drives the year-filter dropdown on
+   * `/rechnungen` — independent of the active filter so picking
+   * year=N does not collapse the dropdown to just N.
+   */
+  async listYears(caller: AuthUser): Promise<number[]> {
+    return listInvoiceYearsRepo(this.db, caller);
+  }
+
+  /**
    * Three-way result (AC-298): row → 200 / OUT_OF_SCOPE → 403 / null → 404.
    */
   async get(caller: AuthUser, id: string): Promise<Invoice> {
@@ -172,6 +183,18 @@ export class InvoiceService {
     id: string,
   ): Promise<{ bytes: Uint8Array; filename: string }> {
     const invoice = await this.get(caller, id);
+    return this.binary.downloadPdf(invoice);
+  }
+
+  /**
+   * Resolve PDF bytes for an already-loaded invoice. Used by the bulk
+   * export path (`resolveExportInvoices` runs the scope / draft triage
+   * once; per-entry PDF fetches reuse the resolved row to avoid an N+1
+   * round-trip back to `get()`).
+   */
+  async downloadPdfBytesForInvoice(
+    invoice: Invoice,
+  ): Promise<{ bytes: Uint8Array; filename: string }> {
     return this.binary.downloadPdf(invoice);
   }
 
@@ -495,8 +518,9 @@ export class InvoiceService {
     userId: string,
     log: ServiceLogger,
     correlationId?: string | null,
+    now: Date = new Date(),
   ): Promise<Invoice> {
-    return this.issue.issueDraft(id, userId, log, correlationId);
+    return this.issue.issueDraft(id, userId, log, correlationId, now);
   }
 
   async cancel(
@@ -505,8 +529,9 @@ export class InvoiceService {
     userId: string,
     log: ServiceLogger,
     correlationId?: string | null,
+    now: Date = new Date(),
   ): Promise<CancelResult> {
-    return this.cancel_.cancel(id, input, userId, log, correlationId);
+    return this.cancel_.cancel(id, input, userId, log, correlationId, now);
   }
 }
 

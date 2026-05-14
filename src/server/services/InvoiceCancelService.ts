@@ -96,6 +96,11 @@ export class InvoiceCancelService {
     userId: string,
     log: ServiceLogger,
     correlationId?: string | null,
+    // Clock seam — defaults to the wall clock in production. The seed
+    // and tests inject a fixed Date to control the Storno's
+    // `issueDate` AND the gapless number-year allocation (must agree,
+    // otherwise a backdated Storno would desync from `ST-YYYY-NNNN`).
+    now: Date = new Date(),
   ): Promise<CancelResult> {
     const ctx = {
       actorKind: 'user' as const,
@@ -110,8 +115,10 @@ export class InvoiceCancelService {
       if (before.status === 'draft') throw invoiceNotIssued();
       if (before.status === 'cancelled') throw invoiceAlreadyCancelled();
 
-      // 1. Allocate from `(year, 'storno')`.
-      const year = new Date().getUTCFullYear();
+      // 1. Allocate from `(year, 'storno')`. Year derives from the
+      //    clock seam so a backdated Storno keeps its number's year
+      //    aligned with its `issueDate`.
+      const year = now.getUTCFullYear();
       const { number: stornoNumber } = await allocateInvoiceNumber(tx, year, 'storno');
 
       // 2. Build the Storno's snapshot fields. Same rule as the issue
@@ -127,7 +134,6 @@ export class InvoiceCancelService {
       const stornoTotals = computeInvoiceTotals(stornoLines, before.taxMode as TaxMode);
       const cancellationReason =
         input.reason && input.reason.trim().length > 0 ? input.reason : null;
-      const now = new Date();
 
       // 3. Render the Storno PDF from the synthesised snapshot. A
       //    throw rolls back the whole cancel atom, including the

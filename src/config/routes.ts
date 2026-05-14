@@ -104,11 +104,12 @@ function landsOnMeineProjekte(caller: RouteCaller): boolean {
   return hasRole(caller, 'worker');
 }
 
-function landsOnProjects(caller: RouteCaller): boolean {
-  // Bookkeeper doesn't have Kanban or Meine Projekte, so they land on
-  // Projekte. Checked by role rather than "no other landing" so a
-  // future bookkeeper-like role doesn't implicitly land on Projekte
-  // without a spec update.
+/**
+ * Bookkeeper landing: Rechnungen list. Their primary workflow is the
+ * invoice register — search/filter/export — so they should land there
+ * directly after login.
+ */
+function landsOnRechnungen(caller: RouteCaller): boolean {
   return hasRole(caller, 'bookkeeper') && !landsOnKanban(caller) && !landsOnMeineProjekte(caller);
 }
 
@@ -147,7 +148,7 @@ export const ROUTES: readonly RouteEntry[] = [
     path: '/projects',
     label: STRINGS.ui.viewProjects,
     canAccess: (u) => hasRole(u, 'owner', 'office', 'bookkeeper'),
-    isDefaultFor: landsOnProjects,
+    isDefaultFor: () => false,
   },
   {
     view: 'kunden',
@@ -166,11 +167,7 @@ export const ROUTES: readonly RouteEntry[] = [
     path: '/rechnungen',
     label: STRINGS.ui.viewInvoices,
     canAccess: (u) => hasPermission(u.roles, 'invoice:read'),
-    // Bookkeeper currently lands on `/projects` (see landsOnProjects);
-    // keep that — the spec does not pin Rechnungen as bookkeeper's
-    // landing view, and changing it would be silently scope-creeping
-    // outside this chunk.
-    isDefaultFor: () => false,
+    isDefaultFor: landsOnRechnungen,
   },
   {
     // Per-invoice viewer (ui/invoices.md §8.16.3) — gated on

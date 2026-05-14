@@ -31,6 +31,8 @@ export type ErrorCode =
   | 'INVOICE_PROJECT_STATE'
   | 'INVOICE_NOT_ISSUED'
   | 'INVOICE_ALREADY_CANCELLED'
+  | 'DRAFT_NOT_EXPORTABLE'
+  | 'EXPORT_TOO_LARGE'
   | 'COMPANY_PROFILE_REQUIRED'
   | 'CUSTOMER_HAS_INVOICES'
   | 'PROJECT_HAS_INVOICES'
@@ -329,4 +331,41 @@ export function customerHasInvoices(details: InvoiceRetentionDetails): AppError 
  */
 export function projectHasInvoices(details: InvoiceRetentionDetails): AppError {
   return new AppError('PROJECT_HAS_INVOICES', STRINGS.errors.projectHasInvoices, 409, details);
+}
+
+/**
+ * Bulk-export rejected — at least one requested invoice id resolves to a
+ * draft row. Drafts carry no rendered PDF and have no legal weight, so
+ * including them in the ZIP would either yield empty PDFs or surface
+ * an INVOICE_NOT_ISSUED mid-stream after partial bytes have already
+ * left the wire. `details.invoiceId` is the offending draft's id so the
+ * UI can target the row in the user's selection.
+ */
+export interface DraftNotExportableDetails {
+  invoiceId: string;
+}
+
+export function draftNotExportable(details: DraftNotExportableDetails): AppError {
+  return new AppError('DRAFT_NOT_EXPORTABLE', STRINGS.errors.draftNotExportable, 422, details);
+}
+
+/**
+ * Bulk-export rejected — the filter matches more invoices than the
+ * server is willing to bundle into a single ZIP. The caller must
+ * narrow the filter (typically by year) and retry. `details.total` is
+ * the matched-row count; `details.cap` is the configured ceiling so
+ * the UI can phrase a precise message.
+ */
+export interface ExportTooLargeDetails {
+  total: number;
+  cap: number;
+}
+
+export function exportTooLarge(details: ExportTooLargeDetails): AppError {
+  return new AppError(
+    'EXPORT_TOO_LARGE',
+    STRINGS.errors.exportTooLarge(details.total, details.cap),
+    422,
+    details,
+  );
 }

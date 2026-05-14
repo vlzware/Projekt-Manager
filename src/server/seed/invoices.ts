@@ -52,7 +52,15 @@ type RestorableProjectStatus = 'abgerechnet' | 'erledigt' | 'abnahme';
 
 interface IssueSpec {
   projectNumberSuffix: string;
-  performanceDateDaysFromNow: number;
+  /** Absolute ISO date (`YYYY-MM-DD`) used as the issuance clock seam.
+   *  Drives both `issueDate` AND the gapless `RE-YYYY-NNNN` allocation,
+   *  so the spread of issuances across 2024/2025/2026 is what the
+   *  bookkeeper sees in the list. */
+  issueDate: string;
+  /** Offset (days) from `issueDate` to compute `performanceDate`.
+   *  Negative = performance happened before issuance (the typical
+   *  Handwerker case). */
+  performanceDateDaysFromIssue: number;
   taxMode?: TaxMode;
   /** Overrides applied to the draft's recipient before issuance — for
    *  the reverse_charge ustId requirement (no seed customer carries
@@ -67,8 +75,12 @@ interface IssueSpec {
    *  re-issue a corrected invoice on the same project. */
   cancellation?: {
     reason: string;
+    /** Days between the original `issueDate` and the cancellation
+     *  Storno's own issueDate. Must be positive. */
+    daysAfterIssue: number;
     reissue?: {
-      performanceDateDaysFromNow: number;
+      issueDate: string;
+      performanceDateDaysFromIssue: number;
       lines: InvoiceLine[];
     };
   };
@@ -107,7 +119,8 @@ const ISSUE_SPECS: readonly IssueSpec[] = [
   // measurements) and re-issued with corrected lines.
   {
     projectNumberSuffix: '016',
-    performanceDateDaysFromNow: -15,
+    issueDate: '2024-03-12',
+    performanceDateDaysFromIssue: -15,
     taxMode: 'reverse_charge',
     recipient: { ustId: 'DE246800000' },
     lines: [
@@ -146,8 +159,10 @@ const ISSUE_SPECS: readonly IssueSpec[] = [
     ],
     cancellation: {
       reason: 'Falsche Aufmaß-Angabe Sporthalle — Neu ausgestellt mit korrigierter Position.',
+      daysAfterIssue: 21,
       reissue: {
-        performanceDateDaysFromNow: -15,
+        issueDate: '2024-04-05',
+        performanceDateDaysFromIssue: -39,
         lines: [
           {
             description: 'Fassadenanstrich Hauptgebäude',
@@ -193,7 +208,8 @@ const ISSUE_SPECS: readonly IssueSpec[] = [
   // `db.select(...).from(invoices)` after a seed run.
   {
     projectNumberSuffix: '017',
-    performanceDateDaysFromNow: -6,
+    issueDate: '2024-07-18',
+    performanceDateDaysFromIssue: -6,
     lines: [
       {
         description: 'Lackierarbeiten Türen Verkaufsraum',
@@ -212,7 +228,8 @@ const ISSUE_SPECS: readonly IssueSpec[] = [
   // after issue.
   {
     projectNumberSuffix: '018',
-    performanceDateDaysFromNow: -12,
+    issueDate: '2025-04-22',
+    performanceDateDaysFromIssue: -12,
     lines: [
       {
         description: 'Innenanstrich Erdgeschoss',
@@ -239,7 +256,8 @@ const ISSUE_SPECS: readonly IssueSpec[] = [
   // overridden to satisfy the issue-time guard (AC-289).
   {
     projectNumberSuffix: '019',
-    performanceDateDaysFromNow: -10,
+    issueDate: '2025-10-14',
+    performanceDateDaysFromIssue: -10,
     recipient: {
       address: { street: 'Hauptstr. 88', zip: '51465', city: 'Bergisch Gladbach' },
     },
@@ -262,7 +280,8 @@ const ISSUE_SPECS: readonly IssueSpec[] = [
   // rule-overlap fix against.
   {
     projectNumberSuffix: '012',
-    performanceDateDaysFromNow: -4,
+    issueDate: '2026-02-08',
+    performanceDateDaysFromIssue: -4,
     lines: [
       {
         description: 'Außenanstrich Reihenhaus inkl. Material',
@@ -405,6 +424,19 @@ function dateFromNow(now: Date, days: number): string {
   return isoDate(d);
 }
 
+/** Parse a YYYY-MM-DD literal at midday UTC, avoiding TZ edge cases
+ *  when used as the issuance clock seam. */
+function parseIsoDate(iso: string): Date {
+  return new Date(`${iso}T12:00:00Z`);
+}
+
+/** Add days to a Date, returning a new Date. */
+function addDays(base: Date, days: number): Date {
+  const d = new Date(base);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
+}
+
 /**
  * Apply the invoice fixtures against the live services. The orchestrator
  * has already wiped + reseeded users / business / profile, so each call
@@ -420,7 +452,7 @@ export async function loadInvoices(db: Database, opts: { now?: Date } = {}): Pro
   const projectIdByNumber = await loadProjectIdMap(db);
 
   for (const spec of ISSUE_SPECS) {
-    await applyIssueSpec(db, service, ownerId, projectIdByNumber, now, spec);
+    await applyIssueSpec(db, service, ownerId, projectIdByNumber, spec);
   }
 
   for (const spec of DRAFT_SPECS) {
@@ -468,7 +500,6 @@ async function applyIssueSpec(
   service: ReturnType<typeof createInvoiceService>,
   ownerId: string,
   projectIdByNumber: Map<string, string>,
-  now: Date,
   spec: IssueSpec,
 ): Promise<void> {
   const projectId = resolveProjectId(projectIdByNumber, spec.projectNumberSuffix);
@@ -485,23 +516,33 @@ async function applyIssueSpec(
   // into a proper partial type.
   const recipientOverride = spec.recipient as InvoiceRecipientSnapshot | undefined;
 
+  const issueDate = parseIsoDate(spec.issueDate);
+
   const draft = await service.createDraft(
     {
       projectId,
       lines: spec.lines,
       taxMode: spec.taxMode,
       recipient: recipientOverride,
-      performanceDate: dateFromNow(now, spec.performanceDateDaysFromNow),
+      performanceDate: dateFromNow(issueDate, spec.performanceDateDaysFromIssue),
     },
     ownerId,
     SEED_LOG,
     null,
   );
 
-  await service.issueDraft(draft.id, ownerId, SEED_LOG, null);
+  await service.issueDraft(draft.id, ownerId, SEED_LOG, null, issueDate);
 
   if (spec.cancellation) {
-    await service.cancel(draft.id, { reason: spec.cancellation.reason }, ownerId, SEED_LOG, null);
+    const cancellationDate = addDays(issueDate, spec.cancellation.daysAfterIssue);
+    await service.cancel(
+      draft.id,
+      { reason: spec.cancellation.reason },
+      ownerId,
+      SEED_LOG,
+      null,
+      cancellationDate,
+    );
 
     if (spec.cancellation.reissue) {
       // After cancellation the project is still `abgerechnet` (cancel
@@ -509,19 +550,23 @@ async function applyIssueSpec(
       // corrected invoice can be issued on the same project.
       await setProjectStatus(db, projectId, 'rechnung_faellig');
 
+      const reissueIssueDate = parseIsoDate(spec.cancellation.reissue.issueDate);
       const reissueDraft = await service.createDraft(
         {
           projectId,
           lines: spec.cancellation.reissue.lines,
           taxMode: spec.taxMode,
           recipient: recipientOverride,
-          performanceDate: dateFromNow(now, spec.cancellation.reissue.performanceDateDaysFromNow),
+          performanceDate: dateFromNow(
+            reissueIssueDate,
+            spec.cancellation.reissue.performanceDateDaysFromIssue,
+          ),
         },
         ownerId,
         SEED_LOG,
         null,
       );
-      await service.issueDraft(reissueDraft.id, ownerId, SEED_LOG, null);
+      await service.issueDraft(reissueDraft.id, ownerId, SEED_LOG, null, reissueIssueDate);
     }
   }
 

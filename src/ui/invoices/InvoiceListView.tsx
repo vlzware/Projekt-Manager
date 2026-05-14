@@ -26,7 +26,7 @@
  * per the spec's "Future-work seam" note.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { STRINGS } from '@/config/strings';
 import { usePermission } from '@/hooks/usePermission';
@@ -40,19 +40,28 @@ import styles from './InvoiceListView.module.css';
 
 const SEARCH_DEBOUNCE_MS = 250;
 
-/** Years offered in the filter — every distinct year present in the
- *  visible list plus the current calendar year, descending. The current
- *  year is always included so a user can pre-filter for "this year"
- *  before any invoice has been issued. */
-function yearsFromInvoices(issueDates: readonly (string | null)[]): readonly number[] {
-  const set = new Set<number>();
+/** Years offered in the filter — the server-side distinct set merged
+ *  with the current calendar year so the user can pre-filter for
+ *  "this year" before any invoice has been issued in it. */
+function buildYearOptions(serverYears: readonly number[]): readonly number[] {
+  const set = new Set<number>(serverYears);
   set.add(new Date().getFullYear());
-  for (const iso of issueDates) {
-    if (!iso) continue;
-    const year = Number(iso.slice(0, 4));
-    if (Number.isFinite(year)) set.add(year);
-  }
   return Array.from(set).sort((a, b) => b - a);
+}
+
+/** Trigger a browser download for an in-memory Blob. Mirrors the
+ *  `BinaryList` download path: anchor click + delayed revoke so the
+ *  download pickup is not raced by URL cleanup. */
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export function InvoiceListView() {
@@ -64,14 +73,25 @@ export function InvoiceListView() {
   const loading = useInvoiceListStore((s) => s.loading);
   const error = useInvoiceListStore((s) => s.error);
   const hasInitialized = useInvoiceListStore((s) => s.hasInitialized);
+  const selectedIds = useInvoiceListStore((s) => s.selectedIds);
+  const exporting = useInvoiceListStore((s) => s.exporting);
+  const exportError = useInvoiceListStore((s) => s.exportError);
+  const availableYears = useInvoiceListStore((s) => s.availableYears);
+  const searchDraft = useInvoiceListStore((s) => s.searchDraft);
   const setFilter = useInvoiceListStore((s) => s.setFilter);
+  const setSearchDraft = useInvoiceListStore((s) => s.setSearchDraft);
   const fetch = useInvoiceListStore((s) => s.fetch);
   const fetchMore = useInvoiceListStore((s) => s.fetchMore);
+  const fetchYears = useInvoiceListStore((s) => s.fetchYears);
+  const resetFilters = useInvoiceListStore((s) => s.resetFilters);
+  const exportZip = useInvoiceListStore((s) => s.exportZip);
 
-  // Local controlled-input mirror for the search field. The store value
-  // updates on the debounce tick — typing always renders immediately, but
-  // the GET only fires after the user stops for `SEARCH_DEBOUNCE_MS`.
-  const [searchInput, setSearchInput] = useState(filters.search);
+  // The visible search input reads/writes `searchDraft` in the store;
+  // a debounce effect below promotes it to `filters.search` (the
+  // dimension the server actually receives). `searchDraft` is in the
+  // store rather than React-local state so `resetFilters()` can clear
+  // both atomically — otherwise a local mirror would re-commit its
+  // stale value back through the debounce after a reset.
 
   // URL → store, one-way. The `?projectId=` query is set by the per-
   // project block's cross-link; the chip's clear button strips the param
@@ -79,13 +99,23 @@ export function InvoiceListView() {
   // source of truth for `projectId` — only the URL is — so there is no
   // bidirectional risk. The fetch effect below picks up the resulting
   // filter change.
+  //
+  // Entering with `?projectId=X` from the per-project cross-link also
+  // resets year/status/search to defaults — otherwise stale filters
+  // from a previous /rechnungen visit would silently narrow the
+  // per-project view (user lands on a partial picture without an
+  // obvious cue why).
   const [searchParams, setSearchParams] = useSearchParams();
   const urlProjectId = searchParams.get('projectId');
   useEffect(() => {
     if (filters.projectId !== urlProjectId) {
+      // Reset other filters when arriving with a fresh project id —
+      // the searchInput mirror picks up the cleared `filters.search`
+      // via the sync-during-render hook above.
+      if (urlProjectId !== null) resetFilters();
       setFilter('projectId', urlProjectId);
     }
-  }, [urlProjectId, filters.projectId, setFilter]);
+  }, [urlProjectId, filters.projectId, setFilter, resetFilters]);
 
   // Project chip resolves number/title from the project store so the user
   // sees *which* project the filter constrains, not just that one is set.
@@ -113,26 +143,72 @@ export function InvoiceListView() {
     void fetch();
   }, [canRead, filters.projectId, filters.year, filters.status, filters.search, fetch]);
 
+  // Year dropdown source — fetched once on mount and refreshed by SSE
+  // (see invoiceSseSubscription.ts). Independent of the active filter.
+  useEffect(() => {
+    if (!canRead) return;
+    void fetchYears();
+  }, [canRead, fetchYears]);
+
   const clearProjectFilter = () => {
     const next = new URLSearchParams(searchParams);
     next.delete('projectId');
     setSearchParams(next, { replace: true });
   };
 
+  const hasAnyFilter =
+    filters.year !== null ||
+    filters.status !== null ||
+    filters.search.length > 0 ||
+    searchDraft.length > 0 ||
+    filters.projectId !== null;
+
+  const resetAllFilters = () => {
+    resetFilters();
+    if (urlProjectId !== null) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('projectId');
+      setSearchParams(next, { replace: true });
+    }
+  };
+
   // Search is debounced so typing does not hammer the endpoint. The
   // debounce only writes `filters.search` to the store; the unified
   // fetch effect above observes the change and dispatches the GET.
   useEffect(() => {
-    if (searchInput === filters.search) return;
+    if (searchDraft === filters.search) return;
     const timer = setTimeout(() => {
-      setFilter('search', searchInput);
+      setFilter('search', searchDraft);
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [searchInput, filters.search, setFilter]);
+  }, [searchDraft, filters.search, setFilter]);
 
-  const years = useMemo(() => yearsFromInvoices(invoices.map((i) => i.issueDate)), [invoices]);
+  const years = useMemo(() => buildYearOptions(availableYears), [availableYears]);
 
   const ordered = useMemo(() => orderInvoicesWithStornoGrouping(invoices), [invoices]);
+
+  // Count of issued/cancelled invoices visible in the current filter —
+  // the "Alle herunterladen (N)" label reflects what the server will
+  // actually ship (drafts excluded server-side). When there are more
+  // matching rows than visible (paginated), the server still exports
+  // every match — N is just the most accurate count we can show
+  // without an extra round trip.
+  const exportableCount = useMemo(
+    () => invoices.filter((i) => i.status !== 'draft').length,
+    [invoices],
+  );
+  const selectedCount = selectedIds.size;
+  const hasSelection = selectedCount > 0;
+  const exportLabel = hasSelection
+    ? STRINGS.invoices.exportSelectedAction(selectedCount)
+    : STRINGS.invoices.exportAllAction(exportableCount);
+  const exportDisabled = exporting || (!hasSelection && exportableCount === 0);
+
+  const handleExport = async () => {
+    if (exportDisabled) return;
+    const result = await exportZip();
+    if (result.ok) triggerBlobDownload(result.blob, result.filename);
+  };
 
   // Storno display lookup — the row needs the original's `number` to
   // render the `Storno zu RE-…` subline.
@@ -153,11 +229,30 @@ export function InvoiceListView() {
         years={years}
         year={filters.year}
         status={filters.status}
-        search={searchInput}
+        search={searchDraft}
+        hasAnyFilter={hasAnyFilter}
         onYearChange={(y) => setFilter('year', y)}
         onStatusChange={(s) => setFilter('status', s)}
-        onSearchChange={setSearchInput}
+        onSearchChange={setSearchDraft}
+        onResetAll={resetAllFilters}
       />
+
+      <div className={styles.exportBar} data-testid="invoice-export-bar">
+        <button
+          type="button"
+          className={styles.exportButton}
+          onClick={() => void handleExport()}
+          disabled={exportDisabled}
+          data-testid="invoice-export-button"
+        >
+          {exporting ? STRINGS.invoices.exportInProgress : exportLabel}
+        </button>
+        {exportError && (
+          <span className={styles.exportError} role="alert" data-testid="invoice-export-error">
+            {exportError}
+          </span>
+        )}
+      </div>
 
       {filters.projectId && (
         <div className={styles.projectChip} data-testid="invoice-list-project-chip">

@@ -37,6 +37,10 @@ export function subscribeInvoiceStoreToSse(): () => void {
     }
     if (useInvoiceListStore.getState().hasInitialized) {
       void useInvoiceListStore.getState().fetch();
+      // The year-filter dropdown source can shift too — a fresh
+      // issuance might introduce a previously-empty year. Refetch in
+      // parallel with the list.
+      void useInvoiceListStore.getState().fetchYears();
     }
     useInvoiceDetailStore.getState().refreshAll();
   });

@@ -190,6 +190,28 @@ export async function listInvoices(
 }
 
 /**
+ * Distinct calendar years that appear in `issueDate` across the
+ * caller-visible invoices. Drafts (null `issueDate`) are excluded by
+ * the WHERE clause. Drives the year filter dropdown on `/rechnungen`
+ * (ui/invoices.md §8.16.1) — the dropdown MUST be derived independent
+ * of the current filter, otherwise picking year=N drops every other
+ * year from the dropdown on the very next render.
+ *
+ * Ordered descending so the most recent year sits at the top of the
+ * picker.
+ */
+export async function listInvoiceYears(db: Database, caller: AuthUser): Promise<number[]> {
+  if (!isUnscoped(caller)) return [];
+  const rows = await db.execute<{ year: number }>(
+    sql`SELECT DISTINCT EXTRACT(YEAR FROM ${invoices.issueDate})::int AS year
+        FROM ${invoices}
+        WHERE ${invoices.issueDate} IS NOT NULL
+        ORDER BY year DESC`,
+  );
+  return rows.rows.map((r) => r.year);
+}
+
+/**
  * Get an invoice by id with the worker-exclusion three-way semantic
  * (AC-298 — `null` / OUT_OF_SCOPE / row), mirroring the project-scope
  * policy (AC-147).

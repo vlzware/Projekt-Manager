@@ -54,6 +54,11 @@ export const STRINGS = {
       'Der Kunde kann nicht gelöscht werden, da ausgestellte oder stornierte Rechnungen existieren.',
     projectHasInvoices:
       'Das Projekt kann nicht endgültig gelöscht werden, da ausgestellte oder stornierte Rechnungen existieren.',
+    draftNotExportable: 'Rechnungs-Entwürfe können nicht exportiert werden.',
+    exportRequiresIdsOrFilter:
+      'Genau eines von „ids" oder „filter" angeben — nicht beides und nicht keines.',
+    exportTooLarge: (total: number, cap: number) =>
+      `Der Filter trifft ${total} Rechnungen — Export ist auf ${cap} pro Anfrage begrenzt. Bitte den Filter eingrenzen (z. B. nach Jahr).`,
   },
 
   entities: {
@@ -546,6 +551,23 @@ export const STRINGS = {
      *  the user sees *which* project constrains the list. */
     filterProjectChip: 'Projekt-Filter:',
     filterProjectClear: 'Filter aufheben',
+    /** Single button in the filter bar that resets every active
+     *  filter (year, status, search, and the URL-driven project chip).
+     *  Visible only when at least one filter is active. */
+    filterResetAll: 'Alle Filter zurücksetzen',
+
+    // Bulk export on the standalone list (ui/invoices.md §8.16.1 —
+    // bookkeeper workflow). Per-row checkboxes plus one toolbar button
+    // that switches label between "alle Treffer herunterladen" and "n
+    // ausgewählte herunterladen" depending on selection.
+    exportAllAction: (n: number) => `Alle herunterladen (${n})`,
+    exportSelectedAction: (n: number) =>
+      n === 1 ? '1 ausgewählte herunterladen' : `${n} ausgewählte herunterladen`,
+    exportInProgress: 'Wird heruntergeladen…',
+    exportFailed: 'Download fehlgeschlagen.',
+    selectRowAria: (number: string | null) =>
+      number ? `Rechnung ${number} auswählen` : 'Entwurf auswählen',
+    draftNotExportableTooltip: 'Entwürfe können nicht exportiert werden.',
 
     // Cross-link from the per-project block to the standalone view
     // (ui/project-detail.md §8.15.11).
