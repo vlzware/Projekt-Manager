@@ -869,11 +869,97 @@ export interface ListInvoicesParams {
   search?: string;
 }
 
+/**
+ * Body for `POST /api/invoices/export`. Exactly one of `ids` or
+ * `filter` must be present — the server returns 422 otherwise.
+ */
+export type ExportInvoicesBody =
+  | { ids: string[]; filter?: undefined }
+  | { ids?: undefined; filter: Omit<ListInvoicesParams, 'offset' | 'limit'> };
+
+export interface ExportInvoicesResult {
+  blob: Blob;
+  filename: string;
+}
+
+/** Parse the filename out of a `Content-Disposition` header. Accepts
+ *  the `filename="..."` form and the RFC 5987 `filename*=UTF-8''...`
+ *  form. Falls back to `null` if neither matches — caller picks a
+ *  default. */
+function filenameFromContentDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (star) {
+    try {
+      return decodeURIComponent(star[1]);
+    } catch {
+      // ignore
+    }
+  }
+  const quoted = /filename="([^"]+)"/i.exec(header);
+  if (quoted) return quoted[1];
+  const bare = /filename=([^;]+)/i.exec(header);
+  if (bare) return bare[1].trim();
+  return null;
+}
+
 export const invoicesApi = {
   list: (params: ListInvoicesParams = {}) =>
     apiCall<InvoiceListResponse>(
       '/api/invoices' + toQuery(params as Record<string, string | number | boolean | undefined>),
     ),
+
+  /** Distinct issue-date years (server-side) — drives the year filter
+   *  dropdown independent of the current filter. */
+  listYears: () => apiCall<{ years: number[] }>('/api/invoices/years'),
+
+  /**
+   * Bulk download. POST instead of GET because the body carries either
+   * a list of UUIDs (potentially long) or a filter object — neither
+   * fits cleanly into a query string. Returns a Blob the caller hands
+   * to an anchor + `URL.createObjectURL`.
+   */
+  exportZip: async (body: ExportInvoicesBody): Promise<ApiResult<ExportInvoicesResult>> => {
+    let res: Response;
+    try {
+      res = await fetch('/api/invoices/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      const isNetwork = err instanceof TypeError && /fetch|network/i.test(err.message);
+      return {
+        ok: false,
+        error: {
+          code: 'NETWORK_ERROR',
+          message: isNetwork ? STRINGS.errors.networkError : STRINGS.errors.mutationFailed,
+        },
+        category: 'network',
+        sessionExpired: false,
+      };
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({ code: 'UNKNOWN', message: '' }));
+      const rawCode = (data.code as string | undefined) ?? 'API_ERROR';
+      const sessionExpired = rawCode === 'SESSION_EXPIRED' || rawCode === 'UNAUTHENTICATED';
+      return {
+        ok: false,
+        error: {
+          code: rawCode,
+          message: (data.message as string | undefined) || STRINGS.errors.mutationFailed,
+        },
+        category: classifyCode(rawCode),
+        sessionExpired,
+        details: data.details,
+      };
+    }
+    const blob = await res.blob();
+    const filename =
+      filenameFromContentDisposition(res.headers.get('Content-Disposition')) ?? 'Rechnungen.zip';
+    return { ok: true, data: { blob, filename } };
+  },
 
   listByProject: (projectId: string) =>
     apiCall<InvoiceListResponse>('/api/invoices' + toQuery({ projectId })),

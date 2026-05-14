@@ -55,7 +55,7 @@ const LANDINGS: Record<RoleName, string> = {
   owner: '/kanban',
   office: '/kanban',
   worker: '/meine-projekte',
-  bookkeeper: '/projects',
+  bookkeeper: '/rechnungen',
 };
 
 describe('ROUTES — per-role nav matrix (AC-75)', () => {

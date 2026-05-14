@@ -194,17 +194,6 @@ First-time Playwright setup requires `npx playwright install` to download browse
 
 The project is considered a successful **MVP**, deployed and E2E-tested in a realistic environment behind VPN, accessible through a real domain from different devices, with users, roles and all the real workflows in place. All operator workflows were E2E-tested as well - backup, recovery, encryption, etc.
 
-**Missing features**
-
-Missing from the original goals, defined in the Kickoff, are invoices and the bookkeeper view - these turned out not to be required for the particular target case.
-
-Also missing is the "Handbuch" - there are two reasons for this:
-
-- the first is the obvious: the rapid adding of features and big changes makes dragging such an artifact around during dev a source of friction;
-- the second is much more interesting - as it turned out during demonstrations, the app _does not need_ a Handbuch, which can fairly be considered a mark of success. The more such a document were needed, the less of a good job we would have done with the UX.
-
-_Of course, when handing the installation over, a "Handbuch" will be present._
-
 **Future improvements**
 
 R2 was enjoyable to fiddle with; however, for the real-user installation I would consider consolidating backups and binaries to B2.

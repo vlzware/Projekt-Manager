@@ -24,9 +24,17 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import archiver from 'archiver';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
 import { createInvoiceService, type ListInvoicesOpts } from '../services/InvoiceService.js';
+import {
+  resolveExportInvoices,
+  buildManifestCsv,
+  todayIsoDate,
+  type ExportInput,
+  type ExportFilterInput,
+} from '../services/InvoiceExportService.js';
 import type { InvoiceLine, InvoiceRecipientSnapshot, TaxMode } from '../../domain/invoice.js';
 import { TAX_MODES, INVOICE_STATUSES } from '../../domain/invoice.js';
 import { buildContentDisposition } from '../storage/client.js';
@@ -136,6 +144,17 @@ export function invoiceRoutes(db: Database) {
         return reply.code(200).send(result);
       },
     );
+
+    // ---------------------------------------------------------------
+    // GET /api/invoices/years — distinct issue-date years in the
+    // caller's scope, descending. Drives the year-filter dropdown
+    // independent of the active filter. Workers see `[]` because the
+    // scope predicate excludes them (ADR-0019).
+    // ---------------------------------------------------------------
+    app.get('/api/invoices/years', async (request, reply) => {
+      const years = await service.listYears(request.user!);
+      return reply.code(200).send({ years });
+    });
 
     // ---------------------------------------------------------------
     // GET /api/invoices/:id — three-way 200 / 403 / 404 (AC-298).
@@ -404,6 +423,118 @@ export function invoiceRoutes(db: Database) {
           .header('Content-Disposition', buildContentDisposition(filename))
           .header('Content-Length', String(bytes.byteLength))
           .send(Buffer.from(bytes));
+      },
+    );
+
+    // ---------------------------------------------------------------
+    // POST /api/invoices/export — bulk-download a ZIP of issued /
+    // cancelled invoice PDFs plus a CSV manifest. Bookkeeper takeout
+    // (ui/invoices.md §8.16.x).
+    //
+    // Two request shapes (exactly one of `ids` / `filter`):
+    //   { ids: [uuid, ...] }
+    //   { filter: { year?, status?, projectId?, customerId?, includeCancelled?, search? } }
+    //
+    // Permission: `invoice:read` (owner / office / bookkeeper).
+    //
+    // Drafts are not in the ZIP: ids-mode rejects with 422
+    // DRAFT_NOT_EXPORTABLE before any bytes leave the wire;
+    // filter-mode silently omits them. The archive is built lazily by
+    // `archiver` and handed to Fastify as a Readable — `reply.send()`
+    // pipes it to the wire, so the compressed ZIP bytes never collect
+    // in memory.
+    // ---------------------------------------------------------------
+    app.post(
+      '/api/invoices/export',
+      {
+        schema: {
+          body: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              ids: {
+                type: 'array',
+                items: { type: 'string', format: 'uuid' },
+                minItems: 1,
+                // Mirrors the filter-mode safety cap. A single explicit
+                // selection over 5000 invoices is presumed misuse; the
+                // user can re-run with a narrower selection.
+                maxItems: 5000,
+              },
+              filter: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  year: { type: 'integer', minimum: 1900, maximum: 9999 },
+                  status: { type: 'string', enum: [...INVOICE_STATUSES] },
+                  projectId: { type: 'string', format: 'uuid' },
+                  customerId: { type: 'string', format: 'uuid' },
+                  includeCancelled: { type: 'boolean' },
+                  search: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        preHandler: requirePermission('invoice:read'),
+      },
+      async (request, reply) => {
+        const body = request.body as {
+          ids?: string[];
+          filter?: ExportFilterInput;
+        };
+
+        // Preserve undefined-vs-present semantics — `resolveExportInvoices`
+        // enforces the exclusive-or invariant; collapsing the missing
+        // half to a default empty filter here would mask the validation
+        // gate.
+        const input = {
+          ...(body.ids !== undefined ? { ids: body.ids } : {}),
+          ...(body.filter !== undefined ? { filter: body.filter } : {}),
+        } as ExportInput;
+
+        // Resolve + pre-fetch all PDF bytes BEFORE setting headers.
+        // A failure here (404 / 403 / draft) bubbles to the global
+        // error handler and surfaces as the documented status code;
+        // once we start writing the archive the response status is
+        // locked, so any later fault can only be expressed as a
+        // truncated stream.
+        const { invoices, scopeLabel } = await resolveExportInvoices(service, request.user!, input);
+
+        const entries: { name: string; bytes: Uint8Array }[] = [];
+        for (const invoice of invoices) {
+          const { bytes } = await service.downloadPdfBytesForInvoice(invoice);
+          entries.push({ name: `${invoice.number!}.pdf`, bytes });
+        }
+        const manifest = buildManifestCsv(invoices);
+
+        const filename = `Rechnungen_${scopeLabel}_${todayIsoDate()}.zip`;
+        const archive = archiver('zip', { zlib: { level: 9 } });
+        archive.on('warning', (err) => {
+          request.log.warn({ err }, 'invoice_export_archive_warning');
+        });
+        archive.on('error', (err) => {
+          request.log.error({ err }, 'invoice_export_archive_error');
+        });
+
+        for (const entry of entries) {
+          archive.append(Buffer.from(entry.bytes), { name: entry.name });
+        }
+        archive.append(Buffer.from(manifest, 'utf-8'), { name: 'manifest.csv' });
+
+        // Kick off finalize before handing the stream to Fastify —
+        // archiver only starts emitting bytes after `finalize()` is
+        // called and the consumer begins reading. Awaiting the
+        // returned promise would deadlock (it resolves when the stream
+        // is fully consumed, which only happens once Fastify reads
+        // from it).
+        void archive.finalize();
+
+        return reply
+          .code(200)
+          .header('Content-Type', 'application/zip')
+          .header('Content-Disposition', buildContentDisposition(filename))
+          .send(archive);
       },
     );
   };
