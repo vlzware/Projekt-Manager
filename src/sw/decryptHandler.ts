@@ -220,14 +220,17 @@ export async function handleEncryptedStorageRequest(request: Request): Promise<R
     // attempt to read the body only on 422 to keep the parse cost
     // off the common-error path.
     if (descriptorResponse.status === 422) {
-      let parsed: { code?: unknown };
+      let parsed: { code?: unknown } | null;
       try {
-        parsed = (await descriptorResponse.json()) as { code?: unknown };
+        // `JSON.parse('null')` returns the literal `null` at runtime — the
+        // `as` cast does not protect against it, so keep the union honest
+        // and read through `?.` below.
+        parsed = (await descriptorResponse.json()) as { code?: unknown } | null;
       } catch {
         // 422 with non-JSON body — not the documented shape.
         return genericFailureResponse(502, 'download-url 422 body was not valid JSON');
       }
-      if (parsed.code === 'DEK_UNWRAP_FAILED') {
+      if (parsed?.code === 'DEK_UNWRAP_FAILED') {
         return failureResponse(
           request.url,
           'DEK_UNWRAP_FAILED',
