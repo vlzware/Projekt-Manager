@@ -93,11 +93,15 @@ process.env.BINARY_AGE_IDENTITY_PATH = E2E_BINARY_IDENTITY_PATH;
 // (installed via the google-chrome-stable .deb) restores the sandbox —
 // Chromium's docs rank this as the safest of the three workarounds
 // (https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
-// Only applied when the helper is actually present; CI images and
-// workstations without google-chrome-stable fall through to Playwright's
-// default `--no-sandbox` launch, where the infobar is irrelevant (headless).
+//
+// Skipped under CI: the ubuntu-latest runner image ships the
+// `/opt/google/chrome/chrome-sandbox` binary but without the required
+// `chown root && chmod 4755`, so Chromium aborts on launch ("SUID
+// sandbox helper binary was found, but is not configured correctly").
+// CI runs headless where the infobar is irrelevant anyway, so falling
+// through to Playwright's default `--no-sandbox` launch is correct.
 const SUID_SANDBOX = '/opt/google/chrome/chrome-sandbox';
-const USE_SUID_SANDBOX = fs.existsSync(SUID_SANDBOX);
+const USE_SUID_SANDBOX = !process.env.CI && fs.existsSync(SUID_SANDBOX);
 if (USE_SUID_SANDBOX) {
   process.env.CHROME_DEVEL_SANDBOX = SUID_SANDBOX;
 }
