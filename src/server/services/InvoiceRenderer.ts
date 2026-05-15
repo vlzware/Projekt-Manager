@@ -5,7 +5,7 @@
  * ADR-0026 pins the wire shape: profile `zugferd-en16931`, PDF/A-3
  * structural wrapper, embedded `factur-x.xml`, German-language
  * human-readable body carrying the per-tax-mode boilerplate. The
- * pure-Node toolchain is pinned at `pdf-lib` (PDF generation +
+ * pure-Node toolchain is pinned at `@cantoo/pdf-lib` (PDF generation +
  * embedded-file attachment) + `libxmljs2` (per-render XSD validation
  * against EN 16931 so a non-conformant XML aborts the issuance atom
  * rather than landing on B2; see `invoice/xsdValidator.ts`).
@@ -20,13 +20,13 @@
  * class export (used by `InvoiceService`'s constructor injection) and
  * `default` object export (used by the mock-seam in
  * `src/server/__tests__/invoices-issue.test.ts:521-536`). Both
- * `render()` shapes are async — pdf-lib's `embedFont` /
+ * `render()` shapes are async — @cantoo/pdf-lib's `embedFont` /
  * `doc.save()` are async by construction.
  *
  * Split across four sibling files for readability:
  *   - `invoice/facturXmlBuilder.ts` — EN 16931 CII-100 XML builder.
  *   - `invoice/xsdValidator.ts`     — per-render EN 16931 XSD check.
- *   - `invoice/pdfDrawer.ts`        — pdf-lib drawing + attach().
+ *   - `invoice/pdfDrawer.ts`        — @cantoo/pdf-lib drawing + attach().
  *   - `invoice/boilerplate.ts`      — per-tax-mode legal strings.
  */
 
@@ -69,7 +69,7 @@ export interface InvoiceRenderInput {
 export class InvoiceRenderer {
   /**
    * Build the EN 16931 XML, then the PDF/A-3 wrapper with the XML
-   * embedded as `factur-x.xml`. Both async — pdf-lib's font embedding
+   * embedded as `factur-x.xml`. Both async — @cantoo/pdf-lib's font embedding
    * and stream serialisation are I/O-shaped even when the bytes are
    * synthesised in memory.
    *

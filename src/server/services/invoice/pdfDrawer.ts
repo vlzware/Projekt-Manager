@@ -6,7 +6,7 @@
  * line-item table, totals block, and a footer carrying the statutory
  * tax-mode boilerplate. Multi-page support spills the line table into
  * additional pages while keeping the totals + footer on the last page.
- * The fonts in use are pdf-lib's standard 14 (Helvetica + Helvetica-
+ * The fonts in use are @cantoo/pdf-lib's standard 14 (Helvetica + Helvetica-
  * Bold + Helvetica-Oblique) — no fontkit dependency, no embedded fonts.
  * Standard fonts limit the glyph repertoire to the WinAnsi codepoints,
  * which suffices for German diacritics (ä ö ü ß § €) but blocks
@@ -17,8 +17,8 @@
  * PDF/A-3 candidate — every page has a MediaBox, the document carries
  * Title / Author / Producer metadata, fonts are standard (WinAnsi-only),
  * and the embedded `factur-x.xml` rides on the catalog Names tree under
- * `/EmbeddedFiles` with the AFRelationship marker pdf-lib provides.
- * pdf-lib does not write the XMP packet that veraPDF demands, so this
+ * `/EmbeddedFiles` with the AFRelationship marker @cantoo/pdf-lib provides.
+ * @cantoo/pdf-lib does not write the XMP packet that veraPDF demands, so this
  * is "structurally-correct PDF/A-3" rather than "certified PDF/A-3"
  * — an honest trade-off documented in the Phase C decision log (see
  * `InvoiceRenderer.ts` header).
@@ -36,7 +36,7 @@ const pdfLibImport: Promise<typeof import('@cantoo/pdf-lib')> = import('@cantoo/
 import type { Invoice } from '../../../domain/invoice.js';
 import { taxModeBoilerplate } from './boilerplate.js';
 
-/** WinAnsi-only sanitiser — drop anything pdf-lib's standard fonts cannot encode. */
+/** WinAnsi-only sanitiser — drop anything @cantoo/pdf-lib's standard fonts cannot encode. */
 function sanitizeForWinAnsi(input: string): string {
   // Helvetica supports the WinAnsi (Windows-1252) codepage. Anything
   // outside U+0020..U+007E plus the additional WinAnsi mappings is
@@ -73,10 +73,10 @@ const LINE_HEIGHT = 12;
 // Approximate glyph extents above/below the baseline for Helvetica /
 // Helvetica-Bold at FONT_SIZE_BODY. The table's horizontal rules are
 // positioned relative to these so the rule never cuts through the
-// adjacent row's text — pdf-lib's `drawText` anchors at the baseline,
+// adjacent row's text — @cantoo/pdf-lib's `drawText` anchors at the baseline,
 // not the visual bounding box, so the renderer has to do the offset
 // itself. Values are the standard-PDF-font metrics and are stable
-// across pdf-lib versions.
+// across @cantoo/pdf-lib versions.
 const TEXT_CAP_HEIGHT_BODY = 7.15;
 const TEXT_DESCENDER_BODY = 2.1;
 const TABLE_RULE_PAD = 4;
@@ -132,14 +132,14 @@ function fmtDate(value: string | Date | null): string {
 
 /**
  * Greedy word-wrap a string so each output line fits within `maxWidth`
- * at the given font/size. pdf-lib's `drawText` will wrap when given
+ * at the given font/size. @cantoo/pdf-lib's `drawText` will wrap when given
  * `maxWidth`, but it does not return the resulting line count, so the
  * caller cannot advance the y cursor by the correct amount and the
  * row's bottom rule ends up drawn through a wrapped line. Wrapping
  * here gives the call site explicit control over `lines.length` and
  * therefore over the row height.
  *
- * Greedy word-fitting matches what pdf-lib does internally — adequate
+ * Greedy word-fitting matches what @cantoo/pdf-lib does internally — adequate
  * for invoice descriptions; we do not attempt hyphenation. A single
  * token wider than `maxWidth` is emitted on its own line and overruns
  * — preferable to silently dropping content; future caller-side
@@ -165,7 +165,7 @@ function wrapTextToWidth(text: string, font: PDFFont, size: number, maxWidth: nu
 
 /**
  * Right-align `text` so its right edge sits at `rightX`. `drawText` in
- * pdf-lib is left-aligned only; the cell-layout code below relies on
+ * @cantoo/pdf-lib is left-aligned only; the cell-layout code below relies on
  * right alignment for every numeric column, so this helper is the
  * single seam for that conversion.
  */
@@ -605,7 +605,7 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
   // Patch the total-page-count into every page footer now that we know
   // the final page count.
   pageNumberCount.total = cursor.pageNumber;
-  // pdf-lib doesn't let us re-draw on a previously-emitted page after
+  // @cantoo/pdf-lib doesn't let us re-draw on a previously-emitted page after
   // additional content has been added without re-rendering; the
   // simpler approach is to write the page numbers AFTER everything,
   // by walking the pages array. We've already drawn placeholder

@@ -294,11 +294,12 @@ async function extractPdfText(buf: Buffer): Promise<string> {
  * Extract the embedded `factur-x.xml` file from a PDF/A-3 buffer.
  * PDF/A-3 carries embedded files via the `/EmbeddedFiles` name tree;
  * factur-x is conventionally named `factur-x.xml`. Lazy import of a
- * PDF library (`pdf-lib` is the lightweight Node-native pick) keeps
+ * PDF library (`@cantoo/pdf-lib` is the lightweight Node-native pick) keeps
  * this file parse-clean pre-impl.
  */
 async function extractFacturXml(buf: Buffer): Promise<string> {
-  // pdf-lib v1.17.x does not expose `embeddedFiles` publicly, so we walk
+  // @cantoo/pdf-lib (a maintained fork of pdf-lib v1.17.x) does not
+  // expose `embeddedFiles` publicly, so we walk
   // the catalog name tree directly: `/Catalog → /Names → /EmbeddedFiles
   // → /Names` is the PDF/A-3 convention. Each pair is
   // `(filename, filespec)`, where the filespec's `/EF/F` ref points at
@@ -355,7 +356,7 @@ async function extractFacturXml(buf: Buffer): Promise<string> {
     if (fileStream instanceof PDFRawStream) {
       bytes = decodePDFRawStream(fileStream).decode();
     } else {
-      // Fallback — pdf-lib normalises to PDFRawStream on load; the
+      // Fallback — @cantoo/pdf-lib normalises to PDFRawStream on load; the
       // branch is here as a safety net only.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       bytes = (fileStream as any).getContents() as Uint8Array;
