@@ -28,7 +28,10 @@
     "postinstall": "patch-package"
   },
   "overrides": {
-    "fast-xml-parser": "^5.7.0"
+    "fast-xml-parser": "^5.7.0",
+    "@esbuild-kit/core-utils": {
+      "esbuild": "^0.25.0"
+    }
   },
   "lint-staged": {
     "src/**/*.{ts,tsx}": [
