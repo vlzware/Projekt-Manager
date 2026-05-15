@@ -211,17 +211,24 @@ export default defineConfig({
       },
     },
 
-    // 5. Demo recordings — not part of the normal test suite.
-    //    Run: npx playwright test --project=demo --headed
-    {
-      name: 'demo',
-      testMatch: DEMO_TESTS,
-      use: {
-        ...devices['Desktop Chrome'],
-        viewport: { width: 1400, height: 1200 },
-        video: { mode: 'on', size: { width: 1400, height: 1200 } },
-      },
-    },
+    // 5. Demo recordings — opt-in only. The project is omitted from
+    //    the config entirely unless PLAYWRIGHT_RUN_DEMO is set, so a
+    //    bare `npx playwright test` (locally or in CI) does not pick
+    //    them up. Run them with:
+    //      PLAYWRIGHT_RUN_DEMO=1 npx playwright test --project=demo --headed
+    ...(process.env.PLAYWRIGHT_RUN_DEMO
+      ? [
+          {
+            name: 'demo',
+            testMatch: DEMO_TESTS,
+            use: {
+              ...devices['Desktop Chrome'],
+              viewport: { width: 1400, height: 1200 },
+              video: { mode: 'on' as const, size: { width: 1400, height: 1200 } },
+            },
+          },
+        ]
+      : []),
   ],
   /**
    * Playwright spawns its own dev server + backend on ports separate
