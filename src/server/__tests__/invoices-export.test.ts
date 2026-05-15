@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import AdmZip from 'adm-zip';
+import { unzipSync } from 'fflate';
 import { sql } from 'drizzle-orm';
 import { startApp, stopApp, login, authGet, authPost } from '../../test/api-helpers.js';
 import { SEED_DEFAULT_PASSWORD, SEED_USERS } from '../../test/seedAssumptions.js';
@@ -42,15 +42,15 @@ interface InvoiceWire {
 
 /**
  * `app.inject()` returns a Buffer in `rawPayload` even when the
- * declared content type is binary. Parse the ZIP with adm-zip and
+ * declared content type is binary. Parse the ZIP with fflate and
  * return the canonical (entry name → buffer) map plus the manifest
  * decoded as UTF-8.
  */
 function parseZipResponse(body: Buffer): { entries: Map<string, Buffer>; manifest: string } {
-  const zip = new AdmZip(body);
+  const decoded = unzipSync(new Uint8Array(body));
   const entries = new Map<string, Buffer>();
-  for (const entry of zip.getEntries()) {
-    entries.set(entry.entryName, entry.getData());
+  for (const [name, bytes] of Object.entries(decoded)) {
+    entries.set(name, Buffer.from(bytes));
   }
   const manifestBuf = entries.get('manifest.csv');
   if (!manifestBuf) throw new Error('manifest.csv missing from archive');
