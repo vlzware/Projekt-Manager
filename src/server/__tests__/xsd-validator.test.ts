@@ -131,38 +131,38 @@ const GOOD_XML = [
 ].join('');
 
 describe('validateFacturXml — positive sanity (AC-293)', () => {
-  it('accepts a minimal known-good EN 16931 Comfort document', () => {
+  it('accepts a minimal known-good EN 16931 Comfort document', async () => {
     // If this arm regresses, the schema loader is broken (wrong path,
     // dropped sibling import, cache invariant violated) — the negative
     // arms below would still pass for the wrong reason.
-    expect(() => validateFacturXml(GOOD_XML)).not.toThrow();
+    await expect(validateFacturXml(GOOD_XML)).resolves.toBeUndefined();
   });
 });
 
 describe('validateFacturXml — negative coverage (AC-293)', () => {
-  it('rejects an XML missing a required child of <ram:SpecifiedTradeProduct>', () => {
+  it('rejects an XML missing a required child of <ram:SpecifiedTradeProduct>', async () => {
     // Drop `<ram:Name>` from the line's SpecifiedTradeProduct. The
     // element is mandatory under EN 16931 (BT-153 / "Item name"), so
     // the validator must surface a violation. Picked over dropping
     // `<ram:ID>` from ExchangedDocument because the EN 16931 minOccurs
     // on Name is unambiguous across the bundled schemas.
     const xml = GOOD_XML.replace('<ram:Name>Anstrich Fassade</ram:Name>', '');
-    expect(() => validateFacturXml(xml)).toThrow(FacturXValidationError);
+    await expect(validateFacturXml(xml)).rejects.toThrow(FacturXValidationError);
   });
 
-  it('rejects an XML whose root element uses a fake namespace', () => {
-    // Rename the `rsm:CrossIndustryInvoice` namespace URI to a
-    // fictitious value. libxml2 resolves the schema by
-    // `targetNamespace`, so a foreign namespace produces a hard
-    // validation error (no matching global element declaration).
+  it('rejects an XML whose root element uses a fake namespace', async () => {
+    // Rename only the root element's namespace URI — descendants still
+    // bind to the EN 16931 URIs via their own `xmlns:ram=` / `xmlns:udt=`
+    // attributes, so the violation is specifically the missing global
+    // element declaration for `{fake}CrossIndustryInvoice`.
     const xml = GOOD_XML.replace(
       'xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"',
       'xmlns:rsm="urn:fake:not-a-real-namespace:999"',
     );
-    expect(() => validateFacturXml(xml)).toThrow(FacturXValidationError);
+    await expect(validateFacturXml(xml)).rejects.toThrow(FacturXValidationError);
   });
 
-  it('rejects an XML carrying a non-numeric value in an xs:decimal field', () => {
+  it('rejects an XML carrying a non-numeric value in an xs:decimal field', async () => {
     // GrandTotalAmount is typed as `udt:AmountType` → `xs:decimal`
     // (see UnqualifiedDataType_100.xsd). A non-numeric string violates
     // the type and the validator must reject it. Pins type-level
@@ -171,17 +171,17 @@ describe('validateFacturXml — negative coverage (AC-293)', () => {
       '<ram:GrandTotalAmount>1785.00</ram:GrandTotalAmount>',
       '<ram:GrandTotalAmount>not-a-decimal</ram:GrandTotalAmount>',
     );
-    expect(() => validateFacturXml(xml)).toThrow(FacturXValidationError);
+    await expect(validateFacturXml(xml)).rejects.toThrow(FacturXValidationError);
   });
 
-  it('FacturXValidationError carries the validator messages on .errors', () => {
+  it('FacturXValidationError carries the validator messages on .errors', async () => {
     // Pin the error shape — callers may surface the field to operators
     // (the issuance route logs it before rolling back). A regression
     // that collapsed `errors` into a plain `Error` would silently strip
     // the diagnostic surface.
     const xml = GOOD_XML.replace('<ram:Name>Anstrich Fassade</ram:Name>', '');
     try {
-      validateFacturXml(xml);
+      await validateFacturXml(xml);
       expect.fail('expected validateFacturXml to throw');
     } catch (err) {
       expect(err).toBeInstanceOf(FacturXValidationError);

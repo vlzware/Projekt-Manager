@@ -15,46 +15,66 @@
  * (entry XSD + 3 imported UN/CEFACT siblings: QualifiedDataType_100,
  * ReusableAggregateBusinessInformationEntity_100, UnqualifiedDataType_100).
  * Sourced from `akretion/factur-x@d7fa1e7`. Import-path layout preserved
- * so libxml2 resolves siblings during validation.
+ * so xmllint resolves siblings during validation via `preload`.
+ *
+ * Validator: `xmllint-wasm` (libxml2 compiled to WebAssembly). Chosen
+ * over the previous native binding (`libxmljs2`, marked "NO LONGER
+ * MAINTAINED" upstream) to drop an unmaintained native dependency from
+ * the tree. The WASM build of xmllint ships with no HTTP loader and
+ * only Emscripten's in-memory FS, so the previous `nonet`/`dtdload`
+ * defense-in-depth flags have nothing to guard against in this build.
+ *
+ * Cost shape (acknowledged tradeoff): `xmllint-wasm` forks a fresh
+ * `worker_threads.Worker` and recompiles the schema inside it on every
+ * `validateXML` call. The disk read is cached below; the worker fork
+ * and schema recompile are not — the library exposes no parsed-schema
+ * handle to persist. Acceptable for human-paced single-invoice
+ * issuance; if bulk re-validation is introduced, move to a long-lived
+ * worker or to a WASM library that persists the schema handle.
  */
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as libxml from 'libxmljs2';
+import { validateXML, type XMLFileInfo } from 'xmllint-wasm';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const XSD_ROOT = path.resolve(__dirname, './xsd/Factur-X_1.07.2_EN16931.xsd');
+const XSD_DIR = path.resolve(__dirname, './xsd');
+const MAIN_XSD = 'Factur-X_1.07.2_EN16931.xsd';
+const IMPORTED_XSDS = [
+  'Factur-X_1.07.2_EN16931_urn_un_unece_uncefact_data_standard_QualifiedDataType_100.xsd',
+  'Factur-X_1.07.2_EN16931_urn_un_unece_uncefact_data_standard_ReusableAggregateBusinessInformationEntity_100.xsd',
+  'Factur-X_1.07.2_EN16931_urn_un_unece_uncefact_data_standard_UnqualifiedDataType_100.xsd',
+] as const;
+
+interface SchemaBundle {
+  readonly schema: XMLFileInfo;
+  readonly preload: ReadonlyArray<XMLFileInfo>;
+}
 
 /**
- * Parsing the 4-file XSD tree (with `baseUrl` resolving siblings) is
- * non-trivial; the schema is process-static so the parsed doc is cached
- * after the first call. The cache is keyed on the module, not on a
- * mutable singleton — re-imports get a fresh parse, but a single-process
- * server hits the parser exactly once.
+ * Cache only what the library lets us cache: the file contents. The
+ * worker fork and schema recompile happen per call (see file header).
+ * `fileName` values match the bare `schemaLocation` references in the
+ * main XSD so xmllint resolves the imports from the in-memory FS.
  */
-let cachedXsdDoc: libxml.Document | null = null;
+let cachedBundle: SchemaBundle | null = null;
 
-/**
- * Defense-in-depth parser flags. The XML we parse is server-built
- * (`facturXmlBuilder.ts`), not attacker-supplied, so no exploit path
- * exists today; pinning the flags makes the contract explicit and
- * insulates the validator from a future libxml2 default flip:
- *   - `noent: false`   — keep entity references unexpanded (no XXE)
- *   - `nonet: true`    — refuse network fetches for external resources
- *   - `dtdload: false` — refuse to load external DTDs
- */
-const SAFE_PARSE_OPTIONS = { noent: false, nonet: true, dtdload: false } as const;
-
-function getXsdDoc(): libxml.Document {
-  if (cachedXsdDoc) return cachedXsdDoc;
-  cachedXsdDoc = libxml.parseXml(readFileSync(XSD_ROOT, 'utf-8'), {
-    baseUrl: XSD_ROOT,
-    ...SAFE_PARSE_OPTIONS,
-  });
-  return cachedXsdDoc;
+function getSchemaBundle(): SchemaBundle {
+  if (cachedBundle) return cachedBundle;
+  cachedBundle = {
+    schema: {
+      fileName: MAIN_XSD,
+      contents: readFileSync(path.join(XSD_DIR, MAIN_XSD), 'utf-8'),
+    },
+    preload: IMPORTED_XSDS.map((fileName) => ({
+      fileName,
+      contents: readFileSync(path.join(XSD_DIR, fileName), 'utf-8'),
+    })),
+  };
+  return cachedBundle;
 }
 
 export class FacturXValidationError extends Error {
@@ -71,11 +91,15 @@ export class FacturXValidationError extends Error {
  * any schema violation so the caller's transaction rolls back before
  * a non-conformant binary is written to B2.
  */
-export function validateFacturXml(xml: string): void {
-  const xsdDoc = getXsdDoc();
-  const xmlDoc = libxml.parseXml(xml, SAFE_PARSE_OPTIONS);
-  if (!xmlDoc.validate(xsdDoc)) {
-    const errors = (xmlDoc.validationErrors ?? []).map((e) => String(e.message ?? e));
+export async function validateFacturXml(xml: string): Promise<void> {
+  const bundle = getSchemaBundle();
+  const result = await validateXML({
+    xml: { fileName: 'factur-x.xml', contents: xml },
+    schema: bundle.schema,
+    preload: bundle.preload,
+  });
+  if (!result.valid) {
+    const errors = result.errors.map((e) => e.message);
     throw new FacturXValidationError(errors);
   }
 }

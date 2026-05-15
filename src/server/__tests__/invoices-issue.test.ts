@@ -1617,6 +1617,6 @@ describe('Invoice issuance — ZUGFeRD EN 16931 conformance (AT-117 / AC-293)', 
     // Round-trip XSD check: the renderer validates at issuance, but
     // this asserts the embedded XML survives the PDF/A-3 attachment
     // pipeline without corruption. Throws on schema violation.
-    expect(() => validateFacturXml(xml)).not.toThrow();
+    await expect(validateFacturXml(xml)).resolves.toBeUndefined();
   });
 });
