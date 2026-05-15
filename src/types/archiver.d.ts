@@ -7,6 +7,10 @@
 // pre-v8 function shape (`declare function archiver(format, options)`)
 // and has no class exports. We override locally; remove this file when
 // DefinitelyTyped publishes a v8-aware release.
+//
+// TODO(DT): delete this shim and reinstall `@types/archiver` once
+// DefinitelyTyped ships v8-aware types (track the `archiver`
+// directory on https://github.com/DefinitelyTyped/DefinitelyTyped).
 
 declare module 'archiver' {
   import * as stream from 'node:stream';
