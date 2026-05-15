@@ -29,9 +29,9 @@
  * structural shape; the certified-PDF/A-3 gate is future work.
  */
 
-import type { PDFDocument, PDFFont, PDFPage, RGB } from 'pdf-lib';
+import type { PDFDocument, PDFFont, PDFPage, RGB } from '@cantoo/pdf-lib';
 
-const pdfLibImport: Promise<typeof import('pdf-lib')> = import('pdf-lib');
+const pdfLibImport: Promise<typeof import('@cantoo/pdf-lib')> = import('@cantoo/pdf-lib');
 
 import type { Invoice } from '../../../domain/invoice.js';
 import { taxModeBoilerplate } from './boilerplate.js';
@@ -52,7 +52,7 @@ interface DrawCursor {
 }
 
 type PdfDrawDeps = Pick<
-  typeof import('pdf-lib'),
+  typeof import('@cantoo/pdf-lib'),
   'PDFDocument' | 'StandardFonts' | 'rgb' | 'AFRelationship'
 >;
 

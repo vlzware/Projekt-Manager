@@ -151,7 +151,7 @@ describe('InvoiceRenderer — factur-x.xml + EN 16931 XSD (AT-117 shape, route-f
     // under the exact `factur-x.xml` name. This mirrors what AT-117's
     // `extractFacturXml` helper does inside `invoices-issue.test.ts`.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pdfLib = (await import('pdf-lib')) as any;
+    const pdfLib = (await import('@cantoo/pdf-lib')) as any;
     const doc = await pdfLib.PDFDocument.load(out.pdfBytes);
     const namesDict = doc.catalog.lookup(pdfLib.PDFName.of('Names'), pdfLib.PDFDict);
     const ef = namesDict.lookup(pdfLib.PDFName.of('EmbeddedFiles'), pdfLib.PDFDict);

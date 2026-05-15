@@ -308,7 +308,7 @@ async function extractFacturXml(buf: Buffer): Promise<string> {
   // → /Names` is the PDF/A-3 convention. Each pair is
   // `(filename, filespec)`, where the filespec's `/EF/F` ref points at
   // the embedded-file stream.
-  const path = 'pdf-lib';
+  const path = '@cantoo/pdf-lib';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lib = (await import(/* @vite-ignore */ path)) as any;
   const {
