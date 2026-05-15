@@ -10,19 +10,19 @@ A scoped npm override now pins `@esbuild-kit/core-utils > esbuild` to
 `^0.25.0`, taking the nested copy out of the vulnerable `<=0.24.2` range.
 `npm audit` reports zero advisories; the CI suppression block is gone.
 
-The "npm overrides" path was rejected below on the grounds that overriding
-dead code cannot reduce runtime risk. That framing conflated two goals:
-runtime exposure (zero either way — `serve()` is never called) and
-audit-signal hygiene (the actual reason for the suppression). The
-override addresses the latter without claiming to address the former,
-and removes the maintenance burden of a per-advisory CI bypass.
+The original ADR was right that the override patches an unused chain —
+the static-analysis evidence in Context §1-2 below still holds, and
+runtime exposure is zero either way. The override is cosmetic for risk.
+We're doing it anyway: one `package.json` line beats a per-advisory CI
+bypass, and a clean `npm audit` is worth more than a hand-maintained
+allowlist. The original ADR weighed runtime risk only; this trade-off
+on signal hygiene wasn't on the table.
 
-`drizzle-kit generate` was exercised end-to-end with the bumped esbuild
-(reads all 14 tables, no diff) before merging — addressing the residual
-concern that drizzle-kit might silently rely on the @esbuild-kit loader
-at runtime despite the static-analysis claim below.
+The drizzle-kit `generate` smoke after the bump confirms the override
+doesn't disturb drizzle-kit's actual loader path (drizzle-kit's bundled
+code never imports `@esbuild-kit` — see Context §1).
 
-The original record is preserved below for context.
+The original record is preserved below.
 
 ## Context
 
@@ -72,8 +72,6 @@ Remove this suppression when any becomes true:
 
 ## Upstream Status
 
-**Last checked: 2026-04-17**
-
-- Stable `drizzle-kit@0.31.10` still declares `@esbuild-kit/esm-loader`. No stable release has addressed the chain since this ADR was written (2026-04-05).
-- Beta `drizzle-kit@1.0.0-beta.22` drops `@esbuild-kit/*` and `tsx`, switches to `jiti` as runtime loader, pins `esbuild ^0.25.10` (above the vulnerable range). Moving our devDependency to the beta was rejected: migration tooling is a schema/data-corruption-critical code path, and the exploitability analysis above already shows zero runtime risk from staying on stable.
-- drizzle-team/drizzle-orm#5304 still OPEN; last activity 2026-03-24.
+drizzle-team/drizzle-orm#5304 tracks the upstream fix (drizzle-kit
+1.0.0-beta drops `@esbuild-kit/*` for `jiti`). When that ships stable,
+both the override and this ADR can be deleted.
