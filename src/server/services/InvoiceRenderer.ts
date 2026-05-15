@@ -6,7 +6,7 @@
  * structural wrapper, embedded `factur-x.xml`, German-language
  * human-readable body carrying the per-tax-mode boilerplate. The
  * pure-Node toolchain is pinned at `@cantoo/pdf-lib` (PDF generation +
- * embedded-file attachment) + `libxmljs2` (per-render XSD validation
+ * embedded-file attachment) + `xmllint-wasm` (per-render XSD validation
  * against EN 16931 so a non-conformant XML aborts the issuance atom
  * rather than landing on B2; see `invoice/xsdValidator.ts`).
  *
@@ -84,7 +84,7 @@ export class InvoiceRenderer {
   async render(input: InvoiceRenderInput): Promise<RenderedInvoice> {
     void input.companyProfile;
     const facturXml = buildFacturXml(input.invoice);
-    validateFacturXml(facturXml);
+    await validateFacturXml(facturXml);
     const pdfBytes = await drawInvoicePdf(input.invoice, facturXml);
     return { pdfBytes, facturXml };
   }

@@ -170,6 +170,6 @@ describe('InvoiceRenderer — factur-x.xml + EN 16931 XSD (AT-117 shape, route-f
     // internally and would throw before returning — this re-check
     // pins the assertion even if the internal step is ever
     // refactored away.
-    expect(() => validateFacturXml(out.facturXml)).not.toThrow();
+    await expect(validateFacturXml(out.facturXml)).resolves.toBeUndefined();
   });
 });
