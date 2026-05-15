@@ -120,6 +120,7 @@ async function main(): Promise<void> {
         `mismatched STORAGE_SECRET_KEY (applicationKey from a different key pair), ` +
         `wrong STORAGE_REGION, or app-key capability set missing listFiles. ` +
         `See docs/ops/object-storage-provisioning.md.`,
+      { cause: err },
     );
   }
 
@@ -155,6 +156,7 @@ async function probeUploadVerb(storage: AttachmentStorageClient, bucket: string)
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `probe-upload: FAILED to sign presigned PUT (bucket=${bucket})\n  ${name}: ${msg}`,
+      { cause: err },
     );
   }
   // The browser's fetch refuses to honor a manual Content-Length and
@@ -171,10 +173,12 @@ async function probeUploadVerb(storage: AttachmentStorageClient, bucket: string)
     res = await fetch(descriptor.url, { method: 'PUT', headers, body });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`probe-upload: FAILED PUT request (bucket=${bucket})\n  ${msg}`);
+    throw new Error(`probe-upload: FAILED PUT request (bucket=${bucket})\n  ${msg}`, {
+      cause: err,
+    });
   }
   if (!res.ok) {
-    let respBody = '';
+    let respBody: string;
     try {
       respBody = (await res.text()).slice(0, 600);
     } catch {
@@ -271,6 +275,7 @@ async function probeCopyObjectVerb(env: {
         `with the full seven-cap set including writeFileRetentions, then ` +
         `update STORAGE_ACCESS_KEY in .env and STORAGE_SECRET_KEY in ` +
         `secrets.env.age, and redeploy.`,
+      { cause: err },
     );
   }
   console.error(

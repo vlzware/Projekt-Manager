@@ -43,13 +43,15 @@ try {
 
 /**
  * Log in as the given user and save the authenticated context. The
- * role-specific landing testid is the ready signal (bookkeeper lands
- * at `/projects`, every other role at `/kanban`).
+ * role-specific landing testid is the ready signal — see
+ * `src/config/routes.ts` for the canonical per-role default:
+ * owner/office → `/kanban` (`kanban-board`), worker → `/meine-projekte`
+ * (`my-projects-view`), bookkeeper → `/rechnungen` (`invoice-list-view`).
  */
 async function loginAndSaveState(
   page: Page,
   user: { username: string; displayName: string },
-  landingTestId: 'kanban-board' | 'project-table' | 'my-projects-view',
+  landingTestId: 'kanban-board' | 'my-projects-view' | 'invoice-list-view',
   statePath: string,
 ): Promise<void> {
   await page.goto('/');
@@ -122,5 +124,5 @@ setup('authenticate worker', async ({ page }) => {
 });
 
 setup('authenticate bookkeeper', async ({ page }) => {
-  await loginAndSaveState(page, SEED_USERS.bookkeeper, 'project-table', STORAGE_STATES.bookkeeper);
+  await loginAndSaveState(page, SEED_USERS.bookkeeper, 'invoice-list-view', STORAGE_STATES.bookkeeper);
 });

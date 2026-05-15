@@ -456,7 +456,6 @@ describe('AT-102: push dispatch within configured latency budget (AC-194)', () =
     });
     expect(ruleRes.statusCode).toBe(201);
 
-    let commitAt: number | null = null;
     let dispatchAt: number | null = null;
     const unsubscribe = pub.onEventDispatched(() => {
       dispatchAt = Date.now();
@@ -468,14 +467,14 @@ describe('AT-102: push dispatch within configured latency budget (AC-194)', () =
         (p) => p.status === 'beauftragt',
       );
       expect(target).toBeDefined();
-      commitAt = Date.now();
+      const commitAt = Date.now();
       const res = await authPost(ownerToken, `/api/projects/${target!.id}/transition/forward`, {
         expectedStatus: 'beauftragt',
       });
       expect(res.statusCode).toBe(200);
 
       expect(dispatchAt).not.toBeNull();
-      const delta = dispatchAt! - commitAt!;
+      const delta = dispatchAt! - commitAt;
       expect(delta).toBeLessThanOrEqual(cfg.PUSH_DISPATCH_LATENCY_BUDGET_MS);
     } finally {
       unsubscribe();

@@ -76,6 +76,16 @@ process.on('exit', () => {
   }
 });
 
+// Mirror the DATABASE_URL / STORAGE_BUCKET pattern above: the Playwright
+// runner itself opens a direct backend handle in `auth.setup.ts` to run
+// `seed({ force: true })`, which constructs InvoiceService and calls
+// `getEnv()` — so the runner process needs these too, not just the
+// spawned webServer. Locally `.env` supplies them globally; in CI no
+// `.env` exists, and the seed throws "STORAGE_* and BINARY_AGE_RECIPIENT
+// / BINARY_AGE_IDENTITY_PATH are required" without this assignment.
+process.env.BINARY_AGE_RECIPIENT = E2E_BINARY_RECIPIENT;
+process.env.BINARY_AGE_IDENTITY_PATH = E2E_BINARY_IDENTITY_PATH;
+
 // Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1` blocks
 // Chromium's namespace sandbox. Without this, Playwright injects
 // `--no-sandbox` as a fallback and Chromium renders an "unsupported flag"
@@ -83,11 +93,15 @@ process.on('exit', () => {
 // (installed via the google-chrome-stable .deb) restores the sandbox —
 // Chromium's docs rank this as the safest of the three workarounds
 // (https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md).
-// Only applied when the helper is actually present; CI images and
-// workstations without google-chrome-stable fall through to Playwright's
-// default `--no-sandbox` launch, where the infobar is irrelevant (headless).
+//
+// Skipped under CI: the ubuntu-latest runner image ships the
+// `/opt/google/chrome/chrome-sandbox` binary but without the required
+// `chown root && chmod 4755`, so Chromium aborts on launch ("SUID
+// sandbox helper binary was found, but is not configured correctly").
+// CI runs headless where the infobar is irrelevant anyway, so falling
+// through to Playwright's default `--no-sandbox` launch is correct.
 const SUID_SANDBOX = '/opt/google/chrome/chrome-sandbox';
-const USE_SUID_SANDBOX = fs.existsSync(SUID_SANDBOX);
+const USE_SUID_SANDBOX = !process.env.CI && fs.existsSync(SUID_SANDBOX);
 if (USE_SUID_SANDBOX) {
   process.env.CHROME_DEVEL_SANDBOX = SUID_SANDBOX;
 }
@@ -197,17 +211,24 @@ export default defineConfig({
       },
     },
 
-    // 5. Demo recordings — not part of the normal test suite.
-    //    Run: npx playwright test --project=demo --headed
-    {
-      name: 'demo',
-      testMatch: DEMO_TESTS,
-      use: {
-        ...devices['Desktop Chrome'],
-        viewport: { width: 1400, height: 1200 },
-        video: { mode: 'on', size: { width: 1400, height: 1200 } },
-      },
-    },
+    // 5. Demo recordings — opt-in only. The project is omitted from
+    //    the config entirely unless PLAYWRIGHT_RUN_DEMO is set, so a
+    //    bare `npx playwright test` (locally or in CI) does not pick
+    //    them up. Run them with:
+    //      PLAYWRIGHT_RUN_DEMO=1 npx playwright test --project=demo --headed
+    ...(process.env.PLAYWRIGHT_RUN_DEMO
+      ? [
+          {
+            name: 'demo',
+            testMatch: DEMO_TESTS,
+            use: {
+              ...devices['Desktop Chrome'],
+              viewport: { width: 1400, height: 1200 },
+              video: { mode: 'on' as const, size: { width: 1400, height: 1200 } },
+            },
+          },
+        ]
+      : []),
   ],
   /**
    * Playwright spawns its own dev server + backend on ports separate

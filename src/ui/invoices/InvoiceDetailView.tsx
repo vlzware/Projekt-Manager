@@ -159,6 +159,7 @@ export function InvoiceDetailView() {
 
   const attrs = statusAttrs(invoice);
   const isStorno = invoice.cancellationOf !== null;
+  const isOriginal = !isStorno;
   const isIssuedOriginal = invoice.status === 'issued' && !isStorno;
 
   // The PDF download affordance is renamed for ZUGFeRD-profile rows to
@@ -385,7 +386,7 @@ export function InvoiceDetailView() {
         </dl>
       </section>
 
-      {isIssuedOriginal && siblings.length > 0 && (
+      {isOriginal && siblings.length > 0 && (
         <section className={styles.card} aria-label={STRINGS.invoices.detailStornoSiblings}>
           <h2 className={styles.cardHeading}>{STRINGS.invoices.detailStornoSiblings}</h2>
           <div className={styles.siblings} data-testid="invoice-detail-storno-siblings">

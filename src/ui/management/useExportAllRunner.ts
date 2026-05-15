@@ -194,6 +194,10 @@ export function useExportAllRunner(input: UseExportAllRunnerInput): UseExportAll
   // arms — close, resize, re-open).
   useEffect(() => {
     if (!isOpen) {
+      // Reset to `closed` on dialog close. Fires once per isOpen→false
+      // transition (the effect's `[isOpen, …]` deps make it idempotent);
+      // not a cascading-renders pattern.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPhase({ kind: 'closed' });
       return;
     }

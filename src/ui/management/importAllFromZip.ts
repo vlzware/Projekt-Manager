@@ -456,6 +456,7 @@ export function parseTakeoutZip(zip: Uint8Array): ParsedTakeoutZip {
   } catch (err) {
     throw new Error(
       `parseTakeoutZip: zip unreadable: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
 
@@ -475,6 +476,7 @@ export function parseTakeoutZip(zip: Uint8Array): ParsedTakeoutZip {
   } catch (err) {
     throw new Error(
       `parseTakeoutZip: manifest.json invalid: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
 
@@ -487,6 +489,7 @@ export function parseTakeoutZip(zip: Uint8Array): ParsedTakeoutZip {
   } catch (err) {
     throw new Error(
       `parseTakeoutZip: data.json invalid: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
 

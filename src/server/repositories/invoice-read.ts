@@ -142,7 +142,6 @@ export async function listInvoices(
     );
   }
 
-  let customerProjectIds: string[] | null = null;
   if (opts.customerId) {
     // Resolve the customer's project ids first so the SELECT has the
     // same shape as the project-scoped path. Single round-trip; the
@@ -151,7 +150,7 @@ export async function listInvoices(
       .select({ id: projects.id })
       .from(projects)
       .where(eq(projects.customerId, opts.customerId));
-    customerProjectIds = rows.map((r) => r.id);
+    const customerProjectIds = rows.map((r) => r.id);
     if (customerProjectIds.length === 0) {
       return { data: [], total: 0 };
     }

@@ -324,16 +324,10 @@ export async function assertBinaryIdentityLoaded(
   let nextProgressLogAt = startTime + progressLogIntervalMs;
   let initialWaitLogEmitted = false;
   let timedOut = false;
-  // Initialized to a sentinel so TS knows the variable is defined at
-  // the throw site below; the first loop iteration overwrites it
-  // before any break path is reached. (Reachable only via an
-  // implementation bug — preserved as a defensive log line rather
-  // than an exception so a future regression surfaces in operator
-  // logs instead of bash's generic stack trace.)
-  let lastNonOkVerdict: { ok: false; failures: string[] } = {
-    ok: false,
-    failures: ['internal: binary-identity probe loop exited before recording a verdict'],
-  };
+  // Definite-assignment: every non-`return` exit from the loop below
+  // assigns `lastNonOkVerdict` before breaking, so the post-loop read
+  // at the throw site is reached only after at least one iteration.
+  let lastNonOkVerdict!: { ok: false; failures: string[] };
 
   while (true) {
     const snapshot = await captureSnapshot(identityPath, configuredRecipient);

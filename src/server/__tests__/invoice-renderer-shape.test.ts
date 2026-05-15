@@ -91,14 +91,10 @@ function makeInvoice(mode: TaxMode): Invoice {
 }
 
 async function pdfText(bytes: Uint8Array): Promise<string> {
-  // Dynamic import via variable so TS --noEmit passes without a
-  // dedicated `@types/pdf-parse` package (the lib ships no .d.ts).
-  const modPath = 'pdf-parse';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod = (await import(/* @vite-ignore */ modPath)) as any;
-  const fn = mod.default ?? mod;
-  const result = await fn(Buffer.from(bytes));
-  return String(result.text);
+  const { extractText, getDocumentProxy } = await import('unpdf');
+  const pdf = await getDocumentProxy(bytes);
+  const { text } = await extractText(pdf, { mergePages: true });
+  return text;
 }
 
 describe('InvoiceRenderer — boilerplate (AT-116 shape, route-free)', () => {
@@ -151,7 +147,7 @@ describe('InvoiceRenderer — factur-x.xml + EN 16931 XSD (AT-117 shape, route-f
     // under the exact `factur-x.xml` name. This mirrors what AT-117's
     // `extractFacturXml` helper does inside `invoices-issue.test.ts`.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const pdfLib = (await import('pdf-lib')) as any;
+    const pdfLib = (await import('@cantoo/pdf-lib')) as any;
     const doc = await pdfLib.PDFDocument.load(out.pdfBytes);
     const namesDict = doc.catalog.lookup(pdfLib.PDFName.of('Names'), pdfLib.PDFDict);
     const ef = namesDict.lookup(pdfLib.PDFName.of('EmbeddedFiles'), pdfLib.PDFDict);

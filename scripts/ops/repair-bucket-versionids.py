@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Tested with boto3 >= 1.30. The `client('s3', ...)` constructor and
+# `get_paginator('list_object_versions')` surfaces this script uses
+# are stable across boto3 1.x.
 """
 Repair attachments.{version_id,thumb_version_id} after a bucket mirror.
 

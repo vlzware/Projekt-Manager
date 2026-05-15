@@ -280,35 +280,31 @@ async function fetchRenderedPdfBytes(token: string, invoiceId: string): Promise<
 }
 
 /**
- * Extract plain text from a PDF buffer. Uses `pdf-parse` lazily so a
- * missing devDep does not block the file's parse. AT-116 uses this to
- * grep for the per-tax-mode boilerplate strings.
+ * Extract plain text from a PDF buffer. AT-116 uses this to grep for
+ * the per-tax-mode boilerplate strings.
  */
 async function extractPdfText(buf: Buffer): Promise<string> {
-  // Dynamic import so TS --noEmit passes even before pdf-parse is added
-  // to devDependencies. Step-5 implementer installs it.
-  const path = 'pdf-parse';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod = (await import(/* @vite-ignore */ path)) as any;
-  const fn = mod.default ?? mod;
-  const result = await fn(buf);
-  return String(result.text);
+  const { extractText, getDocumentProxy } = await import('unpdf');
+  const pdf = await getDocumentProxy(new Uint8Array(buf));
+  const { text } = await extractText(pdf, { mergePages: true });
+  return text;
 }
 
 /**
  * Extract the embedded `factur-x.xml` file from a PDF/A-3 buffer.
  * PDF/A-3 carries embedded files via the `/EmbeddedFiles` name tree;
  * factur-x is conventionally named `factur-x.xml`. Lazy import of a
- * PDF library (`pdf-lib` is the lightweight Node-native pick) keeps
+ * PDF library (`@cantoo/pdf-lib` is the lightweight Node-native pick) keeps
  * this file parse-clean pre-impl.
  */
 async function extractFacturXml(buf: Buffer): Promise<string> {
-  // pdf-lib v1.17.x does not expose `embeddedFiles` publicly, so we walk
+  // @cantoo/pdf-lib (a maintained fork of pdf-lib v1.17.x) does not
+  // expose `embeddedFiles` publicly, so we walk
   // the catalog name tree directly: `/Catalog → /Names → /EmbeddedFiles
   // → /Names` is the PDF/A-3 convention. Each pair is
   // `(filename, filespec)`, where the filespec's `/EF/F` ref points at
   // the embedded-file stream.
-  const path = 'pdf-lib';
+  const path = '@cantoo/pdf-lib';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lib = (await import(/* @vite-ignore */ path)) as any;
   const {
@@ -360,7 +356,7 @@ async function extractFacturXml(buf: Buffer): Promise<string> {
     if (fileStream instanceof PDFRawStream) {
       bytes = decodePDFRawStream(fileStream).decode();
     } else {
-      // Fallback — pdf-lib normalises to PDFRawStream on load; the
+      // Fallback — @cantoo/pdf-lib normalises to PDFRawStream on load; the
       // branch is here as a safety net only.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       bytes = (fileStream as any).getContents() as Uint8Array;

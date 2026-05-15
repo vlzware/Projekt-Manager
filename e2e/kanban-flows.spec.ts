@@ -144,10 +144,23 @@ test.describe('Kanban board flows', () => {
     // picks a `.first()` card from the same column gets a different
     // card than the seed promises, cascading into count-assertion
     // failures that look unrelated to the real cause.
+    // Read the integer count displayed in a column-count badge. Returned
+    // as a number so the assertion can express transitions relative to
+    // the count seen at test start — earlier mutating suites in the
+    // serial bucket (invoices, daten-vollstaendiger-import) reshape the
+    // seed before kanban-flows runs, so pinning to a literal "2" / "3"
+    // is brittle.
+    async function readColumnCount(page: Page, status: string) {
+      const text = await page.getByTestId(`column-count-${status}`).textContent();
+      return Number((text ?? '').trim());
+    }
+
     test('advances a card via the forward button and confirmation', async ({ page }) => {
       // AC-4 / AC-5 / AC-6: Transitions now live on the Kanban card
       // itself — the detail panel no longer carries forward / backward
       // buttons (the card is the single place to organize projects).
+      const initialGeplant = await readColumnCount(page, 'geplant');
+
       const geplantColumn = page.getByTestId('kanban-column-geplant');
       const geplantCard = geplantColumn.locator('[data-testid^="project-card-"]').first();
       const cardTestId = await geplantCard.getAttribute('data-testid');
@@ -165,7 +178,9 @@ test.describe('Kanban board flows', () => {
         .getByTestId('kanban-column-in_arbeit')
         .getByTestId(`project-card-${projectId}`);
       await expect(movedCard).toBeVisible();
-      await expect(page.getByTestId('column-count-geplant')).toContainText('1');
+      await expect(page.getByTestId('column-count-geplant')).toHaveText(
+        String(initialGeplant - 1),
+      );
 
       // Net-zero teardown: move the card back to geplant via the backward
       // arrow so later tests see the seed column counts restored.
@@ -177,13 +192,15 @@ test.describe('Kanban board flows', () => {
       await expect(
         page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
       ).toBeVisible();
-      await expect(page.getByTestId('column-count-geplant')).toContainText('2');
+      await expect(page.getByTestId('column-count-geplant')).toHaveText(String(initialGeplant));
     });
 
     test('moves a card backward from the Kanban card', async ({ page }) => {
       // Net-zero by construction: this test forwards then backs the
-      // SAME card, so it restores the seed regardless of execution
-      // order.
+      // SAME card, so it restores its starting column regardless of
+      // execution order.
+      const initialGeplant = await readColumnCount(page, 'geplant');
+      const initialRechnungFaellig = await readColumnCount(page, 'rechnung_faellig');
 
       // Set up: advance a geplant card so we have something to move back.
       const geplantColumn = page.getByTestId('kanban-column-geplant');
@@ -212,12 +229,14 @@ test.describe('Kanban board flows', () => {
         page.getByTestId('kanban-column-geplant').getByTestId(`project-card-${projectId}`),
       ).toBeVisible();
 
-      // Geplant count restored
-      await expect(page.getByTestId('column-count-geplant')).toContainText('2');
+      // Geplant count restored to its pre-mutation value.
+      await expect(page.getByTestId('column-count-geplant')).toHaveText(String(initialGeplant));
 
       // Cross-feature invariance: an unrelated state transition must
       // leave the rechnung_faellig column count untouched.
-      await expect(page.getByTestId('column-count-rechnung_faellig')).toContainText('3');
+      await expect(page.getByTestId('column-count-rechnung_faellig')).toHaveText(
+        String(initialRechnungFaellig),
+      );
     });
   });
 

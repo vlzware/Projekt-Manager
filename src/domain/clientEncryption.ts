@@ -144,6 +144,7 @@ export function decodeDekMaterial(b64: string): Uint8Array {
   } catch (err) {
     throw new Error(
       `clientEncryption: dekMaterial is not valid base64: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
     );
   }
   if (bin.length !== DEK_BYTES) {

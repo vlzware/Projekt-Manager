@@ -128,11 +128,11 @@ Pinned versions (ADR-0009):
 
 | Package                 | Version                         |
 | ----------------------- | ------------------------------- |
-| `docker-ce`             | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `docker-ce-cli`         | `5:29.3.1-1~ubuntu.24.04~noble` |
-| `containerd.io`         | `2.2.2-1~ubuntu.24.04~noble`    |
-| `docker-buildx-plugin`  | `0.33.0-1~ubuntu.24.04~noble`   |
-| `docker-compose-plugin` | `5.1.1-1~ubuntu.24.04~noble`    |
+| `docker-ce`             | `5:29.5.0-1~ubuntu.24.04~noble` |
+| `docker-ce-cli`         | `5:29.5.0-1~ubuntu.24.04~noble` |
+| `containerd.io`         | `2.2.3-1~ubuntu.24.04~noble`    |
+| `docker-buildx-plugin`  | `0.34.0-1~ubuntu.24.04~noble`   |
+| `docker-compose-plugin` | `5.1.3-1~ubuntu.24.04~noble`    |
 
 1. Add Docker apt repository:
 
@@ -151,11 +151,11 @@ Pinned versions (ADR-0009):
 
    ```bash
    sudo apt-get install -y \
-     docker-ce=5:29.3.1-1~ubuntu.24.04~noble \
-     docker-ce-cli=5:29.3.1-1~ubuntu.24.04~noble \
-     containerd.io=2.2.2-1~ubuntu.24.04~noble \
-     docker-buildx-plugin=0.33.0-1~ubuntu.24.04~noble \
-     docker-compose-plugin=5.1.1-1~ubuntu.24.04~noble
+     docker-ce=5:29.5.0-1~ubuntu.24.04~noble \
+     docker-ce-cli=5:29.5.0-1~ubuntu.24.04~noble \
+     containerd.io=2.2.3-1~ubuntu.24.04~noble \
+     docker-buildx-plugin=0.34.0-1~ubuntu.24.04~noble \
+     docker-compose-plugin=5.1.3-1~ubuntu.24.04~noble
    sudo usermod -aG docker deploy
    ```
 
@@ -167,8 +167,8 @@ Pinned versions (ADR-0009):
 **Verify:**
 
 ```bash
-docker --version              # 29.3.1
-docker compose version        # v5.1.1
+docker --version              # 29.5.0
+docker compose version        # v5.1.3
 apt-mark showhold             # all five listed
 sudo -u deploy docker ps      # empty table, not "permission denied"
 ```

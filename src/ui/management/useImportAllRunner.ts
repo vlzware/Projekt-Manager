@@ -288,6 +288,10 @@ export function useImportAllRunner(input: UseImportAllRunnerInput): UseImportAll
   // (or `error`) once the async work settles.
   useEffect(() => {
     let cancelled = false;
+    // Reset to `parsing` when `file` changes — the async block below
+    // then settles into `preflight` or `error`. Fires once per file
+    // change, not a cascade.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPhase({ kind: 'parsing' });
 
     void (async () => {

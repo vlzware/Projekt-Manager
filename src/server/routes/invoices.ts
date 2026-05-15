@@ -24,7 +24,7 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import type { Database } from '../db/connection.js';
 import { createAuthMiddleware, requirePermission } from '../middleware/auth.js';
 import { createInvoiceService, type ListInvoicesOpts } from '../services/InvoiceService.js';
@@ -509,7 +509,7 @@ export function invoiceRoutes(db: Database) {
         const manifest = buildManifestCsv(invoices);
 
         const filename = `Rechnungen_${scopeLabel}_${todayIsoDate()}.zip`;
-        const archive = archiver('zip', { zlib: { level: 9 } });
+        const archive = new ZipArchive({ zlib: { level: 9 } });
         archive.on('warning', (err) => {
           request.log.warn({ err }, 'invoice_export_archive_warning');
         });

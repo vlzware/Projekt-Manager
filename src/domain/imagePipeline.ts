@@ -268,7 +268,7 @@ async function shrinkUntilUnderCap(
         acceptCeiling,
         hint: 'STEP heuristic in @uploadcare/image-shrink may have moved; re-derive shrinkAcceptCeiling',
       });
-      throw new Error('IMAGE_PROCESSING_FAILED');
+      throw new Error('IMAGE_PROCESSING_FAILED', { cause: err });
     }
     if (out.size <= cap) return out;
     last = out;
@@ -414,7 +414,7 @@ export async function runImagePipeline(
       mimeType: file.type,
       error: err instanceof Error ? `${err.name}: ${err.message}` : err,
     });
-    throw new Error('IMAGE_PROCESSING_FAILED');
+    throw new Error('IMAGE_PROCESSING_FAILED', { cause: err });
   }
 
   let thumbnail: Blob | null = null;

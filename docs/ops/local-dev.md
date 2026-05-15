@@ -4,7 +4,7 @@ No Caddy, no TLS, plain HTTP on loopback. `http://localhost` is a W3C secure con
 
 ## Prerequisites
 
-- **Node 22.20.0** (pinned in `.nvmrc`) -- `nvm install`
+- **Node 22.22.3** (pinned in `.nvmrc`) -- `nvm install`
 - **Docker + Compose plugin**
 - Free ports: `3000` (Fastify), `5173` (Vite), `5432` (Postgres), `9000`/`9001` (MinIO)
 
