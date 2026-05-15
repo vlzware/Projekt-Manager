@@ -249,7 +249,7 @@ function resolveCaps(): ResolvedCaps {
   // `validateEnvRuntime` has already run by the time a route handler reaches
   // the service; reading through `getEnv` keeps the config override
   // path consistent with the other `[C]` surfaces (auditRetention etc.).
-  let env: ReturnType<typeof getEnv> | null = null;
+  let env: ReturnType<typeof getEnv> | null;
   try {
     env = getEnv();
   } catch {

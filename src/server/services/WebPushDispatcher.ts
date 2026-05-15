@@ -74,7 +74,7 @@ export class WebPushDispatcher implements PushDispatcher {
       },
     };
 
-    let statusCode: number | null = null;
+    let statusCode: number | null;
     try {
       const result = await webpush.sendNotification(subscription, JSON.stringify(payload), {
         TTL: PUSH_TTL_SECONDS,

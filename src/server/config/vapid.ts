@@ -126,6 +126,7 @@ export function resolveVapidKeyMaterial(opts: VapidResolverOptions): VapidKeyMat
     const reason = err instanceof Error ? err.message : String(err);
     throw new Error(
       `VAPID_PRIVATE_KEY is malformed (expected urlsafe-base64 32-byte P-256 scalar): ${reason}`,
+      { cause: err },
     );
   }
 

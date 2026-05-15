@@ -102,8 +102,12 @@ export function Papierkorb({ projectId }: PapierkorbProps) {
   useEffect(() => {
     // Skip the duplicate fetch when the cache is already populated by
     // the page-level eager fetch. The retry banner still uses
-    // `runFetch` directly.
+    // `runFetch` directly. `runFetch` is async; the setState calls
+    // inside it happen after `await`, not synchronously in the effect
+    // body, so the cascading-renders concern of `set-state-in-effect`
+    // does not apply here.
     if (items !== undefined) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void runFetch();
     // `items` intentionally not in deps: we only want to gate the
     // mount-time fetch, not retrigger when the cache later mutates.
