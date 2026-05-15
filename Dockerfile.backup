@@ -6,16 +6,16 @@
 #      image. APP_IMAGE_TAG must match the tag deployed on the same
 #      commit (scripts/deploy.sh exports it before `docker compose up`);
 #      defaults to the current iteration branch tag for dev.
-#   2. final stage — node:22.20.0-alpine with postgresql17 (server +
+#   2. final stage — node:22.22.3-alpine with postgresql17 (server +
 #      client) and the rest of the operational toolchain layered on top,
 #      plus the backend bundle from stage 1.
 #
-# BASE IMAGE CHOICE (F1): node:22.20.0-alpine instead of
+# BASE IMAGE CHOICE (F1): node:22.22.3-alpine instead of
 # postgres:17-alpine. Reason: ADR-0009 pins the app runtime at node
-# v22.20.0. postgres:17-alpine is tracking Alpine 3.23, whose `apk add
+# v22.22.3. postgres:17-alpine is tracking Alpine 3.23, whose `apk add
 # nodejs` resolves to v24.x — that would silently diverge from the app
 # image's v22 line and break the parity rule ADR-0009 exists to
-# enforce. node:22.20.0-alpine is on Alpine 3.22, which ships
+# enforce. node:22.22.3-alpine is on Alpine 3.22, which ships
 # postgresql17 server + client packages directly, so initdb /
 # postgres / pg_restore / pg_isready / pg_dump / psql are all
 # available for the Tier 1 verify-on-create path (ADR-0020 §Decision,
@@ -29,7 +29,7 @@ ARG APP_IMAGE_TAG
 # hadolint ignore=DL3006  # tag is set by scripts/deploy.sh per commit
 FROM ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG} AS appsrc
 
-FROM node:22.20.0-alpine
+FROM node:22.22.3-alpine
 
 # Package roles:
 #   postgresql17         — server binaries (initdb, postgres) used by
