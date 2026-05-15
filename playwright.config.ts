@@ -76,6 +76,16 @@ process.on('exit', () => {
   }
 });
 
+// Mirror the DATABASE_URL / STORAGE_BUCKET pattern above: the Playwright
+// runner itself opens a direct backend handle in `auth.setup.ts` to run
+// `seed({ force: true })`, which constructs InvoiceService and calls
+// `getEnv()` — so the runner process needs these too, not just the
+// spawned webServer. Locally `.env` supplies them globally; in CI no
+// `.env` exists, and the seed throws "STORAGE_* and BINARY_AGE_RECIPIENT
+// / BINARY_AGE_IDENTITY_PATH are required" without this assignment.
+process.env.BINARY_AGE_RECIPIENT = E2E_BINARY_RECIPIENT;
+process.env.BINARY_AGE_IDENTITY_PATH = E2E_BINARY_IDENTITY_PATH;
+
 // Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1` blocks
 // Chromium's namespace sandbox. Without this, Playwright injects
 // `--no-sandbox` as a fallback and Chromium renders an "unsupported flag"
