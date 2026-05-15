@@ -209,6 +209,29 @@ describe('InvoiceDetailView — cancelled original', () => {
     );
     expect(screen.queryByTestId('invoice-detail-cancel-button')).toBeNull();
   });
+
+  it('renders the storno-siblings list (§8.16.1 — original links to every Storno)', async () => {
+    setAuthUser(['owner']);
+    const storno = makeInvoice({
+      id: 'storno-1',
+      number: 'ST-2026-0001',
+      status: 'issued',
+      cancellationOf: 'inv-1',
+    });
+    getByIdMock.mockResolvedValue({
+      ok: true,
+      data: makeInvoice({ status: 'cancelled', cancellationReason: 'Tippfehler' }),
+    });
+    listMock.mockResolvedValue({ ok: true, data: { data: [storno], total: 1 } });
+    renderAt('/rechnungen/inv-1');
+
+    await screen.findByTestId('invoice-detail-view');
+    await waitFor(() => {
+      expect(screen.getByTestId('invoice-detail-storno-siblings')).toHaveTextContent(
+        'ST-2026-0001',
+      );
+    });
+  });
 });
 
 describe('InvoiceDetailView — Storno row', () => {
