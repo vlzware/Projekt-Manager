@@ -91,14 +91,10 @@ function makeInvoice(mode: TaxMode): Invoice {
 }
 
 async function pdfText(bytes: Uint8Array): Promise<string> {
-  // Dynamic import via variable so TS --noEmit passes without a
-  // dedicated `@types/pdf-parse` package (the lib ships no .d.ts).
-  const modPath = 'pdf-parse';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod = (await import(/* @vite-ignore */ modPath)) as any;
-  const fn = mod.default ?? mod;
-  const result = await fn(Buffer.from(bytes));
-  return String(result.text);
+  const { extractText, getDocumentProxy } = await import('unpdf');
+  const pdf = await getDocumentProxy(bytes);
+  const { text } = await extractText(pdf, { mergePages: true });
+  return text;
 }
 
 describe('InvoiceRenderer — boilerplate (AT-116 shape, route-free)', () => {

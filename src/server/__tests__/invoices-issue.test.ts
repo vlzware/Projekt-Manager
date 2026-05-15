@@ -280,19 +280,14 @@ async function fetchRenderedPdfBytes(token: string, invoiceId: string): Promise<
 }
 
 /**
- * Extract plain text from a PDF buffer. Uses `pdf-parse` lazily so a
- * missing devDep does not block the file's parse. AT-116 uses this to
- * grep for the per-tax-mode boilerplate strings.
+ * Extract plain text from a PDF buffer. AT-116 uses this to grep for
+ * the per-tax-mode boilerplate strings.
  */
 async function extractPdfText(buf: Buffer): Promise<string> {
-  // Dynamic import so TS --noEmit passes even before pdf-parse is added
-  // to devDependencies. Step-5 implementer installs it.
-  const path = 'pdf-parse';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod = (await import(/* @vite-ignore */ path)) as any;
-  const fn = mod.default ?? mod;
-  const result = await fn(buf);
-  return String(result.text);
+  const { extractText, getDocumentProxy } = await import('unpdf');
+  const pdf = await getDocumentProxy(new Uint8Array(buf));
+  const { text } = await extractText(pdf, { mergePages: true });
+  return text;
 }
 
 /**
