@@ -1,8 +1,28 @@
 # ADR-0007: Suppress esbuild dev-server advisory (GHSA-67mh-4wv8-2f99)
 
-- **Status:** Accepted
+- **Status:** Superseded by PR #195 (2026-05-15)
 - **Date:** 2026-04-05
 - **Confidence:** High
+
+## Supersession
+
+A scoped npm override now pins `@esbuild-kit/core-utils > esbuild` to
+`^0.25.0`, taking the nested copy out of the vulnerable `<=0.24.2` range.
+`npm audit` reports zero advisories; the CI suppression block is gone.
+
+The "npm overrides" path was rejected below on the grounds that overriding
+dead code cannot reduce runtime risk. That framing conflated two goals:
+runtime exposure (zero either way — `serve()` is never called) and
+audit-signal hygiene (the actual reason for the suppression). The
+override addresses the latter without claiming to address the former,
+and removes the maintenance burden of a per-advisory CI bypass.
+
+`drizzle-kit generate` was exercised end-to-end with the bumped esbuild
+(reads all 14 tables, no diff) before merging — addressing the residual
+concern that drizzle-kit might silently rely on the @esbuild-kit loader
+at runtime despite the static-analysis claim below.
+
+The original record is preserved below for context.
 
 ## Context
 
