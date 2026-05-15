@@ -112,6 +112,14 @@ Three implementation-blocking questions are settled in design but not yet valida
 
 Confidence escalates to High once those three are settled in implementation.
 
+## Dep lifecycle health (as of 2026-05-15)
+
+| Dep                         | Status                                                          | Notes                                                                                                                                                                                      |
+| --------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `age` (binary identity)     | see [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md) | Independent keypair from the backup identity ([ADR-0020](0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md)) — separate rotation cadence, separate blast radius.            |
+| WebCrypto / `crypto.subtle` | W3C spec, browser-native                                        | Universal in scope-targeted browsers; no third-party dep. AES-256-GCM is the standard primitive.                                                                                           |
+| `client-zip`                | 2.5.x (^2.5.0 in `package.json`), MIT, active                   | Browser streaming-zip generator; the load-bearing memory-budget primitive for the SW bulk-download path. Verified active in [#187](https://github.com/vlzware/Projekt-Manager/issues/187). |
+
 ## References
 
 - [Kickoff](../project/kickoff.md) — e2e as a project goal; this ADR closes the binary domain.

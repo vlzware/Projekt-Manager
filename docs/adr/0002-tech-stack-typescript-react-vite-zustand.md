@@ -80,6 +80,20 @@ _Details in Decision above; one-line rejections here._
 - "Choose your own adventure" ecosystem — more library decisions than Vue or Svelte
 - CSS Modules lack Tailwind's rapid-prototyping speed
 
+## Dep lifecycle health (as of 2026-05-15)
+
+Cross-reference: dep audit [#187](https://github.com/vlzware/Projekt-Manager/issues/187).
+
+| Dep                   | Last release        | License    | Maintainership                    | Notes                                                                                                                          |
+| --------------------- | ------------------- | ---------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `typescript`          | 6.0.3 (2026-04-16)  | Apache-2.0 | Microsoft, very active            | [deps.dev](https://deps.dev/npm/typescript) — load-bearing language; no viable alternative                                     |
+| `react` + `react-dom` | 19.2.6 (2026-05-08) | MIT        | Meta, very active                 | [deps.dev](https://deps.dev/npm/react)                                                                                         |
+| `vite`                | 8.0.13 (2026-05-14) | MIT        | VoidZero / Vite team, very active | [deps.dev](https://deps.dev/npm/vite)                                                                                          |
+| `zustand`             | 5.0.13 (2026-05-05) | MIT        | Poimandres, active                | [deps.dev](https://deps.dev/npm/zustand)                                                                                       |
+| `date-fns`            | 4.1.0 (2025-08-03)  | MIT        | active                            | [deps.dev](https://deps.dev/npm/date-fns) — 9 months since last publish; not yet a yellow flag, re-check next quarterly review |
+| `vitest`              | 4.1.6 (2026-05-11)  | MIT        | Vitest team, very active          | [deps.dev](https://deps.dev/npm/vitest)                                                                                        |
+| `@playwright/test`    | 1.60.0 (2026-05-15) | Apache-2.0 | Microsoft, very active            | [deps.dev](https://deps.dev/npm/@playwright/test)                                                                              |
+
 ## References
 
 - [ADR-0001: Generalized system with configurable customer specifics](0001-generalized-system-with-configurable-customer-specifics.md)

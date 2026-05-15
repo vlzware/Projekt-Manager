@@ -478,6 +478,18 @@ One row per deployment, pinned by `UNIQUE(singleton) + CHECK(singleton = true)`.
 
 `invoice_changed` SSE frames emit post-commit from the issue / cancel / draft-CRUD paths through `src/server/sse/emitters.ts`. The browser-side store fan-in mirrors the storage-usage pattern: `src/state/invoiceStore.ts` owns per-project cache; `src/state/invoiceListStore.ts` owns the cross-project `/rechnungen` view; both refresh on `invoice_changed` via `src/state/invoiceSseSubscription.ts` (the auth-gated `useEffect` in `src/App.tsx` is the only entry point). Worker callers are excluded structurally via the repository scope predicate ([ADR-0019](docs/adr/0019-worker-data-scoping-repository-layer-predicate.md)) — no `invoice:read` permission gate on the list / get routes (a worker probe returns `200 + []` for list, `404` for single-row, never `403` — matches the spec contract that worker exclusion is invisible).
 
+### Dep lifecycle health (as of 2026-05-15)
+
+[ADR-0026](docs/adr/0026-invoices-immutability-and-zugferd.md) delegates its lib choice here. Per [ADR-0027](docs/adr/0027-continuous-dependency-updates-with-supply-chain-scanning.md), this table is the canonical source for the invoice rendering pipeline's deps.
+
+| Dep                  | Last release                                                                   | License         | Maintainership                  | Notes                                                                                                                                                                                             |
+| -------------------- | ------------------------------------------------------------------------------ | --------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@cantoo/pdf-lib`    | 2.6.5 (2026-05-05)                                                             | MIT             | active maintainer               | Maintained fork of upstream `pdf-lib` (last upstream publish 2021-11-06). Adopted per audit [#187](https://github.com/vlzware/Projekt-Manager/issues/187) to replace the dormant upstream.        |
+| `xmllint-wasm`       | 5.2.0 (2026-03-24)                                                             | MIT             | `noppa/xmllint-wasm`, active    | Pure-WASM XSD validator. Replaces unmaintained `libxmljs2` ([#192](https://github.com/vlzware/Projekt-Manager/issues/192) / PR #194). Drops the only native binding from the project's dep graph. |
+| `fast-xml-parser`    | 5.8.0 (2026-05-12)                                                             | MIT             | active                          | Used for the factur-x.xml builder. Project `overrides` pins `^5.7.0` to bound transitive drift from AWS SDK.                                                                                      |
+| `archiver`           | 8.0.0 (per [#187](https://github.com/vlzware/Projekt-Manager/issues/187) bump) | MIT             | active                          | Server-side ZIP for bookkeeper bulk-export.                                                                                                                                                       |
+| EN 16931 XSD schemas | Bundled from `akretion/factur-x@d7fa1e7`                                       | EU/CEN standard | Versioned at the standards body | Standards-track artifact (not a runtime dep); refreshed when the standard publishes a new version.                                                                                                |
+
 ---
 
 ## Design Decisions (Not ADR-Worthy)

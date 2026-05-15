@@ -72,6 +72,14 @@ Query builder with solid migration support. Rejected: requires manual TS types f
 - Drizzle is younger than Prisma — less LLM training data, fewer community resources, which matters in AI-assisted workflows (same force that favored React over Svelte in ADR-0002). Mitigated by Drizzle's SQL-literate API: where LLM support falls short on niche Drizzle patterns, the developer can reason in SQL directly
 - JSON Schema (Fastify's validation format) is more verbose than alternatives like Zod
 
+## Dep lifecycle health (as of 2026-05-15)
+
+| Dep                  | Last release        | License    | Maintainership                                    | Notes                                                                                        |
+| -------------------- | ------------------- | ---------- | ------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `fastify`            | 5.8.5 (2026-04-14)  | MIT        | Fastify team (Matteo Collina et al.), very active | [deps.dev](https://deps.dev/npm/fastify) — OpenJS Foundation project                         |
+| `drizzle-orm`        | 0.45.2 (2026-05-15) | Apache-2.0 | Drizzle team, very active                         | [deps.dev](https://deps.dev/npm/drizzle-orm) — pre-1.0; bumped lockstep with `drizzle-kit`   |
+| `pg` (node-postgres) | 8.20.0 (2026-03-04) | MIT        | Brian Carlson + maintainers, active               | [deps.dev](https://deps.dev/npm/pg) — most-established Postgres driver in the Node ecosystem |
+
 ## References
 
 - [ADR-0002: Tech Stack — TypeScript, React 19, Vite, Zustand](0002-tech-stack-typescript-react-vite-zustand.md)

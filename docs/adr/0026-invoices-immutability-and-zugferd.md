@@ -142,6 +142,10 @@ Keep `company_profile.defaultTaxMode` plus a `taxModeOverride boolean` on the in
 - New permission keys `invoice:read` and `invoice:write` added to the permission registry; the bookkeeper role (currently a stub) gains `invoice:read`.
 - ZUGFeRD generation lands as a Node-native rendering pipeline (PDF/A-3 + embedded `factur-x.xml` with per-render XSD validation against the EN 16931 schemas); concrete libraries and paths are documented in [`ARCHITECTURE.md` § Invoices Module](../../ARCHITECTURE.md#invoices-module). No JVM, no external service.
 
+## Dep lifecycle health
+
+The named npm dependencies that implement this ADR's shape (PDF/A-3 + factur-x.xml + XSD validation + ZIP export) are tracked in [ARCHITECTURE.md § Invoices Module — Dep lifecycle health](../../ARCHITECTURE.md#dep-lifecycle-health-as-of-2026-05-15). One source of truth per dep; this ADR delegates to that section.
+
 ## References
 
 - [ADR-0001](0001-generalized-system-with-configurable-customer-specifics.md) — single-tenant deployment shape; basis for the `company_profile` singleton.
