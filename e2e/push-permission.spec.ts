@@ -99,10 +99,18 @@ test.describe('AC-202: Stummschalten reflects pushMuted and persists', () => {
   });
 
   test('failed mutation reverts the optimistic toggle', async ({ page }) => {
-    // Intercept the self-update request and respond with a 500 so the
-    // UI must revert its optimistic toggle change per AC-53 / §9.5.
+    // Hold the PATCH response until the test releases it. The optimistic
+    // flip is observable for as long as the request is in flight, so we
+    // can pin it deterministically — no race against CDP / fulfill
+    // latency. Once we assert the flipped state, release the deferred
+    // promise so the 500 lands and the store reverts.
+    let releaseResponse!: () => void;
+    const responseHeld = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
     await page.route('**/api/auth/me', async (route) => {
       if (route.request().method() === 'PATCH') {
+        await responseHeld;
         await route.fulfill({
           status: 500,
           contentType: 'application/json',
@@ -121,16 +129,12 @@ test.describe('AC-202: Stummschalten reflects pushMuted and persists', () => {
     await toggle.click();
 
     // AC-202 contract — two halves to pin:
-    //  1. The optimistic flip is observable BEFORE the server responds,
-    //     so the user gets immediate feedback.
+    //  1. The optimistic flip is observable BEFORE the server responds.
     //  2. The flip reverts after the 500 lands.
-    // The route handler above does not artificially delay the 500; we
-    // rely on the inherent CDP round-trip latency (handler in Node,
-    // toggle state in the browser) plus React's synchronous event-
-    // handler state-update to make the optimistic state observable.
-    await expect.poll(async () => toggle.isChecked(), { timeout: 2000 }).toBe(!before);
+    await expect.poll(async () => toggle.isChecked()).toBe(!before);
 
-    // After the 500 response the toggle must revert to its prior state.
+    // Release the 500 → the toggle must revert to its prior state.
+    releaseResponse();
     await expect.poll(async () => toggle.isChecked()).toBe(before);
   });
 });
