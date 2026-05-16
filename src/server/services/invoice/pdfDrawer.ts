@@ -559,7 +559,10 @@ export async function drawInvoicePdf(invoice: Invoice, facturXml: string): Promi
     );
     cursor.y -= LINE_HEIGHT;
   }
-  cursor.y -= 4;
+  // Breathing room above the Bruttobetrag heading — the prior 4pt gap
+  // crowded it against the Gesamtsteuer line. One LINE_HEIGHT lets the
+  // bold heading read as the section close.
+  cursor.y -= LINE_HEIGHT;
   cursor.page.drawText('Bruttobetrag', {
     x: totalsLeft,
     y: cursor.y,
