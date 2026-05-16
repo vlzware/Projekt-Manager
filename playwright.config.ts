@@ -52,39 +52,55 @@ process.env.STORAGE_BUCKET = E2E_STORAGE_BUCKET;
 // without a tmpfs-loaded identity matching `BINARY_AGE_RECIPIENT`. In
 // production the operator pastes via `load-binary-key.sh`; in unit
 // tests `src/test/integration-setup.ts` generates a per-PID keypair.
-// E2E mirrors that pattern: generate a throwaway pair at config load,
-// stash the private half in `os.tmpdir()`, and pass both env vars to
-// the webServer below. Cleanup on process exit.
+//
+// E2E generates a throwaway pair ONCE per `npx playwright test`
+// invocation, stashes the private half in `os.tmpdir()`, and passes
+// both env vars to the webServer below. The `PM_E2E_BINARY_GENERATED`
+// sentinel guards against regeneration in worker processes: Playwright
+// re-evaluates this config in each test worker, and regenerating per
+// worker leaves `auth.setup.ts`'s seed wrapping invoice DEKs against a
+// keypair the webServer (spawned with the MAIN runner's keypair) cannot
+// unwrap. Workers inherit `BINARY_AGE_RECIPIENT` /
+// `BINARY_AGE_IDENTITY_PATH` + the sentinel from the main process and
+// skip the keygen+writeFile leg.
 const { execFileSync } = await import('node:child_process');
 const os = await import('node:os');
-const E2E_BINARY_IDENTITY_PATH = path.join(os.tmpdir(), `pm-e2e-binary-identity-${process.pid}.txt`);
-const E2E_BINARY_IDENTITY = execFileSync('age-keygen', {
-  encoding: 'utf-8',
-  stdio: ['ignore', 'pipe', 'ignore'],
-}).trim();
-const E2E_BINARY_RECIPIENT = execFileSync('age-keygen', ['-y'], {
-  input: E2E_BINARY_IDENTITY,
-  encoding: 'utf-8',
-  stdio: ['pipe', 'pipe', 'ignore'],
-}).trim();
-fs.writeFileSync(E2E_BINARY_IDENTITY_PATH, E2E_BINARY_IDENTITY + '\n', { mode: 0o600 });
-process.on('exit', () => {
-  try {
-    fs.unlinkSync(E2E_BINARY_IDENTITY_PATH);
-  } catch {
-    // Already gone or never written — nothing to clean.
-  }
-});
+if (!process.env.PM_E2E_BINARY_GENERATED) {
+  const E2E_BINARY_IDENTITY_PATH = path.join(
+    os.tmpdir(),
+    `pm-e2e-binary-identity-${process.pid}.txt`,
+  );
+  const E2E_BINARY_IDENTITY = execFileSync('age-keygen', {
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
+  const E2E_BINARY_RECIPIENT = execFileSync('age-keygen', ['-y'], {
+    input: E2E_BINARY_IDENTITY,
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'ignore'],
+  }).trim();
+  fs.writeFileSync(E2E_BINARY_IDENTITY_PATH, E2E_BINARY_IDENTITY + '\n', { mode: 0o600 });
+  process.on('exit', () => {
+    try {
+      fs.unlinkSync(E2E_BINARY_IDENTITY_PATH);
+    } catch {
+      // Already gone or never written — nothing to clean.
+    }
+  });
 
-// Mirror the DATABASE_URL / STORAGE_BUCKET pattern above: the Playwright
-// runner itself opens a direct backend handle in `auth.setup.ts` to run
-// `seed({ force: true })`, which constructs InvoiceService and calls
-// `getEnv()` — so the runner process needs these too, not just the
-// spawned webServer. Locally `.env` supplies them globally; in CI no
-// `.env` exists, and the seed throws "STORAGE_* and BINARY_AGE_RECIPIENT
-// / BINARY_AGE_IDENTITY_PATH are required" without this assignment.
-process.env.BINARY_AGE_RECIPIENT = E2E_BINARY_RECIPIENT;
-process.env.BINARY_AGE_IDENTITY_PATH = E2E_BINARY_IDENTITY_PATH;
+  // Mirror the DATABASE_URL / STORAGE_BUCKET pattern above: the Playwright
+  // runner itself opens a direct backend handle in `auth.setup.ts` to run
+  // `seed({ force: true })`, which constructs InvoiceService and calls
+  // `getEnv()` — so the runner process needs these too, not just the
+  // spawned webServer. Locally `.env` supplies them globally; in CI no
+  // `.env` exists, and the seed throws "STORAGE_* and BINARY_AGE_RECIPIENT
+  // / BINARY_AGE_IDENTITY_PATH are required" without this assignment.
+  process.env.BINARY_AGE_RECIPIENT = E2E_BINARY_RECIPIENT;
+  process.env.BINARY_AGE_IDENTITY_PATH = E2E_BINARY_IDENTITY_PATH;
+  process.env.PM_E2E_BINARY_GENERATED = '1';
+}
+const E2E_BINARY_RECIPIENT = process.env.BINARY_AGE_RECIPIENT!;
+const E2E_BINARY_IDENTITY_PATH = process.env.BINARY_AGE_IDENTITY_PATH!;
 
 // Ubuntu 24.04's `kernel.apparmor_restrict_unprivileged_userns=1` blocks
 // Chromium's namespace sandbox. Without this, Playwright injects
