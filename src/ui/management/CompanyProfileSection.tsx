@@ -139,6 +139,13 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
   const authUser = useAuthStore((s) => s.authUser);
   const saveError = useCompanyProfileStore((s) => s.saveError);
   const saveProfile = useCompanyProfileStore((s) => s.save);
+  const clearSaveError = useCompanyProfileStore((s) => s.clearSaveError);
+
+  // Drop the stale save-error on unmount so navigating away and
+  // returning to Firmendaten does not resurrect last attempt's red
+  // banner. The error lives in the Zustand store (cross-mount) so the
+  // form has to clear it explicitly.
+  useEffect(() => () => clearSaveError(), [clearSaveError]);
 
   const isOwner = (authUser?.roles ?? []).includes('owner');
 
