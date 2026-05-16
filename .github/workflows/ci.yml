@@ -154,6 +154,14 @@ jobs:
           MINIO_APP_ACCESS_KEY: pmappci
           MINIO_APP_SECRET_KEY: pmappcisecret
           STORAGE_BUCKET: projekt-manager
+          # Isolated bucket the vitest integration suite targets via
+          # src/test/integration-setup.ts. Provisioned alongside
+          # STORAGE_BUCKET by docker/init-storage.sh below; the app user's
+          # IAM policy gains the matching ARN so the boot-time bucket-
+          # safety probe (which runs against the test bucket once the
+          # suite overrides STORAGE_BUCKET) doesn't fail-close with
+          # AccessDenied. Mirrors STORAGE_BUCKET_E2E in e2e.yml.
+          STORAGE_BUCKET_TEST: projekt-manager-test
         run: |
           docker network create pm-storage-net
           docker run -d --name storage \
@@ -182,6 +190,7 @@ jobs:
             -e MINIO_APP_ACCESS_KEY \
             -e MINIO_APP_SECRET_KEY \
             -e STORAGE_BUCKET \
+            -e STORAGE_BUCKET_TEST \
             --entrypoint /bin/sh \
             minio/mc:RELEASE.2025-08-13T08-35-41Z \
             /init-storage.sh
@@ -198,6 +207,12 @@ jobs:
           # asserts the running credential cannot destroy versions.
           STORAGE_ENDPOINT: http://localhost:9000
           STORAGE_BUCKET: projekt-manager
+          # Isolated bucket the integration suite re-points STORAGE_BUCKET
+          # at (src/test/integration-setup.ts §3). Set explicitly here —
+          # matching the docker-compose.minio.yml default — so the bucket
+          # name flows through one source of truth instead of relying on
+          # the hardcoded fallback in integration-setup.ts.
+          STORAGE_BUCKET_TEST: projekt-manager-test
           STORAGE_ACCESS_KEY: pmappci
           STORAGE_SECRET_KEY: pmappcisecret
           # MinIO accepts any region; us-east-1 is the SDK default.

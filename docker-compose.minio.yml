@@ -93,6 +93,14 @@ services:
       # never touch the dev bucket. Defaulted here so the dev compose
       # stack always provisions both buckets, even when .env omits it.
       STORAGE_BUCKET_E2E: ${STORAGE_BUCKET_E2E:-projekt-manager-e2e}
+      # Optional isolated bucket for the vitest integration suite. Same
+      # rationale as STORAGE_BUCKET_E2E: keeps integration-test debris
+      # out of the dev bucket (which `scripts/sync-dev-to-vps.sh` mirrors
+      # to B2). integration-setup.ts overrides STORAGE_BUCKET to this
+      # value and writes under a per-PID key prefix `test-<pid>/` so
+      # parallel forks don't stomp on each other. Defaulted here for
+      # the same reason as E2E.
+      STORAGE_BUCKET_TEST: ${STORAGE_BUCKET_TEST:-projekt-manager-test}
       # R / L sizing dials (docs/ops/object-storage-provisioning.md).
       # Forwarded with defaults so unset vars don't collapse to empty
       # strings (mc rejects "0d").

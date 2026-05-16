@@ -84,6 +84,15 @@ setup('reseed database and storage', async () => {
   // TRUNCATE CASCADE invalidates any pre-existing sessions, which is
   // why this runs BEFORE the login setups below.
   //
+  // Order matters: bucket reset FIRST, then DB seed. The seed's invoice
+  // loader calls `InvoiceBinaryService.persistRendered`, which PUTs PDF
+  // ciphertext to the bucket as part of issuance — wiping the bucket
+  // afterwards would erase those just-uploaded objects, leaving DB rows
+  // pointing at 404s. Bucket reset clears prior-run debris (DB-detached
+  // orphans the reaper cannot reach since it only sweeps `pending` past
+  // TTL); the seed then re-populates both DB and bucket atomically.
+  await resetE2eBucket();
+
   // Runs migrations first so a fresh E2E database (created on-demand
   // for the isolated `projekt_manager_e2e` target — see
   // playwright.config.ts webServer) gets its schema before the seed's
@@ -97,15 +106,6 @@ setup('reseed database and storage', async () => {
   } finally {
     await pool.end();
   }
-
-  // Bucket reset is the storage-side counterpart of seed({ force: true }).
-  // The seed truncates `attachments` (CASCADE from `projects`), so without
-  // this the bucket from a prior run holds objects whose DB rows no
-  // longer exist — DB-detached orphans the orphan reaper cannot reach
-  // (it sweeps `pending` past TTL only). Targets the isolated e2e bucket
-  // by playwright.config.ts override; refuses to run against the dev
-  // bucket as a safety check.
-  await resetE2eBucket();
 
   fs.mkdirSync(AUTH_DIR, { recursive: true });
 });

@@ -163,18 +163,24 @@ if [ "$local_users" -lt 1 ]; then
 fi
 
 echo "[4/10] Bucket-pollution check..."
-# Refuse if the local MinIO bucket holds more current-version objects than
-# the DB can justify. Each live attachment row contributes AT MOST orig +
-# thumb (2 objects); the +2 slack covers a transient bulk-download zip and
-# one stray probe artifact.
+# Refuse if the local MinIO bucket holds more current-version objects
+# than the DB can justify. Each live attachment row contributes AT MOST
+# `original_key` + `thumb_key` (2 objects); invoice binaries already
+# land in the same `attachments` table (status='ready', key under
+# `invoices/<projectId>/<descriptorId>.orig`) so they're counted in the
+# row total. The +2 slack covers a transient bulk-download zip and one
+# stray probe artifact.
 #
-# Without this guard, orphan debris (E2E test runs, abandoned upload
-# flows the orphan reaper couldn't reach) gets faithfully mirrored onto
-# B2 — and every PutObject locks for R days under Compliance Object Lock
-# retention regardless of any subsequent delete-marker. That is real
-# money for no benefit. The threshold is deliberately tight (`2 × rows + 2`)
-# because dev should not be hoarding test artifacts; if this trips, clean
-# the local bucket per the error message below before retrying.
+# Without this guard, any orphan (DB row dropped without going through
+# the proper delete path) gets faithfully mirrored onto B2 — and every
+# PutObject locks for R days under Compliance Object Lock retention,
+# regardless of any subsequent delete-marker. That is real money for
+# no benefit.
+#
+# Diagnostic prefix breakdown gives the operator a starting point for
+# root-cause rather than a hard-coded guess (the previous "E2E runs"
+# attribution was wrong — E2E and integration tests run against
+# isolated buckets per init-storage.sh).
 local_attachment_rows=$(docker exec "${COMPOSE_PROJECT}-db-1" \
   psql -U pm -d projekt_manager -tAc \
   "SELECT COUNT(*) FROM attachments WHERE status IN ('pending', 'ready');")
@@ -184,22 +190,54 @@ local_bucket_objects=$(docker exec "${COMPOSE_PROJECT}-storage-1" sh -c '
 ' | awk '/^Total Objects:/ {print $3+0; found=1} END {if(!found) print 0}')
 expected_max=$((2 * local_attachment_rows + 2))
 if [ "$local_bucket_objects" -gt "$expected_max" ]; then
+  # Per-prefix counts for the diagnostic — invoice binaries, leftover
+  # test prefixes (defensive: shouldn't exist on dev bucket post-fix
+  # for integration test isolation, but flag them if they do), and
+  # everything else (attachment originals + thumbs + stragglers).
+  bucket_invoices=$(docker exec "${COMPOSE_PROJECT}-storage-1" sh -c '
+    mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1
+    mc ls --recursive "local/'"$LOCAL_BUCKET"'/invoices/" 2>/dev/null | wc -l
+  ')
+  bucket_test_prefixed=$(docker exec "${COMPOSE_PROJECT}-storage-1" sh -c '
+    mc alias set local http://localhost:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1
+    mc ls --recursive --json "local/'"$LOCAL_BUCKET"'" 2>/dev/null | grep -c "\"key\":\"test-[0-9]*/" || true
+  ')
+  bucket_other=$((local_bucket_objects - bucket_invoices - bucket_test_prefixed))
   cat <<ERR >&2
-ERROR: local MinIO bucket holds $local_bucket_objects current-version
-objects but only $local_attachment_rows live attachment rows (status IN
-'pending', 'ready'). Expected ceiling is $expected_max objects
-(2 × rows + 2 slack for in-flight bulk-downloads).
+ERROR: local MinIO bucket has more current-version objects than the
+attachments table can justify.
 
-This is dev-environment debris — orphan uploads (E2E runs, abandoned
-upload flows) the orphan reaper could not reach. Mirroring them onto
-B2 costs real money: every PutObject locks for R days under Compliance
-Object Lock retention, regardless of any subsequent delete-marker.
+  Bucket total:     $local_bucket_objects current-version objects
+  DB attachments:   $local_attachment_rows rows (status IN 'pending', 'ready')
+  Expected ceiling: $expected_max  (2 × rows + 2 slack)
+
+  Prefix breakdown:
+    invoices/                  $bucket_invoices
+    test-<pid>/  (leftover)    $bucket_test_prefixed
+    other (attachments + ...)  $bucket_other
+
+The orphan reaper only deletes rows it can still see at
+status='pending'. Any DB row dropped via cascading project purge,
+TRUNCATE / DROP DATABASE, manual psql delete, or a transaction that
+rolled back AFTER PutObject succeeded leaves a stranded bucket
+object that the reaper can never reach.
+
+Likely sources for an excess depending on the breakdown above:
+  - invoices/ dominant: local invoice testing that ran before the
+    integration-test bucket isolation landed, OR manual project
+    deletion through psql.
+  - test-<pid>/ present: integration-test debris from a vitest run
+    that never hit teardown (crash, SIGKILL). The globalSetup sweep
+    should clean dead-PID prefixes on the next 'npm test'; if any
+    show up here they were written to the dev bucket pre-fix.
+  - other dominant: ordinary attachment orphans from a SEED=force
+    that never invoked pruneBucketOrphans, or manual DB resets.
 
 Clean the local bucket before syncing — preserves keys referenced by
 attachment rows (live + hidden), deletes only the orphans:
 
   scripts/clean-bucket-orphans.sh           # dry-run: list orphans
-  scripts/clean-bucket-orphans.sh --apply   # delete them
+  scripts/clean-bucket-orphans.sh --apply   # delete-marker them
 
 Noncurrent versions reap after R+L days per Object Lock + lifecycle.
 Then re-run this script.

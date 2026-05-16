@@ -1,11 +1,11 @@
 /**
  * Per-fork test environment isolation for the vitest `integration` project.
  *
- * Two concerns share this file because both must run BEFORE any test
- * imports — the per-fork DB and the per-fork binary `age` identity (the
- * latter under ADR-0024 / AC-239) are both consumed by the route layer
- * via `process.env`, and the route layer is reached on the first
- * `startApp()` call which re-parses env each time.
+ * Three concerns share this file because all must run BEFORE any test
+ * imports — the per-fork DB, the per-fork binary `age` identity (ADR-0024
+ * / AC-239), and the per-fork storage namespace are all consumed by the
+ * route layer via `process.env`, and the route layer is reached on the
+ * first `startApp()` call which re-parses env each time.
  *
  * 1. Per-fork DATABASE_URL
  *    Without this, every fork connects to whatever DATABASE_URL points at
@@ -42,6 +42,28 @@
  *
  *    `age-keygen` is required on the dev box per CONTRIBUTING.md
  *    §Testing — same posture as MinIO.
+ *
+ * 3. Per-fork storage namespace (STORAGE_BUCKET + STORAGE_KEY_PREFIX)
+ *    Without this, every integration fork shares `STORAGE_BUCKET=
+ *    projekt-manager` (the dev bucket) and writes attachment / invoice
+ *    binaries against it. Each fork drops its per-PID DB at end-of-run,
+ *    but the bucket objects survive (no FK from bucket to DB) — and the
+ *    next `scripts/sync-dev-to-vps.sh` either trips its pollution guard
+ *    or, worse, mirrors the test debris onto B2 under Compliance Object
+ *    Lock retention. That's how 9000+ orphan invoice binaries accumulated
+ *    in the dev bucket prior to this fix (see fix/deploy-2026-05-16
+ *    branch history).
+ *
+ *    Fix: route the suite at the isolated `projekt-manager-test` bucket
+ *    (provisioned by docker/init-storage.sh alongside the e2e bucket),
+ *    and namespace each fork's writes under `test-<pid>/` so parallel
+ *    forks don't share a keyspace. Storage client + `pruneBucketOrphans`
+ *    honour the prefix transparently — callers continue to read/write
+ *    bare logical keys.
+ *
+ *    Dead-PID prefix cleanup lives in `integration-globalsetup.ts` for
+ *    the same `process.exit()` reason as the DB cleanup. Live forks are
+ *    untouched.
  */
 
 import pg from 'pg';
@@ -129,3 +151,16 @@ process.on('exit', () => {
     // Already gone or never written — nothing to clean.
   }
 });
+
+// ---------------------------------------------------------------------
+// 3. Per-fork storage namespace
+// ---------------------------------------------------------------------
+
+// Honour the operator override when set — `.env` may already pin this to
+// a different bucket name. Default to `projekt-manager-test` to match
+// docker/init-storage.sh and docker-compose.minio.yml.
+process.env.STORAGE_BUCKET = process.env.STORAGE_BUCKET_TEST ?? 'projekt-manager-test';
+// `test-<pid>/` is the per-fork namespace inside the shared test bucket.
+// Shape matches the STORAGE_KEY_PREFIX schema in `config/env.ts`
+// (`^[a-z0-9][a-z0-9_-]*\/$`).
+process.env.STORAGE_KEY_PREFIX = `test-${process.pid}/`;

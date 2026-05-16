@@ -27,17 +27,29 @@ until mc alias set minio http://storage:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PAS
 done
 
 BUCKET_DEV="$STORAGE_BUCKET"
-# E2E bucket is optional — the dev compose stack and the e2e CI workflow
-# set it; the prod-shape ci.yml `check` job that also runs this script
-# does not. When unset, only the dev bucket is provisioned and the IAM
-# policy below scopes to a single bucket ARN — preserving the prior
-# behaviour for any caller that hasn't opted in to the isolation.
+# E2E and integration-test buckets are optional. The dev compose stack
+# and the e2e CI workflow set both; the prod-shape ci.yml `check` job
+# that also runs this script sets neither. When unset, only the dev
+# bucket is provisioned and the IAM policy below scopes to a single
+# bucket ARN — preserving the prior behaviour for any caller that
+# hasn't opted in to the isolation.
 BUCKET_E2E="${STORAGE_BUCKET_E2E:-}"
+BUCKET_TEST="${STORAGE_BUCKET_TEST:-}"
 LOCK_DAYS="${STORAGE_OBJECT_LOCK_DAYS:-1}"
 HIDE_TTL_DAYS="${STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS:-2}"
 
 if [ -n "$BUCKET_E2E" ] && [ "$BUCKET_E2E" = "$BUCKET_DEV" ]; then
   echo "ERROR: STORAGE_BUCKET_E2E ('$BUCKET_E2E') must differ from STORAGE_BUCKET" >&2
+  echo "       — isolation requires distinct buckets." >&2
+  exit 1
+fi
+if [ -n "$BUCKET_TEST" ] && [ "$BUCKET_TEST" = "$BUCKET_DEV" ]; then
+  echo "ERROR: STORAGE_BUCKET_TEST ('$BUCKET_TEST') must differ from STORAGE_BUCKET" >&2
+  echo "       — isolation requires distinct buckets." >&2
+  exit 1
+fi
+if [ -n "$BUCKET_TEST" ] && [ -n "$BUCKET_E2E" ] && [ "$BUCKET_TEST" = "$BUCKET_E2E" ]; then
+  echo "ERROR: STORAGE_BUCKET_TEST ('$BUCKET_TEST') must differ from STORAGE_BUCKET_E2E" >&2
   echo "       — isolation requires distinct buckets." >&2
   exit 1
 fi
@@ -91,6 +103,9 @@ configure_bucket() {
 configure_bucket "$BUCKET_DEV"
 if [ -n "$BUCKET_E2E" ]; then
   configure_bucket "$BUCKET_E2E"
+fi
+if [ -n "$BUCKET_TEST" ]; then
+  configure_bucket "$BUCKET_TEST"
 fi
 
 # -----------------------------------------------------------------------
@@ -163,6 +178,10 @@ RESOURCES_OBJECTS="\"arn:aws:s3:::$BUCKET_DEV/*\""
 if [ -n "$BUCKET_E2E" ]; then
   RESOURCES_BUCKET="$RESOURCES_BUCKET,\"arn:aws:s3:::$BUCKET_E2E\""
   RESOURCES_OBJECTS="$RESOURCES_OBJECTS,\"arn:aws:s3:::$BUCKET_E2E/*\""
+fi
+if [ -n "$BUCKET_TEST" ]; then
+  RESOURCES_BUCKET="$RESOURCES_BUCKET,\"arn:aws:s3:::$BUCKET_TEST\""
+  RESOURCES_OBJECTS="$RESOURCES_OBJECTS,\"arn:aws:s3:::$BUCKET_TEST/*\""
 fi
 
 cat > "$POLICY_FILE" <<EOF

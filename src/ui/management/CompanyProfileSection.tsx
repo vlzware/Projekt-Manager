@@ -55,14 +55,37 @@ function ustIdRequiredFor(mode: TaxMode): boolean {
   return mode === 'standard' || mode === 'reverse_charge';
 }
 
-function isFormValid(values: FormValues): boolean {
-  if (!values.companyName.trim()) return false;
-  if (!values.street.trim()) return false;
-  if (!values.zip.trim()) return false;
-  if (!values.city.trim()) return false;
-  if (!values.taxId.trim()) return false;
-  if (ustIdRequiredFor(values.defaultTaxMode) && !values.ustId.trim()) return false;
-  return true;
+/**
+ * Mirrors the server-side regex on
+ * `src/server/routes/company-profile.ts` — `^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$`.
+ * Empty string is valid (the column is nullable). Keeps the UX hint and
+ * the wire contract pinned together; any future widening on the server
+ * must update this constant.
+ */
+const ACCENT_COLOR_PATTERN = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/;
+
+function isValidAccentColor(value: string): boolean {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return true;
+  return ACCENT_COLOR_PATTERN.test(trimmed);
+}
+
+/**
+ * Walk fields in render order and return the key of the first one that
+ * fails its rule, or `null` when everything is valid. The submit path
+ * uses this to focus the offending input directly — DOM-querying
+ * `aria-invalid="true"` immediately after `setShowErrors(true)` would
+ * miss the update because React has not yet committed the new attribute.
+ */
+function firstInvalidFieldKey(values: FormValues): keyof FormValues | null {
+  if (!values.companyName.trim()) return 'companyName';
+  if (!values.street.trim()) return 'street';
+  if (!values.zip.trim()) return 'zip';
+  if (!values.city.trim()) return 'city';
+  if (!values.taxId.trim()) return 'taxId';
+  if (ustIdRequiredFor(values.defaultTaxMode) && !values.ustId.trim()) return 'ustId';
+  if (!isValidAccentColor(values.accentColor)) return 'accentColor';
+  return null;
 }
 
 function profileToFormValues(profile: CompanyProfile): FormValues {
@@ -106,10 +129,11 @@ export function CompanyProfileSection() {
   // otherwise hide the diagnostic behind an empty section. The retry
   // button re-dispatches `fetch()` so the user can recover without a
   // full page reload.
+  // The host (InvoiceListView's `<details>`) provides the heading via
+  // its `<summary>`; the section renders only the description + form.
   if (!data) {
     return (
       <section className={styles.section}>
-        <h3 className={styles.heading}>{STRINGS.companyProfile.heading}</h3>
         <p className={styles.description}>{STRINGS.companyProfile.description}</p>
         {fetchError && (
           <div className={styles.fetchError} role="alert" data-testid="company-profile-fetch-error">
@@ -138,6 +162,13 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
   const authUser = useAuthStore((s) => s.authUser);
   const saveError = useCompanyProfileStore((s) => s.saveError);
   const saveProfile = useCompanyProfileStore((s) => s.save);
+  const clearSaveError = useCompanyProfileStore((s) => s.clearSaveError);
+
+  // Drop the stale save-error on unmount so navigating away and
+  // returning to Firmendaten does not resurrect last attempt's red
+  // banner. The error lives in the Zustand store (cross-mount) so the
+  // form has to clear it explicitly.
+  useEffect(() => () => clearSaveError(), [clearSaveError]);
 
   const isOwner = (authUser?.roles ?? []).includes('owner');
 
@@ -157,13 +188,22 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
     };
   };
 
-  const valid = isFormValid(values);
+  const firstInvalid = firstInvalidFieldKey(values);
   const ustIdMissing = ustIdRequiredFor(values.defaultTaxMode) && !values.ustId.trim();
+  const accentColorInvalid = !isValidAccentColor(values.accentColor);
 
   const handleSubmit = async () => {
     if (!isOwner || submitting) return;
-    if (!valid) {
+    if (firstInvalid !== null) {
       setShowErrors(true);
+      // Focus + scroll the offending input so the error is obvious
+      // rather than buried somewhere in the form. Looked up by id rather
+      // than `aria-invalid` because the attribute is not yet committed
+      // by the time the click handler returns (showErrors flips in the
+      // next render).
+      const node = document.getElementById(`company-profile-${firstInvalid}`);
+      node?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      (node as HTMLInputElement | null)?.focus();
       return;
     }
 
@@ -216,7 +256,6 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
 
   return (
     <section className={styles.section}>
-      <h3 className={styles.heading}>{STRINGS.companyProfile.heading}</h3>
       <p className={styles.description}>{STRINGS.companyProfile.description}</p>
 
       <form
@@ -237,10 +276,13 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
             value={values[f.key]}
             onChange={setField(f.key)}
             readOnly={readOnly}
+            helperText={f.key === 'accentColor' ? STRINGS.companyProfile.accentColorHelper : null}
             inlineError={
               showErrors && f.key === 'ustId' && ustIdMissing
                 ? STRINGS.companyProfile.ustIdRequiredForMode
-                : null
+                : showErrors && f.key === 'accentColor' && accentColorInvalid
+                  ? STRINGS.companyProfile.accentColorInvalid
+                  : null
             }
           />
         ))}
@@ -277,6 +319,7 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
           value={values.footerText}
           onChange={setField('footerText')}
           readOnly={readOnly}
+          helperText={STRINGS.companyProfile.footerTextHelper}
           inlineError={null}
         />
 
@@ -311,6 +354,8 @@ interface LabeledInputProps {
   value: string;
   onChange: (e: ChangeEvent<HTMLInputElement>) => void;
   readOnly: boolean;
+  /** Always-visible explanatory text below the input. */
+  helperText?: string | null;
   inlineError: string | null;
 }
 
@@ -318,6 +363,14 @@ function LabeledInput(props: LabeledInputProps) {
   const id = `company-profile-${props.fieldKey}`;
   const testId = `company-profile-${props.fieldKey}-input`;
   const errorTestId = `company-profile-${props.fieldKey}-error`;
+  const helperId = `company-profile-${props.fieldKey}-helper`;
+  const errorId = `company-profile-${props.fieldKey}-error-msg`;
+  const invalid = props.inlineError !== null;
+  // Pair helper + error with the input via aria-describedby so screen
+  // readers announce the guidance alongside the field.
+  const describedBy =
+    [props.helperText ? helperId : null, invalid ? errorId : null].filter(Boolean).join(' ') ||
+    undefined;
   return (
     <div className={`${styles.field} ${props.full ? styles.fieldFull : ''}`}>
       <label className={styles.label} htmlFor={id}>
@@ -326,15 +379,22 @@ function LabeledInput(props: LabeledInputProps) {
       </label>
       <input
         id={id}
-        className={styles.input}
+        className={`${styles.input} ${invalid ? styles.inputInvalid : ''}`}
         type="text"
         value={props.value}
         onChange={props.onChange}
         readOnly={props.readOnly}
+        aria-invalid={invalid || undefined}
+        aria-describedby={describedBy}
         data-testid={testId}
       />
+      {props.helperText && (
+        <p id={helperId} className={styles.helperText}>
+          {props.helperText}
+        </p>
+      )}
       {props.inlineError && (
-        <p className={styles.fieldError} data-testid={errorTestId}>
+        <p id={errorId} className={styles.fieldError} data-testid={errorTestId}>
           {props.inlineError}
         </p>
       )}

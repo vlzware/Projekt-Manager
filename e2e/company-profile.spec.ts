@@ -5,24 +5,21 @@ import { STORAGE_STATES } from './storage-states';
  * E2E — Company profile management (verification.md §16.3 "Company
  * profile management", pins AC-301, AC-303 at the UI layer).
  *
+ * Lives on the Rechnungen tab (`/rechnungen`) inside a collapsible
+ * `<details>` — the values are referenced by every invoice snapshot
+ * (ADR-0026), so the form sits where invoices are managed. The block
+ * is collapsed by default; each test opens it.
+ *
  * Three flows:
- *   1. Owner navigates to Daten → company-profile form, fills every
- *      required field plus `defaultTaxMode = 'standard'` with a
- *      `ustId`, saves. A subsequent `GET /api/company-profile` returns
- *      the persisted values.
+ *   1. Owner opens Firmendaten, fills every required field plus
+ *      `defaultTaxMode = 'standard'` with a `ustId`, saves. A
+ *      subsequent `GET /api/company-profile` returns the persisted
+ *      values.
  *   2. Owner attempts to save with `defaultTaxMode = 'reverse_charge'`
  *      and an empty `ustId`; the form blocks submit with a German
  *      validation message naming the missing field.
- *   3. Office user navigates to the Daten view; the company-profile
- *      section is read-only (no save button rendered) per AC-301.
- *
- * The "Daten view" lives at the path documented in ui/daten.md
- * (`/daten`); the company-profile form lives at §8.11.4 of that file.
- *
- * Pre-impl red state: the Daten view's company-profile form does not
- * exist; selectors miss; navigation may still succeed (the Daten tab
- * already renders backups/export). The first form-specific selector
- * times out.
+ *   3. Office user opens the section; it is read-only (no save button
+ *      rendered) per AC-301.
  */
 
 test.describe.configure({ mode: 'serial' });
@@ -32,10 +29,12 @@ test.describe('Company profile management (AC-301, AC-303)', () => {
     test.use({ storageState: STORAGE_STATES.owner });
 
     test('owner fills the form and saves; GET returns the persisted values', async ({ page }) => {
-      await page.goto('/daten');
-      await expect(page.getByTestId('daten-view')).toBeVisible();
+      await page.goto('/rechnungen');
+      await expect(page.getByTestId('invoice-list-view')).toBeVisible();
 
-      // Company-profile form lives in its own section.
+      // Firmendaten lives inside a `<details>` collapsed by default; open it.
+      const details = page.getByTestId('company-profile-details');
+      await details.locator('summary').click();
       const form = page.getByTestId('company-profile-form');
       await expect(form).toBeVisible();
 
@@ -60,6 +59,7 @@ test.describe('Company profile management (AC-301, AC-303)', () => {
       // ensures the read goes through the route, not the in-memory
       // form state.
       await page.reload();
+      await page.getByTestId('company-profile-details').locator('summary').click();
       const formAfter = page.getByTestId('company-profile-form');
       await expect(formAfter).toBeVisible();
       await expect(formAfter.getByTestId('company-profile-companyName-input')).toHaveValue(
@@ -71,7 +71,8 @@ test.describe('Company profile management (AC-301, AC-303)', () => {
     test('reverse_charge with empty ustId blocks submit with a German validation message naming the field', async ({
       page,
     }) => {
-      await page.goto('/daten');
+      await page.goto('/rechnungen');
+      await page.getByTestId('company-profile-details').locator('summary').click();
       const form = page.getByTestId('company-profile-form');
       await expect(form).toBeVisible();
 
@@ -116,8 +117,9 @@ test.describe('Company profile management (AC-301, AC-303)', () => {
     test('office sees the company-profile section as read-only (no save button)', async ({
       page,
     }) => {
-      await page.goto('/daten');
-      await expect(page.getByTestId('daten-view')).toBeVisible();
+      await page.goto('/rechnungen');
+      await expect(page.getByTestId('invoice-list-view')).toBeVisible();
+      await page.getByTestId('company-profile-details').locator('summary').click();
 
       // The section renders (every authenticated role may read per
       // AC-301), but the save affordance is not rendered for office.

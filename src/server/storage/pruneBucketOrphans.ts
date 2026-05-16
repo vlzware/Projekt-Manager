@@ -49,6 +49,16 @@ export interface BucketKeyListerConfig {
   accessKey: string;
   secretKey: string;
   region?: string;
+  /**
+   * Optional per-process key namespace, matching `StorageConfig.keyPrefix`.
+   * When set, the lister scopes its ListObjectsV2 to keys under this
+   * prefix AND strips the prefix from returned keys — so the prune
+   * compares logical-key sets (bucket scope vs DB attachments rows,
+   * which also store logical keys). Without this, a prune launched
+   * from a prefixed context (vitest fork) would treat every other
+   * fork's prefix as orphan.
+   */
+  keyPrefix?: string;
 }
 
 export interface PruneBucketOrphansLogger {
@@ -75,6 +85,7 @@ export function createBucketKeyLister(config: BucketKeyListerConfig): () => Prom
     forcePathStyle: true,
   });
 
+  const keyPrefix = config.keyPrefix ?? '';
   return async () => {
     const keys: string[] = [];
     let continuationToken: string | undefined;
@@ -82,11 +93,20 @@ export function createBucketKeyLister(config: BucketKeyListerConfig): () => Prom
       const response = await s3.send(
         new ListObjectsV2Command({
           Bucket: config.bucket,
+          // Empty prefix lists the entire bucket (the prod-shape behaviour).
+          // With a per-process keyPrefix, restrict to that namespace so a
+          // prune from one vitest fork cannot see siblings.
+          ...(keyPrefix ? { Prefix: keyPrefix } : {}),
           ContinuationToken: continuationToken,
         }),
       );
       for (const obj of response.Contents ?? []) {
-        if (typeof obj.Key === 'string') keys.push(obj.Key);
+        if (typeof obj.Key !== 'string') continue;
+        // Return logical keys (the same shape the attachments rows store)
+        // so the diff against the DB-referenced set is apples-to-apples.
+        keys.push(
+          keyPrefix && obj.Key.startsWith(keyPrefix) ? obj.Key.slice(keyPrefix.length) : obj.Key,
+        );
       }
       continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
     } while (continuationToken);

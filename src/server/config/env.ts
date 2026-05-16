@@ -56,6 +56,25 @@ export const envSchema = z.object({
   // createStorageClient) treat empty as "fall back to STORAGE_ENDPOINT".
   STORAGE_PUBLIC_ENDPOINT: z.preprocess((v) => (v === '' ? undefined : v), z.string().optional()),
   STORAGE_BUCKET: z.string().min(1).default('projekt-manager'),
+  // Optional per-process key prefix. When set, every storage operation
+  // (put / get / head / hide / list / copy / presign) transparently
+  // prepends this string; production passes none (callers see and store
+  // bare keys). The vitest integration suite sets `test-<pid>/` so each
+  // fork's writes land in its own keyspace inside the shared test bucket
+  // — mirroring the per-PID DB isolation in `integration-setup.ts`.
+  // Must be empty or match `^[a-z0-9][a-z0-9_-]*\/$` (lowercase + digits
+  // + `_-`, trailing `/`); collapsing the empty string to undefined keeps
+  // the downstream `?? undefined` checks clean.
+  STORAGE_KEY_PREFIX: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z
+      .string()
+      .regex(
+        /^[a-z0-9][a-z0-9_-]*\/$/,
+        'STORAGE_KEY_PREFIX must match [a-z0-9][a-z0-9_-]*/ (trailing slash required)',
+      )
+      .optional(),
+  ),
   STORAGE_ACCESS_KEY: z.string().optional(),
   STORAGE_SECRET_KEY: z.string().optional(),
   // S3 region used for SigV4 signing. MinIO accepts any value (`us-east-1`

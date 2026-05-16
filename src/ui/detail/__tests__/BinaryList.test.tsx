@@ -165,7 +165,7 @@ beforeEach(() => {
 
 describe('BinaryList — Herunterladen routes through synthetic origin (AC-223)', () => {
   it('renders one row per ready binary with filename / label / uploader / timestamp', async () => {
-    render(<BinaryList projectId="p-42" />);
+    render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
 
     // Resolve rows by per-row testid rather than text-matching: pins
     // the row contract independent of German labels.
@@ -182,7 +182,7 @@ describe('BinaryList — Herunterladen routes through synthetic origin (AC-223)'
   });
 
   it('excludes photo and pending rows from the binary list', async () => {
-    render(<BinaryList projectId="p-42" />);
+    render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
     await screen.findByTestId('attachment-binary-row-bin-pdf');
     expect(screen.queryByTestId('attachment-binary-row-ph-1')).not.toBeInTheDocument();
     expect(screen.queryByTestId('attachment-binary-row-bin-pending')).not.toBeInTheDocument();
@@ -216,7 +216,7 @@ describe('BinaryList — Herunterladen routes through synthetic origin (AC-223)'
     document.body.appendChild = appendChildSpy as unknown as typeof document.body.appendChild;
 
     try {
-      render(<BinaryList projectId="p-42" />);
+      render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
       const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
       await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
 
@@ -251,7 +251,7 @@ describe('BinaryList — Herunterladen routes through synthetic origin (AC-223)'
 
 describe('BinaryList — Auswahl als ZIP triggers bulk-fetch (AC-223)', () => {
   it('shows Auswahl als ZIP only once at least one row is selected', async () => {
-    render(<BinaryList projectId="p-42" />);
+    render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
     const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
 
     expect(screen.queryByTestId('binary-bulk-download')).not.toBeInTheDocument();
@@ -267,7 +267,7 @@ describe('BinaryList — Auswahl als ZIP triggers bulk-fetch (AC-223)', () => {
     );
     listMock.mockResolvedValue(ok({ data: many }));
 
-    render(<BinaryList projectId="p-42" />);
+    render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
     await screen.findByTestId('attachment-binary-row-bin-0');
 
     await userEvent.click(screen.getByTestId('binary-select-all'));
@@ -310,7 +310,7 @@ describe('BinaryList — Auswahl als ZIP triggers bulk-fetch (AC-223)', () => {
     document.body.appendChild = appendChildSpy as unknown as typeof document.body.appendChild;
 
     try {
-      render(<BinaryList projectId="p-42" />);
+      render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
       const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
       const docxRow = await screen.findByTestId('attachment-binary-row-bin-docx');
 
@@ -358,7 +358,7 @@ describe('BinaryList — "Datei fehlt" on download 404 (AC-224 binary side)', ()
       .mockResolvedValueOnce(new Response('not found', { status: 404 }));
 
     try {
-      render(<BinaryList projectId="p-42" />);
+      render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
 
       const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
       await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
@@ -379,7 +379,7 @@ describe('BinaryList — "Datei fehlt" on download 404 (AC-224 binary side)', ()
       .mockResolvedValueOnce(new Response('not found', { status: 404 }));
 
     try {
-      render(<BinaryList projectId="p-42" />);
+      render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
 
       const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
       await userEvent.click(within(pdfRow).getByTestId('attachment-download'));
@@ -413,7 +413,7 @@ describe('BinaryList — Schlüssel nicht verfügbar render (AC-244)', () => {
     );
 
     try {
-      render(<BinaryList projectId="p-42" />);
+      render(<BinaryList projectId="p-42" bundleFileName="P-2026-042_Test-Projekt.zip" />);
 
       const pdfRow = await screen.findByTestId('attachment-binary-row-bin-pdf');
       await userEvent.click(within(pdfRow).getByTestId('attachment-download'));

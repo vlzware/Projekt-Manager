@@ -65,6 +65,14 @@ services:
       # state its bucket explicitly via `.env` rather than relying on a
       # silent fallback that would diverge from the init script.
       STORAGE_BUCKET: ${STORAGE_BUCKET:?STORAGE_BUCKET must be set}
+      # Optional per-process key prefix. Production leaves this unset so
+      # callers store bare keys; the vitest integration suite sets
+      # `test-<pid>/` via `process.env` (src/test/integration-setup.ts) for
+      # per-fork isolation inside the shared test bucket. Forwarded here
+      # only so check-env-drift.sh sees it — without this line, the Zod
+      # schema's optional() would silently mask a missing-in-compose drift
+      # if a production caller ever did need to set it.
+      STORAGE_KEY_PREFIX: ${STORAGE_KEY_PREFIX:-}
       # SigV4 signing region. MinIO accepts any value (us-east-1 in dev);
       # B2 verifies against the bucket-bound region (`us-west-002`,
       # `eu-central-003`, …) and rejects mismatches with

@@ -104,6 +104,7 @@ async function main(): Promise<void> {
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
     region: env.STORAGE_REGION,
+    keyPrefix: env.STORAGE_KEY_PREFIX,
   });
   try {
     await storage.ping();

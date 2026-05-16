@@ -42,6 +42,17 @@ sudo -u deploy /opt/projekt-manager/scripts/deploy.sh <sha>
 
 The script: fetches origin, checks out the exact SHA, decrypts `secrets.env.age` via process substitution (plaintext never on disk), sets `APP_IMAGE_TAG=sha-<sha>`, runs `docker compose pull app && docker compose up -d`, polls `/api/health` for 60s, reloads Caddy, and — when the backup container's tmpfs is empty — prompts the operator to paste the age private identity into `/run/drill-key/identity` via the existing `load-drill-key` tool (no key persisted to disk). A failed or skipped paste warns but does not abort the deploy; reload manually with `docker exec -it projekt-manager-backup-1 load-drill-key`.
 
+## How upgrades reach the VPS
+
+`deploy.sh` covers everything except the Docker engine itself.
+
+| Layer                                 | How                                                                                                                                  |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| App / backup (npm, app code, Node)    | CI builds + pushes to GHCR per commit SHA → `deploy.sh` pulls + recreates containers                                                 |
+| Caddy (`docker/caddy/Dockerfile`)     | `deploy.sh` runs `docker compose build caddy` — Docker's layer cache makes it near-free when nothing changed                         |
+| Postgres / MinIO (pinned tags)        | `deploy.sh`'s `up -d` pulls on tag change. Same-tag-new-digest (rare) requires explicit `compose pull <service>` before deploy.      |
+| Docker engine + Compose plugin (host) | Manual, lockstep per [ADR-0009](../adr/0009-pin-docker-versions-across-environments.md) → [server-setup.md](server-setup.md) Phase 4 |
+
 ## Rollback
 
 Same as forward-deploy with an older SHA:

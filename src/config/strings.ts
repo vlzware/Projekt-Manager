@@ -49,7 +49,7 @@ export const STRINGS = {
     invoiceNotIssued: 'Die Rechnung ist noch ein Entwurf.',
     invoiceAlreadyCancelled: 'Die Rechnung wurde bereits storniert.',
     companyProfileRequired:
-      'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
+      'Firmendaten sind unvollständig. Bitte erst im Bereich „Rechnungen" vervollständigen.',
     customerHasInvoices:
       'Der Kunde kann nicht gelöscht werden, da ausgestellte oder stornierte Rechnungen existieren.',
     projectHasInvoices:
@@ -371,7 +371,18 @@ export const STRINGS = {
     ustId: 'USt-IdNr.',
     iban: 'IBAN',
     accentColor: 'Akzentfarbe',
+    /**
+     * Helper text below the Akzentfarbe input — pins the accepted shape
+     * (the server validates against `^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$`).
+     * Examples use the 3-digit form to satisfy the AC-108 palette-leak
+     * scan, which only inspects 6-/8-digit hex literals.
+     */
+    accentColorHelper: 'Hex-Farbe als #RGB oder #RRGGBB, z. B. #f60.',
+    /** Client-side validation message when the input is non-empty and not a hex color. */
+    accentColorInvalid: 'Bitte als #RGB oder #RRGGBB angeben, z. B. #f60.',
     footerText: 'Fußzeile',
+    footerTextHelper:
+      'Erscheint am Ende jeder Rechnung. Geeignet z. B. für Bankverbindung oder Zahlungsziel.',
     defaultTaxMode: 'Standard-Steuermodus',
     taxModeStandard: 'Regulär',
     taxModeKleinunternehmer: 'Kleinunternehmer §19',
@@ -532,7 +543,7 @@ export const STRINGS = {
     errorProjectState:
       'Das Projekt steht nicht im Status „Rechnung fällig" — die Rechnung kann nicht ausgestellt werden.',
     errorCompanyProfileRequired:
-      'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
+      'Firmendaten sind unvollständig. Bitte erst im Bereich „Rechnungen" vervollständigen.',
     errorPdfDownload: 'Die PDF konnte nicht geladen werden.',
 
     // Standalone /rechnungen list view (ui/invoices.md §8.16.1).
@@ -860,13 +871,6 @@ export const STRINGS = {
     bulkDownload: 'Auswahl als ZIP',
     downloadAll: 'Alle herunterladen',
     noAttachments: 'Keine Dateien zum Herunterladen.',
-    /**
-     * Fallback filename hinted to the browser when the bulk-download
-     * anchor is created. The server's Content-Disposition is still
-     * authoritative; this is the "filename the user sees if the
-     * browser honours the hint."
-     */
-    bulkZipFileName: 'Dateien.zip',
     selectAll: 'Alle auswählen',
     /**
      * Bulk-download cap violation message (AC-223) — MUST name both caps

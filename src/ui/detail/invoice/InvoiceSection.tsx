@@ -268,7 +268,7 @@ export function InvoiceSection({ projectId, projectStatus }: Props) {
             )}
           </p>
           <Link
-            to="/daten"
+            to="/rechnungen"
             className={styles.companyProfileBannerLink}
             data-testid="invoice-company-profile-link"
           >

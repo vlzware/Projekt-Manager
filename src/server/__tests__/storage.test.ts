@@ -266,4 +266,142 @@ describe('Object Storage Module', () => {
       expect(Buffer.from(restored.data).toString('utf-8')).toBe('restore-me');
     });
   });
+
+  // ---------------------------------------------------------------
+  // keyPrefix transparency — proves the per-process namespace lands
+  // at the S3 boundary (the prefix is applied to writes) while callers
+  // continue to read/write bare logical keys.
+  //
+  // Two clients against the same bucket: `prefixedStorage` is the unit
+  // under test; `unprefixedStorage` (defined at the top-level describe)
+  // is the control used to observe the raw bucket-side key shape.
+  // ---------------------------------------------------------------
+  describe('keyPrefix transparency', () => {
+    // Per-run namespace — `keyPrefix` regex requires lowercase + digits
+    // + `_-` only and a trailing slash. PID + timestamp keep parallel
+    // CI runs and parallel local vitest workers from sharing a namespace.
+    const namespace = `unittest-${process.pid}-${Date.now()}/`;
+    let prefixedStorage: AttachmentStorageClient;
+
+    beforeAll(() => {
+      prefixedStorage = createStorageClient({
+        endpoint: requireEnv('STORAGE_ENDPOINT'),
+        bucket: requireEnv('STORAGE_BUCKET'),
+        accessKey: requireEnv('STORAGE_ACCESS_KEY'),
+        secretKey: requireEnv('STORAGE_SECRET_KEY'),
+        region: process.env.STORAGE_REGION ?? 'us-east-1',
+        keyPrefix: namespace,
+      });
+    });
+
+    afterEach(async () => {
+      // Per-test cleanup — hide whatever the test wrote. Compliance
+      // Object Lock stacks a delete marker; the bytes survive until
+      // the lifecycle rule (default 2 days) reaps them. That's enough
+      // for the bucket-pollution guard's current-version check.
+      const keys = await prefixedStorage.listObjects('kp/');
+      for (const key of keys) {
+        try {
+          await prefixedStorage.hide(key);
+        } catch {
+          // Best-effort; another test may have raced.
+        }
+      }
+    });
+
+    it('round-trips a logical key — caller never sees the prefix', async () => {
+      const logicalKey = 'kp/round-trip';
+      const body = Buffer.from('hello-from-prefixed-client', 'utf-8');
+      const { key: returnedKey } = await prefixedStorage.upload(logicalKey, body, 'text/plain');
+      // Returned key is the LOGICAL key the caller passed — not the
+      // wire-key. Stripping happens at the boundary.
+      expect(returnedKey).toBe(logicalKey);
+
+      const dl = await prefixedStorage.download(logicalKey);
+      expect(Buffer.from(dl.data).toString('utf-8')).toBe('hello-from-prefixed-client');
+    });
+
+    it('places the object at the prefixed path in the bucket', async () => {
+      const logicalKey = 'kp/wire-key-check';
+      await prefixedStorage.upload(logicalKey, Buffer.from('x'), 'application/octet-stream');
+
+      // The control client (no keyPrefix) reads the bucket raw — it sees
+      // the wire key `namespace + logicalKey`. If the prefix were not
+      // applied, this list would be empty.
+      const rawKeys = await storage.listObjects(namespace);
+      expect(rawKeys).toContain(`${namespace}${logicalKey}`);
+      // And the same path is NOT visible at the bare logical key.
+      const bareKeys = await storage.listObjects('kp/');
+      expect(bareKeys).not.toContain(logicalKey);
+    });
+
+    it('strips the prefix from listObjects results', async () => {
+      // Two writes through the prefixed client.
+      await prefixedStorage.upload('kp/listing/a', Buffer.from('1'), 'text/plain');
+      await prefixedStorage.upload('kp/listing/b', Buffer.from('2'), 'text/plain');
+
+      // Caller asks for `kp/listing/` and gets BARE keys back — the
+      // wire prefix is invisible.
+      const keys = await prefixedStorage.listObjects('kp/listing/');
+      expect(keys.sort()).toEqual(['kp/listing/a', 'kp/listing/b']);
+    });
+
+    it('hide() targets the prefixed key', async () => {
+      const logicalKey = 'kp/hide-target';
+      await prefixedStorage.upload(logicalKey, Buffer.from('x'), 'text/plain');
+
+      // Hide via prefixed client — DeleteObject without VersionId
+      // hits `namespace + logicalKey`. Caller-side view: gone.
+      await prefixedStorage.hide(logicalKey);
+      await expect(prefixedStorage.headObject(logicalKey)).rejects.toBeInstanceOf(
+        StorageObjectNotFoundError,
+      );
+
+      // Control client confirms the delete-marker landed at the
+      // wire key — the bare logical key was never written and so
+      // wouldn't appear in either view; the wire key was, but its
+      // current version is now a delete marker, so a current-version
+      // list excludes it.
+      const rawKeys = await storage.listObjects(namespace);
+      expect(rawKeys).not.toContain(`${namespace}${logicalKey}`);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // keyPrefix shape validation — misconfiguration fails at boot,
+  // not at the first PUT.
+  // ---------------------------------------------------------------
+  describe('keyPrefix validation', () => {
+    const baseConfig = () => ({
+      endpoint: requireEnv('STORAGE_ENDPOINT'),
+      bucket: requireEnv('STORAGE_BUCKET'),
+      accessKey: requireEnv('STORAGE_ACCESS_KEY'),
+      secretKey: requireEnv('STORAGE_SECRET_KEY'),
+      region: process.env.STORAGE_REGION ?? 'us-east-1',
+    });
+
+    it.each([
+      ['no trailing slash', 'test-123'],
+      ['leading slash', '/test-123/'],
+      ['uppercase', 'Test-123/'],
+      ['invalid char', 'test 123/'],
+      ['starts with dash', '-test/'],
+      ['double slash', 'test//'],
+    ])('rejects keyPrefix "%s" (%s)', (_label, invalid) => {
+      expect(() => createStorageClient({ ...baseConfig(), keyPrefix: invalid })).toThrow(
+        /keyPrefix/,
+      );
+    });
+
+    it('accepts empty / undefined as "no prefix"', () => {
+      expect(() => createStorageClient({ ...baseConfig(), keyPrefix: undefined })).not.toThrow();
+      expect(() => createStorageClient({ ...baseConfig(), keyPrefix: '' })).not.toThrow();
+    });
+
+    it('accepts the canonical shape', () => {
+      expect(() =>
+        createStorageClient({ ...baseConfig(), keyPrefix: 'test-12345/' }),
+      ).not.toThrow();
+    });
+  });
 });

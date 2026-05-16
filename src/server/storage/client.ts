@@ -65,6 +65,21 @@ export interface StorageConfig {
   accessKey: string;
   secretKey: string;
   region?: string;
+  /**
+   * Optional per-process key namespace. When set, every storage
+   * operation transparently prepends this string at the S3 boundary
+   * (PUT/GET/HEAD/DELETE/LIST/COPY/PRESIGN); callers continue to pass
+   * and receive bare logical keys. Used by the vitest integration suite
+   * (`src/test/integration-setup.ts`) to scope each fork's writes to
+   * `test-<pid>/` inside the shared test bucket, mirroring the per-PID
+   * DB isolation. Production passes `undefined` — logical keys land in
+   * the bucket as-is.
+   *
+   * Shape: `^[a-z0-9][a-z0-9_-]*\/$` (trailing slash required). Validated
+   * at `createStorageClient()` so a misconfiguration fails at boot, not
+   * at first PUT.
+   */
+  keyPrefix?: string;
 }
 
 export interface UploadResult {
@@ -488,6 +503,23 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       });
 
   const bucket = config.bucket;
+  // keyPrefix shape is validated at config boundary so a misconfiguration
+  // fails before the first PUT. Same regex as the STORAGE_KEY_PREFIX env
+  // schema in `config/env.ts` — single source of truth would require an
+  // extra import; the duplication is bounded to these two sites.
+  const keyPrefix = config.keyPrefix ?? '';
+  if (keyPrefix && !/^[a-z0-9][a-z0-9_-]*\/$/.test(keyPrefix)) {
+    throw new Error(
+      `StorageConfig.keyPrefix must be empty or match ^[a-z0-9][a-z0-9_-]*\\/$ ` +
+        `(trailing slash required), got: "${keyPrefix}"`,
+    );
+  }
+  // Wire-key encoder + decoder. Callers always speak in logical (bare)
+  // keys; the S3 boundary speaks in prefixed keys. `wireKey()` is the
+  // only call path that knows about the prefix.
+  const wireKey = (key: string): string => keyPrefix + key;
+  const stripPrefix = (full: string): string =>
+    keyPrefix && full.startsWith(keyPrefix) ? full.slice(keyPrefix.length) : full;
 
   return {
     async upload(
@@ -499,7 +531,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       await s3.send(
         new PutObjectCommand({
           Bucket: bucket,
-          Key: key,
+          Key: wireKey(key),
           Body: data,
           ContentType: contentType,
         }),
@@ -512,7 +544,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       const response = await s3.send(
         new GetObjectCommand({
           Bucket: bucket,
-          Key: key,
+          Key: wireKey(key),
         }),
       );
 
@@ -542,7 +574,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       const clamped = Math.min(expirySeconds, MAX_SIGNED_URL_EXPIRY_SECONDS);
       const command = new GetObjectCommand({
         Bucket: bucket,
-        Key: key,
+        Key: wireKey(key),
       });
       return getSignedUrl(s3Signing, command, { expiresIn: clamped });
     },
@@ -565,7 +597,9 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       // HeadBucket comment claimed. The `__probe/` prefix keeps the call
       // bounded so a populated bucket doesn't waste bandwidth listing user
       // keys.
-      await s3.send(new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1, Prefix: '__probe/' }));
+      await s3.send(
+        new ListObjectsV2Command({ Bucket: bucket, MaxKeys: 1, Prefix: wireKey('__probe/') }),
+      );
     },
 
     async createPresignedPut(
@@ -611,7 +645,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       const expiresIn = Math.max(1, expirySeconds);
       const command = new PutObjectCommand({
         Bucket: bucket,
-        Key: key,
+        Key: wireKey(key),
         ContentType: contentType,
         ContentLength: sizeBytes,
         ContentMD5: contentMd5Base64,
@@ -651,7 +685,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       const clamped = Math.min(expirySeconds, MAX_SIGNED_URL_EXPIRY_SECONDS);
       const command = new GetObjectCommand({
         Bucket: bucket,
-        Key: key,
+        Key: wireKey(key),
         ...(attachmentFileName
           ? { ResponseContentDisposition: buildContentDisposition(attachmentFileName) }
           : {}),
@@ -666,7 +700,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     async headObject(key: string): Promise<HeadObjectResult> {
       validateKey(key);
       try {
-        const res = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        const res = await s3.send(new HeadObjectCommand({ Bucket: bucket, Key: wireKey(key) }));
         return {
           size: Number(res.ContentLength ?? 0),
           contentType: res.ContentType ?? 'application/octet-stream',
@@ -687,7 +721,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       // delete marker — the version becomes "noncurrent" and reads return
       // 404, but the bytes survive until the lifecycle reap (ADR-0022).
       // Idempotent like S3 DeleteObject — succeeds on missing keys.
-      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: wireKey(key) }));
     },
 
     async copyFromVersion(key: string, sourceVersionId: string): Promise<string | undefined> {
@@ -720,7 +754,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         await s3.send(
           new HeadObjectCommand({
             Bucket: bucket,
-            Key: key,
+            Key: wireKey(key),
             VersionId: sourceVersionId,
           }),
         );
@@ -749,8 +783,8 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         const response = await s3.send(
           new CopyObjectCommand({
             Bucket: bucket,
-            Key: key,
-            CopySource: `${bucket}/${key}?versionId=${encodeURIComponent(sourceVersionId)}`,
+            Key: wireKey(key),
+            CopySource: `${bucket}/${wireKey(key)}?versionId=${encodeURIComponent(sourceVersionId)}`,
           }),
         );
         return response.VersionId;
@@ -777,7 +811,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
     async getObject(key: string): Promise<Readable> {
       validateKey(key);
       try {
-        const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+        const response = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: wireKey(key) }));
         const body = response.Body;
         if (!body) {
           throw new Error(`Empty response body for key: ${key}`);
@@ -806,7 +840,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
       await s3.send(
         new PutObjectCommand({
           Bucket: bucket,
-          Key: key,
+          Key: wireKey(key),
           Body: body,
           ContentType: contentType,
         }),
@@ -875,7 +909,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         await s3.send(
           new DeleteObjectCommand({
             Bucket: bucket,
-            Key: CAPABILITY_PROBE_KEY,
+            Key: wireKey(CAPABILITY_PROBE_KEY),
             VersionId: CAPABILITY_PROBE_VERSION_ID,
           }),
         );
@@ -914,7 +948,7 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
         const response = await s3.send(
           new ListObjectsV2Command({
             Bucket: bucket,
-            Prefix: prefix,
+            Prefix: wireKey(prefix),
             ContinuationToken: continuationToken,
           }),
         );
@@ -922,7 +956,9 @@ export function createStorageClient(config: StorageConfig): AttachmentStorageCli
           const k = obj.Key;
           if (typeof k !== 'string') continue;
           if (olderThan && obj.LastModified && obj.LastModified >= olderThan) continue;
-          keys.push(k);
+          // Strip the per-process prefix so callers see logical keys —
+          // the same shape they pass to `headObject`, `hide`, etc.
+          keys.push(stripPrefix(k));
         }
         continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
       } while (continuationToken);

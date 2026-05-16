@@ -202,6 +202,62 @@ describe('AC-243: synthetic-origin intercept + decrypt', () => {
     expect(out).toEqual(plaintext);
   });
 
+  it("propagates the descriptor's mimeType as the response Content-Type (PDF preview inline)", async () => {
+    // Why this matters: `<iframe src='/encrypted-storage/...'>` only
+    // renders a PDF inline when the response carries
+    // `Content-Type: application/pdf`. The earlier SW served everything
+    // as `application/octet-stream`, which the browser collapses to a
+    // download — the "Ansehen" affordance produced a `<uuid>.original`
+    // file in the downloads folder and a blank iframe.
+    const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
+    const plaintext = utf8('%PDF-1.7 ...');
+    const ciphertext = await encryptForTest(plaintext, dek);
+
+    installFetchPlan({
+      downloadUrl: () =>
+        jsonResponse({
+          url: 'https://storage.example/cipher-original',
+          expiresAt: '2026-04-30T12:00:00Z',
+          dekMaterial: toBase64(dek),
+          mimeType: 'application/pdf',
+        }),
+      ciphertext: () => new Response(ciphertext.slice() as BlobPart),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/pdf');
+  });
+
+  it('falls back to application/octet-stream when the descriptor omits mimeType (older server)', async () => {
+    // Forward-compat: a worker that ships ahead of the server keeps
+    // serving downloads (prior behavior) rather than crashing on a
+    // missing field.
+    const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
+    const plaintext = utf8('x');
+    const ciphertext = await encryptForTest(plaintext, dek);
+
+    installFetchPlan({
+      downloadUrl: () =>
+        jsonResponse({
+          url: 'https://storage.example/c',
+          expiresAt: '2026-04-30T12:00:00Z',
+          dekMaterial: toBase64(dek),
+        }),
+      ciphertext: () => new Response(ciphertext.slice() as BlobPart),
+    });
+
+    const response = await handleEncryptedStorageRequest(
+      syntheticRequest('p-42', 'att-1', 'original'),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/octet-stream');
+  });
+
   it('calls the download-url endpoint with the project id, attachment id, and variant in the query', async () => {
     const dek = crypto.getRandomValues(new Uint8Array(DEK_BYTES));
     const plaintext = new TextEncoder().encode('x');
