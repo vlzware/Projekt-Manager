@@ -241,13 +241,25 @@ if docker compose ps --status running --services 2>/dev/null | grep -qx db; then
 fi
 
 # `docker compose pull` only pulls services that declare an `image:`
-# — `db`, `storage`, and `caddy` use their own pinned registry images
-# (unchanged); `app` and `backup` resolve via APP_IMAGE_TAG (exported
-# in Phase 2 setup above). --profile backup is needed on BOTH `pull`
-# and `up` — without it on pull, the backup service is filtered out
-# of the active set and its image is never fetched ahead of `up -d`
-# (which would then block on a registry round-trip while starting).
+# — `db` and `storage` use pinned registry images (unchanged); `app`
+# and `backup` resolve via APP_IMAGE_TAG (exported in Phase 2 setup
+# above). --profile backup is needed on BOTH `pull` and `up` — without
+# it on pull, the backup service is filtered out of the active set and
+# its image is never fetched ahead of `up -d` (which would then block
+# on a registry round-trip while starting).
 docker compose --profile backup pull app backup
+
+# Caddy uses `build: ./docker/caddy` (locally built, not a registry
+# pull), so `compose up -d` below does NOT auto-rebuild on Dockerfile
+# changes — the cached `projekt-manager-caddy` image is reused even
+# after a base-image or xcaddy version bump (regression observed
+# 2026-05-16: a Caddy 2.11.2 → 2.11.3 bump landed in the repo but the
+# VPS kept running 2.11.2 until a manual rebuild). Docker's layer cache
+# makes this a near-no-op when nothing changed; on a real bump it picks
+# up the new pins. Safe to run unconditionally — the env was sourced
+# from secrets.env.age in Phase 2 setup, so the compose-file env
+# interpolation (CLOUDFLARE_API_TOKEN, …) resolves.
+docker compose build caddy
 
 # --- Pre-flight: schema-level env validation + feature manifest ------
 # Two checkpoints in one ephemeral container:
