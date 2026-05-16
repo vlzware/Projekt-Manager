@@ -1841,7 +1841,7 @@ describe('Attachment routes — integration (issue #108)', () => {
   // happens at the scope layer (attachments-scope.test.ts).
   // -------------------------------------------------------------------
   describe('AC-241: download-url returns presigned URL + unwrapped DEK', () => {
-    it('returns { url, expiresAt, dekMaterial } for variant=original', async () => {
+    it('returns { url, expiresAt, dekMaterial, mimeType } for variant=original', async () => {
       const [id] = await seedReadyAttachments(projectId, [
         { sizeBytes: 100, kind: 'photo', mimeType: 'image/jpeg', label: 'foto' },
       ]);
@@ -1857,10 +1857,31 @@ describe('Attachment routes — integration (issue #108)', () => {
       // 32 bytes after base64-decode — the AES-256-GCM key shape.
       const decoded = Buffer.from(body.dekMaterial, 'base64');
       expect(decoded.length).toBe(32);
+      // Plaintext mimeType drives the SW's Content-Type so PDF
+      // previews render inline in `<iframe>` instead of triggering
+      // downloads. For an `original` variant it must match the row's
+      // stored mimeType (image/jpeg here).
+      expect(body.mimeType).toBe('image/jpeg');
       // Wrapped envelope is NEVER on the response — confidentiality
       // boundary per api.md §14.2.11. A regression that surfaced the
       // wrapped form alongside the unwrapped one would be a valid
       // 200 by status but wrong by shape.
+    });
+
+    it('returns mimeType=image/jpeg for variant=thumbnail regardless of original mime', async () => {
+      // Thumbnails are produced by the photo-thumbnail pipeline and
+      // are always JPEG, even when the original is image/png or
+      // image/webp. The SW relies on a stable thumbnail mime to render
+      // the gallery placeholder.
+      const [id] = await seedReadyAttachments(projectId, [
+        { sizeBytes: 100, kind: 'photo', mimeType: 'image/png', label: 'foto' },
+      ]);
+      const res = await authGet(
+        ownerToken,
+        `/api/projects/${projectId}/attachments/${id}/download-url?variant=thumbnail`,
+      );
+      expect(res.statusCode).toBe(200);
+      expect(res.json().mimeType).toBe('image/jpeg');
     });
 
     it('returns { url, expiresAt, dekMaterial } for variant=thumbnail (using wrappedThumbDek) — end-to-end DEK fidelity', async () => {

@@ -193,6 +193,16 @@ export interface DownloadUrlResult {
   expiresAt: string;
   /** Base64 of the unwrapped 32-byte DEK that decrypts the requested variant. */
   dekMaterial: string;
+  /**
+   * Plaintext MIME type of the requested variant. The Service-Worker
+   * decrypt path sets this as the `Content-Type` on the response it
+   * synthesises so `<iframe src>` PDF previews render inline instead
+   * of triggering a download (the browser only renders inline for the
+   * matching content type — `application/octet-stream` collapses to
+   * download). Originals use the stored `mimeType`; thumbnails are
+   * always `image/jpeg` per the photo-thumbnail pipeline.
+   */
+  mimeType: string;
 }
 
 export type DownloadVariant = 'original' | 'thumbnail';
@@ -1234,10 +1244,16 @@ export class AttachmentService {
         ? await this.storage.createPresignedGet(row.thumbKey!)
         : await this.storage.createPresignedGet(row.originalKey, undefined, row.filename);
 
+    // Thumbnails are produced by the photo-thumbnail pipeline and are
+    // always JPEG (src/server/services/AttachmentService.ts thumbnail
+    // pre-encode); originals carry whatever MIME the client uploaded.
+    const variantMime = variant === 'thumbnail' ? 'image/jpeg' : row.mimeType;
+
     return {
       url: presigned.url,
       expiresAt: presigned.expiresAt,
       dekMaterial,
+      mimeType: variantMime,
     };
   }
 

@@ -80,6 +80,14 @@ interface DownloadUrlResponse {
   url: string;
   expiresAt: string;
   dekMaterial: string;
+  /**
+   * Plaintext MIME of the requested variant — set as `Content-Type` on
+   * the decrypted response so `<iframe src>` previews of PDFs render
+   * inline (the browser would download an `application/octet-stream`
+   * instead). Falls back to octet-stream when omitted; older server
+   * builds without the field stay download-only, matching prior behavior.
+   */
+  mimeType?: string;
 }
 
 interface ParsedSyntheticPath {
@@ -340,17 +348,21 @@ export async function handleEncryptedStorageRequest(request: Request): Promise<R
     );
   }
 
-  // Step 4 — serve plaintext. The plaintext mime is row-level state
-  // and the download-url response does not currently carry it
-  // (api.md §14.2.11 returns only `{ url, expiresAt, dekMaterial }`).
-  // Default to `application/octet-stream`; consumers that need an
-  // explicit mime (the binary `Herunterladen` anchor) own naming +
-  // disposition on their side. For `<img src=...>` the browser
-  // content-sniffs and renders correctly regardless.
+  // Step 4 — serve plaintext. The download-url descriptor carries the
+  // plaintext mime; surfacing it as `Content-Type` is what lets
+  // `<iframe src>` PDF previews render inline (the browser collapses
+  // `application/octet-stream` to a download). Falls back to
+  // octet-stream when the server omits the field — keeps the worker
+  // forward-compat against an older deploy that hasn't shipped the
+  // mime addition yet.
+  const responseMime =
+    typeof descriptor.mimeType === 'string' && descriptor.mimeType.length > 0
+      ? descriptor.mimeType
+      : 'application/octet-stream';
   return new Response(plaintext as BodyInit, {
     status: 200,
     headers: {
-      'content-type': 'application/octet-stream',
+      'content-type': responseMime,
       'cache-control': 'no-store',
     },
   });
