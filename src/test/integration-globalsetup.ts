@@ -1,20 +1,30 @@
 /**
- * Sweep orphaned `projekt_manager_test_<pid>` databases before and
- * after the integration suite. "Orphan" = the PID encoded in the name
+ * Sweep orphans before and after the integration suite — both per-PID
+ * test databases (`projekt_manager_test_<pid>`) and per-PID test bucket
+ * key prefixes (`test-<pid>/`). "Orphan" = the PID encoded in the name
  * is no longer alive. Active runs from other agents/worktrees survive.
  *
  * Runs in the main vitest process (forks/workers have not been spawned
  * yet at setup time and have already exited by teardown time), so it
- * cannot create the per-fork DB itself — that lives in
+ * cannot create the per-fork DB / prefix itself — those live in
  * `integration-setup.ts`. The teardown side is what reliably reaps this
  * run's forks: vitest's `forks` pool exits each worker via
- * `process.exit()`, which skips `beforeExit`, so a per-fork drop hook
+ * `process.exit()`, which skips `beforeExit`, so a per-fork cleanup hook
  * is not viable.
+ *
+ * Bucket sweep uses DeleteObject without VersionId — Compliance Object
+ * Lock allows that (it stacks a delete marker on top of the retained
+ * version). The underlying bytes survive until the lifecycle rule
+ * (`STORAGE_LIFECYCLE_HIDE_TO_DELETE_DAYS`, default 2 days) reaps them.
+ * For the pollution-check semantic (current-version `mc ls`), delete
+ * markers are enough; disk reclamation is automatic.
  */
 
 import pg from 'pg';
+import { S3Client, ListObjectsV2Command, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 const TEST_DB_PREFIX = 'projekt_manager_test_';
+const TEST_KEY_PREFIX_PATTERN = /^test-(\d+)\/$/;
 
 function adminConnectionString(): string {
   const baseUrl =
@@ -35,7 +45,7 @@ function isPidAlive(pid: number): boolean {
   }
 }
 
-async function sweepOrphans(): Promise<void> {
+async function sweepOrphanDatabases(): Promise<void> {
   const client = new pg.Client({ connectionString: adminConnectionString() });
   await client.connect();
   try {
@@ -59,6 +69,97 @@ async function sweepOrphans(): Promise<void> {
   } finally {
     await client.end();
   }
+}
+
+/**
+ * Sweep dead-PID `test-<pid>/` prefixes in the integration-test bucket.
+ *
+ * Lists with `Delimiter: '/'` so we get the top-level prefixes
+ * (`CommonPrefixes`) cheaply — listing each fork's full keyspace would
+ * be O(objects) instead of O(forks). Then, per dead-PID prefix, paginate
+ * through ListObjectsV2 + DeleteObject to delete-marker every key.
+ *
+ * No-ops cleanly when the env doesn't have storage configured (the
+ * unit-test slice of vitest doesn't need MinIO) — no STORAGE_ENDPOINT,
+ * no sweep.
+ */
+async function sweepOrphanStoragePrefixes(): Promise<void> {
+  const endpoint = process.env.STORAGE_ENDPOINT;
+  const accessKey = process.env.STORAGE_ACCESS_KEY;
+  const secretKey = process.env.STORAGE_SECRET_KEY;
+  const bucket = process.env.STORAGE_BUCKET_TEST ?? 'projekt-manager-test';
+  const region = process.env.STORAGE_REGION ?? 'us-east-1';
+  if (!endpoint || !accessKey || !secretKey) return;
+
+  const s3 = new S3Client({
+    endpoint,
+    region,
+    credentials: { accessKeyId: accessKey, secretAccessKey: secretKey },
+    forcePathStyle: true,
+  });
+
+  // Step 1: enumerate top-level prefixes via the delimiter trick.
+  const deadPrefixes: string[] = [];
+  let continuationToken: string | undefined;
+  do {
+    let response;
+    try {
+      response = await s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          Delimiter: '/',
+          ContinuationToken: continuationToken,
+        }),
+      );
+    } catch {
+      // Bucket may not exist yet (first-time fresh MinIO). Nothing to
+      // sweep — the configure step in init-storage.sh will provision it
+      // when the dev compose stack comes up.
+      return;
+    }
+    for (const cp of response.CommonPrefixes ?? []) {
+      if (typeof cp.Prefix !== 'string') continue;
+      const match = TEST_KEY_PREFIX_PATTERN.exec(cp.Prefix);
+      if (!match) continue;
+      const pid = Number.parseInt(match[1] ?? '', 10);
+      if (isPidAlive(pid)) continue;
+      deadPrefixes.push(cp.Prefix);
+    }
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : undefined;
+  } while (continuationToken);
+
+  // Step 2: per dead-PID prefix, walk + delete-marker.
+  for (const prefix of deadPrefixes) {
+    let token: string | undefined;
+    do {
+      let page;
+      try {
+        page = await s3.send(
+          new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: prefix,
+            ContinuationToken: token,
+          }),
+        );
+      } catch {
+        break; // Best-effort.
+      }
+      for (const obj of page.Contents ?? []) {
+        if (typeof obj.Key !== 'string') continue;
+        try {
+          // DeleteObject without VersionId — Compliance-safe.
+          await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: obj.Key }));
+        } catch {
+          // Best-effort per key; another sweeper may have raced.
+        }
+      }
+      token = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (token);
+  }
+}
+
+async function sweepOrphans(): Promise<void> {
+  await Promise.all([sweepOrphanDatabases(), sweepOrphanStoragePrefixes()]);
 }
 
 export default async function setup(): Promise<() => Promise<void>> {

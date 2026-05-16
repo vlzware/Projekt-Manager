@@ -160,6 +160,7 @@ async function start(): Promise<void> {
           accessKey: env.STORAGE_ACCESS_KEY,
           secretKey: env.STORAGE_SECRET_KEY,
           region: env.STORAGE_REGION,
+          keyPrefix: env.STORAGE_KEY_PREFIX,
         };
         const prunerStorage = createStorageClient({
           ...prunerConfig,
@@ -241,6 +242,7 @@ async function start(): Promise<void> {
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
     region: env.STORAGE_REGION,
+    keyPrefix: env.STORAGE_KEY_PREFIX,
   });
 
   // Boot-time bucket-safety probe (ADR-0022 / docs/ops/object-storage-provisioning.md).
@@ -313,6 +315,7 @@ async function start(): Promise<void> {
     accessKey: env.STORAGE_ACCESS_KEY,
     secretKey: env.STORAGE_SECRET_KEY,
     region: env.STORAGE_REGION,
+    keyPrefix: env.STORAGE_KEY_PREFIX,
   });
 
   // Health-check endpoint (outside auth-guarded routes). Real probe — runs
