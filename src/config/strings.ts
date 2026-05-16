@@ -49,7 +49,7 @@ export const STRINGS = {
     invoiceNotIssued: 'Die Rechnung ist noch ein Entwurf.',
     invoiceAlreadyCancelled: 'Die Rechnung wurde bereits storniert.',
     companyProfileRequired:
-      'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
+      'Firmendaten sind unvollständig. Bitte erst im Bereich „Rechnungen" vervollständigen.',
     customerHasInvoices:
       'Der Kunde kann nicht gelöscht werden, da ausgestellte oder stornierte Rechnungen existieren.',
     projectHasInvoices:
@@ -532,7 +532,7 @@ export const STRINGS = {
     errorProjectState:
       'Das Projekt steht nicht im Status „Rechnung fällig" — die Rechnung kann nicht ausgestellt werden.',
     errorCompanyProfileRequired:
-      'Firmendaten sind unvollständig. Bitte erst im Daten-Bereich vervollständigen.',
+      'Firmendaten sind unvollständig. Bitte erst im Bereich „Rechnungen" vervollständigen.',
     errorPdfDownload: 'Die PDF konnte nicht geladen werden.',
 
     // Standalone /rechnungen list view (ui/invoices.md §8.16.1).

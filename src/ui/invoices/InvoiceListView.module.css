@@ -9,6 +9,33 @@
   gap: 12px;
 }
 
+/* Collapsible Firmendaten host. Closed-by-default so the section does
+   not crowd the invoice list; the inner CompanyProfileSection owns its
+   own padding and chrome. */
+.companyProfileDetails {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-surface-raised);
+}
+
+.companyProfileSummary {
+  padding: 12px 16px;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.companyProfileSummary:hover {
+  background: var(--color-surface-muted);
+}
+
+.companyProfileSummary:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;

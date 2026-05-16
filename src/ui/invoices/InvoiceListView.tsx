@@ -34,6 +34,7 @@ import { orderInvoicesWithStornoGrouping } from '@/domain/invoiceGrouping';
 import { useInvoiceListStore } from '@/state/invoiceListStore';
 import { useProjectStore } from '@/state/projectStore';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
+import { CompanyProfileSection } from '@/ui/management/CompanyProfileSection';
 import { InvoiceListFilterBar } from './InvoiceListFilterBar';
 import { InvoiceListRow } from './InvoiceListRow';
 import styles from './InvoiceListView.module.css';
@@ -225,6 +226,15 @@ export function InvoiceListView() {
 
   return (
     <div className={styles.container} data-testid="invoice-list-view">
+      {/* Firmendaten — collapsed by default; the values are referenced
+          here because the invoice issuer snapshot is frozen from this
+          profile at issue time (ADR-0026). Native `<details>` keeps the
+          surface a11y-correct without a custom toggle component. */}
+      <details className={styles.companyProfileDetails} data-testid="company-profile-details">
+        <summary className={styles.companyProfileSummary}>{STRINGS.companyProfile.heading}</summary>
+        <CompanyProfileSection />
+      </details>
+
       <InvoiceListFilterBar
         years={years}
         year={filters.year}

@@ -106,10 +106,11 @@ export function CompanyProfileSection() {
   // otherwise hide the diagnostic behind an empty section. The retry
   // button re-dispatches `fetch()` so the user can recover without a
   // full page reload.
+  // The host (InvoiceListView's `<details>`) provides the heading via
+  // its `<summary>`; the section renders only the description + form.
   if (!data) {
     return (
       <section className={styles.section}>
-        <h3 className={styles.heading}>{STRINGS.companyProfile.heading}</h3>
         <p className={styles.description}>{STRINGS.companyProfile.description}</p>
         {fetchError && (
           <div className={styles.fetchError} role="alert" data-testid="company-profile-fetch-error">
@@ -216,7 +217,6 @@ function CompanyProfileForm({ profile }: { profile: CompanyProfile }) {
 
   return (
     <section className={styles.section}>
-      <h3 className={styles.heading}>{STRINGS.companyProfile.heading}</h3>
       <p className={styles.description}>{STRINGS.companyProfile.description}</p>
 
       <form
