@@ -9,6 +9,8 @@
  * (Date instances, raw `bigint`) that the wire contract does not.
  */
 
+import { sanitiseFilenameSegment } from './filename.js';
+
 /** §5.15 — three-state machine: draft (editable) → issued (frozen) → cancelled (flag). */
 export const INVOICE_STATUSES = ['draft', 'issued', 'cancelled'] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
@@ -294,18 +296,4 @@ export function buildInvoiceDownloadFilename(
   const numberPart = invoice.number ?? `invoice-${invoice.id}`;
   const recipientSlug = sanitiseFilenameSegment(invoice.recipient?.name ?? '');
   return recipientSlug.length > 0 ? `${numberPart}_${recipientSlug}.pdf` : `${numberPart}.pdf`;
-}
-
-function sanitiseFilenameSegment(value: string): string {
-  return (
-    value
-      // eslint-disable-next-line no-control-regex
-      .replace(/[\x00-\x1f\x7f]/g, '')
-      .replace(/[/\\:*?"<>|]/g, '')
-      .trim()
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^[.-]+|[.-]+$/g, '')
-      .slice(0, 40)
-  );
 }

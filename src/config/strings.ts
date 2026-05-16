@@ -860,13 +860,6 @@ export const STRINGS = {
     bulkDownload: 'Auswahl als ZIP',
     downloadAll: 'Alle herunterladen',
     noAttachments: 'Keine Dateien zum Herunterladen.',
-    /**
-     * Fallback filename hinted to the browser when the bulk-download
-     * anchor is created. The server's Content-Disposition is still
-     * authoritative; this is the "filename the user sees if the
-     * browser honours the hint."
-     */
-    bulkZipFileName: 'Dateien.zip',
     selectAll: 'Alle auswählen',
     /**
      * Bulk-download cap violation message (AC-223) — MUST name both caps

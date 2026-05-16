@@ -23,6 +23,7 @@ import { useToastStore } from '@/state/toastStore';
 import { usePermission } from '@/hooks/usePermission';
 import { ATTACHMENT_MIME_WHITELIST } from '@/domain/attachments';
 import { formatDateDE } from '@/domain/dateFormat';
+import { buildProjectBundleFilename } from '@/domain/filename';
 import { ActivityFeed } from '@/ui/audit/ActivityFeed';
 import { NotPermittedView } from '@/ui/common/NotPermittedView';
 import { CustomerEditForm } from '@/ui/management/CustomerEditForm';
@@ -257,7 +258,7 @@ export function ProjectDetailPage() {
     const blobUrl = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = blobUrl;
-    anchor.download = STRINGS.attachments.bulkZipFileName;
+    anchor.download = bundleFileName;
     anchor.rel = 'noopener';
     document.body.appendChild(anchor);
     anchor.click();
@@ -270,6 +271,8 @@ export function ProjectDetailPage() {
   const readyAttachmentCount = (attachmentsByProject ?? []).filter(
     (a) => a.status === 'ready',
   ).length;
+
+  const bundleFileName = buildProjectBundleFilename(project);
 
   return (
     <article
@@ -618,7 +621,11 @@ export function ProjectDetailPage() {
           {attachmentTab === 'attachments' ? (
             <>
               <PhotoGallery projectId={project.id} archived={isArchived} />
-              <BinaryList projectId={project.id} archived={isArchived} />
+              <BinaryList
+                projectId={project.id}
+                bundleFileName={bundleFileName}
+                archived={isArchived}
+              />
             </>
           ) : (
             <Papierkorb projectId={project.id} />
@@ -627,7 +634,11 @@ export function ProjectDetailPage() {
       ) : (
         <>
           <PhotoGallery projectId={project.id} archived={isArchived} />
-          <BinaryList projectId={project.id} archived={isArchived} />
+          <BinaryList
+            projectId={project.id}
+            bundleFileName={bundleFileName}
+            archived={isArchived}
+          />
         </>
       )}
 

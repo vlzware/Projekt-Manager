@@ -37,6 +37,13 @@ function isPdf(row: { fileName: string; mimeType?: string | null }): boolean {
 
 interface BinaryListProps {
   projectId: string;
+  /**
+   * Filename hinted to the browser when the bulk-download anchor fires.
+   * Built once by the parent (`buildProjectBundleFilename`) so the
+   * "Alle herunterladen" affordance on the page header and the selection-
+   * bulk button here share one naming convention.
+   */
+  bundleFileName: string;
   /** Archived project — suppresses per-row delete controls. */
   archived?: boolean;
 }
@@ -82,7 +89,7 @@ async function readSwErrorCode(response: Response): Promise<string | null> {
   return null;
 }
 
-export function BinaryList({ projectId, archived = false }: BinaryListProps) {
+export function BinaryList({ projectId, bundleFileName, archived = false }: BinaryListProps) {
   // Select the raw per-project slice then filter in useMemo so the
   // selector output is referentially stable across renders.
   const rows = useAttachmentStore((s) => s.byProject[projectId]);
@@ -279,7 +286,7 @@ export function BinaryList({ projectId, archived = false }: BinaryListProps) {
     const blob = await requestBulkZipBlob(projectId, ids);
     if (!blob) return;
     const blobUrl = URL.createObjectURL(blob);
-    triggerDownload(blobUrl, STRINGS.attachments.bulkZipFileName);
+    triggerDownload(blobUrl, bundleFileName);
     setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
   };
 
