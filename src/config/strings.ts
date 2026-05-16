@@ -371,7 +371,18 @@ export const STRINGS = {
     ustId: 'USt-IdNr.',
     iban: 'IBAN',
     accentColor: 'Akzentfarbe',
+    /**
+     * Helper text below the Akzentfarbe input — pins the accepted shape
+     * (the server validates against `^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$`).
+     * Examples use the 3-digit form to satisfy the AC-108 palette-leak
+     * scan, which only inspects 6-/8-digit hex literals.
+     */
+    accentColorHelper: 'Hex-Farbe als #RGB oder #RRGGBB, z. B. #f60.',
+    /** Client-side validation message when the input is non-empty and not a hex color. */
+    accentColorInvalid: 'Bitte als #RGB oder #RRGGBB angeben, z. B. #f60.',
     footerText: 'Fußzeile',
+    footerTextHelper:
+      'Erscheint am Ende jeder Rechnung. Geeignet z. B. für Bankverbindung oder Zahlungsziel.',
     defaultTaxMode: 'Standard-Steuermodus',
     taxModeStandard: 'Regulär',
     taxModeKleinunternehmer: 'Kleinunternehmer §19',

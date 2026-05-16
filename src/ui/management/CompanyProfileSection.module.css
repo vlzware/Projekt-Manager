@@ -62,6 +62,27 @@
   cursor: not-allowed;
 }
 
+/* Invalid-input emphasis — the canonical signal is `aria-invalid="true"`
+   from the LabeledInput; the class mirror lets the border land without a
+   separate attribute selector that some preprocessors normalize away. */
+.inputInvalid,
+.input[aria-invalid='true'] {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-bg);
+}
+
+.inputInvalid:focus,
+.input[aria-invalid='true']:focus {
+  border-color: var(--color-danger-border);
+  box-shadow: 0 0 0 2px var(--color-danger-border);
+}
+
+.helperText {
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
 .fieldError {
   margin-top: 2px;
   font-size: 0.8rem;
