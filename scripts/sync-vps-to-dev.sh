@@ -30,12 +30,13 @@
 #   - Postgres database `projekt_manager` (all tables DROPped and recreated)
 #   - Local MinIO bucket `projekt-manager` (objects absent on VPS are deleted)
 #
-# Stop `npm run dev` before running; restart it afterwards. The restore
-# drops tables while your dev server may hold open connections, which at
-# best spews errors into its log and at worst deadlocks. The script
-# terminates stray backend connections defensively before the DROP, but
-# the tsx watch process will still need a manual restart to pick up the
-# refreshed state cleanly.
+# Stopping `npm run dev` first is optional. The script terminates any
+# stray connections to projekt_manager before the DROP TABLE statements
+# run; the dev app's pool absorbs the resulting client errors via the
+# 'error' handler in src/server/db/connection.ts (attachPoolErrorHandler).
+# Restart `npm run dev` afterwards if you want a clean log — the watch
+# process keeps running, but transient query errors from the kill
+# window will appear in its output before pool reconnect kicks in.
 
 set -euo pipefail
 
@@ -156,6 +157,13 @@ echo "[6/7] Restoring locally..."
 # restore — a running `npm run dev` holds a connection pool that would
 # otherwise race `pg_dump --clean`'s DROP TABLE statements. The exclusion
 # of pg_backend_pid() spares our own admin connection.
+#
+# The dev app survives this kill because the pool in
+# src/server/db/connection.ts installs the canonical 'error' listener
+# (attachPoolErrorHandler) — without it the idle-client error from
+# pg_terminate_backend would crash the tsx watch process and force a
+# manual `npm run dev` restart on every sync. Same contract the prod
+# side relies on in scripts/ops/sync-restore-vps.sh.
 docker exec "${COMPOSE_PROJECT}-db-1" \
   psql -U pm -d postgres -tAc \
   "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='projekt_manager' AND pid <> pg_backend_pid();" \
@@ -182,5 +190,3 @@ docker run --rm \
   mirror --overwrite --remove --md5 /data "dst/$LOCAL_BUCKET" >/dev/null
 
 echo "[7/7] Done — local synced from VPS at $(date -u -Iseconds)"
-echo
-echo "Restart 'npm run dev' to pick up the refreshed state."

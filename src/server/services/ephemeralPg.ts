@@ -35,6 +35,7 @@ import path from 'node:path';
 import pg from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { computeManifest, type Manifest, type VerifyManifestFn } from './backup.js';
+import { attachPoolErrorHandler } from '../db/connection.js';
 import * as schema from '../db/schema.js';
 
 const { Pool } = pg;
@@ -218,6 +219,7 @@ async function computeManifestInInstance(instance: EphemeralInstance): Promise<M
     user: 'postgres',
     database: 'postgres',
   });
+  attachPoolErrorHandler(pool);
   // Force every checked-out connection to UTC before the manifest
   // SELECTs run. `md5(row(t.*)::text)` in computeManifest serializes
   // `timestamptz` values through the session's TimeZone, so a drift
@@ -420,6 +422,7 @@ async function probeSocket(socketDir: string, port: number): Promise<boolean> {
     // consume the whole poll budget.
     connectionTimeoutMillis: 500,
   });
+  attachPoolErrorHandler(pool);
   try {
     await pool.query('SELECT 1');
     return true;
