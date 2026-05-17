@@ -84,10 +84,20 @@ fi
 # `pg_dump --clean` writes DROP TABLE IF EXISTS CASCADE statements that
 # would otherwise lock-fight the app's connection pool. The exclusion
 # of pg_backend_pid() spares this admin connection. node-postgres
-# reconnects transparently when the next request needs a backend, so
-# the brief termination window costs at most a few requests with a
-# transient pool error during the ~10 s restore. Mirrors the same
-# pattern in sync-vps-to-dev.sh.
+# reconnects transparently because the app installs a pool 'error'
+# handler in db/connection.ts (attachPoolErrorHandler) — without it,
+# the idle-client error from pg_terminate_backend would crash the
+# process and wipe the tmpfs binary identity (ADR-0024), blocking
+# subsequent boots on an operator paste. Mirrors the same pattern in
+# sync-vps-to-dev.sh.
+#
+# Capture the app's StartedAt before terminating so we can detect any
+# regression of the above contract: if the container restarted during
+# this run, the smoke probe at the end of this script would time out
+# blaming /api/health, when the real cause is the boot-time identity
+# probe blocking on a missing paste. Surfacing the correct diagnostic
+# saves the operator a docker-logs spelunk.
+APP_STARTED_AT_BEFORE=$(docker inspect "$APP_CONTAINER" --format '{{.State.StartedAt}}')
 echo "  terminating app db connections..."
 docker exec "$DB_CONTAINER" \
   psql -U pm -d postgres -tAc \
@@ -193,6 +203,38 @@ if [ "$was_backup_paused" = "1" ]; then
   echo "  unpausing backup..."
   docker unpause "$BACKUP_CONTAINER" >/dev/null
   was_backup_paused=0
+fi
+
+# Detect whether the app container restarted during the restore. The
+# pool error handler (attachPoolErrorHandler in db/connection.ts) is
+# the contract that keeps the process alive through
+# pg_terminate_backend; a restart here means that contract regressed.
+# Without this guard the operator sees a generic "/api/health did not
+# return 200" timeout below and has to grep app logs to discover the
+# real cause (a boot-time binary-identity probe blocking on a missing
+# paste). Surface the correct diagnostic up front instead.
+APP_STARTED_AT_AFTER=$(docker inspect "$APP_CONTAINER" --format '{{.State.StartedAt}}')
+if [ "$APP_STARTED_AT_BEFORE" != "$APP_STARTED_AT_AFTER" ]; then
+  cat <<ERR >&2
+ERROR: app container restarted during the restore.
+  Was:  $APP_STARTED_AT_BEFORE
+  Now:  $APP_STARTED_AT_AFTER
+
+The pg_terminate_backend step is meant to be survivable for the app
+process — db/connection.ts installs a pool 'error' handler so idle
+client errors don't crash the process. A restart here regresses that
+contract.
+
+The container's tmpfs at /run/binary-key was wiped by the restart, so
+the boot probe is now blocking on the operator paste (ADR-0024).
+Recover:
+
+  docker exec -it $APP_CONTAINER load-binary-key
+  # paste the age private identity, then Ctrl-D
+
+Then re-run scripts/sync-dev-to-vps.sh.
+ERR
+  exit 1
 fi
 
 # Smoke probe via the SSOT script shipped in $REMOTE_TMP by the

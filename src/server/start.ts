@@ -370,6 +370,38 @@ async function start(): Promise<void> {
   await app.listen({ port: env.PORT, host: HOST });
 }
 
+// Global error supervision (canonical Node.js production pattern;
+// see https://nodejs.org/api/process.html#event-uncaughtexception and
+// #event-unhandledrejection). The pool error handler in
+// db/connection.ts covers the most common crash vector (idle clients
+// from `pg_terminate_backend`); these two are the safety net for
+// everything that escapes module-level handlers — a typo'd `await`,
+// an event-emitter error in a third-party lib, a setTimeout callback
+// that throws. Logging both as structured single lines gives operators
+// a parseable failure marker instead of a multi-page stack dump from
+// the default V8 printer. Exit non-zero so the container's restart
+// policy treats this as a real failure; "log and continue" is the
+// wrong choice — the process state is undefined after an uncaught
+// exception per the Node.js docs.
+process.on('uncaughtException', (err) => {
+  console.error(
+    JSON.stringify({
+      event: 'uncaught-exception',
+      message: err instanceof Error ? formatErrorChain(err) : String(err),
+    }),
+  );
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error(
+    JSON.stringify({
+      event: 'unhandled-rejection',
+      message: reason instanceof Error ? formatErrorChain(reason) : String(reason),
+    }),
+  );
+  process.exit(1);
+});
+
 start().catch((err) => {
   console.error('Failed to start server:', formatErrorChain(err));
   process.exit(1);

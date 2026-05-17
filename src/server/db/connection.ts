@@ -64,7 +64,26 @@ export function createDatabase(opts: ConnectionOptions = {}): {
   const connectionString = opts.connectionString ?? env.DATABASE_URL;
 
   const pool = new Pool({ connectionString });
+  attachPoolErrorHandler(pool);
   const db = drizzle(pool, { schema });
 
   return { db, pool };
+}
+
+/**
+ * Attach the canonical 'error' handler to a pg.Pool.
+ *
+ * Idle pool clients emit `error` when their backend is terminated
+ * externally (`pg_terminate_backend`, postgres restart, network drop).
+ * node-postgres documents the requirement: without a listener the
+ * process crashes with the uncaught Error. The handler logs and
+ * returns — node-postgres discards the dead client and subsequent
+ * queries acquire fresh connections transparently. Exported so every
+ * `new Pool` site uses the same listener; the alternative (inline at
+ * each call) is how this footgun re-grows.
+ */
+export function attachPoolErrorHandler(pool: pg.Pool): void {
+  pool.on('error', (err) => {
+    console.error(JSON.stringify({ event: 'pg-pool-client-error', message: err.message }));
+  });
 }
