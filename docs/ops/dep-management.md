@@ -25,7 +25,13 @@ The dry-run is most useful after editing `customManagers` regex patterns — Ren
 1. **Install the Renovate App** for `vlzware/Projekt-Manager` from [github.com/apps/renovate](https://github.com/apps/renovate) — choose **Select repositories** and pick this repo only.
 2. **Merge the onboarding PR.** On first scan Renovate opens a "Configure Renovate" PR; per the [Renovate docs](https://docs.renovatebot.com/getting-started/installing-onboarding/), no further PRs are raised until it lands. Sanity-check that it picked up `.github/renovate.json` and then merge.
 3. **Enable auto-merge at the repo level.** Repo Settings → General → "Allow auto-merge" must be checked, otherwise `automerge: true` in the config silently no-ops.
-4. **Tighten branch protection on `main`.** Required status check: `check` (the GitHub Actions job name — branch protection matches job-level checks). `check` always runs and includes OSV-Scanner, Trivy filesystem-secret + IaC scans, lint, type-check, and tests. Do NOT add `docker` or `build-and-push`: `docker` is path-filtered and pull-request-only (skipped checks remain pending forever and block the merge queue); `build-and-push` only fires on push / `workflow_dispatch` (never on PRs, so adding it as a required PR context blocks every PR by definition). The full gating rationale is in [ADR-0027 §Operational](../adr/0027-continuous-dependency-updates-with-supply-chain-scanning.md#operational). Without `check` as a required context, Renovate's auto-merge bypasses the safety net this ADR adds.
+4. **Tighten branch protection on `main`.** Required status checks: `check` AND `docker` (the GitHub Actions job names — branch protection matches job-level checks).
+   - **`check`** always runs and provides the always-on gate: OSV-Scanner (lockfile vulns), Trivy filesystem-secret + IaC scans, allowlist schema, lint, format, type-check, shellcheck, theme-token hygiene, env-drift, audit-write-path check, MinIO + integration tests, build.
+   - **`docker`** is path-filtered (Dockerfile / docker-compose / package-lock / patches / tsconfig / workflow changes) and pull-request-only. On non-image PRs the job's `if:` condition evaluates false → GitHub reports the job as **skipped**, which [counts as a successful required check](https://docs.github.com/en/actions/using-jobs/using-conditions-to-control-job-execution) — so adding `docker` as required does NOT block non-image PRs. On image-affecting PRs, `docker` runs and the image-vuln scan blocks merge on HIGH/CRITICAL findings.
+   - Do **NOT** add `build-and-push`: it only fires on `push` / `workflow_dispatch` events (never on `pull_request`); its post-merge image-scan-then-push step is the deploy-time safety net, not a PR gate.
+
+   Without both `check` and `docker` as required contexts, Renovate's auto-merge bypasses the safety net this ADR adds; without `docker`, image-vuln gating becomes informational-only on PRs (the post-merge `build-and-push` scan is still the backstop). The full gating rationale is in [ADR-0027 §Operational](../adr/0027-continuous-dependency-updates-with-supply-chain-scanning.md#operational).
+
 5. **Pin the Dependency Dashboard issue.** Renovate auto-creates an issue titled "Dependency Dashboard" listing queue state; pin it so the weekly wrangler can find it without searching.
 
 ## Cadence
@@ -51,6 +57,15 @@ The dry-run is most useful after editing `customManagers` regex patterns — Ren
 - **High/Critical** — bypass schedule; merge on green CI even off-hours.
 - **Medium/Low** — roll into the weekly batch.
 - **False-positive on dead code** (cf. the original [ADR-0007](../adr/0007-suppress-esbuild-dev-server-advisory.md) case): add the advisory to the OSV-Scanner allowlist with a documented review trigger. Never `--omit=dev` blanket-suppress.
+- **No-fix-yet OS-package CVE in a base image** (Alpine `node:22-alpine`, `postgresql17-alpine`, etc., where the upstream distro hasn't shipped a patched build yet): Trivy blocks the `docker` and `build-and-push` image scans on every run because `ignore-unfixed: true` is deliberately not set (per [ADR-0027 §Operational](../adr/0027-continuous-dependency-updates-with-supply-chain-scanning.md#operational); see also [§Allowlist](#allowlist-osv-scanner--trivy) for the schema). The deploy pipeline halts until either Alpine ships the fix or an operator writes a deliberate, time-bounded allowlist entry:
+
+  ```text
+  # owner: @<handle>
+  # reason: <CVE-ID> — no upstream Alpine fix yet; exposure analysis at <link to triage>
+  <CVE-ID> exp:<today+90d>
+  ```
+
+  90 days is the maximum permitted window; pick a shorter date if upstream has a target ship-date. The expiry forces a re-review and the entry stops suppressing automatically — there is no silent-forever suppression path. Track the upstream CVE in the Renovate dashboard so the entry gets removed (not renewed) when the fix lands.
 
 ### Allowlist (OSV-Scanner + Trivy)
 
