@@ -57,6 +57,12 @@ Gold standard — sends a 5-character SHA-1 prefix, receives ~500 matching suffi
 - Blocklist is small (~100 entries) and static — misses passwords from new breaches. Acceptable for VPN-internal
 - No check against username or display name as a password — minor gap, addable later
 
+## Dep lifecycle health (as of 2026-05-18)
+
+| Dep        | Last release       | License      | Maintainership                                                  | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------- | ------------------ | ------------ | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bcryptjs` | 3.0.3 (2025-11-02) | BSD-3-Clause | single maintainer (`dcode`), repo active (last push 2026-05-08) | [deps.dev](https://deps.dev/npm/bcryptjs) — pure-JS implementation of bcrypt (no native bindings). Cost factor `10` per the Decision above; library choice is implementation-detail of "use bcrypt" — swappable for `bcrypt` (native) or `@node-rs/bcrypt` (Rust) if the bus-factor-1 maintainership becomes a concern. ~6.5 months since last npm publish — within healthy range for a small stable lib, re-check next quarterly review |
+
 ## References
 
 - [NIST SP 800-63B — Digital Identity Guidelines: Authentication](https://pages.nist.gov/800-63-4/sp800-63b.html)
