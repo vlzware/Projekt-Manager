@@ -139,10 +139,20 @@ jobs:
           scan-type: fs
           scan-ref: .
           scanners: secret
-          # No `severity:` filter — Trivy classifies many real secret
-          # rules as MEDIUM (JWTs, age private keys per ADR-0024, Slack
-          # webhooks). Filtering to HIGH/CRITICAL silently drops them.
-          # Any committed secret is a finding, full stop.
+          # No `severity:` filter — many of Trivy's built-in secret
+          # rules (jwt-token, age-secret-key, slack-web-hook, etc.)
+          # ship at MEDIUM and would be silently dropped by HIGH/
+          # CRITICAL. Within scanned files, ANY rule match is a block.
+          #
+          # Residual coverage gap (Trivy v0.70.0 built-in skip list,
+          # NOT overridden here): skipDirs `.git`, `node_modules`;
+          # skipFiles `package-lock.json` + other lockfiles; skipExts
+          # `.svg`, `.pdf`, `.zip`, `.gz`, `.bin`, …; built-in allow-
+          # rules that skip paths matching `test`/`example`/`vendor`/
+          # `.md`/`/locales/` globally. A secret committed inside any of
+          # those slips through — supplement with pre-commit hooks or
+          # a complementary scanner (gitleaks/trufflehog) if that gap
+          # matters operationally.
           exit-code: '1'
           trivyignores: .trivyignore
 
@@ -331,12 +341,19 @@ jobs:
           filters: |
             docker:
               - 'Dockerfile'
+              - 'Dockerfile.backup'
               - '.dockerignore'
               - 'docker/**'
               - 'docker-compose.yml'
               - 'docker-compose.*.yml'
               - 'package.json'
               - 'package-lock.json'
+              # `npm ci` applies these — a patch change rebuilds the
+              # image bytes, so the image-vuln scan should re-run.
+              - 'patches/**'
+              # `npm run build` reads these; the compiled output is
+              # baked into the image.
+              - 'tsconfig*.json'
               # Self-validation: changes to this workflow (the docker
               # job itself, the drift check, or the cache config) must
               # exercise the docker job once so regressions are caught
@@ -597,7 +614,34 @@ jobs:
       # references the just-pushed app image, so the app push must
       # complete first. Separate gha cache scope keeps the backup
       # image's layer cache from invalidating the app image's cache.
-      - name: Build and push backup image
+      #
+      # Build → scan → push mirrors the app image flow (same R6 rationale):
+      # the backup image adds `postgresql17*`, `age`, `bash`, `findmnt`
+      # apk layers on top of node-alpine, each with its own CVE surface
+      # — leaving it unscanned was pre-existing tech debt.
+      - name: Build backup image (load locally for scan)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: Dockerfile.backup
+          push: false
+          load: true
+          tags: projekt-manager-backup:ci
+          build-args: |
+            APP_IMAGE_TAG=${{ steps.tags.outputs.app_image_tag }}
+          cache-from: type=gha,scope=backup
+          cache-to: type=gha,mode=max,scope=backup
+
+      - name: Trivy — backup image vuln scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: projekt-manager-backup:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      - name: Push backup image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
