@@ -179,7 +179,7 @@ The Layer 2 implementation of [§11.9](#119-data-persistence-and-recovery) is a 
 
 **Topology.**
 
-- The `backup` compose service is scheduled by in-container cron; the compose file is the source of truth ([ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)). The backup interval is configurable **[C]**.
+- The `backup` compose service is scheduled by an in-process `croner` registered by `src/server/backup-runner.ts`'s `schedule` subcommand; the compose file is the source of truth ([ADR-0012](../adr/0012-manual-pull-based-deploy-over-wireguard.md)). The backup interval is configurable **[C]**.
 - Each run produces the backup artifact (a full-state database dump, encrypted) and its manifest sidecar (per-table row count and deterministic content checksum, encrypted). The manifest checksum is computed as specified in [ADR-0020 §Decision](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#decision).
 - Retention is linear (provider-enforced bucket lock + lifecycle rule, canonical values at [ADR-0020 §Retention](../adr/0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md#retention)). No in-container rotation, no weekly/monthly promotion, no object versioning. Scope rationale in the same section.
 

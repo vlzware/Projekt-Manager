@@ -4,8 +4,7 @@
 #   1. `appsrc` stage — pulls the compiled app bundle so we can COPY
 #      `dist/server/backup-runner.js` (and its friends) into the final
 #      image. APP_IMAGE_TAG must match the tag deployed on the same
-#      commit (scripts/deploy.sh exports it before `docker compose up`);
-#      defaults to the current iteration branch tag for dev.
+#      commit (scripts/deploy.sh exports it before `docker compose up`).
 #   2. final stage — node:22.22.3-alpine with postgresql17 (server +
 #      client) and the rest of the operational toolchain layered on top,
 #      plus the backend bundle from stage 1.
@@ -39,6 +38,8 @@ FROM node:22.22.3-alpine
 #                          is pinned at the major in the package name —
 #                          Alpine 3.22 ships 17.x, which tracks the
 #                          `db` service's postgres:17-alpine image.
+#                          Creates the `postgres` system user (UID 70)
+#                          we run the container as — see USER below.
 #   postgresql17-client  — pg_restore, pg_dump, pg_isready, psql.
 #                          Used by the backend backup-runner for the
 #                          manifest + round-trip verify.
@@ -53,28 +54,28 @@ FROM node:22.22.3-alpine
 #                          "extension pg_trgm is not available".
 #   age                  — envelope encryption (asymmetric recipient
 #                          in env; private identity operator-held).
-#   dcron                — foreground cron for the scheduled run loop.
-#   tzdata               — zoneinfo for Europe/Berlin. Without it the
-#                          TZ env var set by compose is silently
-#                          ignored and cron falls back to UTC, drifting
-#                          the backup schedule by an hour twice a year.
-#   bash                 — scripts use bash idioms (pipefail, [[,
-#                          arrays). Alpine's default /bin/sh is ash.
-#   jq                   — manifest JSON + status mirror
-#                          parsing/emitting.
-#   coreutils            — `flock` and GNU `date`/`stat` semantics the
-#                          scripts rely on (busybox variants diverge
-#                          on --iso-8601 etc.).
+#   bash                 — load-drill-key.sh uses bash idioms (pipefail,
+#                          [[, arrays, $'\004' EOT terminator for the
+#                          tmpfs paste). Alpine's default /bin/sh is ash.
 #   findmnt              — used by load-drill-key.sh's tmpfs-invariant
 #                          check (AC-175 safety gate). Without it the
 #                          script falls back to /proc/mounts parsing
 #                          which is strictly less reliable.
-#   su-exec              — the backend backup-runner uses it to demote
-#                          the ephemeral `postgres` subprocess to the
-#                          `postgres` UID. The postgres binary refuses
-#                          to run as uid 0; the backend must invoke
-#                          `su-exec postgres:postgres postgres …` when
-#                          spawning the verify instance.
+#
+# What's no longer here (#199):
+#   - dcron / tzdata / su-exec — the schedule moved to in-process
+#     `croner` inside the backend bundle (see backup-runner.ts).
+#     croner reads timezones via the JS runtime's IANA `Intl` API;
+#     node:22-alpine bundles full ICU + tzdata so Europe/Berlin works
+#     without an OS package. If the base image ever switches to a slim
+#     runtime without ICU, croner silently falls back to UTC and the
+#     schedule drifts by an hour twice a year — verify ICU presence
+#     before any such switch. su-exec is gone because the container
+#     now runs as the `postgres` user directly (USER directive below);
+#     ephemeralPg.ts no longer demotes.
+#   - jq / coreutils / dcron-only utilities — the scripts that needed
+#     them (run-backup.sh / run-drill.sh / crontab) collapsed into the
+#     Node bundle when the schedule moved in-process.
 #
 # No explicit version pins here (the db-image parity via
 # postgresql17's major version pin is what governs cross-environment
@@ -84,78 +85,68 @@ RUN apk add --no-cache \
       postgresql17-client \
       postgresql17-contrib \
       age \
-      dcron \
-      tzdata \
       bash \
-      jq \
-      coreutils \
-      findmnt \
-      su-exec
+      findmnt
 
 # Pull the compiled backend bundle + node_modules from the app image.
-# This gives us `dist/server/backup-runner.js` (produced by the other
-# stream's Phase-3 work) without rebuilding the TypeScript here. It
-# also guarantees the backup service runs the EXACT same backend code
-# as the deployed app — no skew between a "runBackup" definition used
-# by the web handlers and one used by cron.
-#
-# TODO(phase-3-sync, backend stream): confirm the bundle exposes a CLI
-# entry at /app/dist/server/backup-runner.js with `run` and `drill`
-# subcommands. If the backend stream bundles it differently (e.g.,
-# under dist/server/cli/backup.js), update run-backup.sh and
-# run-drill.sh's BACKUP_RUNNER_SCRIPT default in lockstep.
+# This gives us `dist/server/backup-runner.js` without rebuilding the
+# TypeScript here. It also guarantees the backup service runs the
+# EXACT same backend code as the deployed app — no skew between a
+# `runBackup` definition used by the web handlers and one used by
+# the in-container scheduler.
 COPY --from=appsrc /app/node_modules /app/node_modules
 COPY --from=appsrc /app/dist         /app/dist
 COPY --from=appsrc /app/package.json /app/package.json
 
-# Backup cron scripts. Copied into /usr/local/bin/ so the shorter names
-# in the crontab (run-backup.sh, load-drill-key, ...) resolve on PATH.
-# The crontab itself is installed under /etc/crontabs/root so dcron
-# picks it up without --path gymnastics.
-COPY scripts/backup/run-backup.sh       /usr/local/bin/run-backup.sh
-COPY scripts/backup/run-drill.sh        /usr/local/bin/run-drill.sh
-COPY scripts/backup/load-drill-key.sh   /usr/local/bin/load-drill-key
-COPY scripts/backup/entrypoint.sh       /usr/local/bin/backup-entrypoint
-COPY scripts/backup/probe-r2.mjs        /usr/local/bin/probe-r2.mjs
-COPY scripts/backup/crontab             /etc/crontabs/root
-
-RUN chmod +x \
-      /usr/local/bin/run-backup.sh \
-      /usr/local/bin/run-drill.sh \
-      /usr/local/bin/load-drill-key \
-      /usr/local/bin/backup-entrypoint
+# Operator helper: the tmpfs drill-key loader. Copied into
+# /usr/local/bin/ so operators can `docker compose exec backup load-drill-key`
+# without typing the full path. The script itself is shell because it
+# is interactive (reads a pasted identity from stdin); the operational
+# pipeline never invokes it on a schedule.
+COPY scripts/backup/load-drill-key.sh /usr/local/bin/load-drill-key
+RUN chmod +x /usr/local/bin/load-drill-key
 
 # Tmpfs-destination directory for the operator-loaded drill identity.
-# The actual mount is injected by compose (tmpfs: /run/drill-key). We
-# pre-create the mountpoint with 0700 so if compose's tmpfs directive
+# The actual mount is injected by compose with uid=70,gid=70,mode=0700
+# (see docker-compose.yml services.backup.tmpfs). We pre-create the
+# mountpoint with matching ownership so if compose's tmpfs directive
 # is ever accidentally removed, the script path still exists (and
-# load-drill-key.sh's tmpfs-invariant check refuses to write — defense
-# in depth for AC-175).
-RUN mkdir -p /run/drill-key && chmod 0700 /run/drill-key
+# load-drill-key.sh's tmpfs-invariant check refuses to write —
+# defense in depth for AC-175).
+RUN mkdir -p /run/drill-key \
+ && chown postgres:postgres /run/drill-key \
+ && chmod 0700 /run/drill-key
 
-# No USER directive. The container runs as root because:
-#   1. `dcron` needs CAP_SETUID to exec entries on behalf of non-root
-#      users — running cron itself as root is standard on Alpine.
-#   2. The Tier 1 verify path spawns an ephemeral `postgres` subprocess,
-#      and the postgres binary refuses to run as uid 0. The backend
-#      backup-runner is expected to demote that subprocess itself using
-#      `su-exec postgres:postgres postgres …` before exec — `su-exec`
-#      is installed above for exactly this purpose. No script in this
-#      image performs that demotion; it is a backend-runner
-#      responsibility, called out here so the coupling is visible.
-#   3. The tmpfs at /run/drill-key is mounted uid=0,gid=0,mode=0700;
-#      only root inside the container can read/write the loaded
-#      identity.
-# The container is compose-level `read_only: true` with writes confined
-# to the tmpfs and /tmp — the root UID here is not a blast-radius
-# amplifier, only a Postgres/cron scheduling requirement.
+# Run as the `postgres` system user (UID 70, created by the
+# postgresql17 apk package). Resolves Trivy IaC DS-0002 at the
+# architectural layer — no `.trivyignore` entry needed.
+#
+# Why this is now possible (#199):
+#   - The scheduler moved from `dcron` (which historically ran as
+#     root because CAP_SETUID is needed to exec entries on behalf of
+#     other users) to in-process `croner` inside the Node bundle.
+#     Node-as-PID-1 needs no special caps to run its own children.
+#   - The ephemeral verify Postgres no longer needs a demotion step:
+#     it spawns directly under this UID. The postgres binary's
+#     refusal-to-run-as-uid-0 rule was the original justification
+#     for `su-exec`; with UID 70 it just works.
+#   - The tmpfs at /run/drill-key is mounted uid=70,gid=70,mode=0700
+#     so the in-container user can read/write the loaded identity.
+#
+# The image stays compose-level `read_only: true`; writes are still
+# confined to the tmpfs and /tmp.
+USER postgres
 
-# Single-process entrypoint: run crond in the foreground. `-f` keeps it
-# attached to PID 1 (no forking init that would then detach). The
-# default log level (5/NOTICE) emits scheduled-wakeup lines that the
-# Docker json-file driver captures; the entrypoint script is the thin
-# wrapper that verifies env presence once at container start before
-# exec'ing crond. (Per-cron-line stdout/stderr redirection to
-# /proc/1/fd/{1,2} — see scripts/backup/crontab — gets each script's
-# output into the same docker log stream.)
-ENTRYPOINT ["/usr/local/bin/backup-entrypoint"]
+# Single-process entrypoint: `node backup-runner.js schedule`. croner
+# registers the cron jobs and keeps the event loop alive via its
+# internal setTimeout. SIGTERM from `docker stop` triggers a graceful
+# drain (stop jobs, await in-flight ticks, close the DB pool, exit 0)
+# — see scheduleSubcommand in src/server/backup-runner.ts.
+#
+# No `init: true` needed in compose. The historical reason was dcron's
+# fork()+setpgid() per cron entry tripping Docker's PID-1 protection;
+# croner does not fork. Node-as-PID-1 reaps its own children via libuv
+# (ephemeralPg.ts's postgres/initdb/pg_restore subprocesses are all
+# awaited, so no orphan-reaping concern).
+ENTRYPOINT ["node", "/app/dist/server/backup-runner.js"]
+CMD ["schedule"]

@@ -9,7 +9,7 @@ A `backup` compose service that, on every scheduled tick, produces three R2 obje
 ```
 ┌──────────────────────┐   pg_dump -Fc + manifest   ┌──────────────────────────┐
 │  backup container    │ ─────────────────────────▶ │  Cloudflare R2 bucket    │
-│  dcron loop          │  age-encrypt (recipient)   │  projekt-manager-backups │
+│  croner schedule     │  age-encrypt (recipient)   │  projekt-manager-backups │
 │  Tier 1 verify       │                            │                          │
 │   (ephemeral pg)     │ ─── status/latest.json ──▶ │  ├ daily/*.dump.age      │
 │  Tier 2 verify       │                            │  ├ daily/*.manifest.age  │
@@ -40,9 +40,9 @@ Every backup is verified immediately after creation (**Tier 1**). Whenever the o
 
 ## Cadence
 
-`scripts/backup/crontab` runs the backup five times on weekdays (09:00, 12:00, 15:00, 18:00, 21:00 Europe/Berlin) and once on weekends (12:00). The drill service follows the same schedule, offset by 2 minutes so it never starts in the same second as the backup it verifies. Interval is a **[C]** value per [spec architecture.md §11.10](../../spec/architecture.md#1110-full-state-backup-layer-2).
+The in-process `croner` schedule registered by `src/server/backup-runner.ts` (`schedule` subcommand — the container's PID 1) runs the backup five times on weekdays (09:00, 12:00, 15:00, 18:00, 21:00 Europe/Berlin) and once on weekends (12:00). The drill service follows the same schedule, offset by 2 minutes so it never starts in the same second as the backup it verifies. Interval is a **[C]** value per [spec architecture.md §11.10](../../spec/architecture.md#1110-full-state-backup-layer-2).
 
-The container runs on `TZ=Europe/Berlin` so the cron entries stay correct across DST.
+croner reads `timezone: 'Europe/Berlin'` explicitly, so the schedule stays correct across DST regardless of the container's `TZ` env var. `TZ=Europe/Berlin` is still set on the service for human-readable log timestamps.
 
 ## References
 

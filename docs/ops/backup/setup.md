@@ -174,7 +174,7 @@ sudo -u deploy docker logs projekt-manager-backup-1 --tail=50
 
 First-run expectations, in order (next scheduled tick — see [overview.md § Cadence](overview.md#cadence)):
 
-1. The cron entry inside the `backup` container logs a wake-up at the next scheduled hour.
+1. The in-process croner schedule inside the `backup` container logs a `backup-runner: schedule: registered backup-weekday next=…` line at startup and a `backup tick` line at the next scheduled hour.
 2. A run writes a row into `meta_backup_status` with `lastBackupOk = true` and a fresh `lastBackupAt`.
 3. Three R2 objects appear under `projekt-manager-backups`: `daily/<iso>.dump.age`, `daily/<iso>.manifest.json.age`, and `status/latest.json`.
 4. The freshness badge on the login screen turns green (amber if no Tier 2 drill has run yet — that is expected until the drill key is loaded per [drills.md](drills.md)).

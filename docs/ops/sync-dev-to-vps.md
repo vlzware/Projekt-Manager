@@ -60,7 +60,7 @@ Overrides via env:
 | ------------ | --------- | ----------------------------------------------- |
 | `SSH_TARGET` | `hetzner` | SSH destination (host alias in `~/.ssh/config`) |
 
-End-to-end typical timing on a small dataset: ~40 seconds. The app container stays running throughout — at most a few requests during the ~10 s restore see a transient pool error after `pg_terminate_backend` clears the connections; node-postgres reconnects on the next query. The backup container is `docker pause`d for the same window so its dcron can't fire mid-restore (and so its `/run/drill-key` tmpfs survives — `docker stop` would wipe it the same way it wipes the app's binary identity, ADR-0024).
+End-to-end typical timing on a small dataset: ~40 seconds. The app container stays running throughout — at most a few requests during the ~10 s restore see a transient pool error after `pg_terminate_backend` clears the connections; node-postgres reconnects on the next query. The backup container is `docker pause`d for the same window so its croner schedule can't fire mid-restore (and so its `/run/drill-key` tmpfs survives — `docker stop` would wipe it the same way it wipes the app's binary identity, ADR-0024).
 
 ## What the script does
 

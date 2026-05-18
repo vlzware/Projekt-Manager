@@ -219,11 +219,12 @@ services:
 
   backup:
     # Layer 2 encrypted backup service — see ADR-0020 and
-    # docs/spec/architecture.md §11.10. Runs a dcron loop that fires
-    # run-backup.sh five times on weekdays (09/12/15/18/21 Europe/Berlin)
-    # and once on weekends (12:00), with run-drill.sh at a +2 min offset
-    # on each tick. Retention is linear (R2 bucket lock + 90-day
-    # lifecycle); no in-container rotation step.
+    # docs/spec/architecture.md §11.10. Runs an in-process croner
+    # schedule (src/server/backup-runner.ts → `schedule` subcommand)
+    # that fires runBackup five times on weekdays (09/12/15/18/21
+    # Europe/Berlin) and once on weekends (12:00), with runDrill at a
+    # +2 min offset on each tick. Retention is linear (R2 bucket lock
+    # + 90-day lifecycle); no in-container rotation step.
     #
     # Pulled from GHCR — mirrors the `app` service's shape (ADR-0011's
     # "build in CI, distribute via GHCR" invariant extends to this
@@ -236,32 +237,37 @@ services:
     # `docker compose up`; the only safe way to run is with an
     # operator-supplied SHA.
     image: ghcr.io/vlzware/projekt-manager-backup:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
-    # dcron exec'd as PID 1 hits Docker's PID-1 protection: its fork()+
-    # setpgid() for each cron entry fails with "setpgid: Operation not
-    # permitted" and the container crash-loops. `init: true` puts tini as
-    # PID 1 so crond runs as PID 2+ and its children can setpgid normally.
-    # Caught on the first test deploy of iteration/7-data — CI builds the
-    # image but never boots it, so the runtime crash never surfaced in CI.
-    init: true
+    # No `init: true` — the historical reason was dcron's fork()+
+    # setpgid() per cron entry tripping Docker's PID-1 protection.
+    # croner does not fork; Node-as-PID-1 reaps its own children via
+    # libuv and handles SIGTERM in scheduleSubcommand for a graceful
+    # drain. See #199 for the rearchitecture context.
     read_only: true
     tmpfs:
       # Operator-loaded drill identity (AC-175). The script
       # load-drill-key.sh asserts this mount is tmpfs before writing;
       # removing this directive will make the script refuse rather
       # than persist the identity to disk.
-      - /run/drill-key:mode=0700,uid=0,gid=0
+      #
+      # uid=70,gid=70 = the `postgres` system user created by the
+      # postgresql17 apk package — the container's USER (Dockerfile.backup
+      # USER directive). Without matching ownership, the loader would
+      # be unable to write the identity even though it can resolve
+      # the path.
+      - /run/drill-key:mode=0700,uid=70,gid=70
       # Ephemeral Postgres workdir for Tier 1 verify-on-create
-      # (initdb output, WAL, socket) AND lockfile scratch for
-      # run-{backup,drill}.sh. Kept out of any volume because
+      # (initdb output, WAL, socket). Kept out of any volume because
       # it must never survive a run — the integrity proof is that
       # the process starts from initdb every time.
       #
       # Historically there was a second `- /var/run` mount here for
-      # the lockfiles, but on Alpine /var/run is a symlink to /run,
-      # so that tmpfs landed on /run and shadowed /run/drill-key
+      # bash-side flock lockfiles, but on Alpine /var/run is a symlink
+      # to /run, so that tmpfs landed on /run and shadowed /run/drill-key
       # above it (tmpfs mounts stack in list order; a fresh /run
-      # tmpfs hides every earlier mount under /run/*). Moving locks
-      # to /tmp drops one mount and the shadowing problem with it.
+      # tmpfs hides every earlier mount under /run/*). flock is gone
+      # with the bash scripts (#199 — croner's `protect: true` is the
+      # in-process equivalent), and the remaining transient writes
+      # land under /tmp.
       - /tmp
     mem_limit: 512m
     cpus: 1.0
@@ -281,8 +287,10 @@ services:
       # prod, deploy.sh sources secrets into the shell env before
       # compose, and shell env always beats a compose default — so
       # the defaults here never mask a genuinely missing secret at
-      # runtime. The backup service itself validates these at startup
-      # (scripts/backup/entrypoint.sh) and refuses to run on empties.
+      # runtime. The backup-runner's `schedule` subcommand
+      # (src/server/backup-runner.ts) validates the same set via the
+      # Zod schema and refuses to start on empties; the R2 HeadBucket
+      # probe runs before any cron registers.
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       R2_ENDPOINT: ${R2_ENDPOINT:-}
@@ -291,16 +299,19 @@ services:
       AGE_RECIPIENT: ${AGE_RECIPIENT:-}
       # Tmpfs path where the operator loads the age private identity
       # for Tier 2 drills (AC-168, AC-175). Default matches the tmpfs
-      # mount above and scripts/backup/run-drill.sh — kept explicit in
-      # compose so check-env-drift.sh sees it and so the runner's Zod
+      # mount above and the env schema default in
+      # src/server/config/env.ts — kept explicit in compose so
+      # check-env-drift.sh sees it and so the runner's Zod
       # schema cannot silently fall back to its default at runtime.
       AGE_IDENTITY_PATH: ${AGE_IDENTITY_PATH:-/run/drill-key/identity}
-      # Container-local timezone. The crontab entries are written in
-      # Europe/Berlin local time (see scripts/backup/crontab) so the
-      # schedule tracks human working hours and DST transitions
-      # automatically. tzdata must be installed in the image
-      # (Dockerfile.backup) for this to take effect; without it dcron
-      # silently falls back to UTC.
+      # Container-local timezone. croner reads `timezone: 'Europe/Berlin'`
+      # explicitly inside scheduleSubcommand (#199), so the schedule is
+      # not load-bearing on this env var — it is informational for
+      # `new Date().toLocaleString()` calls and for human-readable
+      # `console.log` timestamps in `docker compose logs backup`.
+      # node:22-alpine bundles full ICU + tzdata so no OS `tzdata`
+      # package is required (was dropped from Dockerfile.backup with
+      # the croner rearchitecture).
       TZ: Europe/Berlin
       NODE_ENV: production
     depends_on:

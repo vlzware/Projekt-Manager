@@ -30,13 +30,13 @@ sudo -u deploy docker exec projekt-manager-db-1 psql -U pm -d projekt_manager -c
 
 ## Second-line (manual one-shot, deep-dive)
 
-Trigger a backup manually and read the full output. This `docker exec`s into the running backup container; the scheduled `crond` loop keeps running, but the in-container `/tmp/backup.lock` flock serialises cron-triggered and manual runs, so neither overlaps:
+Trigger a backup manually and read the full output. This `docker exec`s into the running backup container; the in-process croner schedule keeps running in PID 1. Note: manual one-shot runs are NOT serialised against scheduled ticks (croner's `protect: true` only covers intra-process overlap). In practice each run picks a fresh ISO-timestamped artifact key, so an accidental overlap is at most a duplicate log line — not data corruption.
 
 ```bash
-sudo -u deploy docker exec projekt-manager-backup-1 /usr/local/bin/run-backup.sh
+sudo -u deploy docker exec projekt-manager-backup-1 node /app/dist/server/backup-runner.js run
 ```
 
-If the container isn't running (e.g. crash-looping on the entrypoint's env validation), `docker logs` from First-line diagnostics is the starting point, not this — `docker exec` needs a live PID 1.
+If the container isn't running (e.g. crash-looping on env validation or the startup R2 HeadBucket probe), `docker logs` from First-line diagnostics is the starting point, not this — `docker exec` needs a live PID 1.
 
 Common buckets:
 

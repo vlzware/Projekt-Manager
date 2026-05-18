@@ -114,8 +114,11 @@ fi
 trap 'rm -f "$DRILL_FILE"; unset IDENTITY; exit 1' ERR INT TERM
 
 # umask 0077 so a race between creat() and chmod() cannot expose the
-# file to other UIDs on the container (defensive; the container is
-# root-only anyway).
+# file to other UIDs on the container. The container runs as the
+# `postgres` user (UID 70 — see Dockerfile.backup, #199); the tmpfs at
+# /run/drill-key is mounted uid=70,gid=70,mode=0700, so the only UID
+# that can reach this path is the one we already run as. Belt and
+# suspenders.
 umask 0077
 printf '%s' "$IDENTITY" > "$DRILL_FILE"
 chmod 0400 "$DRILL_FILE"

@@ -6,15 +6,17 @@
  * per-table manifest against the restored DB, tears everything down.
  *
  * Binary requirements (must be on PATH in the backup container):
- *   - initdb       (postgres-client / postgres base image)
+ *   - initdb       (postgresql17 alpine package)
  *   - postgres
  *   - pg_isready
  *   - pg_restore
- *   - su-exec (alpine) OR gosu — to demote the postgres binary away from
- *     root, because the postgres binary refuses to run as uid 0. The
- *     backup image (`Dockerfile.backup`) must ensure one of these is
- *     installed; the helper tries `su-exec` first, then `gosu`, then
- *     fails loudly. See module-level TODO in that Dockerfile.
+ *
+ * The container runs as the `postgres` system user (UID 70, set by
+ * `USER postgres` in Dockerfile.backup — #199). initdb / postgres run
+ * directly under that UID; no `su-exec` / `gosu` demotion needed. The
+ * historical root-then-demote path was removed when the container went
+ * non-root; if a test environment ever invokes this as root, initdb
+ * will refuse and the rejection surfaces immediately.
  *
  * This file is intentionally kept separate from `backup.ts` because the
  * subprocess choreography is substantial and has very different risk
@@ -99,27 +101,17 @@ async function startEphemeralPostgres(): Promise<EphemeralInstance> {
   await fs.mkdir(dataDir, { recursive: true });
   await fs.mkdir(socketDir, { recursive: true });
 
-  // Postgres refuses to initdb/run as uid 0; when this process is root
-  // (as it is in the backup container) we must demote. The demotion
-  // strategy is determined by which demoter binary is available.
-  const demoter = await findDemoter();
-
-  // Make the working dirs writable by the postgres user before initdb
-  // touches them. Without this the demoted user cannot create files in
-  // the tree we just mkdir'd as root.
-  if (demoter !== null) {
-    await chownRecursiveToPostgres(dataDir, demoter);
-    await chownRecursiveToPostgres(socketDir, demoter);
-  }
-
-  await runSubprocess(buildInitdbCommand(dataDir, demoter), 'initdb');
+  // Container runs as the `postgres` system user (UID 70 — see file
+  // header). initdb / postgres run as that UID directly; no demotion
+  // step. The dirs we just mkdir'd are owned by the current process
+  // user, which is also `postgres`, so initdb can write into them.
+  await runSubprocess(buildInitdbCommand(dataDir), 'initdb');
 
   const port = await pickFreePort();
-  const postgres = spawn(
-    buildPostgresArgv(dataDir, socketDir, port, demoter).cmd,
-    buildPostgresArgv(dataDir, socketDir, port, demoter).args,
-    { stdio: ['ignore', 'pipe', 'pipe'] },
-  );
+  const postgresCmd = buildPostgresArgv(dataDir, socketDir, port);
+  const postgres = spawn(postgresCmd.cmd, postgresCmd.args, {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
 
   // Drain stdout/stderr so the subprocess doesn't deadlock on a full
   // pipe. We don't log the lines — a verbose postgres log would swamp
@@ -190,10 +182,13 @@ async function restoreDumpIntoInstance(
       cmd: 'pg_restore',
       args: [
         '--dbname',
-        // `postgres@` pins the role — same reason as the Pool probes:
-        // without it libpq falls back to the process uid's user name,
-        // which is `root` here and a role that doesn't exist in the
-        // ephemeral cluster.
+        // `postgres@` pins the role explicitly. initdb ran with
+        // `--username=postgres`, so `postgres` is the only role that
+        // exists in the ephemeral cluster. Pinning here keeps the
+        // restore independent of libpq's process-uid → username
+        // fallback (which today resolves to `postgres` since the
+        // container runs as UID 70 — but explicit is cheaper than
+        // relying on that coincidence).
         `postgresql://postgres@/postgres?host=${instance.socketDir}&port=${instance.port}`,
         '--no-owner',
         '--no-privileges',
@@ -212,10 +207,9 @@ async function computeManifestInInstance(instance: EphemeralInstance): Promise<M
   const pool = new Pool({
     host: instance.socketDir,
     port: instance.port,
-    // Same reason as probeSocket(): pg defaults to the current OS
-    // username (`root` in the backup container), which is not a role
-    // that exists in the ephemeral cluster. initdb created `postgres`
-    // (via --username=postgres).
+    // Same reason as probeSocket(): pin the role explicitly so we
+    // don't rely on pg's process-uid → username fallback. initdb
+    // created only `postgres`.
     user: 'postgres',
     database: 'postgres',
   });
@@ -244,64 +238,17 @@ async function computeManifestInInstance(instance: EphemeralInstance): Promise<M
 }
 
 // ---------------------------------------------------------------
-// Demotion helpers (root → postgres system user)
+// Subprocess builders (run as the current uid — postgres in the container)
 // ---------------------------------------------------------------
 
-type Demoter = { cmd: 'su-exec' | 'gosu'; user: 'postgres' };
-
-/**
- * Detect which demoter binary is available in the container. Falls
- * back to `null` when this process is already non-root — in that case
- * postgres can run directly.
- */
-async function findDemoter(): Promise<Demoter | null> {
-  if (typeof process.getuid === 'function' && process.getuid() !== 0) {
-    return null;
-  }
-  for (const cmd of ['su-exec', 'gosu'] as const) {
-    if (await binaryExists(cmd)) {
-      return { cmd, user: 'postgres' };
-    }
-  }
-  throw new Error(
-    'running as root but neither su-exec nor gosu is installed — cannot demote postgres. ' +
-      'Install alpine `su-exec` (or `gosu`) in the backup image.',
-  );
+function buildInitdbCommand(dataDir: string): SubprocessCommand {
+  return {
+    cmd: 'initdb',
+    args: ['-D', dataDir, '--auth=trust', '--username=postgres'],
+  };
 }
 
-async function binaryExists(name: string): Promise<boolean> {
-  try {
-    await runSubprocess({ cmd: 'which', args: [name] }, `which ${name}`);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function chownRecursiveToPostgres(target: string, _demoter: Demoter): Promise<void> {
-  // chown runs as root — it does not itself need demotion. The argument
-  // `postgres:postgres` assumes the base image provides that user
-  // (postgres:17-alpine does).
-  await runSubprocess(
-    { cmd: 'chown', args: ['-R', 'postgres:postgres', target] },
-    `chown ${target}`,
-  );
-}
-
-function buildInitdbCommand(dataDir: string, demoter: Demoter | null): SubprocessCommand {
-  const initdbArgs = ['-D', dataDir, '--auth=trust', '--username=postgres'];
-  if (demoter) {
-    return { cmd: demoter.cmd, args: [demoter.user, 'initdb', ...initdbArgs] };
-  }
-  return { cmd: 'initdb', args: initdbArgs };
-}
-
-function buildPostgresArgv(
-  dataDir: string,
-  socketDir: string,
-  port: number,
-  demoter: Demoter | null,
-): SubprocessCommand {
+function buildPostgresArgv(dataDir: string, socketDir: string, port: number): SubprocessCommand {
   // TCP listener disabled; only local socket accepts connections. The
   // combination of `initdb --auth=trust` and a TCP listener was an open
   // security hole — anything that could reach 127.0.0.1:<port> inside
@@ -317,40 +264,36 @@ function buildPostgresArgv(
   // literal characters and postgres would try to resolve the hostname
   // `''`, fail with "could not translate host name", and abort on
   // "could not create any TCP/IP sockets" before the socket is ready.
-  const postgresArgs = [
-    '-D',
-    dataDir,
-    '-k',
-    socketDir,
-    '-p',
-    String(port),
-    '-c',
-    'listen_addresses=',
-    '-c',
-    'fsync=off',
-    '-c',
-    'full_page_writes=off',
-    '-c',
-    'synchronous_commit=off',
-    // Force the ephemeral cluster's session TimeZone to UTC regardless
-    // of the parent process env (the backup container sets
-    // TZ=Europe/Berlin so cron log wakeups render in local time; initdb
-    // would otherwise pick that up and the ephemeral session would
-    // serialize `timestamptz` via `row(t.*)::text` as `+02` while the
-    // live `db` container — which runs TimeZone=UTC — renders `+00`,
-    // producing a false Tier 1 mismatch on any populated `timestamptz`
-    // column). Pairs with the `pool.on('connect', …UTC)` hook in
-    // computeManifestInInstance.
-    '-c',
-    'TimeZone=UTC',
-  ];
-  if (demoter) {
-    return {
-      cmd: demoter.cmd,
-      args: [demoter.user, 'postgres', ...postgresArgs],
-    };
-  }
-  return { cmd: 'postgres', args: postgresArgs };
+  return {
+    cmd: 'postgres',
+    args: [
+      '-D',
+      dataDir,
+      '-k',
+      socketDir,
+      '-p',
+      String(port),
+      '-c',
+      'listen_addresses=',
+      '-c',
+      'fsync=off',
+      '-c',
+      'full_page_writes=off',
+      '-c',
+      'synchronous_commit=off',
+      // Force the ephemeral cluster's session TimeZone to UTC regardless
+      // of the parent process env (the backup container sets
+      // TZ=Europe/Berlin so cron log wakeups render in local time; initdb
+      // would otherwise pick that up and the ephemeral session would
+      // serialize `timestamptz` via `row(t.*)::text` as `+02` while the
+      // live `db` container — which runs TimeZone=UTC — renders `+00`,
+      // producing a false Tier 1 mismatch on any populated `timestamptz`
+      // column). Pairs with the `pool.on('connect', …UTC)` hook in
+      // computeManifestInInstance.
+      '-c',
+      'TimeZone=UTC',
+    ],
+  };
 }
 
 // ---------------------------------------------------------------
@@ -410,12 +353,12 @@ async function probeSocket(socketDir: string, port: number): Promise<boolean> {
     host: socketDir,
     port,
     // initdb ran with `--username=postgres`, so `postgres` is the only
-    // role that exists in the ephemeral cluster. Without this line the
-    // pg library falls back to os.userInfo().username — which inside
-    // the backup container is `root`, a role that was never created,
-    // so every probe fails with "role 'root' does not exist" and
-    // readiness times out even though the socket is accepting
-    // connections.
+    // role that exists in the ephemeral cluster. Pin the role here
+    // rather than rely on pg's `os.userInfo().username` fallback —
+    // even though that fallback today resolves to `postgres` (the
+    // container's USER), a future change to who runs the verify path
+    // would silently flip every probe to "role 'X' does not exist"
+    // and readiness would time out without a clear reason.
     user: 'postgres',
     database: 'postgres',
     // Short connection timeout so a single failed probe does not

@@ -477,11 +477,12 @@ jobs:
       # ---------------------------------------------------------------
       # Runtime smoke test — catch bugs that "does it compile?" misses.
       #
-      # History: iteration 7 landed with six distinct runtime defects
-      # that all passed `npm ci && npm test && docker build`. Each one
-      # fired only when the container actually booted and ran its real
-      # code path on a real DB:
-      #   - dcron EPERM on setpgid (needed init:true)
+      # History (pre-#199): iteration 7 landed with six distinct
+      # runtime defects that all passed `npm ci && npm test && docker
+      # build`. Each one fired only when the container actually booted
+      # and ran its real code path on a real DB:
+      #   - dcron EPERM on setpgid (needed init:true) — gone with #199
+      #     (croner does not fork; container runs non-root)
       #   - shared env schema required STORAGE_* (unused by backup-runner)
       #   - listen_addresses='' literal quotes in execve
       #   - pg Pool defaulting to a role that doesn't exist
@@ -490,14 +491,18 @@ jobs:
       #     inlined JSON import so the specific ENOENT can't recur)
       #
       # Cheap defence: boot the full stack with the in-stack MinIO
-      # standing in as the R2 target, then run one `run-backup.sh`
-      # cycle end to end. MinIO is S3-compatible for every call the
-      # uploader makes (HeadBucket / PutObject / GetObject /
-      # ListObjectsV2), so this exercises the real pipeline including
-      # the entrypoint's authenticated R2 probe. An env-schema error,
-      # spawn-quoting crash, peer-auth failure, or probe regression
-      # all surface here before the image is picked up by a real
-      # deploy. Runtime cost is ~60–90s on GHA's hosted runners.
+      # standing in as the R2 target. Confirm the scheduler logged
+      # its registered-jobs lines (catches a schedule-registration
+      # regression in scheduleSubcommand), then run one `node
+      # backup-runner.js run` cycle end to end. MinIO is S3-compatible
+      # for every call the uploader makes (HeadBucket / PutObject /
+      # GetObject / ListObjectsV2), so this exercises the real
+      # pipeline including the startup R2 HeadBucket probe and the
+      # ephemeral-pg spawn under the postgres UID. An env-schema
+      # error, spawn-quoting crash, peer-auth failure, missing
+      # binary, or schedule-registration regression all surface here
+      # before the image is picked up by a real deploy. Runtime cost
+      # is ~60–90s on GHA's hosted runners.
       # ---------------------------------------------------------------
       - name: Runtime smoke test
         env:
@@ -506,9 +511,9 @@ jobs:
           # normal path so the compose config is exercised too, not just
           # the images.
           APP_IMAGE_TAG: ${{ steps.tags.outputs.app_image_tag }}
-          # Placeholder secrets — the stack must start and run-backup.sh
-          # must complete one full cycle before any of these matter to
-          # anything outside the compose network.
+          # Placeholder secrets — the stack must start and one
+          # `node backup-runner.js run` cycle must complete before any
+          # of these matter to anything outside the compose network.
           POSTGRES_PASSWORD: smoke
           MINIO_ROOT_USER: minioadmin
           MINIO_ROOT_PASSWORD: smoke123
@@ -530,13 +535,13 @@ jobs:
           STORAGE_SECRET_KEY: pmappsmokesecret
           CLOUDFLARE_API_TOKEN: smoke
           # R2 target points at the in-stack MinIO. The backup
-          # container's entrypoint probe (scripts/backup/probe-r2.mjs)
-          # runs a HeadBucket on startup and exits non-zero on any
-          # failure — an unreachable endpoint or a missing bucket
-          # would crash the container into a restart loop before
-          # run-backup could be exercised. A reachable, authenticated
-          # target lets both the probe and the upload pipeline run
-          # end to end.
+          # container's schedule subcommand (backup-runner.ts) runs
+          # an authenticated HeadBucket probe on startup and exits
+          # non-zero on any failure — an unreachable endpoint or a
+          # missing bucket would crash the container into a restart
+          # loop before any tick could be exercised. A reachable,
+          # authenticated target lets the probe, the schedule
+          # registration, and the upload pipeline run end to end.
           R2_ACCESS_KEY_ID: minioadmin
           R2_SECRET_ACCESS_KEY: smoke123
           R2_ENDPOINT: http://storage:9000
@@ -586,9 +591,9 @@ jobs:
           # to provision a TLS cert against the fake DOMAIN/token and
           # would otherwise dominate the log with ACME retries. Backup
           # is deferred until the R2 bucket exists on MinIO, otherwise
-          # the entrypoint probe's HeadBucket would 404 and the
-          # container would restart-loop. COMPOSE_FILE in env: above
-          # picks up the minio overlay automatically.
+          # the schedule subcommand's startup HeadBucket probe would
+          # 404 and the container would restart-loop. COMPOSE_FILE in
+          # env: above picks up the minio overlay automatically.
           docker compose up -d db storage storage-init app
           echo "::endgroup::"
 
@@ -658,10 +663,11 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::Backup container stable? (up to 20s)"
-          # Poll briefly so we don't race the probe — the probe runs
-          # early in entrypoint.sh and the container reports 'running'
-          # before the probe has had a chance to crash it. A stable
-          # container in this window passed the probe and exec'd crond.
+          # Poll briefly so we don't race the startup R2 probe — the
+          # probe runs early in scheduleSubcommand and the container
+          # reports 'running' before the probe has had a chance to
+          # crash it. A stable container in this window passed the
+          # probe and registered the croner schedule.
           for i in $(seq 1 10); do
             running=$(docker inspect projekt-manager-backup-1 --format '{{.State.Running}}' 2>/dev/null || echo false)
             restarts=$(docker inspect projekt-manager-backup-1 --format '{{.RestartCount}}' 2>/dev/null || echo 0)
@@ -678,23 +684,52 @@ jobs:
           fi
           echo "::endgroup::"
 
+          echo "::group::Scheduler registered all four cron jobs?"
+          # scheduleSubcommand logs one "registered <name> next=..." line
+          # per croner job at boot. Confirming all four are present
+          # catches a regression where a job's cron expression is
+          # malformed (croner throws at construction → only the earlier
+          # jobs ever registered), or where buildScheduleJobs returned
+          # fewer than four entries. The unit tests in
+          # backup-runner-schedule.test.ts cover the wiring at the
+          # function level; this smoke proves the wiring survives an
+          # actual container boot.
+          backup_logs=$(docker logs projekt-manager-backup-1 2>&1)
+          echo "$backup_logs"
+          for name in backup-weekday backup-weekend drill-weekday drill-weekend; do
+            if ! printf '%s' "$backup_logs" | grep -q "schedule: registered ${name} next="; then
+              echo "::error::scheduler did not log a 'registered ${name}' line at boot"
+              exit 1
+            fi
+          done
+          echo "  all four croner jobs registered — smoke OK"
+          echo "::endgroup::"
+
           echo "::group::Run one backup cycle"
           # Full pipeline: env parse, pg_dump, ephemeral-pg verify,
           # age encrypt, PutObject to MinIO. Expected rc=0 — MinIO
           # is S3-compatible for every call the uploader makes. A
           # non-zero rc here is a real runtime defect the image-build
           # phase did not catch.
+          #
+          # NOTE: this is a SEPARATE node process from the scheduler
+          # in PID 1; the manual `run` subcommand is not serialised
+          # against an in-flight scheduled tick (croner's protect: true
+          # only covers intra-process). Acceptable here because the
+          # smoke clock is unlikely to land on the schedule's tick
+          # window during the ~5-min run.
           set +e
-          backup_out=$(docker exec projekt-manager-backup-1 /usr/local/bin/run-backup.sh 2>&1)
+          backup_out=$(docker exec projekt-manager-backup-1 \
+            node /app/dist/server/backup-runner.js run 2>&1)
           backup_rc=$?
           set -e
           echo "$backup_out"
           echo "  exit code: $backup_rc"
           if [ "$backup_rc" != "0" ]; then
-            echo "::error::run-backup failed end-to-end against MinIO — see output above"
+            echo "::error::backup-runner run failed end-to-end against MinIO — see output above"
             exit 1
           fi
-          echo "  run-backup completed end-to-end — smoke OK"
+          echo "  backup-runner run completed end-to-end — smoke OK"
           echo "::endgroup::"
 
           echo "::group::Drill-key tmpfs reachable?"

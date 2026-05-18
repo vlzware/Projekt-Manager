@@ -252,6 +252,40 @@ describe('assertStoragePublicEndpointInProduction', () => {
  * this after the smoke-test container started failing to boot; this
  * test freezes the fix.
  */
+/**
+ * AGE_RECIPIENT — public recipient for Layer 2 backup encryption.
+ * Schema enforces the `age1…` prefix so a private identity pasted by
+ * mistake (`AGE-SECRET-KEY-1…`) is rejected at boot. Compose forwards
+ * `${AGE_RECIPIENT:-}` which materialises as `""` when the operator
+ * hasn't sourced secrets.env.age (dev workflows, app-only deploys),
+ * so the schema MUST treat the empty string as "not set" — otherwise
+ * any non-backup deploy fails env validation and the app won't boot.
+ */
+describe('envSchema AGE_RECIPIENT handling (#199)', () => {
+  const minimal = { DATABASE_URL: 'postgres://unused' };
+
+  it('coerces "" to undefined so app-only deploys (no backup secrets) boot', () => {
+    const parsed = envSchema.parse({ ...minimal, AGE_RECIPIENT: '' });
+    expect(parsed.AGE_RECIPIENT).toBeUndefined();
+  });
+
+  it('accepts a valid age1… public recipient', () => {
+    const valid = 'age15nf2qq4znfwup9khgjk0rdgp5wg9vx33fngc727m3zdkctq29djqyr9su6';
+    const parsed = envSchema.parse({ ...minimal, AGE_RECIPIENT: valid });
+    expect(parsed.AGE_RECIPIENT).toBe(valid);
+  });
+
+  it('rejects a private identity pasted by mistake', () => {
+    expect(() =>
+      envSchema.parse({
+        ...minimal,
+        AGE_RECIPIENT:
+          'AGE-SECRET-KEY-1QQPQQS4M3Q4HMNAWPV4TXMFQ8YUL9G6X5RKTZ8KLZ9TYUZZTJVHWQRYR9SU',
+      }),
+    ).toThrow(/public recipient.*age1/);
+  });
+});
+
 describe('envSchema AUDIT_RETENTION_WINDOW_DAYS empty-string handling', () => {
   const minimal = { DATABASE_URL: 'postgres://unused' };
 

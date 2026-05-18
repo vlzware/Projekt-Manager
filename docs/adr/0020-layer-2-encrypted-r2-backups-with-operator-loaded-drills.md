@@ -108,3 +108,25 @@ Originally specified with prefix scope "all objects" (setup.md §1.2). The statu
 ### 2026-04-29 — Threat-model scope tightened to data-plane after empirical testing
 
 Tested against the live bucket: within the immutability window, R2 bucket lock blocks DeleteObject, PutObject overwrite, DeleteObjects, and CopyObject self-overwrite via the data-plane S3 token. The design's protection holds for `secrets.env.age` exfiltration. Two gaps surfaced and were added to §Consequences: `status/latest.json` is forge-able with the same token, and unbounded PUT permits a cost-attack until lifecycle reaps at day 90. Also confirmed: rule changes apply retroactively in both directions — shortening the rule's `maxAgeSeconds` unlocks already-stored objects whose age exceeds the new threshold. Only management-plane credentials (CF dashboard, R2-edit API token) can change the rule, and those never reach the VPS, so retroactive shortening is outside the data-plane threat model. §Alternatives and §Consequences wording tightened accordingly.
+
+### 2026-05-18 — Scheduler rearchitected to in-process croner; container runs non-root (#199)
+
+The container's PID 1 was `dcron` (Alpine package) execing four bash scripts (`run-backup.sh`, `run-drill.sh`, weekday + weekend lines in `scripts/backup/crontab`). The container had to run as root because dcron's per-entry `fork()+setpgid()` needs `CAP_SETUID`, and the postgres binary's refusal-to-run-as-uid-0 forced an `su-exec`-based demotion every Tier 1 verify cycle.
+
+Two issues compounded:
+
+1. **`dcron` upstream is effectively dead.** Alpine ships ptchinster/dcron, whose only releases are v4.5 and v4.6; last commit 2025-03-18 (~14 months stale at adoption time of this amendment) and last typo-fix-only activity. The Alpine `dcron-4.6-r0` package itself was built 2024-05-30 (~24 months stale). For a service holding encryption keys + DR tooling, an un-triaged-for-CVE OS daemon is a real liability.
+2. **Trivy DS-0002** flagged the lack of a `USER` directive on `Dockerfile.backup` (enabled by [ADR-0027](0027-continuous-dependency-updates-with-supply-chain-scanning.md)). The clean fix is an architectural one: non-root, no dcron.
+
+**What changed:**
+
+- Schedule moved into the backend bundle. `src/server/backup-runner.ts` gained a `schedule` subcommand that registers four `croner@10` jobs (backup weekday/weekend × drill weekday/weekend) with `timezone: 'Europe/Berlin'` and `protect: true` (croner's in-process equivalent of the former `flock -n` in `run-backup.sh`). The container's `ENTRYPOINT` is `["node", "/app/dist/server/backup-runner.js"]`, `CMD` is `["schedule"]`.
+- Container runs as `USER postgres` (UID 70, from the `postgresql17` apk package). The tmpfs at `/run/drill-key` is mounted `uid=70,gid=70,mode=0700` to match.
+- `ephemeralPg.ts` simplified: the root → postgres demotion path (`findDemoter`, `chownRecursiveToPostgres`, `su-exec` / `gosu` detection) was deleted. The verify Postgres spawns directly under UID 70.
+- `apk add` shrank from 11 packages to 6: dropped `dcron`, `tzdata`, `su-exec`, `jq`, `coreutils` (no more bash flock/date/stat callers after the script layer collapsed). croner reads timezones via the JS runtime's IANA `Intl` API; `node:22-alpine` bundles full ICU + tzdata so no OS package is required (a future runtime swap to a slim image without ICU would silently fall back to UTC — guard noted in `Dockerfile.backup`).
+- Startup R2 `HeadBucket` probe (formerly `scripts/backup/probe-r2.mjs` invoked by `entrypoint.sh`) folded into `scheduleSubcommand` so a stale credential surfaces as a fast container restart, not a missed cron tick an hour later.
+- `init: true` removed from compose. Node-as-PID-1 handles SIGTERM in `scheduleSubcommand` for a graceful drain (stop jobs → wait up to 9s for in-flight ticks → close DB pool → exit 0); libuv reaps the awaited subprocesses (initdb, postgres, pg_restore).
+
+**Trade-off acknowledged:** the former bash flock provided inter-process serialization between the cron-fired tick and an operator's manual `docker exec ... run-backup.sh`. croner's `protect: true` is intra-process only — a manual `docker exec ... node backup-runner.js run` while a scheduled tick is in flight runs in parallel. Artifacts are independent (distinct ISO-timestamp keys, separate ephemeral pg instances); worst case is a duplicate log line and a status-mirror "last writer wins." Documented in `docs/ops/backup/troubleshooting.md`. If operationally needed, a Postgres advisory lock at the top of `runBackup` would restore the cross-process guarantee; not added now because the manual-run-during-scheduled-tick scenario is rare and the consequences are bounded.
+
+The Alpine OS-package coverage gap that hid dcron's stagnation (Renovate's `dockerfile` manager tracks base-image tags, not `apk add` packages on top) was closed in parallel by the [ADR-0027](0027-continuous-dependency-updates-with-supply-chain-scanning.md) work — `docs/ops/dep-management.md` now enumerates apk-installed packages per Dockerfile and requires per-package upstream-health checks at the quarterly review.

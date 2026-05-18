@@ -27,6 +27,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   ListObjectsV2Command,
+  HeadBucketCommand,
 } from '@aws-sdk/client-s3';
 import type { BackupUploader } from './backup.js';
 
@@ -62,6 +63,35 @@ const STATUS_MIRROR_KEY = 'status/latest.json';
 const DAILY_PREFIX = 'daily/';
 const DUMP_SUFFIX = '.dump.age';
 const MANIFEST_SUFFIX = '.manifest.json.age';
+
+/**
+ * Authenticated reachability probe (`HeadBucket`). Runs at schedule
+ * startup so a stale credential, bucket-scope typo, or dead endpoint
+ * surfaces as a container restart loop at deploy time — not silently
+ * an hour later at the first cron tick. Mirrors the app's MinIO
+ * HeadBucket gate in `storage/safety.ts`.
+ *
+ * Throws with `name + message + httpStatus` so 403 (bad secret, wrong
+ * bucket scope) vs 404 (bucket missing) vs 5xx (R2 outage) is obvious
+ * from the log without cross-referencing the SDK internals. Secrets
+ * never hit the message.
+ */
+export async function probeR2HeadBucket(config: R2Config): Promise<void> {
+  const client = buildClient(config);
+  try {
+    await client.send(new HeadBucketCommand({ Bucket: config.bucket }));
+  } catch (err) {
+    const e = err as { name?: string; message?: string; $metadata?: { httpStatusCode?: number } };
+    const name = e.name ?? 'Error';
+    const message = typeof e.message === 'string' ? e.message : String(err);
+    const status = e.$metadata?.httpStatusCode ?? 'unknown';
+    throw new Error(`R2 HeadBucket failed: ${name}: ${message} (http=${String(status)})`, {
+      cause: err,
+    });
+  } finally {
+    client.destroy();
+  }
+}
 
 /**
  * Build a backup uploader. Construct once at startup and reuse across
