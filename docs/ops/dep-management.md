@@ -103,6 +103,18 @@ A dep is "strategic" if it is load-bearing for security, runtime correctness, or
 | VPN                      | WireGuard kernel + clients                                                                      | [ADR-0008](../adr/0008-vpn-first-network-access.md)                                                                                                                                            |
 | Storage SDK              | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`                                           | [ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)                                                                                                                            |
 
+**OS packages installed in our Dockerfiles** (added per [#199](https://github.com/vlzware/Projekt-Manager/issues/199), which surfaced that the apk-package layer was not covered by either Renovate or this review):
+
+Renovate's `dockerfile` manager tracks base-image tags, not the individual packages added via `apk add` on top. OSV-Scanner and Trivy catch published CVEs in OS packages, but stagnant-but-not-yet-vulnerable (the dcron case: no CVE filed, no maintainer to file one) is invisible to both gates. Treat every explicit `apk add` line as a strategic-dep adoption and walk it during this review.
+
+| Dockerfile                | Explicit `apk add` packages                                                                                                                            | Upstream notes                                                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Dockerfile`              | `age`, `findmnt`, `bash`                                                                                                                               | `age` = FiloSottile/age (active); `findmnt` from util-linux (kernel.org, very active); `bash` from GNU (very active).                                   |
+| `Dockerfile.backup`       | `postgresql17`, `postgresql17-client`, `postgresql17-contrib`, `age`, `bash`, `jq`, `coreutils`, `findmnt` _(post-#199: dcron/tzdata/su-exec removed)_ | `postgresql17*` from postgres.org (active); `jq` = jqlang/jq (active fork after stedolan dormancy — switched 2022); `coreutils` from GNU (very active). |
+| `docker/caddy/Dockerfile` | _(none — uses upstream `caddy:*-alpine` as-is)_                                                                                                        | n/a                                                                                                                                                     |
+
+Per package, the same ≤5-min check as npm strategic deps: archived flag, last release date, CVE filing cadence (for niche projects, "no CVEs ever" can mean "no one filing them" more than "no vulnerabilities"). When introducing a new `apk add` line, add the package here in the same PR — same discipline as the per-ADR lifecycle-health entry.
+
 After the review, update the "Last performed" date above.
 
 ## Adopting a new dep
