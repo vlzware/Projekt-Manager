@@ -44,12 +44,12 @@ You are about to write private key material into RAM on the VPS; this is cleared
 
 ## Triggering a drill manually
 
-The backup image ships `/usr/local/bin/run-drill.sh` — the same script the in-container cron fires — so an operator can trigger a one-shot drill without waiting for the next scheduled tick. Common reasons: verifying a freshly-loaded drill key, reproducing a failure seen in the cron logs, closing "Drill: noch nie ausgeführt" immediately after setup.
+The backup image's `node /app/dist/server/backup-runner.js drill` subcommand runs the same code path the in-container croner schedule fires — so an operator can trigger a one-shot drill without waiting for the next scheduled tick. Common reasons: verifying a freshly-loaded drill key, reproducing a failure seen in the scheduler logs, closing "Drill: noch nie ausgeführt" immediately after setup.
 
 From the admin ssh session:
 
 ```bash
-sudo -u deploy docker exec projekt-manager-backup-1 /usr/local/bin/run-drill.sh
+sudo -u deploy docker exec projekt-manager-backup-1 node /app/dist/server/backup-runner.js drill
 ```
 
 Expected one-liners on stdout:
@@ -58,13 +58,13 @@ Expected one-liners on stdout:
 - `backup-runner: drill skipped reason=key-absent` — no identity at `/run/drill-key/identity`. Load the key via [§Loading](#loading-the-drill-key-on-the-vps) and retry. Skip is not a failure ([AC-168](../../spec/verification.md#1522-backup-and-recovery)), so the status row is not mutated.
 - `backup-runner: drill failed reason=...` — something between download, decrypt, and verify broke. `lastDrillOk=false` and `lastError` carries the cue; see [troubleshooting.md](troubleshooting.md).
 
-The in-container `/tmp/drill.lock` serialises cron-triggered and manual runs — two drills never overlap. A manual drill while a scheduled tick is firing makes one of them exit 2 ("another drill is in flight").
+croner's `protect: true` prevents two scheduled drill ticks from overlapping within the schedule process. A manual `docker exec … drill` runs in a separate Node process and is NOT serialised against the scheduled tick — operators who fire a manual drill during a scheduled tick may see two drills run in parallel. In practice the artifacts are independent (different ephemeral pg instances, same R2 artifact under verification) so the worst case is a duplicate "drill ok" log line and a status-mirror overwrite of the slower one's row by the faster.
 
 **Badge refresh caveat:** the login-screen freshness badge reads from `status/latest.json` in R2, which is written by the **backup** runner (not the drill). A successful drill updates `meta_backup_status` in the app DB but does NOT refresh the R2 mirror — the badge picks up the new `lastDrillAt` / `lastDrillOk` on the next scheduled backup tick, or sooner if you trigger a backup immediately after:
 
 ```bash
-sudo -u deploy docker exec projekt-manager-backup-1 /usr/local/bin/run-drill.sh
-sudo -u deploy docker exec projekt-manager-backup-1 /usr/local/bin/run-backup.sh
+sudo -u deploy docker exec projekt-manager-backup-1 node /app/dist/server/backup-runner.js drill
+sudo -u deploy docker exec projekt-manager-backup-1 node /app/dist/server/backup-runner.js run
 ```
 
 ## Monthly operator-workstation drill

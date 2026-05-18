@@ -139,8 +139,7 @@ export const envSchema = z.object({
   // Layer 2 backup (ADR-0020). Consumed by the `backup-runner` CLI,
   // not by the main app server — but declared here so the schema
   // remains the single source of truth. Optional at the app-server
-  // level; the CLI enforces presence at dispatch time, and the shell
-  // entrypoints in scripts/backup/run-*.sh pre-check the same set.
+  // level; the CLI enforces presence at dispatch time.
   // ---------------------------------------------------------------
   R2_ACCESS_KEY_ID: z.string().optional(),
   R2_SECRET_ACCESS_KEY: z.string().optional(),
@@ -148,11 +147,35 @@ export const envSchema = z.object({
   R2_BUCKET: z.string().optional(),
   R2_REGION: z.string().default('auto'),
   /** Public age recipient (asymmetric). Encryption fails fast if empty
-   * to preserve the "no plaintext at rest" invariant (AC-167). */
-  AGE_RECIPIENT: z.string().optional(),
+   * to preserve the "no plaintext at rest" invariant (AC-167).
+   *
+   * Shape-check enforced here so a private identity pasted by mistake
+   * (`AGE-SECRET-KEY-1…`) is rejected at boot instead of silently
+   * producing undecryptable backups for the first cycle. The former
+   * `scripts/backup/entrypoint.sh` did this check in bash; it now
+   * lives at the schema layer (#199 removed the shell entrypoint).
+   *
+   * `preprocess('' → undefined)` mirrors the pattern used by
+   * STORAGE_PUBLIC_ENDPOINT and other compose-forwarded keys:
+   * docker-compose.yml writes `${AGE_RECIPIENT:-}`, which materialises
+   * as the empty string when the operator has not sourced
+   * secrets.env.age (dev workflows; backup profile gated off). Without
+   * the preprocess, the empty string would fail the refine and break
+   * the app container's boot for any deploy that doesn't include the
+   * backup secrets. */
+  AGE_RECIPIENT: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z
+      .string()
+      .optional()
+      .refine(
+        (v) => v === undefined || v.startsWith('age1'),
+        'AGE_RECIPIENT must be the public recipient (age1…), not the private identity (AGE-SECRET-KEY-1…). Re-derive with: age-keygen -y <identity-file>',
+      ),
+  ),
   /** Tmpfs-resident identity path used by the drill decrypt step.
-   * Default matches `scripts/backup/run-drill.sh` and the tmpfs mount
-   * in Dockerfile.backup so operators don't need to set it. */
+   * Default matches the tmpfs mount in docker-compose.yml's `backup`
+   * service so operators don't need to set it. */
   AGE_IDENTITY_PATH: z.string().default('/run/drill-key/identity'),
   // ---------------------------------------------------------------
   // Binary attachment e2e (ADR-0024 / AC-239). Independent keypair from

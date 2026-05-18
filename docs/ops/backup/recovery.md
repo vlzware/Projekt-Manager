@@ -165,7 +165,7 @@ Two paths exist; this runbook supports **(a) only**. Path (b) — targeted table
 
 - [ ] `curl https://${DOMAIN}/api/health` returns 200 from a WireGuard client.
 - [ ] Log in as the owner; confirm project counts match the manifest expectations.
-- [ ] `meta_backup_status` row exists and is fresh (the first post-restore cron tick will overwrite it).
+- [ ] `meta_backup_status` row exists and is fresh (the first post-restore scheduled tick will overwrite it).
 - [ ] Freshness badge renders green after the next backup run.
 - [ ] Shred local copies: `shred -u ~/restore/${TS}.dump ~/restore/${TS}.manifest.json`.
 - [ ] Rotate any credentials that may have been exposed during the incident ([setup.md § Rotating credentials](setup.md#rotating-credentials)).

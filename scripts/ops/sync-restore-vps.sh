@@ -29,8 +29,8 @@
 #
 # The backup container is `pause`d, not stopped, for the same reason:
 # `docker pause` freezes via cgroup freezer so /run/drill-key (AC-175)
-# survives, while still preventing dcron from firing a run-backup.sh
-# tick mid-restore.
+# survives, while still preventing the in-process croner schedule
+# (#199) from firing a backup tick mid-restore.
 
 set -euo pipefail
 
@@ -43,8 +43,8 @@ APP_CONTAINER="${COMPOSE_PROJECT}-app-1"
 BACKUP_CONTAINER="${COMPOSE_PROJECT}-backup-1"
 
 # Unpause the backup container on any exit. Without this a failed restore
-# would leave it frozen and its dcron silent — drills and scheduled
-# backups would stop firing until the operator manually unpaused.
+# would leave it frozen and its croner schedule silent — drills and
+# scheduled backups would stop firing until the operator manually unpaused.
 was_backup_paused=0
 unpause_paused() {
   rc=$?
@@ -70,10 +70,10 @@ B2_KEY=$(docker exec "$APP_CONTAINER" printenv STORAGE_ACCESS_KEY)
 B2_SECRET=$(docker exec "$APP_CONTAINER" printenv STORAGE_SECRET_KEY)
 
 # Pause the backup container if active (profile-gated, may not exist) so
-# its dcron can't fire a run-backup.sh tick mid-restore — pg_dump racing
-# `pg_dump --clean`'s DROP/CREATE statements would either lock-fight or
-# capture stale tables. `docker pause` freezes the container via the
-# cgroup freezer, so /run/drill-key (AC-175) is preserved.
+# its in-process croner schedule can't fire a backup tick mid-restore —
+# pg_dump racing `pg_dump --clean`'s DROP/CREATE statements would either
+# lock-fight or capture stale tables. `docker pause` freezes the container
+# via the cgroup freezer, so /run/drill-key (AC-175) is preserved.
 if running "$BACKUP_CONTAINER"; then
   echo "  pausing backup..."
   docker pause "$BACKUP_CONTAINER" >/dev/null
@@ -196,9 +196,9 @@ if [ -s "$REPAIR_SQL" ]; then
     < "$REPAIR_SQL" >/dev/null
 fi
 
-# Unpause backup before the smoke probe so its dcron resumes promptly
-# and any deferred backup ticks fire against the restored DB. Clear
-# the trap flag so the EXIT trap doesn't issue a redundant unpause.
+# Unpause backup before the smoke probe so its croner schedule resumes
+# promptly and any deferred backup ticks fire against the restored DB.
+# Clear the trap flag so the EXIT trap doesn't issue a redundant unpause.
 if [ "$was_backup_paused" = "1" ]; then
   echo "  unpausing backup..."
   docker unpause "$BACKUP_CONTAINER" >/dev/null
