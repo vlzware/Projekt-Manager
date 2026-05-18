@@ -98,6 +98,11 @@
       "versioning": "loose"
     },
     {
+      "description": "Caddy version bumps land across three places in docker/caddy/Dockerfile (FROM caddy:X-builder, FROM caddy:X, xcaddy build vX). Group them so one PR moves the version everywhere — otherwise a partial bump builds an image where xcaddy compiles vX+1 against a base labelled vX",
+      "groupName": "caddy",
+      "matchPackageNames": ["caddy", "caddyserver/caddy"]
+    },
+    {
       "description": "Auto-merge ungrouped patch + minor on green CI (requires repo Settings → General → Pull Requests → Allow auto-merge)",
       "matchUpdateTypes": ["patch", "minor", "digest", "pin", "lockFileMaintenance"],
       "automerge": true,
@@ -141,6 +146,17 @@
         "MC_IMAGE=\"minio/mc:(?<currentValue>RELEASE\\.[0-9TZ-]+)\""
       ],
       "depNameTemplate": "minio/mc",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "description": "MinIO `minio` and `mc` images hardcoded in `docker run …` shell steps inside .github/workflows/*.yml — Renovate's github-actions manager doesn't parse docker images inside run: blocks, so a custom regex keeps them in lockstep with the docker-compose copies",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "matchStrings": [
+        "minio/(?<depName>minio|mc):(?<currentValue>RELEASE\\.[0-9TZ-]+)"
+      ],
+      "packageNameTemplate": "minio/{{depName}}",
       "datasourceTemplate": "docker",
       "versioningTemplate": "loose"
     }
