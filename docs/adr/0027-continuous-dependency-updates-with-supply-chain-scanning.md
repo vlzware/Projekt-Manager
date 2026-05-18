@@ -13,7 +13,7 @@ Dependency hygiene has so far been a **manual audit** triggered by guilt rather 
 - One Node base-image bump (3 CVEs)
 - One Docker Engine bump (2 CVEs, including in-container privesc)
 - Two **non-drop-in migrations** carved into separate issues:
-  - [#191](https://github.com/vlzware/Projekt-Manager/issues/191) — `minio/minio` upstream-archived 2026-04-24, caught ~3 weeks late
+  - [#191](https://github.com/vlzware/Projekt-Manager/issues/191) — `minio/minio` upstream-archived 2026-04-25, caught ~3 weeks late
   - [#192](https://github.com/vlzware/Projekt-Manager/issues/192) — `libxmljs2` README literally `# NO LONGER MAINTAINED`, caught only by this audit
 - Two driver-level switches (`pdf-lib` → `@cantoo/pdf-lib`, `pdf-parse` → `unpdf`)
 - A patch deletion (`@aws-sdk+xml-builder` patch rendered obsolete by upstream rewrite)
@@ -22,7 +22,7 @@ This pattern is structurally fragile in three ways:
 
 1. **Batching correlates risk.** A regression in one of 25 bumps becomes a bisect through the whole batch. Each bump's CI signal is invisible.
 2. **CVE time-to-merge is weeks, not hours.** The Caddy admin-socket and FastCGI advisories, the Docker `containerd` DoS, and the MinIO session-policy privesc all sat unpatched until a human noticed.
-3. **Dying upstreams surface late.** MinIO's archive flag flipped on a Friday afternoon; the project found out via a bored Wednesday audit three weeks later. The agent that originally recommended MinIO (during initial stack selection) did **not** check upstream lifecycle — a known LLM failure mode. The fix is a process bar, not a "be more careful" rule.
+3. **Dying upstreams surface late.** MinIO's archive flag flipped on a Saturday (2026-04-25); the project found out via a bored Wednesday audit three weeks later. The agent that originally recommended MinIO (during initial stack selection) did **not** check upstream lifecycle — a known LLM failure mode. The fix is a process bar, not a "be more careful" rule.
 
 Constraints:
 
@@ -62,7 +62,7 @@ Exceptions to blocking go in a documented allowlist with a review trigger (the p
 
 ### 3. Lifecycle-health entry on dep-introducing ADRs + quarterly review
 
-- The `vv-adr` skill now requires a `## Dep lifecycle health (as of YYYY-MM-DD)` section on any ADR that commits to a specific named external dep (npm package, container image, SaaS service, source-built binary). Pattern/policy ADRs omit it. If the ADR delegates lib choice to a design doc (e.g., `ARCHITECTURE.md`), the table lives in the design doc — one source of truth per dep.
+- The `vv-adr` skill now requires a `## Dep lifecycle health (as of YYYY-MM-DD)` section on any ADR that commits to a specific named external dep (npm package, container image, SaaS service, source-built binary). Pattern/policy ADRs omit it — for this codebase the excluded set is **0001, 0005, 0006, 0007 (superseded), 0010, 0013, 0014, 0015, 0017, 0018, 0019, 0021, 0023, 0025**. New ADRs apply the same test: if no named external dep is committed, omit the section. If the ADR delegates lib choice to a design doc (e.g., `ARCHITECTURE.md`), the table lives in the design doc — one source of truth per dep.
 - ADRs 0002–0026 are retrofitted in the same change as this ADR (excluding the superseded 0007 and the pattern-only ones). ADR-0009's existing version table doubles as its lifecycle surface. ADR-0008's prose maintenance notes are reshaped into a structured table.
 - A **quarterly strategic-dep review** walks the headline deps (framework, ORM, storage SaaS, base images, build tooling) and asks: alive? funded? still our best option? exit ramp documented? Outcomes feed superseding ADRs when warranted. Tracked in [docs/ops/dep-management.md](../ops/dep-management.md).
 
@@ -102,21 +102,31 @@ The lightest possible option. Ruled out: covers only the npm tree, no OS-package
 ### Negative
 
 - **PR queue volume.** A weekly window with grouping should land 3–8 PRs/week in steady state. The "weekly wrangler" hat is ~30 min/week.
-- **Auto-merge depends on CI confidence.** If Playwright E2E flakes, auto-merge produces false-green merges. Mitigated by the existing flake-quarantine practice and by keeping auto-merge off for grouped/major PRs.
+- **Auto-merge depends on CI confidence.** If Playwright E2E flakes, auto-merge produces false-green merges. No flake-quarantine practice is documented today — explicit gap. Interim mitigation: auto-merge stays off for grouped/major PRs (the highest-risk class). Threshold rule for tuning in a future iteration: **disable auto-merge for the affected suite if E2E flake rate exceeds 5% over the last 20 PRs**; defaults are a placeholder until we have a quarter of CI history to calibrate against.
 - **Renovate config drift.** A `.github/renovate.json` that goes stale (new dep types, ecosystem changes) silently degrades coverage. Mitigated by the quarterly review explicitly checking the config.
-- **OSV-Scanner false positives** for advisories on dead code paths (cf. the original ADR-0007 case). Mitigated by the documented allowlist pattern — one entry per advisory with a review trigger, not a blanket `--omit=dev`.
+- **OSV-Scanner false positives** for advisories on dead code paths (cf. the original ADR-0007 case). Mitigated by a structured allowlist — never a blanket `--omit=dev`. Every entry in `osv-scanner.toml` (and the equivalent in `.trivyignore`) MUST carry:
+  - `id` — the advisory identifier (`GHSA-…`, `CVE-…`, or `OSV-…`).
+  - `reason` — why this advisory doesn't apply here (dead code path, mitigated upstream, exploitation precondition unmet, …) **including the GitHub handle of the person who added the entry** (osv-scanner.toml has no dedicated `owner` field; for `.trivyignore` the handle goes in the `#` comment above the line).
+  - `ignoreUntil` — ISO date, at most **90 days from creation**, forces a re-review. For `.trivyignore` use the `exp:YYYY-MM-DD` suffix.
+
+  See [docs/ops/dep-management.md § Allowlist (OSV-Scanner + Trivy)](../ops/dep-management.md#allowlist-osv-scanner--trivy) for example entries.
 
 ### Operational
 
-- New file: `.github/renovate.json` (config) — to be authored in a separate PR following this ADR.
-- New CI jobs: OSV-Scanner step + Trivy step. Both block merge on HIGH / CRITICAL.
-- New runbook: [docs/ops/dep-management.md](../ops/dep-management.md).
-- The `vv-adr` skill template is updated; retrofits to existing ADRs land in the same change as this ADR.
+Implementation ships in this ADR's PR:
+
+- `.github/renovate.json` — schedule, grouping, auto-merge rules, manager set.
+- `.github/workflows/ci.yml` — OSV-Scanner step + Trivy step added to the existing CI workflow; both block merge on HIGH / CRITICAL.
+- `.github/workflows/security-scheduled.yml` — nightly OSV-Scanner run against `main` so newly-published advisories surface without waiting for a PR.
+- `osv-scanner.toml` (repo root) — allowlist file; empty on landing, schema documented in `docs/ops/dep-management.md`.
+- `.trivyignore` (repo root) — allowlist file for Trivy; empty on landing, same schema discipline.
+- [docs/ops/dep-management.md](../ops/dep-management.md) — runbook (first-run setup, weekly wrangler, quarterly review, allowlist schema).
+- The `vv-adr` skill template is updated; retrofits to the existing ADRs in the included set land in the same change as this ADR.
 - No env-var or schema impact.
 
 ## Dep lifecycle health (as of 2026-05-15)
 
-This ADR itself does not commit to a specific named external dep — Renovate, OSV-Scanner, and Trivy are the proposed _tooling_, but the choice is reversible (move to Dependabot-only or to commercial SCA later). Concrete tool-version pinning lives in `.github/workflows/*.yml` and `.github/renovate.json` once authored, and is tracked by Renovate's own self-update path.
+Renovate, OSV-Scanner, and Trivy are the adopted _tooling_; the choice is reversible (move to Dependabot-only or to commercial SCA later). Concrete tool-version pinning lives in `.github/workflows/*.yml` and `.github/renovate.json` and is tracked by Renovate's own self-update path.
 
 | Dep                                | Last release     | License    | Maintainership                   | Notes                                                                                |
 | ---------------------------------- | ---------------- | ---------- | -------------------------------- | ------------------------------------------------------------------------------------ |
