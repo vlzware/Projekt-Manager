@@ -40,30 +40,32 @@ Renovate is a GitHub App. Until installed and onboarded, the `.github/renovate.j
 
 Allowlist files: `osv-scanner.toml` (npm + git deps) and `.trivyignore` (container image scan), both at the repo root.
 
-Per [ADR-0027 §Negative](../adr/0027-continuous-dependency-updates-with-supply-chain-scanning.md#negative), every entry MUST carry:
+Per [ADR-0027 §Negative](../adr/0027-continuous-dependency-updates-with-supply-chain-scanning.md#negative), every entry MUST carry **id + owner (GitHub handle) + reason + expiry**, expressed in the format each scanner accepts. Both files are gated in CI by `scripts/check-allowlist-schema.sh` — entries that miss a field, encode an invalid handle, drift past 90 days, or use the wrong shape are rejected before the scanner step runs.
 
-- **`id`** — advisory identifier (`GHSA-…`, `CVE-…`, or `OSV-…`).
-- **`reason`** — why the advisory doesn't apply (dead code path, mitigated upstream, exploit precondition unmet, …) **plus the GitHub handle of the person adding the entry**. The osv-scanner.toml schema has no dedicated `owner` field, so the handle goes inside `reason`; for `.trivyignore` it goes in the `#` comment above the line.
-- **`ignoreUntil`** — ISO date, **at most 90 days from creation**. Forces a re-review; an expired entry stops suppressing and the advisory blocks CI again. For `.trivyignore` use the `exp:YYYY-MM-DD` suffix.
-
-If any of the three is missing, the entry is illegitimate — delete it and let CI fail until a real entry is written. Per [CLAUDE.md "refuse to serve" principle](../../CLAUDE.md#principles), the correct response to an undocumented suppression is to remove it, not to keep it "for now."
+Per [CLAUDE.md "refuse to serve" principle](../../CLAUDE.md#principles), the correct response to a finding without a justified allowlist entry is to fix the underlying issue, not to write a suppression "for now." Allowlist entries are a structured exception, not a default.
 
 **`osv-scanner.toml` example entry:**
+
+OSV-Scanner has no dedicated `owner` field, so the handle is encoded as a `@<handle>:` prefix on `reason`. `ignoreUntil` MUST be a bare TOML date literal — a quoted `"YYYY-MM-DD"` parses as a string and is rejected, as is an offset datetime (`YYYY-MM-DDTHH:MM:SSZ`).
 
 ```toml
 [[IgnoredVulns]]
 id = "GHSA-67mh-4wv8-2f99"
-ignoreUntil = 2026-08-15  # <= 90 days from add date 2026-05-18
-reason = "esbuild dev-server only; prod build invokes the bundler API, not the server. Added by @vlzware."
+ignoreUntil = 2026-08-16  # <= 90 days from add date 2026-05-18
+reason = "@vlzware: esbuild dev-server only; prod build invokes the bundler API, not the server. Tracking upstream fix at <link>."
 ```
 
 **`.trivyignore` example entry:**
 
+`.trivyignore` has no `reason` field. Both fields go in the contiguous comment block immediately preceding the entry; the expiry goes as `exp:YYYY-MM-DD` SUFFIX on the entry line itself (not in the block).
+
 ```text
-# CVE on libfoo (image base layer) — exploitation requires inbound TCP on 9000, our image binds only 8080.
-# Added by @vlzware. Re-review by 2026-08-15.
-CVE-2026-12345 exp:2026-08-15
+# owner: @vlzware
+# reason: CVE on libfoo (image base layer) — exploit requires inbound TCP on 9000; our image binds only 8080.
+CVE-2026-12345 exp:2026-08-16
 ```
+
+Run `bash scripts/check-allowlist-schema.sh` locally to validate before pushing — the same script gates the CI `check` job.
 
 ## Quarterly lifecycle review
 

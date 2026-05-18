@@ -104,12 +104,16 @@ The lightest possible option. Ruled out: covers only the npm tree, no OS-package
 - **PR queue volume.** A weekly window with grouping should land 3–8 PRs/week in steady state. The "weekly wrangler" hat is ~30 min/week.
 - **Auto-merge depends on CI confidence.** If Playwright E2E flakes, auto-merge produces false-green merges. No flake-quarantine practice is documented today — explicit gap. Interim mitigation: auto-merge stays off for grouped/major PRs (the highest-risk class). Threshold rule for tuning in a future iteration: **disable auto-merge for the affected suite if E2E flake rate exceeds 5% over the last 20 PRs**; defaults are a placeholder until we have a quarter of CI history to calibrate against.
 - **Renovate config drift.** A `.github/renovate.json` that goes stale (new dep types, ecosystem changes) silently degrades coverage. Mitigated by the quarterly review explicitly checking the config.
-- **OSV-Scanner false positives** for advisories on dead code paths (cf. the original ADR-0007 case). Mitigated by a structured allowlist — never a blanket `--omit=dev`. Every entry in `osv-scanner.toml` (and the equivalent in `.trivyignore`) MUST carry:
-  - `id` — the advisory identifier (`GHSA-…`, `CVE-…`, or `OSV-…`).
-  - `reason` — why this advisory doesn't apply here (dead code path, mitigated upstream, exploitation precondition unmet, …) **including the GitHub handle of the person who added the entry** (osv-scanner.toml has no dedicated `owner` field; for `.trivyignore` the handle goes in the `#` comment above the line).
-  - `ignoreUntil` — ISO date, at most **90 days from creation**, forces a re-review. For `.trivyignore` use the `exp:YYYY-MM-DD` suffix.
+- **OSV-Scanner / Trivy false positives** for advisories on dead code paths (cf. the original ADR-0007 case). Mitigated by a structured allowlist — never a blanket `--omit=dev`. The two scanners use different file formats but the same review-contract fields; both are enforced in CI by `scripts/check-allowlist-schema.sh` (~100ms; runs before the scanner gates so a sloppy entry fails fast). Required fields per entry:
+  - **`id`** — the advisory or rule identifier (any non-empty string; Trivy and OSV-Scanner validate the ID shape themselves).
+  - **`reason`** — why the advisory doesn't apply here. The GitHub handle of the entry's owner is mandatory. The handle must be a real GitHub username (1-39 alnum chars + non-leading/trailing/consecutive hyphens) — `@`, `@-`, `@a--b` and similar are rejected:
+    - `osv-scanner.toml` has no dedicated `owner` field. The `reason` string MUST start with `@<handle>:` so the handle is encoded.
+    - `.trivyignore` has no `reason` field at all. A `# owner: @<handle>` comment AND a `# reason: <free text>` comment in the contiguous comment block immediately preceding the entry are required.
+  - **`expiry`** — at most **90 days from creation**, forces a re-review:
+    - `osv-scanner.toml`: `ignoreUntil = YYYY-MM-DD` as a bare TOML date literal (the script rejects both quoted strings and offset datetimes — only the bare date is accepted).
+    - `.trivyignore`: `exp:YYYY-MM-DD` as a suffix on the entry line itself (not in the comment block).
 
-  See [docs/ops/dep-management.md § Allowlist (OSV-Scanner + Trivy)](../ops/dep-management.md#allowlist-osv-scanner--trivy) for example entries.
+  See [docs/ops/dep-management.md § Allowlist (OSV-Scanner + Trivy)](../ops/dep-management.md#allowlist-osv-scanner--trivy) for copy-pasteable examples that pass the CI gate.
 
 ### Operational
 

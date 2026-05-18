@@ -1,14 +1,28 @@
 # Trivy allowlist.
 #
-# Each line is either a Trivy ID (CVE-..., AVD-..., DS-..., KSV-...) or a
-# comment. Per ADR-0027 §Negative and docs/ops/dep-management.md §Allowlist,
-# each entry MUST be preceded by a comment block with all four fields:
+# Each line is either a Trivy finding ID (whatever Trivy emits — CVE-...,
+# GHSA-..., AVD-..., DS-..., KSV001 without hyphen, lowercase secret-rule
+# IDs like `aws-access-token`, etc.) or a `#`-prefixed comment. Per
+# ADR-0027 §Negative and docs/ops/dep-management.md §Allowlist, each
+# entry must satisfy three machine-enforced rules (gated in CI by
+# scripts/check-allowlist-schema.sh):
 #
-#   # owner: @<github-handle>
-#   # reason: <why this finding does not apply here>
-#   # expires: YYYY-MM-DD (≤90 days from add)
-#   <TRIVY-ID>
+#   1. A `# owner: @<github-handle>` comment in the contiguous comment
+#      block immediately preceding the entry. <github-handle> must be a
+#      valid GitHub handle (1-39 alnum chars + non-leading/trailing/
+#      consecutive hyphens) — `@-`, `@:`, etc. are rejected.
+#   2. A `# reason: <free text>` comment in the same block.
+#   3. An `exp:YYYY-MM-DD` suffix on the entry line itself, within
+#      [today, today+90d].
 #
-# Trivy reads only the IDs, but the comments are part of the review contract.
+# Example:
+#
+#   # owner: @vlzware
+#   # reason: CVE on libfoo (image base layer) — exploit requires
+#   #         inbound TCP on 9000; our image binds only 8080.
+#   CVE-2026-12345 exp:2026-08-16
+#
+# Trivy itself reads only the entry IDs; the comment block is the review
+# contract enforced by the schema check, not by Trivy.
 #
 # (no active entries)
