@@ -1,0 +1,48 @@
+# Scheduled OSV-Scanner full-tree scan (ADR-0027 §Decision.2 layer 3).
+#
+# Catches retroactive CVEs landing on existing deps that no open PR is
+# bumping. PR-time gates in ci.yml only see the diff; this is the
+# safety net for the steady state.
+#
+# Uses Google's official reusable workflow rather than the CLI: the
+# reusable workflow handles SARIF upload to the GH Security tab,
+# diff-aware reporting, and artifact retention — reimplementing those
+# inline would be needless extra code. The PR-time gate in ci.yml uses
+# the CLI directly because Google ships no composite action suitable
+# for inline use in an existing job; this scheduled job is its own job,
+# so the reusable workflow fits naturally.
+#
+# Findings show up in the repo's "Security > Code Scanning" tab via
+# the SARIF upload performed inside the reusable workflow. The job
+# itself ALSO fails red (fail-on-vuln: true) so a missing finding in
+# the Security tab cannot mask a regression — the schedule fails loud.
+
+name: Security (scheduled)
+
+on:
+  schedule:
+    # 03:00 UTC daily = 06:00 Europe/Sofia. Off-hours window to avoid
+    # collision with weekday Renovate runs.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  # Required by the reusable workflow itself — it uploads SARIF to
+  # Code Scanning and reads action metadata for annotations.
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  osv-scan:
+    # Reusable workflow pinned by the same SHA as the PR-time CLI
+    # binary (v2.3.8 — see ci.yml). The reusable workflow scans the
+    # whole tree with `-r ./` by default; we override scan-args to
+    # also load the repo allowlist.
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+    with:
+      scan-args: |-
+        --recursive
+        --config=./osv-scanner.toml
+        ./
+      fail-on-vuln: true
