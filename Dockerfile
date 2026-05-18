@@ -54,9 +54,17 @@ RUN apk add --no-cache age findmnt bash
 # Removing them shrinks the image and eliminates this CVE class
 # permanently. Aligns with ADR-0027 §Decision.2 + the project's
 # refuse-or-block-never-downgrade principle.
+#
+# Post-rm assertion (`! command -v`) catches regressions where a future
+# base-image bump reintroduces npm through a different path (e.g. an
+# alpine variant that puts npm under /usr/bin); the build fails loudly
+# instead of silently re-surfacing the CVE class. Same RUN to keep the
+# invariant atomic with the removal.
 RUN rm -rf /usr/local/lib/node_modules/npm \
            /usr/local/bin/npm \
-           /usr/local/bin/npx
+           /usr/local/bin/npx \
+ && ! command -v npm \
+ && ! command -v npx
 
 # Operator helper: load the binary `age` private identity into tmpfs
 # (ADR-0024 §Operator workflow). Mirrors how Dockerfile.backup installs
