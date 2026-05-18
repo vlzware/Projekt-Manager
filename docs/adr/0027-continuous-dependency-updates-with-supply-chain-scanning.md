@@ -63,7 +63,7 @@ Exceptions to blocking go in a documented allowlist with a review trigger (the p
 ### 3. Lifecycle-health entry on dep-introducing ADRs + quarterly review
 
 - The `vv-adr` skill now requires a `## Dep lifecycle health (as of YYYY-MM-DD)` section on any ADR that commits to a specific named external dep (npm package, container image, SaaS service, source-built binary). Pattern/policy ADRs omit it — for this codebase the excluded set is **0001, 0007 (superseded), 0010, 0013, 0014, 0015, 0017, 0018, 0019, 0021, 0023, 0025**. New ADRs apply the same test: if no named external dep is committed, omit the section. If the ADR delegates lib choice to a design doc (e.g., `ARCHITECTURE.md`), the table lives in the design doc — one source of truth per dep.
-- ADRs 0002–0026 are retrofitted in the same change as this ADR (excluding the superseded 0007 and the pattern-only ones). ADR-0009's existing version table doubles as its lifecycle surface. ADR-0008's prose maintenance notes are reshaped into a structured table.
+- ADRs 0002–0026 are retrofitted in the same change as this ADR (excluding the superseded 0007 and the pattern-only ones). ADR-0009's existing version table doubles as its lifecycle surface. ADR-0008's prose maintenance notes are reshaped into a structured table. The `(as of YYYY-MM-DD)` timestamp on each ADR reflects the day that ADR's table was last verified — they need not all match. The initial retrofit landed on **2026-05-15** for ADRs 0002, 0003, 0004, 0008, 0009, 0011, 0012, 0016, 0020, 0022, 0024, 0026, and on **2026-05-18** for the later-retrofitted ADR-0005 and ADR-0006.
 - A **quarterly strategic-dep review** walks the headline deps (framework, ORM, storage SaaS, base images, build tooling) and asks: alive? funded? still our best option? exit ramp documented? Outcomes feed superseding ADRs when warranted. Tracked in [docs/ops/dep-management.md](../ops/dep-management.md).
 
 ## Alternatives Considered
@@ -121,6 +121,10 @@ Implementation ships in this ADR's PR:
 - `osv-scanner.toml` (repo root) — allowlist file; empty on landing, schema documented in `docs/ops/dep-management.md`.
 - `.trivyignore` (repo root) — allowlist file for Trivy; empty on landing, same schema discipline.
 - [docs/ops/dep-management.md](../ops/dep-management.md) — runbook (first-run setup, weekly wrangler, quarterly review, allowlist schema).
+- `scripts/check-allowlist-schema.sh` + `scripts/__tests__/check-allowlist-schema.test.sh` — wired into the `check` job; rejects allowlist entries missing owner/reason/expiry per §Negative.
+
+**Coverage gap (known, documented):** Trivy's filesystem-secret and IaC-misconfig scans run only in the `docker` job, which is gated on `pull_request` events. A direct push to `main` (e.g., emergency hotfix bypassing the PR flow) re-runs only the image vuln scan in `build-and-push`, not the secret or IaC scans. Mitigated in practice by branch protection requiring the `docker` job on PRs to `main`; the gap is the bypass-via-direct-push case the project's principles already discourage.
+
 - The `vv-adr` skill template is updated; retrofits to the existing ADRs in the included set land in the same change as this ADR.
 - No env-var or schema impact.
 
