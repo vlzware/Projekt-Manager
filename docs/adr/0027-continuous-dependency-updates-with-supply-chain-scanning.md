@@ -2,7 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-05-15
-- **Confidence:** High
+- **Confidence:** Medium-High — the design rests on established industry patterns (Renovate + OSV-Scanner + Trivy is the OSS-tier supply-chain baseline at this stage), but the Renovate App is not yet installed on the repo, the allowlist schema has only been exercised against the empty baseline, and the quarterly-review cadence has not yet completed a full loop. Promote to High after the first Renovate-driven Monday lands and one quarterly review walk completes.
 
 ## Context
 
@@ -13,7 +13,7 @@ Dependency hygiene has so far been a **manual audit** triggered by guilt rather 
 - One Node base-image bump (3 CVEs)
 - One Docker Engine bump (2 CVEs, including in-container privesc)
 - Two **non-drop-in migrations** carved into separate issues:
-  - [#191](https://github.com/vlzware/Projekt-Manager/issues/191) — `minio/minio` upstream-archived 2026-04-25, caught ~3 weeks late
+  - [#191](https://github.com/vlzware/Projekt-Manager/issues/191) — `minio/minio` upstream-archived 2026-04-24, caught ~3 weeks late
   - [#192](https://github.com/vlzware/Projekt-Manager/issues/192) — `libxmljs2` README literally `# NO LONGER MAINTAINED`, caught only by this audit
 - Two driver-level switches (`pdf-lib` → `@cantoo/pdf-lib`, `pdf-parse` → `unpdf`)
 - A patch deletion (`@aws-sdk+xml-builder` patch rendered obsolete by upstream rewrite)
@@ -22,7 +22,7 @@ This pattern is structurally fragile in three ways:
 
 1. **Batching correlates risk.** A regression in one of 25 bumps becomes a bisect through the whole batch. Each bump's CI signal is invisible.
 2. **CVE time-to-merge is weeks, not hours.** The Caddy admin-socket and FastCGI advisories, the Docker `containerd` DoS, and the MinIO session-policy privesc all sat unpatched until a human noticed.
-3. **Dying upstreams surface late.** MinIO's archive flag flipped on a Saturday (2026-04-25); the project found out via a bored Wednesday audit three weeks later. The agent that originally recommended MinIO (during initial stack selection) did **not** check upstream lifecycle — a known LLM failure mode. The fix is a process bar, not a "be more careful" rule.
+3. **Dying upstreams surface late.** MinIO's archive flag flipped on 2026-04-24; the project found out three weeks later during a routine audit. The agent that originally recommended MinIO (during initial stack selection) did **not** check upstream lifecycle — a known LLM failure mode. The fix is a process bar, not a "be more careful" rule.
 
 Constraints:
 
@@ -45,13 +45,13 @@ We will adopt **three coupled changes**:
 `.github/renovate.json` with:
 
 - **Schedule:** weekly window (e.g. `before 9am on monday`) for routine bumps. Vulnerability PRs bypass the schedule.
-- **Grouping:** lockstep clusters get one PR — AWS SDK family, ESLint cluster (`eslint` + `@eslint/js` + `globals` + `typescript-eslint`), Vitest pair (`vitest` + `@vitest/coverage-v8`), React pair, Fastify family, Drizzle pair.
+- **Grouping:** seven lockstep clusters, one PR per cluster — AWS SDK (`@aws-sdk/**`), ESLint cluster (`eslint` + `@eslint/js` + `globals` + `typescript-eslint` + `eslint-plugin-react-hooks` + `eslint-plugin-react-refresh`), Vitest pair (`vitest` + `@vitest/coverage-v8`), React quartet (`react` + `react-dom` + `@types/react` + `@types/react-dom`), Fastify family (`fastify` + `@fastify/**`), Drizzle pair (`drizzle-orm` + `drizzle-kit`), and Caddy (groups the `caddy` base-image + plugin SHA bumps in `docker/caddy/Dockerfile` so a partial bump cannot ship a `xcaddy build vX` against a `FROM caddy:Y` mismatch).
 - **Per-major-version PRs.** No grouping across majors; each major bump gets its own PR with the changelog inline.
 - **Auto-merge** for patch + minor when CI is green, **except** on the lockstep clusters above (group bumps get human review even if minor — easier to read changelog deltas in one place).
 - **Lockfile maintenance** PR weekly to bound transitive drift.
 - **Managers:** `npm`, `dockerfile`, `docker-compose`, `github-actions`, and four `customManagers` of type `regex`: Caddy version (`xcaddy build vN.N.N` in `docker/caddy/Dockerfile`), the `caddy-dns/cloudflare` plugin SHA in the same Dockerfile, and MinIO `mc`/`minio` image tags in `scripts/sync-*.sh` and `.github/workflows/*.yml` (Renovate's built-in `github-actions` manager doesn't see Docker images inside `run:` blocks). **Out of scope for Renovate:** Alpine `apk add` packages on top of base images (unpinned versions; surface enumerated and walked in [`docs/ops/dep-management.md` § OS packages](../ops/dep-management.md#strategic-deps)) and Docker Engine apt packages on the VPS (tracked manually per [ADR-0009](0009-pin-docker-versions-across-environments.md) lifecycle table).
 
-Dependabot Alerts stays on at the GH Security tab — it remains the CVE notification surface; Renovate is the **action** surface.
+Dependabot Alerts stays on at the GH Security tab — it remains the CVE notification surface; Renovate is the **action** surface. The Renovate config also enables `osvVulnerabilityAlerts: true`, so Renovate raises vulnerability PRs against the OSV database in parallel — slight overlap with Dependabot is intentional belt-and-braces.
 
 ### 2. Supply-chain scanning in CI (blocking)
 

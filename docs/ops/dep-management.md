@@ -6,6 +6,22 @@ How the project tracks, updates, and audits external deps. Rationale: [ADR-0027]
 
 Renovate is a GitHub App. Until installed and onboarded, the `.github/renovate.json` in the repo does nothing.
 
+**Optional pre-install validation:** to dry-run the config against the current repo state without going live, use Renovate's local platform:
+
+```bash
+# Verifies JSON syntax + cross-references against the schema.
+npx --yes -p renovate renovate-config-validator --strict --no-global .github/renovate.json
+
+# Optional fuller dry-run: lists what Renovate WOULD do if installed.
+# Requires a GitHub token with read access to the repo; LOG_LEVEL=info
+# keeps the output manageable.
+LOG_LEVEL=info npx --yes -p renovate renovate \
+  --platform=local --dry-run \
+  vlzware/Projekt-Manager
+```
+
+The dry-run is most useful after editing `customManagers` regex patterns — Renovate logs which files matched, which deps it would have proposed, and which regexes returned zero matches (a silent regex typo otherwise lands invisibly).
+
 1. **Install the Renovate App** for `vlzware/Projekt-Manager` from [github.com/apps/renovate](https://github.com/apps/renovate) — choose **Select repositories** and pick this repo only.
 2. **Merge the onboarding PR.** On first scan Renovate opens a "Configure Renovate" PR; per the [Renovate docs](https://docs.renovatebot.com/getting-started/installing-onboarding/), no further PRs are raised until it lands. Sanity-check that it picked up `.github/renovate.json` and then merge.
 3. **Enable auto-merge at the repo level.** Repo Settings → General → "Allow auto-merge" must be checked, otherwise `automerge: true` in the config silently no-ops.
@@ -76,6 +92,11 @@ For each strategic dep below, check (≤5 min each):
 - **deps.dev / Snyk Advisor** — last release date, maintainer count.
 - **GitHub repo** — archived flag, issue triage, license file (BSL/SSPL/Elastic relicensings).
 - **Renovate dashboard** — stuck/abandoned PRs on the dep.
+
+After the per-dep walk, do the **allowlist sweep** — same review, distinct surface:
+
+- Open `osv-scanner.toml` and `.trivyignore`. For every active entry: is the original justification still true? Has the upstream landed a fix that makes the suppression obsolete? Is the owner still the right person? Drop entries that no longer hold.
+- The script's `ignoreUntil` ≤90d window means stale entries auto-expire and fail CI — the sweep is the in-band check that catches entries that were merely renewed without re-justification.
 
 When something changes (archive, relicense, bus-factor drop), update the relevant ADR's lifecycle table and open an issue. Do not panic-migrate — same week is fine, same month usually is too.
 

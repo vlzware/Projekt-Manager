@@ -19,5 +19,5 @@
 # Example (delete when the first real entry is added):
 # [[IgnoredVulns]]
 # id = "GHSA-xxxx-xxxx-xxxx"
-# ignoreUntil = 2026-08-17
+# ignoreUntil = 2026-08-16  # <= 90 days from add date 2026-05-18 (this PR)
 # reason = "@vlzware: dead code path — function is bundled but never reached at runtime; advisory tracking upstream fix at <link>"
