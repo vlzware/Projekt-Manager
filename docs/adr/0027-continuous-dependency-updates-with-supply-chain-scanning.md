@@ -116,14 +116,17 @@ The lightest possible option. Ruled out: covers only the npm tree, no OS-package
 Implementation ships in this ADR's PR:
 
 - `.github/renovate.json` — schedule, grouping, auto-merge rules, manager set.
-- `.github/workflows/ci.yml` — OSV-Scanner step (blocks on any vuln; CLI has no severity flag) + Trivy steps (image vuln + filesystem secret + IaC misconfig, all HIGH/CRITICAL) added to the existing CI workflow.
+- `.github/workflows/ci.yml` — OSV-Scanner step (blocks on any vuln; CLI has no severity flag) + Trivy steps placed by gating role:
+  - **`check` job** (always runs, the sole branch-protection-required context): Trivy filesystem-secret scan (no severity filter — secret rules ship MEDIUM and any committed secret is a finding) and Trivy IaC-misconfig scan (HIGH/CRITICAL).
+  - **`docker` job** (path-filtered, PR-only, informational): compose validation + image build + Trivy image-vuln scan (HIGH/CRITICAL).
+  - **`build-and-push` job** (post-merge / `workflow_dispatch`): build → Trivy image-vuln scan → push (in that order — a failed scan never publishes the tag).
 - `.github/workflows/security-scheduled.yml` — nightly OSV-Scanner run against `main` so newly-published advisories surface without waiting for a PR.
 - `osv-scanner.toml` (repo root) — allowlist file; empty on landing, schema documented in `docs/ops/dep-management.md`.
 - `.trivyignore` (repo root) — allowlist file for Trivy; empty on landing, same schema discipline.
 - [docs/ops/dep-management.md](../ops/dep-management.md) — runbook (first-run setup, weekly wrangler, quarterly review, allowlist schema).
 - `scripts/check-allowlist-schema.sh` + `scripts/__tests__/check-allowlist-schema.test.sh` — wired into the `check` job; rejects allowlist entries missing owner/reason/expiry per §Negative.
 
-**Coverage gap (known, documented):** Trivy's filesystem-secret and IaC-misconfig scans run only in the `docker` job, which is gated on `pull_request` events. A direct push to `main` (e.g., emergency hotfix bypassing the PR flow) re-runs only the image vuln scan in `build-and-push`, not the secret or IaC scans. Mitigated in practice by branch protection requiring the `docker` job on PRs to `main`; the gap is the bypass-via-direct-push case the project's principles already discourage.
+**Gating model rationale.** Trivy fs-secret + IaC scans live in `check` (not `docker`) because `docker` is path-filtered and PR-only — placing the scans there would skip them on every TS-only / docs / e2e PR and on every direct push to `main`, leaving the gate informational rather than blocking. Image-vuln scanning stays in `docker` (needs the built image) and `build-and-push` (post-merge backstop with build-before-publish ordering). Branch protection requires only `check`; the `docker` and `build-and-push` jobs are best-effort layers on top. `ignore-unfixed` is NOT set on any image scan — a no-fix-yet CVE is still a finding, and an operationally-tolerable case goes in `.trivyignore` with owner/reason/exp ≤90d, same machinery as the rest of the allowlist (CLAUDE.md "refuse-or-block, never downgrade").
 
 - The `vv-adr` skill template is updated; retrofits to the existing ADRs in the included set land in the same change as this ADR.
 - No env-var or schema impact.
