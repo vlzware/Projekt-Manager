@@ -70,6 +70,17 @@ jobs:
       - name: Install apt prerequisites
         run: sudo apt-get update && sudo apt-get install -y ripgrep age
 
+      # Allowlist schema gate (ADR-0027 §Negative; runbook §Allowlist).
+      # Scanners enforce only the advisory ID; owner/reason/expiry are
+      # convention. This gate makes the convention machine-enforced so a
+      # sloppy entry cannot land. ~100ms; runs before OSV-Scanner so the
+      # cheap check fails fast.
+      - name: Check allowlist schema (osv-scanner.toml + .trivyignore)
+        run: bash scripts/check-allowlist-schema.sh
+
+      - name: Check allowlist schema — self-test
+        run: bash scripts/__tests__/check-allowlist-schema.test.sh
+
       # OSV-Scanner (ADR-0027 §Decision.2) — replaces `npm audit`. OSV.dev
       # ingests GHSA, so OSV is a strict superset of npm audit for npm
       # advisories AND covers transitive OS-level CVEs the registry index
