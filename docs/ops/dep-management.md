@@ -114,7 +114,7 @@ Minimum at adoption time: last release date, license, maintainer count or archiv
 ## Files
 
 - `.github/renovate.json` — Renovate config: schedule (`before 9am on monday` Europe/Sofia), grouping clusters, auto-merge rules, manager set (`npm` + `dockerfile` + `docker-compose` + `github-actions` + `regex`).
-- `.github/workflows/ci.yml` — adds OSV-Scanner step (every PR) and Trivy step (PRs touching image-affecting paths). Both block merge on HIGH / CRITICAL.
+- `.github/workflows/ci.yml` — adds OSV-Scanner step (every PR; blocks on any vuln, no severity flag in CLI v2.3.8) and Trivy steps (image vuln + filesystem secret + IaC misconfig on PRs touching image-affecting paths; blocks on HIGH/CRITICAL).
 - `.github/workflows/security-scheduled.yml` — nightly OSV-Scanner run against `main` so newly-published advisories surface without waiting for a PR.
 - `osv-scanner.toml` — allowlist for OSV-Scanner (npm + git deps). Schema in [§Allowlist](#allowlist-osv-scanner--trivy) above.
 - `.trivyignore` — allowlist for Trivy (container image scan). Same schema discipline; comments carry the owner handle.

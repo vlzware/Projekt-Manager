@@ -98,11 +98,18 @@ jobs:
           sudo mv /tmp/osv-scanner /usr/local/bin/osv-scanner
           osv-scanner --version
 
-      - name: OSV-Scanner (lockfile, HIGH/CRITICAL)
+      - name: OSV-Scanner (lockfile, fail on any vuln)
         # `scan source` is the subcommand for source-tree scans (lockfiles,
         # SBOMs, manifests). --lockfile pins the input to package-lock.json.
         # --config points at the repo allowlist. Default exit code on
         # vuln-found is non-zero, which fails the step and blocks the PR.
+        #
+        # NOTE on severity: osv-scanner v2.3.8 has no --severity flag. The
+        # gate fails on ANY vuln OSV.dev knows about, regardless of CVSS.
+        # This is stricter than ADR-0027's original "HIGH/CRITICAL" wording
+        # and aligns with the project's "refuse-or-block, never downgrade"
+        # principle (CLAUDE.md). False positives go through
+        # osv-scanner.toml with the documented owner/reason/expiry schema.
         run: osv-scanner scan source --lockfile=./package-lock.json --config=./osv-scanner.toml
 
       - name: Lint

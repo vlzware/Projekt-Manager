@@ -53,10 +53,10 @@ We will adopt **three coupled changes**:
 
 Dependabot Alerts stays on at the GH Security tab — it remains the CVE notification surface; Renovate is the **action** surface.
 
-### 2. Supply-chain scanning in CI (blocking on HIGH/CRITICAL)
+### 2. Supply-chain scanning in CI (blocking)
 
-- **OSV-Scanner** (`google/osv-scanner-action`) — scans the npm tree against the OSV database. Free, OSS, broader DB than `npm audit`. Blocks merge on `HIGH` / `CRITICAL`.
-- **Trivy** (`aquasecurity/trivy-action`) — scans the built Docker image, including OS packages (`apk`, `apt`) that OSV-Scanner can't see. Same blocking rule. Runs only on PRs that touch image-affecting paths (`Dockerfile*`, `package.json`, `package-lock.json`).
+- **OSV-Scanner** (CLI v2.3.8 pinned by SHA256) — scans the npm tree against the OSV database. Free, OSS, broader DB than `npm audit`. **Blocks merge on any vuln**: the v2.3.8 CLI has no severity flag, so the implementation gates on every advisory OSV.dev publishes. This is stricter than originally drafted (HIGH/CRITICAL) and matches the project's "refuse-or-block, never downgrade" principle. False positives go through `osv-scanner.toml` with the owner/reason/expiry schema in §Negative.
+- **Trivy** (`aquasecurity/trivy-action`) — scans the built Docker image, including OS packages (`apk`, `apt`) that OSV-Scanner can't see; plus filesystem secret scan and IaC misconfig scan. **Blocks merge on `HIGH` / `CRITICAL`** (Trivy supports `--severity` and the noisier surfaces it scans benefit from the filter). Runs on PRs that touch image-affecting paths (`Dockerfile*`, `package.json`, `package-lock.json`, `docker-compose*`, `docker/**`, `.github/workflows/ci.yml`); post-merge backstop in `build-and-push`.
 
 Exceptions to blocking go in a documented allowlist with a review trigger (the pattern from the superseded [ADR-0007](0007-suppress-esbuild-dev-server-advisory.md) is the right shape).
 
@@ -116,7 +116,7 @@ The lightest possible option. Ruled out: covers only the npm tree, no OS-package
 Implementation ships in this ADR's PR:
 
 - `.github/renovate.json` — schedule, grouping, auto-merge rules, manager set.
-- `.github/workflows/ci.yml` — OSV-Scanner step + Trivy step added to the existing CI workflow; both block merge on HIGH / CRITICAL.
+- `.github/workflows/ci.yml` — OSV-Scanner step (blocks on any vuln; CLI has no severity flag) + Trivy steps (image vuln + filesystem secret + IaC misconfig, all HIGH/CRITICAL) added to the existing CI workflow.
 - `.github/workflows/security-scheduled.yml` — nightly OSV-Scanner run against `main` so newly-published advisories surface without waiting for a PR.
 - `osv-scanner.toml` (repo root) — allowlist file; empty on landing, schema documented in `docs/ops/dep-management.md`.
 - `.trivyignore` (repo root) — allowlist file for Trivy; empty on landing, same schema discipline.
