@@ -9,7 +9,7 @@ Renovate is a GitHub App. Until installed and onboarded, the `.github/renovate.j
 1. **Install the Renovate App** for `vlzware/Projekt-Manager` from [github.com/apps/renovate](https://github.com/apps/renovate) — choose **Select repositories** and pick this repo only.
 2. **Merge the onboarding PR.** On first scan Renovate opens a "Configure Renovate" PR; per the [Renovate docs](https://docs.renovatebot.com/getting-started/installing-onboarding/), no further PRs are raised until it lands. Sanity-check that it picked up `.github/renovate.json` and then merge.
 3. **Enable auto-merge at the repo level.** Repo Settings → General → "Allow auto-merge" must be checked, otherwise `automerge: true` in the config silently no-ops.
-4. **Tighten branch protection on `main`.** Required status checks must include `check` and `OSV-Scanner`, and `Trivy` for image-touching PRs. Without these, Renovate's auto-merge bypasses the very safety net this ADR adds.
+4. **Tighten branch protection on `main`.** Required status checks must list the **CI job names** (not step names — GitHub branch protection matches job-level checks): `check` (always — runs OSV-Scanner + tests + lint), `docker` (runs Trivy image/secret/IaC scans on image-touching PRs), and `build-and-push` (post-merge backstop image scan + push to GHCR). Without these, Renovate's auto-merge bypasses the very safety net this ADR adds.
 5. **Pin the Dependency Dashboard issue.** Renovate auto-creates an issue titled "Dependency Dashboard" listing queue state; pin it so the weekly wrangler can find it without searching.
 
 ## Cadence
