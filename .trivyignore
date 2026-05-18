@@ -1,0 +1,14 @@
+# Trivy allowlist.
+#
+# Each line is either a Trivy ID (CVE-..., AVD-..., DS-..., KSV-...) or a
+# comment. Per ADR-0027 §Negative and docs/ops/dep-management.md §Allowlist,
+# each entry MUST be preceded by a comment block with all four fields:
+#
+#   # owner: @<github-handle>
+#   # reason: <why this finding does not apply here>
+#   # expires: YYYY-MM-DD (≤90 days from add)
+#   <TRIVY-ID>
+#
+# Trivy reads only the IDs, but the comments are part of the review contract.
+#
+# (no active entries)

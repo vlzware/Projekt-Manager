@@ -70,8 +70,40 @@ jobs:
       - name: Install apt prerequisites
         run: sudo apt-get update && sudo apt-get install -y ripgrep age
 
-      - name: Audit dependencies
-        run: npm audit --audit-level=moderate
+      # OSV-Scanner (ADR-0027 §Decision.2) — replaces `npm audit`. OSV.dev
+      # ingests GHSA, so OSV is a strict superset of npm audit for npm
+      # advisories AND covers transitive OS-level CVEs the registry index
+      # does not surface. Inline-in-the-`check`-job CLI install instead of
+      # google/osv-scanner-action because that action only ships reusable
+      # workflows (separate jobs) and a composite Docker action documented
+      # as "not intended to be used directly" — neither fits an inline step.
+      # Binary pinned by SHA256 from the official v2.3.8 release.
+      #
+      # Scans the lockfile only (PR-time gate). Full-tree scheduled scan
+      # lives in .github/workflows/security-scheduled.yml.
+      # Allowlist: osv-scanner.toml (empty baseline; entries require owner +
+      # reason + ignoreUntil ≤90d per ADR-0027 §Negative).
+      - name: Install OSV-Scanner CLI
+        run: |
+          set -euo pipefail
+          url="https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64"
+          expected_sha="bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc"
+          curl -fsSL -o /tmp/osv-scanner "$url"
+          actual_sha=$(sha256sum /tmp/osv-scanner | awk '{print $1}')
+          if [ "$actual_sha" != "$expected_sha" ]; then
+            echo "::error::OSV-Scanner binary SHA256 mismatch — expected $expected_sha got $actual_sha"
+            exit 1
+          fi
+          chmod +x /tmp/osv-scanner
+          sudo mv /tmp/osv-scanner /usr/local/bin/osv-scanner
+          osv-scanner --version
+
+      - name: OSV-Scanner (lockfile, HIGH/CRITICAL)
+        # `scan source` is the subcommand for source-tree scans (lockfiles,
+        # SBOMs, manifests). --lockfile pins the input to package-lock.json.
+        # --config points at the repo allowlist. Default exit code on
+        # vuln-found is non-zero, which fails the step and blocks the PR.
+        run: osv-scanner scan source --lockfile=./package-lock.json --config=./osv-scanner.toml
 
       - name: Lint
         run: npm run lint
@@ -356,10 +388,57 @@ jobs:
           context: .
           file: Dockerfile
           push: false
-          load: false
+          # `load: true` exports the built image into the runner's local
+          # Docker daemon (instead of leaving it only in the buildx
+          # cache). Trivy's image scan below resolves `image-ref` via the
+          # local daemon, so it must be loaded. Mutually exclusive with
+          # multi-platform builds, but this build is amd64-only.
+          load: true
           tags: projekt-manager-app:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # ---------------------------------------------------------------
+      # Trivy gates (ADR-0027 §Decision.2). Three scans run as separate
+      # steps so each surfaces with a distinct name in the GH log:
+      #   1) image vuln — OS + library CVEs in the built app image
+      #   2) filesystem secret — scans the tree for accidentally-
+      #      committed credentials (preventive, on top of pre-commit hooks)
+      #   3) IaC misconfig — Dockerfile, docker-compose, Caddyfile etc.
+      # All three exit non-zero on HIGH/CRITICAL and block PR merge.
+      # Allowlist: .trivyignore (empty baseline).
+      # ---------------------------------------------------------------
+      - name: Trivy — image vuln scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: projekt-manager-app:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          # Skip vulns with no fix available — they cannot be acted on
+          # by bumping a dep and would otherwise be perma-blockers.
+          # Re-evaluated when a fix lands upstream.
+          ignore-unfixed: true
+          trivyignores: .trivyignore
+
+      - name: Trivy — filesystem secret scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      - name: Trivy — IaC misconfig scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          trivyignores: .trivyignore
 
   # ---------------------------------------------------------------
   # Build and push the production app image to GHCR on every push
@@ -443,6 +522,25 @@ jobs:
           tags: ${{ steps.tags.outputs.app_tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Backstop Trivy image scan against the just-pushed SHA-tagged
+      # image (ADR-0027 §Decision.2). The PR-time `docker` job already
+      # scans the image before merge; this catches the edge case where
+      # main is updated without a Docker-touching PR (e.g., a TypeScript-
+      # only commit that nonetheless changes the baked-in code) or where
+      # the PR-time gate was somehow bypassed. Image-only — IaC + secret
+      # scans already ran on the PR and re-running them adds no value.
+      # Pulls from the registry rather than loading via the buildx cache;
+      # mirrors what a real deploy would do.
+      - name: Trivy — image vuln scan on pushed tag (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ghcr.io/${{ github.repository_owner }}/projekt-manager:${{ steps.tags.outputs.app_image_tag }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: true
+          trivyignores: .trivyignore
 
       # Backup image — see ADR-0020 §Decision (Layer 2 encrypted
       # backups) and Dockerfile.backup. Built and pushed to GHCR under

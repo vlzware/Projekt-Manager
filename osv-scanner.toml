@@ -1,0 +1,20 @@
+# OSV-Scanner allowlist.
+#
+# Each ignored vuln MUST include all four fields below (per ADR-0027 §Negative
+# and docs/ops/dep-management.md §Allowlist). Entries without all four are a
+# review blocker.
+#
+# Required schema per entry:
+#   id          — the OSV identifier (GHSA-..., CVE-..., or OSV-...)
+#   reason      — why this advisory does not apply here. Must include the
+#                 owner GitHub handle prefix (e.g., "@vlzware: dead code path
+#                 ..."). OSV-Scanner's TOML schema has no `owner` field, so
+#                 owner lives at the start of `reason`.
+#   ignoreUntil — ISO date (YYYY-MM-DD), ≤90 days from the date the entry
+#                 was added. The expiry forces a re-review.
+#
+# Example (delete when the first real entry is added):
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# ignoreUntil = "2026-08-17"
+# reason = "@vlzware: dead code path — function is bundled but never reached at runtime; advisory tracking upstream fix at <link>"
