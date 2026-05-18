@@ -436,3 +436,22 @@ curl -v --resolve "${DOMAIN}:443:10.213.17.1" "https://${DOMAIN}/api/health"
 curl --connect-timeout 5 "https://<server-public-ip>/api/health"
 # expect: timeout (443 not bound on public interface)
 ```
+
+## Upgrade Notes
+
+One-time host-side operations required when upgrading an existing deploy across specific releases. Fresh installs skip these.
+
+### Caddy non-root migration (PR #196)
+
+Caddy now runs as UID 1000 inside the container (Trivy DS-0002 / rootless web-server hardening — see `docker/caddy/Dockerfile`). On a fresh `docker compose up`, Docker initialises an empty named volume with the image-side ownership, so `caddy_data` and `caddy_config` land owned by `caddy:caddy` automatically. Pre-existing volumes from a prior root-running Caddy keep their original `root:root` ownership and must be chown'd once, otherwise Caddy boots and immediately errors on writing to `/data/caddy`.
+
+Run once, as `deploy` on the VPS, after pulling the new image and before bringing Caddy up:
+
+```bash
+sudo -u deploy docker compose stop caddy
+sudo -u deploy docker run --rm -v projekt-manager_caddy_data:/data alpine chown -R 1000:1000 /data
+sudo -u deploy docker run --rm -v projekt-manager_caddy_config:/config alpine chown -R 1000:1000 /config
+sudo -u deploy docker compose up -d caddy
+```
+
+Verify: `docker exec projekt-manager-caddy-1 id` should report `uid=1000(caddy)`; `docker logs` shows no `permission denied` on `/data/caddy/...`.

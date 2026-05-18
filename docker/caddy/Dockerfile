@@ -21,3 +21,19 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM caddy:2.11.3@sha256:ec18ee54aab3315c22e25f3b2babda73ff8007d39b13b3bd1bfffa2f0444c7d9
 
 COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+
+# Non-root runtime (Trivy DS-0002). Caddy needs to bind :443 (the only
+# published port — see docker-compose.yml services.caddy); CAP_NET_BIND_SERVICE
+# as a file capability lets the unprivileged binary do that without root.
+# Standard rootless web-server hardening (cf. nginx-unprivileged, Bitnami).
+#
+# UID 1000 is chosen so Docker's empty-named-volume initialization stamps
+# caddy_data and caddy_config with caddy:caddy ownership on a fresh `compose
+# up`. Pre-existing deploys with root-owned volumes need a one-time host-side
+# chown — documented in docs/ops/server-setup.md § Caddy non-root migration.
+RUN addgroup -S -g 1000 caddy \
+ && adduser  -S -D -H -u 1000 -G caddy -s /sbin/nologin caddy \
+ && setcap   cap_net_bind_service=+ep /usr/bin/caddy \
+ && chown -R caddy:caddy /data /config
+
+USER caddy
