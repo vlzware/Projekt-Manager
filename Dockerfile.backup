@@ -88,6 +88,24 @@ RUN apk add --no-cache \
       bash \
       findmnt
 
+# Remove npm + npx from the production image. The runtime invokes only
+# `node /app/dist/server/backup-runner.js` — npm is build-time tooling
+# that, once baked into the production layer, becomes recurring CVE
+# surface (e.g. CVE-2026-33671 in bundled picomatch). The node binary
+# works without npm; nothing in the backup code path shells out to
+# `npm`/`npx`. Mirrors the same removal in Dockerfile; aligns with
+# ADR-0027 §Decision.2 + the refuse-or-block-never-downgrade principle.
+#
+# Post-rm assertion (`! command -v`) catches regressions where a future
+# base-image bump reintroduces npm through a different path; the build
+# fails loudly instead of silently re-surfacing the CVE class. Same RUN
+# to keep the invariant atomic with the removal.
+RUN rm -rf /usr/local/lib/node_modules/npm \
+           /usr/local/bin/npm \
+           /usr/local/bin/npx \
+ && ! command -v npm \
+ && ! command -v npx
+
 # Pull the compiled backend bundle + node_modules from the app image.
 # This gives us `dist/server/backup-runner.js` without rebuilding the
 # TypeScript here. It also guarantees the backup service runs the
