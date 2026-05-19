@@ -1,0 +1,34 @@
+/**
+ * MD5 helper for the S3-presigned PUT path — the storage provider
+ * verifies the body against `Content-MD5` (ADR-0024 / api.md §14.2.11).
+ * Both upload routes (`state/attachmentStore.ts` and
+ * `ui/management/useImportAllRunner.ts`) call into this single
+ * implementation; a regression here breaks every upload.
+ *
+ * Golden values pinned against `md5sum` (coreutils) so the test is
+ * authoritative across hash-library swaps. The 3 MiB case exercises
+ * the streaming path (CHUNK_BYTES is 2 MiB internally).
+ */
+
+import { describe, it, expect } from 'vitest';
+
+import { computeMd5Base64 } from '@/domain/attachmentChecksum';
+
+describe('computeMd5Base64 — RFC 1864 base64 MD5', () => {
+  it('empty blob produces the canonical empty-MD5', async () => {
+    expect(await computeMd5Base64(new Blob([]))).toBe('1B2M2Y8AsgTpgAmY7PhCfg==');
+  });
+
+  it("'abc' matches md5sum reference", async () => {
+    expect(await computeMd5Base64(new Blob(['abc']))).toBe('kAFQmDzST7DWlj99KOF/cg==');
+  });
+
+  it("'Hello, World!' matches md5sum reference", async () => {
+    expect(await computeMd5Base64(new Blob(['Hello, World!']))).toBe('ZajifYh5KDgxtmS9i38K1A==');
+  });
+
+  it('3 MiB of zeros — exercises the 2 MiB chunked streaming path', async () => {
+    const bytes = new Uint8Array(3 * 1024 * 1024);
+    expect(await computeMd5Base64(new Blob([bytes]))).toBe('0d0hDWsTEss0K1bQK9XmUQ==');
+  });
+});

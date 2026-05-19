@@ -8,12 +8,18 @@
  * PUT's `Content-MD5` header (ADR-0024 / api.md §14.2.11), and what
  * the storage provider verifies the body against.
  *
- * Streams `SparkMD5.ArrayBuffer` in 2 MiB chunks so the full bytes
- * never materialize twice in memory; cheap on phones, fast enough that
- * no Web Worker is warranted at the per-file cap.
+ * MD5 is required by the S3 wire protocol (`Content-MD5`); imported
+ * from `@noble/hashes/legacy` because Paul Miller's noble suite
+ * deliberately walls MD5 / SHA-1 off into `/legacy` to signal that
+ * they should never be used for new crypto — we are only here because
+ * the storage provider's API contract forces it.
+ *
+ * Streams the digest in 2 MiB chunks so the full bytes never
+ * materialize twice in memory; cheap on phones, fast enough that no
+ * Web Worker is warranted at the per-file cap.
  */
 
-import SparkMD5 from 'spark-md5';
+import { md5 } from '@noble/hashes/legacy.js';
 
 const CHUNK_BYTES = 2 * 1024 * 1024;
 
@@ -22,19 +28,18 @@ const CHUNK_BYTES = 2 * 1024 * 1024;
  * 24-character `==`-padded form the server expects.
  */
 export async function computeMd5Base64(blob: Blob): Promise<string> {
-  const hasher = new SparkMD5.ArrayBuffer();
+  const hasher = md5.create();
   for (let offset = 0; offset < blob.size; offset += CHUNK_BYTES) {
     const slice = blob.slice(offset, Math.min(offset + CHUNK_BYTES, blob.size));
     const buf = await slice.arrayBuffer();
-    hasher.append(buf);
+    hasher.update(new Uint8Array(buf));
   }
-  // SparkMD5 yields the 16-byte digest as a hex string; convert to
-  // base64 by walking pairs of hex chars into bytes. Browsers don't
-  // ship a hex→base64 helper, but `btoa` over a binary string does.
-  const hex = hasher.end();
+  // noble-hashes returns the 16-byte digest as Uint8Array; convert
+  // straight to a binary string for `btoa`.
+  const digest = hasher.digest();
   let bin = '';
-  for (let i = 0; i < hex.length; i += 2) {
-    bin += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16));
+  for (const byte of digest) {
+    bin += String.fromCharCode(byte);
   }
   return btoa(bin);
 }
