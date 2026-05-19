@@ -22,8 +22,17 @@ LOG_LEVEL=info npx --yes -p renovate renovate \
 
 The dry-run is most useful after editing `customManagers` regex patterns — Renovate logs which files matched, which deps it would have proposed, and which regexes returned zero matches (a silent regex typo otherwise lands invisibly).
 
-1. **Install the Renovate App** for `vlzware/Projekt-Manager` from [github.com/apps/renovate](https://github.com/apps/renovate) — choose **Select repositories** and pick this repo only.
-2. **Merge the onboarding PR.** On first scan Renovate opens a "Configure Renovate" PR; per the [Renovate docs](https://docs.renovatebot.com/getting-started/installing-onboarding/), no further PRs are raised until it lands. Sanity-check that it picked up `.github/renovate.json` and then merge.
+1. **Install via Mend.** Renovate is operated by Mend; the GitHub App install funnels through Mend's onboarding.
+   1. From [github.com/apps/renovate](https://github.com/apps/renovate) → **Install** → **Only select repositories** → pick `vlzware/Projekt-Manager` only. GitHub redirects to [developer.mend.io/install](https://developer.mend.io/install).
+   2. Sign up to Mend (one-time; org pre-fills from the GitHub handle).
+   3. Mend asks two questions:
+      - **Product:** **Renovate only**. The bundled SAST/SCA options are Mend's paid tier and not used — OSV-Scanner + Trivy in CI cover the SCA surface per ADR-0027.
+      - **Mode:** **Scan and Alert**, NOT "Scan Only". "Scan Only" runs Renovate in silent mode (no PRs/issues/checks; telemetry-only) and would defeat the whole point. The Mend dashboard later labels "Scan and Alert" as **"Interactive"** under _Default Engine Settings → Dependency Updates_.
+   4. Mend drops you on the org dashboard. Confirm the repo shows **Renovate: Enabled** and **Renovate Status: onboarded** within a few minutes (first scan). The Mend dashboard is informational — the actual control surface is the repo (config + PRs + Dependency Dashboard issue); we do not operate from the Mend UI.
+
+   The free **Community** plan is sufficient; paid tiers gate SAST/SCA/concurrent-jobs that we don't use.
+
+2. **No onboarding PR is expected.** Per the [Renovate docs](https://docs.renovatebot.com/getting-started/installing-onboarding/), when `.github/renovate.json` is already committed at the default branch, Renovate skips the "Configure Renovate" onboarding PR and goes straight to opening dep PRs (or queuing them in the Dependency Dashboard if a `schedule` window applies). If an onboarding PR DOES appear, it means the config wasn't detected — investigate before merging.
 3. **Enable auto-merge at the repo level.** Repo Settings → General → "Allow auto-merge" must be checked, otherwise `automerge: true` in the config silently no-ops.
 4. **Tighten branch protection on `main`.** Required status checks: `check` AND `docker` (the GitHub Actions job names — branch protection matches job-level checks).
    - **`check`** always runs and provides the always-on gate: OSV-Scanner (lockfile vulns), Trivy filesystem-secret + IaC scans, allowlist schema, lint, format, type-check, shellcheck, theme-token hygiene, env-drift, audit-write-path check, MinIO + integration tests, build.
