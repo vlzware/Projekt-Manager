@@ -103,14 +103,12 @@
       "matchPackageNames": ["caddy", "caddyserver/caddy"]
     },
     {
-      "description": "Suppress abandonment-heuristic false positives — release-date heuristic misfires on stable / maintenance-mode libs (verified upstream activity 2026-05-19; per-dep rationale in docs/ops/dep-management.md § Abandonment-flag verdicts). 3 years keeps real abandonment within range while filtering current noise.",
+      "description": "Suppress abandonment-heuristic false positives — release-date heuristic misfires on stable / maintenance-mode libs. Per-dep rationale + per-row verification dates in docs/ops/dep-management.md § Abandonment-flag verdicts. 3 years keeps real abandonment within range while filtering current noise.",
       "matchPackageNames": [
         "@fastify/cookie",
         "@fastify/rate-limit",
         "@testing-library/user-event",
-        "client-zip",
-        "husky",
-        "web-push"
+        "client-zip"
       ],
       "abandonmentThreshold": "3 years"
     },

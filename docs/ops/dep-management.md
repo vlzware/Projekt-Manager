@@ -110,29 +110,41 @@ Run `bash scripts/check-allowlist-schema.sh` locally to validate before pushing 
 
 ## Abandonment-flag verdicts
 
-Renovate's `abandonmentThreshold` heuristic uses **last-release date**, which produces false positives for libraries in stable / maintenance mode (release cadence reflects upstream maturity, not abandonment). The dashboard's "Abandoned Dependencies" list mixes real cases with these false positives. Every flag needs ≤5 min of upstream verification (last commit, issue triage, archive flag, deps.dev signal); never trust the heuristic alone.
+Renovate's `abandonmentThreshold` heuristic uses **last-release date**, which produces false positives for libraries in stable / maintenance mode (release cadence reflects upstream maturity, not abandonment). The Renovate / Mend Dependency Dashboard's "Abandoned Dependencies" heading mixes real cases with these false positives. Every flag needs ≤5 min of upstream verification (last commit, issue triage, archive flag, recent-commit authorship); never trust the heuristic alone — and never trust "last release date" alone either, because a stream of Dependabot-only merges can mask the absence of human attention.
 
-For confirmed false positives, `.github/renovate.json` overrides `abandonmentThreshold` per-package to **3 years** — high enough that genuine abandonment still trips, low enough that we don't suppress the signal forever. New flags are evaluated as they appear (during the weekly wrangler pass); verdicts land here and the matching `matchPackageNames` entry lands in the Renovate config in the same commit.
+Each flag lands in one of three states:
 
-Per [CLAUDE.md "refuse to serve" principle](../../CLAUDE.md#principles), confirmed-abandoned deps are **swapped, not suppressed**. The override is for the false-positive class only.
+- **Suppressed** — confirmed false positive; `.github/renovate.json` overrides `abandonmentThreshold` per-package to **3 years**, high enough that genuine abandonment still trips, low enough that we don't suppress the signal forever.
+- **Monitoring** — borderline (bus-factor concern, or dev-tooling whose flag is recurring noise we accept). The override is intentionally NOT applied; the flag re-surfaces on every weekly scan and the row is re-evaluated quarterly.
+- **Resolved** — replaced. Per [CLAUDE.md "refuse to serve" principle](../../CLAUDE.md#principles), confirmed-abandoned deps are swapped, not suppressed.
 
-**Active verdicts (last walked 2026-05-19, after first Renovate scan):**
+New flags are evaluated during the weekly wrangler pass; the verdict lands in the matching table below and (only for **Suppressed**) the `matchPackageNames` entry lands in the Renovate config in the same commit.
 
-| Package                       | Last release | Last commit | Verdict        | Rationale                                                                                         |
-| ----------------------------- | ------------ | ----------- | -------------- | ------------------------------------------------------------------------------------------------- |
-| `@fastify/cookie`             | 2025-01-05   | 2026-05-12  | maintenance    | Fastify family; refactor commit one week ago; 297 stars                                           |
-| `@fastify/rate-limit`         | 2025-05-18   | 2026-04-29  | maintenance    | Fastify family; active commits 3 weeks ago; 593 stars                                             |
-| `@testing-library/user-event` | 2025-01-21   | 2025-08-25  | mature, stable | 2.3k stars; 119 open issues actively triaged; user-event API has been stable for years            |
-| `client-zip`                  | 2025-03-14   | 2025-03-14  | done           | Single-purpose lib (client-side zip streaming); 7 open issues; nothing to add                     |
-| `husky`                       | 2024-11-18   | 2026-03-19  | active         | 35k stars; commit 2 months ago; the heuristic just missed the npm publish cadence                 |
-| `web-push`                    | 2024-01-16   | 2024-12-16  | maintenance    | Wraps fixed RFCs 8291/8292; 3.5k stars; recent dep bumps in master; the protocol itself is frozen |
+**Suppressed (last walked 2026-05-19, after first Renovate scan):**
 
-**Resolved (kept for audit trail; remove after one quarterly cycle if no regression):**
+| Package                       | Last release | Last commit | Verdict        | Rationale                                                                              |
+| ----------------------------- | ------------ | ----------- | -------------- | -------------------------------------------------------------------------------------- |
+| `@fastify/cookie`             | 2025-01-05   | 2026-05-12  | maintenance    | Fastify family; refactor commit one week ago; 297 stars                                |
+| `@fastify/rate-limit`         | 2025-05-18   | 2026-04-29  | maintenance    | Fastify family; active commits 3 weeks ago; 593 stars                                  |
+| `@testing-library/user-event` | 2025-01-21   | 2025-08-25  | mature, stable | 2.3k stars; 119 open issues actively triaged; user-event API has been stable for years |
+| `client-zip`                  | 2025-03-14   | 2025-03-14  | done           | Single-purpose lib (client-side zip streaming); 7 open issues; nothing to add          |
 
-| Package                     | Verdict   | Resolution                                         |
-| --------------------------- | --------- | -------------------------------------------------- |
-| `spark-md5`                 | abandoned | Swapped → `@noble/hashes/legacy.js` `md5`          |
-| `ludeeus/action-shellcheck` | abandoned | Swapped → direct `shellcheck` binary on the runner |
+**Monitoring (flag continues; re-evaluate quarterly):**
+
+| Package    | Last human commit | Concern     | Why not suppress                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | ----------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `husky`    | 2026-03-19        | dev-tooling | Non-strategic per § strategic-deps note (dev-convenience tooling explicitly excluded). The flag is recurring noise, acted on only if husky materially changes (archive flag, security issue) — suppressing felt like an opinion the project shouldn't pretend to have.                                                                                                        |
+| `web-push` | 2024-01-16        | bus-factor  | Wraps fixed RFCs 8291/8292 so feature work is genuinely scarce — BUT every commit since the 3.6.7 release (2024-01-16) is `dependabot[bot]`. No human commit in 16 months. On the Auth-crypto strategic row; a CVE response would depend on a solo maintainer (Marco Castelluccio). The flag is retained deliberately as a quarterly re-evaluation prompt, not as live noise. |
+
+**Resolved (kept for audit trail; remove after one quarterly cycle without regression):**
+
+| Package                     | Verdict                           | Resolution                                         |
+| --------------------------- | --------------------------------- | -------------------------------------------------- |
+| `spark-md5`                 | abandoned                         | Swapped → `@noble/hashes/legacy.js` `md5`          |
+| `ludeeus/action-shellcheck` | replaced — not formally abandoned | Swapped → direct `shellcheck` binary on the runner |
+
+- `spark-md5` is the genuine first-scan case: last code commit 2021-08-25 (4.5 years), 14 unaddressed open issues, no maintainer activity.
+- `ludeeus/action-shellcheck` is NOT abandoned by the project's own evidence threshold — the repo isn't archived, has 12 open PRs and 18 open issues, and the README documents real value-adds (the `version` input pins a specific Shellcheck release; `additional_files` and `ignore_paths` widen file detection; `-s ksh|dash|...` tests shell flavors). What forced the swap was Renovate's inability to determine the action's digest (last release 2023-01-29) combined with our usage exercising none of those value-adds. **Trade-off accepted:** the runner-provided shellcheck can drift between ubuntu-latest image refreshes; deterministic version-pinning is no longer enforced at this gate. Drift exposure is bounded — shellcheck rules evolve predictably between releases and a new false-positive would surface as a CI failure, not as silent miss.
 
 ## Quarterly lifecycle review
 
@@ -151,8 +163,9 @@ After the per-dep walk, do the **allowlist sweep** — same review, distinct sur
 
 Then the **abandonment-verdict sweep** — same review, distinct surface:
 
-- Walk the [§ Abandonment-flag verdicts](#abandonment-flag-verdicts) "active" table. For each entry, re-check upstream activity (last commit, archive flag, issue triage). If the verdict still holds, leave it. If the upstream actually did go quiet since the last walk, drop the package from `.github/renovate.json` `packageRules` so Renovate flags it again on the next scan — then decide swap-or-defer per the same procedure that produced the original verdict.
-- For "resolved" entries: drop the row after one quarter without regression. The audit trail lives in git history.
+- Walk the [§ Abandonment-flag verdicts](#abandonment-flag-verdicts) **Suppressed** table. For each entry, re-check upstream activity. If the false-positive verdict still holds, leave it. If the upstream actually did go quiet since the last walk, drop the package from `.github/renovate.json` `packageRules` so Renovate flags it again on the next scan — then decide swap-or-monitor per the same procedure that produced the original verdict.
+- Walk the **Monitoring** table. Each row represents an intentional non-suppression (bus-factor or dev-tooling noise). Re-check whether the original concern still holds at the same severity; if a Monitoring entry materially worsens (archive flag, license change, security incident, maintainer-departure signal), promote it to **Resolved** by swapping the dep in the same quarterly cycle.
+- For **Resolved** entries: drop the row after one quarter without regression. The audit trail lives in git history.
 
 When something changes (archive, relicense, bus-factor drop), update the relevant ADR's lifecycle table and open an issue. Do not panic-migrate — same week is fine, same month usually is too.
 
