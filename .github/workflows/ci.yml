@@ -170,16 +170,14 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      # H5 audit finding: every .sh under scripts/ goes through shellcheck
-      # at `--severity=warning`. Covers scripts/*.sh (rotation/deploy
-      # toolchain) and scripts/backup/*.sh (cron entrypoints + drill
-      # loader). Action pinned by SHA to match the rest of this workflow.
+      # H5 audit: shellcheck on every .sh under scripts/. Calls the
+      # runner's pre-installed shellcheck binary directly — the
+      # ludeeus/action-shellcheck wrapper was abandoned upstream
+      # (2023-01-29) and added nothing over `find | shellcheck`.
       - name: Shellcheck
-        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # v2.0.0
-        env:
-          SHELLCHECK_OPTS: --severity=warning
-        with:
-          scandir: ./scripts
+        run: |
+          shellcheck --version
+          find scripts -name '*.sh' -print0 | xargs -0 -r shellcheck --severity=warning
 
       - name: Format check
         run: npm run format:check

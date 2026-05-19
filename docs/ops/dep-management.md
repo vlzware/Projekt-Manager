@@ -22,8 +22,17 @@ LOG_LEVEL=info npx --yes -p renovate renovate \
 
 The dry-run is most useful after editing `customManagers` regex patterns — Renovate logs which files matched, which deps it would have proposed, and which regexes returned zero matches (a silent regex typo otherwise lands invisibly).
 
-1. **Install the Renovate App** for `vlzware/Projekt-Manager` from [github.com/apps/renovate](https://github.com/apps/renovate) — choose **Select repositories** and pick this repo only.
-2. **Merge the onboarding PR.** On first scan Renovate opens a "Configure Renovate" PR; per the [Renovate docs](https://docs.renovatebot.com/getting-started/installing-onboarding/), no further PRs are raised until it lands. Sanity-check that it picked up `.github/renovate.json` and then merge.
+1. **Install via Mend.** Renovate is operated by Mend; the GitHub App install funnels through Mend's onboarding.
+   1. From [github.com/apps/renovate](https://github.com/apps/renovate) → **Install** → **Only select repositories** → pick `vlzware/Projekt-Manager` only. GitHub redirects to [developer.mend.io/install](https://developer.mend.io/install).
+   2. Sign up to Mend (one-time; org pre-fills from the GitHub handle).
+   3. Mend asks two questions:
+      - **Product:** **Renovate only**. The bundled SAST/SCA options are Mend's paid tier and not used — OSV-Scanner + Trivy in CI cover the SCA surface per ADR-0027.
+      - **Mode:** **Scan and Alert**, NOT "Scan Only". "Scan Only" runs Renovate in silent mode (no PRs/issues/checks; telemetry-only) and would defeat the whole point. The Mend dashboard later labels "Scan and Alert" as **"Interactive"** under _Default Engine Settings → Dependency Updates_.
+   4. Mend drops you on the org dashboard. Confirm the repo shows **Renovate: Enabled** and **Renovate Status: onboarded** within a few minutes (first scan). The Mend dashboard is informational — the actual control surface is the repo (config + PRs + Dependency Dashboard issue); we do not operate from the Mend UI.
+
+   The free **Community** plan is sufficient; paid tiers gate SAST/SCA/concurrent-jobs that we don't use.
+
+2. **No onboarding PR is expected.** Per the [Renovate docs](https://docs.renovatebot.com/getting-started/installing-onboarding/), when `.github/renovate.json` is already committed at the default branch, Renovate skips the "Configure Renovate" onboarding PR and goes straight to opening dep PRs (or queuing them in the Dependency Dashboard if a `schedule` window applies). If an onboarding PR DOES appear, it means the config wasn't detected — investigate before merging.
 3. **Enable auto-merge at the repo level.** Repo Settings → General → "Allow auto-merge" must be checked, otherwise `automerge: true` in the config silently no-ops.
 4. **Tighten branch protection on `main`.** Required status checks: `check` AND `docker` (the GitHub Actions job names — branch protection matches job-level checks).
    - **`check`** always runs and provides the always-on gate: OSV-Scanner (lockfile vulns), Trivy filesystem-secret + IaC scans, allowlist schema, lint, format, type-check, shellcheck, theme-token hygiene, env-drift, audit-write-path check, MinIO + integration tests, build.
@@ -46,11 +55,12 @@ The dry-run is most useful after editing `customManagers` regex patterns — Ren
 ## Weekly wrangler
 
 1. Open the Renovate dashboard issue — queue state at a glance.
-2. **Auto-merged PRs** (patch/minor + green CI) need no action; spot-check for surprises.
-3. **Grouped PRs** (AWS SDK / ESLint cluster / Vitest pair / React pair / Fastify family / Drizzle pair): read combined changelog, merge.
-4. **Major PRs**: read upstream migration guide, run `npm test` + `npm run test:e2e` locally on the bump branch, merge.
-5. **Lockfile maintenance** PR: merge if green.
-6. Red CI: triage the failure, patch or revert.
+2. **Abandonment flags**: scan the dashboard's "Abandoned Dependencies" list for new entries. Verify each per [§ Abandonment-flag verdicts](#abandonment-flag-verdicts); record a verdict + (for false positives) add the package to `.github/renovate.json` `packageRules` in the same commit.
+3. **Auto-merged PRs** (patch/minor + green CI) need no action; spot-check for surprises.
+4. **Grouped PRs** (AWS SDK / ESLint cluster / Vitest pair / React pair / Fastify family / Drizzle pair): read combined changelog, merge.
+5. **Major PRs**: read upstream migration guide, run `npm test` + `npm run test:e2e` locally on the bump branch, merge.
+6. **Lockfile maintenance** PR: merge if green.
+7. Red CI: triage the failure, patch or revert.
 
 ## CVE handling
 
@@ -98,6 +108,44 @@ CVE-2026-12345 exp:2026-08-16
 
 Run `bash scripts/check-allowlist-schema.sh` locally to validate before pushing — the same script gates the CI `check` job.
 
+## Abandonment-flag verdicts
+
+Renovate's `abandonmentThreshold` heuristic uses **last-release date**, which produces false positives for libraries in stable / maintenance mode (release cadence reflects upstream maturity, not abandonment). The Renovate / Mend Dependency Dashboard's "Abandoned Dependencies" heading mixes real cases with these false positives. Every flag needs ≤5 min of upstream verification (last commit, issue triage, archive flag, recent-commit authorship); never trust the heuristic alone — and never trust "last release date" alone either, because a stream of Dependabot-only merges can mask the absence of human attention.
+
+Each flag lands in one of three states:
+
+- **Suppressed** — confirmed false positive; `.github/renovate.json` overrides `abandonmentThreshold` per-package to **3 years**, high enough that genuine abandonment still trips, low enough that we don't suppress the signal forever.
+- **Monitoring** — borderline (bus-factor concern, or dev-tooling whose flag is recurring noise we accept). The override is intentionally NOT applied; the flag re-surfaces on every weekly scan and the row is re-evaluated quarterly.
+- **Resolved** — replaced. Per [CLAUDE.md "refuse to serve" principle](../../CLAUDE.md#principles), confirmed-abandoned deps are swapped, not suppressed.
+
+New flags are evaluated during the weekly wrangler pass; the verdict lands in the matching table below and (only for **Suppressed**) the `matchPackageNames` entry lands in the Renovate config in the same commit.
+
+**Suppressed (last walked 2026-05-19, after first Renovate scan):**
+
+| Package                       | Last release | Last commit | Verdict        | Rationale                                                                              |
+| ----------------------------- | ------------ | ----------- | -------------- | -------------------------------------------------------------------------------------- |
+| `@fastify/cookie`             | 2025-01-05   | 2026-05-12  | maintenance    | Fastify family; refactor commit one week ago; 297 stars                                |
+| `@fastify/rate-limit`         | 2025-05-18   | 2026-04-29  | maintenance    | Fastify family; active commits 3 weeks ago; 593 stars                                  |
+| `@testing-library/user-event` | 2025-01-21   | 2025-08-25  | mature, stable | 2.3k stars; 119 open issues actively triaged; user-event API has been stable for years |
+| `client-zip`                  | 2025-03-14   | 2025-03-14  | done           | Single-purpose lib (client-side zip streaming); 7 open issues; nothing to add          |
+
+**Monitoring (flag continues; re-evaluate quarterly):**
+
+| Package    | Last human commit | Concern     | Why not suppress                                                                                                                                                                                                                                                                                                                                                              |
+| ---------- | ----------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `husky`    | 2026-03-19        | dev-tooling | Non-strategic per § strategic-deps note (dev-convenience tooling explicitly excluded). The flag is recurring noise, acted on only if husky materially changes (archive flag, security issue) — suppressing felt like an opinion the project shouldn't pretend to have.                                                                                                        |
+| `web-push` | 2024-01-16        | bus-factor  | Wraps fixed RFCs 8291/8292 so feature work is genuinely scarce — BUT every commit since the 3.6.7 release (2024-01-16) is `dependabot[bot]`. No human commit in 16 months. On the Auth-crypto strategic row; a CVE response would depend on a solo maintainer (Marco Castelluccio). The flag is retained deliberately as a quarterly re-evaluation prompt, not as live noise. |
+
+**Resolved (kept for audit trail; remove after one quarterly cycle without regression):**
+
+| Package                     | Verdict                           | Resolution                                         |
+| --------------------------- | --------------------------------- | -------------------------------------------------- |
+| `spark-md5`                 | abandoned                         | Swapped → `@noble/hashes/legacy.js` `md5`          |
+| `ludeeus/action-shellcheck` | replaced — not formally abandoned | Swapped → direct `shellcheck` binary on the runner |
+
+- `spark-md5` is the genuine first-scan case: last code commit 2021-08-25 (4.5 years), 14 unaddressed open issues, no maintainer activity.
+- `ludeeus/action-shellcheck` is NOT abandoned by the project's own evidence threshold — the repo isn't archived, has 12 open PRs and 18 open issues, and the README documents real value-adds (the `version` input pins a specific Shellcheck release; `additional_files` and `ignore_paths` widen file detection; `-s ksh|dash|...` tests shell flavors). What forced the swap was Renovate's inability to determine the action's digest (last release 2023-01-29) combined with our usage exercising none of those value-adds. **Trade-off accepted:** the runner-provided shellcheck can drift between ubuntu-latest image refreshes; deterministic version-pinning is no longer enforced at this gate. Drift exposure is bounded — shellcheck rules evolve predictably between releases and a new false-positive would surface as a CI failure, not as silent miss.
+
 ## Quarterly lifecycle review
 
 **Last performed:** _not yet_ — first review due **2026-08-17** (Monday; 2026-08-15 falls on a Saturday, aligned with the weekly wrangler cadence).
@@ -112,6 +160,12 @@ After the per-dep walk, do the **allowlist sweep** — same review, distinct sur
 
 - Open `osv-scanner.toml` and `.trivyignore`. For every active entry: is the original justification still true? Has the upstream landed a fix that makes the suppression obsolete? Is the owner still the right person? Drop entries that no longer hold.
 - The script's `ignoreUntil` ≤90d window means stale entries auto-expire and fail CI — the sweep is the in-band check that catches entries that were merely renewed without re-justification.
+
+Then the **abandonment-verdict sweep** — same review, distinct surface:
+
+- Walk the [§ Abandonment-flag verdicts](#abandonment-flag-verdicts) **Suppressed** table. For each entry, re-check upstream activity. If the false-positive verdict still holds, leave it. If the upstream actually did go quiet since the last walk, drop the package from `.github/renovate.json` `packageRules` so Renovate flags it again on the next scan — then decide swap-or-monitor per the same procedure that produced the original verdict.
+- Walk the **Monitoring** table. Each row represents an intentional non-suppression (bus-factor or dev-tooling noise). Re-check whether the original concern still holds at the same severity; if a Monitoring entry materially worsens (archive flag, license change, security incident, maintainer-departure signal), promote it to **Resolved** by swapping the dep in the same quarterly cycle.
+- For **Resolved** entries: drop the row after one quarter without regression. The audit trail lives in git history.
 
 When something changes (archive, relicense, bus-factor drop), update the relevant ADR's lifecycle table and open an issue. Do not panic-migrate — same week is fine, same month usually is too.
 
