@@ -376,7 +376,13 @@ jobs:
   # ---------------------------------------------------------------
   docker:
     needs: changes
-    if: needs.changes.outputs.docker == 'true' && github.event_name == 'pull_request'
+    # On `merge_group` (queue) events the `docker` context must REPORT
+    # success rather than be skipped — merge queue treats a skipped
+    # required check as "not yet met" and waits until the response
+    # timeout expires (60 min default), then rejects the PR with no
+    # actionable signal. So run the job unconditionally on `merge_group`;
+    # the path filter only applies on `pull_request`.
+    if: (needs.changes.outputs.docker == 'true' && github.event_name == 'pull_request') || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
