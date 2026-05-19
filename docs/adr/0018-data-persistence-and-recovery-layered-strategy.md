@@ -92,7 +92,7 @@ Versioned export with translation code bridging old formats. Ruled out: speculat
 - [ADR-0008](0008-vpn-first-network-access.md) — VPN-first threat model
 - [ADR-0010](0010-first-run-admin-bootstrap.md) — how users are created on fresh installs (why users are excluded from business-data export)
 - [ADR-0017](0017-soft-delete-as-board-archive.md) — archived rows are business data and must round-trip
-- Issue [#90](https://github.com/vlzware/Projekt-Manager/issues/90) — seed.ts replacement and the "export all" open question
-- Issue [#46](https://github.com/vlzware/Projekt-Manager/issues/46) — DB-level backup + monitoring (second-layer tracker)
-- Issue [#45](https://github.com/vlzware/Projekt-Manager/issues/45) — B2 binary storage integration (third-layer tracker); see [ADR-0022](0022-binary-storage-b2-compliance-object-lock.md)
-- Issue [#105](https://github.com/vlzware/Projekt-Manager/issues/105) — role-scoped views; this ADR commits to `data:export` and introduces `data:restore`
+- Issue [#90](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/90) — seed.ts replacement and the "export all" open question
+- Issue [#46](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/46) — DB-level backup + monitoring (second-layer tracker)
+- Issue [#45](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/45) — B2 binary storage integration (third-layer tracker); see [ADR-0022](0022-binary-storage-b2-compliance-object-lock.md)
+- Issue [#105](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/105) — role-scoped views; this ADR commits to `data:export` and introduces `data:restore`

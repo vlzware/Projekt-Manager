@@ -15,7 +15,7 @@
 # the distribution-to-host leg.
 #
 # Preconditions on the VPS:
-#   - /opt/projekt-manager is a git clone of vlzware/Projekt-Manager
+#   - /opt/projekt-manager is a git clone of Projekt-Manager-Org/Projekt-Manager
 #   - /opt/projekt-manager/secrets.env.age exists (age-encrypted env file)
 #   - The `deploy` user is logged in to GHCR via `docker login`
 #   - `age` is installed

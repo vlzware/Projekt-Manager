@@ -26,7 +26,7 @@
 # a stale mutable branch tag could silently ship the wrong code.
 ARG APP_IMAGE_TAG
 # hadolint ignore=DL3006  # tag is set by scripts/deploy.sh per commit
-FROM ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG} AS appsrc
+FROM ghcr.io/projekt-manager-org/projekt-manager:${APP_IMAGE_TAG} AS appsrc
 
 FROM node:22.22.3-alpine
 

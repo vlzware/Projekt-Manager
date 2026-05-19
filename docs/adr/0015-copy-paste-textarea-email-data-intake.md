@@ -37,4 +37,4 @@ The app connects directly to the mailbox (IMAP/OAuth) and renders emails in-app.
 
 ## References
 
-- [Issue #87](https://github.com/vlzware/Projekt-Manager/issues/87) — Decision: LLM extraction of data from emails
+- [Issue #87](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/87) — Decision: LLM extraction of data from emails

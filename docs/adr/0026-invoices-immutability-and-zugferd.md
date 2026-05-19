@@ -155,7 +155,7 @@ The named npm dependencies that implement this ADR's shape (PDF/A-3 + factur-x.x
 - [ADR-0024](0024-binary-attachment-e2e-encryption.md) — E2E envelope encryption; rendered invoice ciphertext rides the same pipeline.
 - [ADR-0025](0025-realtime-ui-invalidation-via-sse.md) — SSE invalidation primitive; `invoice_changed` is a new typed event on the existing channel.
 - [Kickoff](../project/kickoff.md) — Rechnung-fällig / Abgerechnet workflow and the bookkeeper view that consumes this domain.
-- [Issue #109](https://github.com/vlzware/Projekt-Manager/issues/109) — implementation tracking; the prior comment is superseded by this ADR.
+- [Issue #109](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/109) — implementation tracking; the prior comment is superseded by this ADR.
 - §14 UStG — [Pflichtangaben einer Rechnung](https://www.gesetze-im-internet.de/ustg_1980/__14.html).
 - §14a UStG — [Elektronische Rechnung / E-Rechnungspflicht](https://www.gesetze-im-internet.de/ustg_1980/__14a.html).
 - §19 UStG — [Kleinunternehmer](https://www.gesetze-im-internet.de/ustg_1980/__19.html).

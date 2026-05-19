@@ -18,14 +18,14 @@ Have `~/secrets/age-backup.key` open on the operator workstation before invoking
 
 ## Preconditions
 
-| Requirement                                     | Verify                                                              |
-| ----------------------------------------------- | ------------------------------------------------------------------- |
-| `/opt/projekt-manager` is a git clone           | `sudo -u deploy git -C /opt/projekt-manager remote -v`              |
-| `age` installed                                 | `command -v age`                                                    |
-| `deploy` logged in to GHCR                      | `sudo -u deploy docker pull ghcr.io/vlzware/projekt-manager:main`   |
-| `secrets.env.age` exists, owned `deploy:deploy` | `ls -l /opt/projekt-manager/secrets.env.age`                        |
-| `deploy` has no interactive login               | `getent passwd deploy` shows `/usr/sbin/nologin`                    |
-| `deploy` can fetch from origin                  | `sudo -u deploy git -C /opt/projekt-manager fetch --dry-run origin` |
+| Requirement                                     | Verify                                                                        |
+| ----------------------------------------------- | ----------------------------------------------------------------------------- |
+| `/opt/projekt-manager` is a git clone           | `sudo -u deploy git -C /opt/projekt-manager remote -v`                        |
+| `age` installed                                 | `command -v age`                                                              |
+| `deploy` logged in to GHCR                      | `sudo -u deploy docker pull ghcr.io/projekt-manager-org/projekt-manager:main` |
+| `secrets.env.age` exists, owned `deploy:deploy` | `ls -l /opt/projekt-manager/secrets.env.age`                                  |
+| `deploy` has no interactive login               | `getent passwd deploy` shows `/usr/sbin/nologin`                              |
+| `deploy` can fetch from origin                  | `sudo -u deploy git -C /opt/projekt-manager fetch --dry-run origin`           |
 
 ## Deploy
 
@@ -160,7 +160,7 @@ Backup blobs in R2 remain decryptable — they are encrypted against `AGE_RECIPI
 # 1. Clone
 sudo mkdir -p /opt/projekt-manager
 sudo chown deploy:deploy /opt/projekt-manager
-sudo -u deploy git clone https://github.com/vlzware/Projekt-Manager.git /opt/projekt-manager
+sudo -u deploy git clone https://github.com/Projekt-Manager-Org/Projekt-Manager.git /opt/projekt-manager
 
 # 2. Install age
 sudo apt update && sudo apt install -y age

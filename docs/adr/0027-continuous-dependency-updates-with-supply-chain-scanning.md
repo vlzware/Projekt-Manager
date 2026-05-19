@@ -6,15 +6,15 @@
 
 ## Context
 
-Dependency hygiene has so far been a **manual audit** triggered by guilt rather than schedule. The most recent pass ([#187](https://github.com/vlzware/Projekt-Manager/issues/187), 2026-05-15) accumulated in under two months:
+Dependency hygiene has so far been a **manual audit** triggered by guilt rather than schedule. The most recent pass ([#187](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/187), 2026-05-15) accumulated in under two months:
 
 - ~25 patch/minor bumps batched into one omnibus PR
 - One ESLint major cluster (`eslint` 9→10, `@eslint/js`, `globals` 14→17, `typescript-eslint`, `lint-staged` 16→17)
 - One Node base-image bump (3 CVEs)
 - One Docker Engine bump (2 CVEs, including in-container privesc)
 - Two **non-drop-in migrations** carved into separate issues:
-  - [#191](https://github.com/vlzware/Projekt-Manager/issues/191) — `minio/minio` upstream-archived 2026-04-24, caught ~3 weeks late
-  - [#192](https://github.com/vlzware/Projekt-Manager/issues/192) — `libxmljs2` README literally `# NO LONGER MAINTAINED`, caught only by this audit
+  - [#191](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/191) — `minio/minio` upstream-archived 2026-04-24, caught ~3 weeks late
+  - [#192](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/192) — `libxmljs2` README literally `# NO LONGER MAINTAINED`, caught only by this audit
 - Two driver-level switches (`pdf-lib` → `@cantoo/pdf-lib`, `pdf-parse` → `unpdf`)
 - A patch deletion (`@aws-sdk+xml-builder` patch rendered obsolete by upstream rewrite)
 
@@ -63,14 +63,14 @@ Exceptions to blocking go in a documented allowlist with a review trigger (the p
 ### 3. Lifecycle-health entry on dep-introducing ADRs + quarterly review
 
 - The `vv-adr` skill now requires a `## Dep lifecycle health (as of YYYY-MM-DD)` section on any ADR that commits to a specific named external dep (npm package, container image, SaaS service, source-built binary). Pattern/policy ADRs omit it — for this codebase the excluded set is **0001, 0007 (superseded), 0010, 0013, 0014, 0015, 0017, 0018, 0019, 0021, 0023, 0025**. New ADRs apply the same test: if no named external dep is committed, omit the section. If the ADR delegates lib choice to a design doc (e.g., `ARCHITECTURE.md`), the table lives in the design doc — one source of truth per dep.
-- ADRs 0002–0026 are retrofitted in the same change as this ADR (excluding the superseded 0007 and the pattern-only ones listed above). The retrofit landed across two batches — **2026-05-15** for the bulk and **2026-05-18** for ADRs touched during PR review (notably 0005, 0006, and a re-stamp of 0020 when [#199](https://github.com/vlzware/Projekt-Manager/issues/199) introduced `croner`). The `(as of YYYY-MM-DD)` timestamp on each ADR reflects the day that ADR's table was last verified; per the as-of policy, individual table dates need not match. ADR-0008's prose maintenance notes are reshaped into a structured table during the retrofit. ADR-0009 carries both a "Pinned versions" table (version surface) and a separate lifecycle-health section added during retrofit — the two are distinct.
+- ADRs 0002–0026 are retrofitted in the same change as this ADR (excluding the superseded 0007 and the pattern-only ones listed above). The retrofit landed across two batches — **2026-05-15** for the bulk and **2026-05-18** for ADRs touched during PR review (notably 0005, 0006, and a re-stamp of 0020 when [#199](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/199) introduced `croner`). The `(as of YYYY-MM-DD)` timestamp on each ADR reflects the day that ADR's table was last verified; per the as-of policy, individual table dates need not match. ADR-0008's prose maintenance notes are reshaped into a structured table during the retrofit. ADR-0009 carries both a "Pinned versions" table (version surface) and a separate lifecycle-health section added during retrofit — the two are distinct.
 - A **quarterly strategic-dep review** walks the headline deps (framework, ORM, storage SaaS, base images, build tooling) and asks: alive? funded? still our best option? exit ramp documented? Outcomes feed superseding ADRs when warranted. Tracked in [docs/ops/dep-management.md](../ops/dep-management.md).
 
 ## Alternatives Considered
 
 ### Dependabot-only as the primary update bot
 
-GitHub-native, already half-configured (Alerts on). Ruled out: weaker grouping (no expression-based clusters across ecosystems), no Docker-tag regex manager for arbitrary files (Caddy plugin SHA, apk pins, `download.docker.com` package list), no `lockFileMaintenance` equivalent, no schedule windows. Renovate covers the project's mixed-ecosystem pinning surface; Dependabot would leave half of [#187](https://github.com/vlzware/Projekt-Manager/issues/187)'s scope outside automation. Dependabot Alerts remains on for the CVE notification surface — the two cooperate.
+GitHub-native, already half-configured (Alerts on). Ruled out: weaker grouping (no expression-based clusters across ecosystems), no Docker-tag regex manager for arbitrary files (Caddy plugin SHA, apk pins, `download.docker.com` package list), no `lockFileMaintenance` equivalent, no schedule windows. Renovate covers the project's mixed-ecosystem pinning surface; Dependabot would leave half of [#187](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/187)'s scope outside automation. Dependabot Alerts remains on for the CVE notification surface — the two cooperate.
 
 ### Manual audits tightened to monthly cadence
 
@@ -153,9 +153,9 @@ Renovate, OSV-Scanner, and Trivy are the adopted _tooling_; the choice is revers
 
 - [ADR-0007 (superseded)](0007-suppress-esbuild-dev-server-advisory.md) — `npm audit`-only baseline that proved insufficient; the suppression pattern is reused for OSV-Scanner allowlists.
 - [ADR-0009](0009-pin-docker-versions-across-environments.md) — Docker version pinning; its existing version table is the lifecycle-health surface for the Docker stack.
-- [Issue #187](https://github.com/vlzware/Projekt-Manager/issues/187) — the omnibus audit this ADR is responding to.
-- [Issue #191](https://github.com/vlzware/Projekt-Manager/issues/191) — MinIO archival; the canonical failure case for "adopted-already-dying."
-- [Issue #192](https://github.com/vlzware/Projekt-Manager/issues/192) — libxmljs2 unmaintained replacement.
+- [Issue #187](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/187) — the omnibus audit this ADR is responding to.
+- [Issue #191](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/191) — MinIO archival; the canonical failure case for "adopted-already-dying."
+- [Issue #192](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/192) — libxmljs2 unmaintained replacement.
 - [docs/ops/dep-management.md](../ops/dep-management.md) — runbook complement: cadence, wrangler procedure, lifecycle-review process.
 - [Renovate docs](https://docs.renovatebot.com/) — configuration reference.
 - [OSV-Scanner](https://google.github.io/osv-scanner/) — scanner + database.

@@ -17,13 +17,13 @@ npx --yes -p renovate renovate-config-validator --strict --no-global .github/ren
 # keeps the output manageable.
 LOG_LEVEL=info npx --yes -p renovate renovate \
   --platform=local --dry-run \
-  vlzware/Projekt-Manager
+  Projekt-Manager-Org/Projekt-Manager
 ```
 
 The dry-run is most useful after editing `customManagers` regex patterns — Renovate logs which files matched, which deps it would have proposed, and which regexes returned zero matches (a silent regex typo otherwise lands invisibly).
 
 1. **Install via Mend.** Renovate is operated by Mend; the GitHub App install funnels through Mend's onboarding.
-   1. From [github.com/apps/renovate](https://github.com/apps/renovate) → **Install** → **Only select repositories** → pick `vlzware/Projekt-Manager` only. GitHub redirects to [developer.mend.io/install](https://developer.mend.io/install).
+   1. From [github.com/apps/renovate](https://github.com/apps/renovate) → **Install** → **Only select repositories** → pick `Projekt-Manager-Org/Projekt-Manager` only. GitHub redirects to [developer.mend.io/install](https://developer.mend.io/install).
    2. Sign up to Mend (one-time; org pre-fills from the GitHub handle).
    3. Mend asks two questions:
       - **Product:** **Renovate only**. The bundled SAST/SCA options are Mend's paid tier and not used — OSV-Scanner + Trivy in CI cover the SCA surface per ADR-0027.
@@ -218,7 +218,7 @@ A dep is "strategic" if it is load-bearing for security, runtime correctness, or
 | VPN                      | WireGuard kernel + clients                                                                      | [ADR-0008](../adr/0008-vpn-first-network-access.md)                                                                                                                                            |
 | Storage SDK              | `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`                                           | [ADR-0022](../adr/0022-binary-storage-b2-compliance-object-lock.md)                                                                                                                            |
 
-**OS packages installed in our Dockerfiles** (added per [#199](https://github.com/vlzware/Projekt-Manager/issues/199), which surfaced that the apk-package layer was not covered by either Renovate or this review):
+**OS packages installed in our Dockerfiles** (added per [#199](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/199), which surfaced that the apk-package layer was not covered by either Renovate or this review):
 
 Renovate's `dockerfile` manager tracks base-image tags, not the individual packages added via `apk add` on top. OSV-Scanner and Trivy catch published CVEs in OS packages, but stagnant-but-not-yet-vulnerable (the dcron case: no CVE filed, no maintainer to file one) is invisible to both gates. Treat every explicit `apk add` line as a strategic-dep adoption and walk it during this review.
 
