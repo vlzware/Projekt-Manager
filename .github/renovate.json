@@ -1,0 +1,164 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:best-practices",
+    ":dependencyDashboard",
+    ":semanticCommits"
+  ],
+  "timezone": "Europe/Sofia",
+  "schedule": ["before 9am on monday"],
+  "prHourlyLimit": 4,
+  "prConcurrentLimit": 10,
+  "labels": ["dependencies"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 9am on monday"]
+  },
+  "vulnerabilityAlerts": {
+    "labels": ["security", "dependencies"],
+    "schedule": ["at any time"]
+  },
+  "osvVulnerabilityAlerts": true,
+  "packageRules": [
+    {
+      "description": "AWS SDK family — bump together",
+      "groupName": "aws-sdk",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@aws-sdk/**"]
+    },
+    {
+      "description": "ESLint cluster — bump together",
+      "groupName": "eslint",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "eslint",
+        "@eslint/js",
+        "globals",
+        "typescript-eslint",
+        "eslint-plugin-react-hooks",
+        "eslint-plugin-react-refresh"
+      ]
+    },
+    {
+      "description": "Vitest pair — bump together",
+      "groupName": "vitest",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["vitest", "@vitest/coverage-v8"]
+    },
+    {
+      "description": "React + types — bump together",
+      "groupName": "react",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom"
+      ]
+    },
+    {
+      "description": "Fastify family — bump together",
+      "groupName": "fastify",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["fastify", "@fastify/**"]
+    },
+    {
+      "description": "Drizzle pair — bump together",
+      "groupName": "drizzle",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["drizzle-orm", "drizzle-kit"]
+    },
+    {
+      "description": "Grouped clusters: no auto-merge — human reads the combined changelog",
+      "matchPackageNames": [
+        "@aws-sdk/**",
+        "eslint",
+        "@eslint/js",
+        "globals",
+        "typescript-eslint",
+        "eslint-plugin-react-hooks",
+        "eslint-plugin-react-refresh",
+        "vitest",
+        "@vitest/coverage-v8",
+        "react",
+        "react-dom",
+        "@types/react",
+        "@types/react-dom",
+        "fastify",
+        "@fastify/**",
+        "drizzle-orm",
+        "drizzle-kit"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "MinIO RELEASE.* tags sort lexicographically — use loose versioning so timestamp order is respected",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["minio/minio", "minio/mc"],
+      "versioning": "loose"
+    },
+    {
+      "description": "Caddy version bumps land across three places in docker/caddy/Dockerfile (FROM caddy:X-builder, FROM caddy:X, xcaddy build vX). Group them so one PR moves the version everywhere — otherwise a partial bump builds an image where xcaddy compiles vX+1 against a base labelled vX",
+      "groupName": "caddy",
+      "matchPackageNames": ["caddy", "caddyserver/caddy"]
+    },
+    {
+      "description": "Auto-merge ungrouped patch + minor on green CI (requires repo Settings → General → Pull Requests → Allow auto-merge)",
+      "matchUpdateTypes": ["patch", "minor", "digest", "pin", "lockFileMaintenance"],
+      "automerge": true,
+      "platformAutomerge": true
+    },
+    {
+      "description": "Belt-and-braces: never auto-merge major bumps (best-practices already separates and disables, but be explicit)",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Caddy version inside `xcaddy build vN.N.N` in docker/caddy/Dockerfile — track caddyserver/caddy releases",
+      "managerFilePatterns": ["/^docker/caddy/Dockerfile$/"],
+      "matchStrings": [
+        "xcaddy build v(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "caddyserver/caddy",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "caddy-dns/cloudflare plugin pinned to a git SHA — track master and bump the SHA",
+      "managerFilePatterns": ["/^docker/caddy/Dockerfile$/"],
+      "matchStrings": [
+        "github\\.com/caddy-dns/cloudflare@(?<currentDigest>[a-f0-9]{40})"
+      ],
+      "currentValueTemplate": "master",
+      "depNameTemplate": "caddy-dns/cloudflare",
+      "packageNameTemplate": "https://github.com/caddy-dns/cloudflare",
+      "datasourceTemplate": "git-refs"
+    },
+    {
+      "customType": "regex",
+      "description": "MinIO `mc` image tag in sync-*.sh helper scripts — track minio/mc Docker tags with loose versioning",
+      "managerFilePatterns": ["/^scripts/sync-(dev-to-vps|vps-to-dev)\\.sh$/"],
+      "matchStrings": [
+        "MC_IMAGE=\"minio/mc:(?<currentValue>RELEASE\\.[0-9TZ-]+)\""
+      ],
+      "depNameTemplate": "minio/mc",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "loose"
+    },
+    {
+      "customType": "regex",
+      "description": "MinIO `minio` and `mc` images hardcoded in `docker run …` shell steps inside .github/workflows/*.yml — Renovate's github-actions manager doesn't parse docker images inside run: blocks, so a custom regex keeps them in lockstep with the docker-compose copies",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "matchStrings": [
+        "minio/(?<depName>minio|mc):(?<currentValue>RELEASE\\.[0-9TZ-]+)"
+      ],
+      "packageNameTemplate": "minio/{{depName}}",
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "loose"
+    }
+  ]
+}

@@ -52,6 +52,14 @@ JSX escaping + `@fastify/helmet` CSP + no `dangerouslySetInnerHTML` + strict typ
 - Integration tests must extract cookies via `set-cookie` header rather than reading a token from the response body — slightly more setup
 - Future cross-origin API consumers (mobile app, third-party) would need an augmented auth path (e.g., separate token-based flow)
 
+## Dep lifecycle health (as of 2026-05-18)
+
+The cookie attributes (`HttpOnly`, `Secure`, `SameSite=Strict`) are stdlib-level browser primitives — no third-party dep is committed by the Decision itself. The "three independent CSRF barriers" rationale leans on three primitives, one of which (CSP) is implemented in the codebase via `@fastify/helmet`. That library is the only dep this ADR's argumentation touches.
+
+| Dep               | Last release        | License | Maintainership                                                                  | Notes                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------- | ------------------- | ------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@fastify/helmet` | 13.0.2 (2025-09-28) | MIT     | Fastify team (18 maintainers on npm, including Matteo Collina), very active org | [deps.dev](https://deps.dev/npm/%40fastify%2Fhelmet) — applies the CSP `default-src 'self'` policy that backs the third CSRF barrier in the Decision. ~7.5 months since last release; healthy for a thin wrapper around `helmet` whose surface area is stable. Bumped lockstep with `fastify` via the Fastify family Renovate group ([dep-management.md](../ops/dep-management.md)) |
+
 ## References
 
 - [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)

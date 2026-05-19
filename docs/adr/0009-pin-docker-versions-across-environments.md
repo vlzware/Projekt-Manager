@@ -77,6 +77,14 @@ CVEs against Docker Engine:
 - `apt-mark showhold` is part of post-install verification (see `docs/ops/server-setup.md` Phase 4).
 - Upgrade procedure above is also in `docs/ops/server-setup.md` for operational reference.
 
+## Dep lifecycle health (as of 2026-05-15)
+
+The "Pinned versions" table above is the version surface. Upstream metadata:
+
+| Dep                                                                                            | License    | Maintainership           | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------- | ---------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin` | Apache-2.0 | Docker Inc., very active | CVE channel: [Docker Engine release notes](https://docs.docker.com/engine/release-notes/) + GHSA. The 2026-05-15 bump closed CVE-2026-32288 and CVE-2026-31431. These packages are installed on the VPS host (not in a container), so [ADR-0027](0027-continuous-dependency-updates-with-supply-chain-scanning.md)'s Renovate config does NOT track them. Bumps require the lockstep upgrade procedure above; the quarterly review walk (per [docs/ops/dep-management.md](../ops/dep-management.md#quarterly-lifecycle-review)) and the Docker release-notes channel are the surfacing mechanism. |
+
 ## References
 
 - [ADR-0003: Deployment infrastructure — VPS, Docker Compose, GitHub Actions](0003-deployment-infrastructure-vps-docker-compose-github-actions.md)

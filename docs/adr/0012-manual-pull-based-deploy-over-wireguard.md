@@ -94,6 +94,12 @@ The cutover is a principled retreat to a smaller trust surface. Expected progres
 
 The artifact pipeline (CI → GHCR, ADR-0011) is compatible with every step without modification — future automation bolts onto it, does not replace it.
 
+## Dep lifecycle health (as of 2026-05-15)
+
+| Dep                                                           | Last release               | License      | Maintainership                         | Notes                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------- | -------------------------- | ------------ | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `age` ([FiloSottile/age](https://github.com/FiloSottile/age)) | v1.2.x stable line, active | BSD-3-Clause | Filippo Valsorda + maintainers, active | Spec-stable since v1.0 (2022); reference Go implementation + Rust port (`rage`). Used identically in [ADR-0020](0020-layer-2-encrypted-r2-backups-with-operator-loaded-drills.md) and [ADR-0024](0024-binary-attachment-e2e-encryption.md) with independent identities. No published deprecation; small surface area, easy to audit. |
+
 ## References
 
 - [ADR-0003: Deployment infrastructure — VPS, Docker Compose, GitHub Actions](0003-deployment-infrastructure-vps-docker-compose-github-actions.md) — original topology; this ADR replaces its deploy leg

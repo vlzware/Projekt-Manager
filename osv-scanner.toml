@@ -1,0 +1,23 @@
+# OSV-Scanner allowlist.
+#
+# Each ignored vuln MUST include all three TOML fields below (per ADR-0027
+# §Negative and docs/ops/dep-management.md §Allowlist). Entries missing any
+# field, or with `reason` not starting with `@<github-handle>:`, are rejected
+# by scripts/check-allowlist-schema.sh in CI.
+#
+# Required schema per entry:
+#   id           — the OSV identifier (GHSA-..., CVE-..., or OSV-...)
+#                  TOML string.
+#   ignoreUntil  — bare TOML date literal (YYYY-MM-DD, NOT quoted), at most
+#                  90 days from the day the entry was added. The expiry
+#                  forces a re-review; OSV-Scanner stops honoring the entry
+#                  past this date and CI starts failing again.
+#   reason       — TOML string. MUST start with `@<github-handle>:` so the
+#                  owner is encoded (OSV-Scanner has no dedicated owner
+#                  field). Brief explanation follows the prefix.
+#
+# Example (delete when the first real entry is added):
+# [[IgnoredVulns]]
+# id = "GHSA-xxxx-xxxx-xxxx"
+# ignoreUntil = 2026-08-16  # <= 90 days from add date 2026-05-18 (this PR)
+# reason = "@vlzware: dead code path — function is bundled but never reached at runtime; advisory tracking upstream fix at <link>"

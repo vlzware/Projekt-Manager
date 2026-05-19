@@ -70,8 +70,102 @@ jobs:
       - name: Install apt prerequisites
         run: sudo apt-get update && sudo apt-get install -y ripgrep age
 
-      - name: Audit dependencies
-        run: npm audit --audit-level=moderate
+      # Allowlist schema gate (ADR-0027 §Negative; runbook §Allowlist).
+      # Scanners enforce only the advisory ID; owner/reason/expiry are
+      # convention. This gate makes the convention machine-enforced so a
+      # sloppy entry cannot land. ~100ms; runs before OSV-Scanner so the
+      # cheap check fails fast.
+      - name: Check allowlist schema (osv-scanner.toml + .trivyignore)
+        run: bash scripts/check-allowlist-schema.sh
+
+      - name: Check allowlist schema — self-test
+        run: bash scripts/__tests__/check-allowlist-schema.test.sh
+
+      # OSV-Scanner (ADR-0027 §Decision.2) — replaces `npm audit`. OSV.dev
+      # ingests GHSA, so OSV is a strict superset of npm audit for npm
+      # advisories AND covers transitive OS-level CVEs the registry index
+      # does not surface. Inline-in-the-`check`-job CLI install instead of
+      # google/osv-scanner-action because that action only ships reusable
+      # workflows (separate jobs) and a composite Docker action documented
+      # as "not intended to be used directly" — neither fits an inline step.
+      # Binary pinned by SHA256 from the official v2.3.8 release.
+      #
+      # Scans the lockfile only (PR-time gate). Full-tree scheduled scan
+      # lives in .github/workflows/security-scheduled.yml.
+      # Allowlist: osv-scanner.toml (empty baseline; entries require owner +
+      # reason + ignoreUntil ≤90d per ADR-0027 §Negative).
+      - name: Install OSV-Scanner CLI
+        run: |
+          set -euo pipefail
+          url="https://github.com/google/osv-scanner/releases/download/v2.3.8/osv-scanner_linux_amd64"
+          expected_sha="bc98e15319ed0d515e3f9235287ba53cdc5535d576d24fd573978ecfe9ab92dc"
+          curl -fsSL -o /tmp/osv-scanner "$url"
+          actual_sha=$(sha256sum /tmp/osv-scanner | awk '{print $1}')
+          if [ "$actual_sha" != "$expected_sha" ]; then
+            echo "::error::OSV-Scanner binary SHA256 mismatch — expected $expected_sha got $actual_sha"
+            exit 1
+          fi
+          chmod +x /tmp/osv-scanner
+          sudo mv /tmp/osv-scanner /usr/local/bin/osv-scanner
+          osv-scanner --version
+
+      - name: OSV-Scanner (lockfile, fail on any vuln)
+        # `scan source` is the subcommand for source-tree scans (lockfiles,
+        # SBOMs, manifests). --lockfile pins the input to package-lock.json.
+        # --config points at the repo allowlist. Default exit code on
+        # vuln-found is non-zero, which fails the step and blocks the PR.
+        #
+        # NOTE on severity: osv-scanner v2.3.8 has no --severity flag. The
+        # gate fails on ANY vuln OSV.dev knows about, regardless of CVSS.
+        # This is stricter than ADR-0027's original "HIGH/CRITICAL" wording
+        # and aligns with the project's "refuse-or-block, never downgrade"
+        # principle (CLAUDE.md). False positives go through
+        # osv-scanner.toml with the documented owner/reason/expiry schema.
+        run: osv-scanner scan source --lockfile=./package-lock.json --config=./osv-scanner.toml
+
+      # Trivy source-tree scans land in `check` (not in `docker`) so they
+      # run on every PR regardless of which paths changed. The `docker`
+      # job below is path-filtered and pull-request-only — leaving secret
+      # + IaC scans there would skip them on every TS-only / docs / e2e
+      # PR (the majority class), making the gate informational rather
+      # than blocking. Branch protection requires `check`; `docker`
+      # provides only the image-vuln scan + compose validation.
+      #
+      # Allowlist: .trivyignore (entries gated by check-allowlist-schema
+      # above; empty baseline).
+      - name: Trivy — filesystem secret scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          # No `severity:` filter — many of Trivy's built-in secret
+          # rules (jwt-token, age-secret-key, slack-web-hook, etc.)
+          # ship at MEDIUM and would be silently dropped by HIGH/
+          # CRITICAL. Within scanned files, ANY rule match is a block.
+          #
+          # Residual coverage gap (Trivy v0.70.0 built-in skip list,
+          # NOT overridden here): skipDirs `.git`, `node_modules`;
+          # skipFiles `package-lock.json` + other lockfiles; skipExts
+          # `.svg`, `.pdf`, `.zip`, `.gz`, `.bin`, …; built-in allow-
+          # rules that skip paths matching `test`/`example`/`vendor`/
+          # `.md`/`/locales/` globally. A secret committed inside any of
+          # those slips through — supplement with pre-commit hooks or
+          # a complementary scanner (gitleaks/trufflehog) if that gap
+          # matters operationally.
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      - name: Trivy — IaC misconfig scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          # IaC has the noisiest baseline of the three Trivy scans —
+          # the HIGH/CRITICAL filter keeps the signal-to-noise workable.
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          trivyignores: .trivyignore
 
       - name: Lint
         run: npm run lint
@@ -247,12 +341,19 @@ jobs:
           filters: |
             docker:
               - 'Dockerfile'
+              - 'Dockerfile.backup'
               - '.dockerignore'
               - 'docker/**'
               - 'docker-compose.yml'
               - 'docker-compose.*.yml'
               - 'package.json'
               - 'package-lock.json'
+              # `npm ci` applies these — a patch change rebuilds the
+              # image bytes, so the image-vuln scan should re-run.
+              - 'patches/**'
+              # `npm run build` reads these; the compiled output is
+              # baked into the image.
+              - 'tsconfig*.json'
               # Self-validation: changes to this workflow (the docker
               # job itself, the drift check, or the cache config) must
               # exercise the docker job once so regressions are caught
@@ -356,10 +457,37 @@ jobs:
           context: .
           file: Dockerfile
           push: false
-          load: false
+          # `load: true` exports the built image into the runner's local
+          # Docker daemon (instead of leaving it only in the buildx
+          # cache). Trivy's image scan below resolves `image-ref` via the
+          # local daemon, so it must be loaded. Mutually exclusive with
+          # multi-platform builds, but this build is amd64-only.
+          load: true
           tags: projekt-manager-app:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Trivy image-vuln scan against the locally-built image
+      # (ADR-0027 §Decision.2). Filesystem-secret + IaC scans live in
+      # the `check` job above so they run on every PR; this job is
+      # path-filtered and would skip them on the majority of PRs.
+      # Allowlist: .trivyignore (entries gated by the schema check in
+      # `check`; empty baseline). HIGH/CRITICAL only — image scans
+      # otherwise drown in LOW-severity OS-package noise.
+      #
+      # No `ignore-unfixed`: per the project's refuse-or-block-never-
+      # downgrade principle, a no-fix-yet CVE is still a finding. If
+      # one becomes operationally tolerable, the entry goes in
+      # .trivyignore with owner/reason/exp ≤90d — same machinery as
+      # the rest of the allowlist.
+      - name: Trivy — image vuln scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: projekt-manager-app:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          trivyignores: .trivyignore
 
   # ---------------------------------------------------------------
   # Build and push the production app image to GHCR on every push
@@ -434,7 +562,41 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
-      - name: Build and push app image
+      # Build → scan → push. Two build-push-action invocations share
+      # the gha cache, so the second one re-uses every layer and adds
+      # ~5s. The split exists to keep a failing image scan from
+      # publishing the bad tag to GHCR — `scripts/deploy.sh <sha>`
+      # resolves images by SHA tag, so a published-then-fails-scan
+      # sequence would leave a draw-able bad image behind.
+      - name: Build app image (load locally for scan)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          load: true
+          tags: projekt-manager-app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Backstop Trivy image scan on the locally-loaded image before
+      # publishing (ADR-0027 §Decision.2). The PR-time `docker` job
+      # already scans the image before merge; this catches edge cases
+      # — TS-only commits that change the baked-in code without
+      # tripping the docker job's path filter, workflow_dispatch
+      # builds on feature branches, and direct-push-to-main bypasses
+      # that skipped the PR flow entirely. No `ignore-unfixed`: same
+      # rationale as the `docker` job's scan.
+      - name: Trivy — image vuln scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: projekt-manager-app:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      - name: Push app image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
@@ -452,7 +614,34 @@ jobs:
       # references the just-pushed app image, so the app push must
       # complete first. Separate gha cache scope keeps the backup
       # image's layer cache from invalidating the app image's cache.
-      - name: Build and push backup image
+      #
+      # Build → scan → push mirrors the app image flow (same R6 rationale):
+      # the backup image adds `postgresql17*`, `age`, `bash`, `findmnt`
+      # apk layers on top of node-alpine, each with its own CVE surface
+      # — leaving it unscanned was pre-existing tech debt.
+      - name: Build backup image (load locally for scan)
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        with:
+          context: .
+          file: Dockerfile.backup
+          push: false
+          load: true
+          tags: projekt-manager-backup:ci
+          build-args: |
+            APP_IMAGE_TAG=${{ steps.tags.outputs.app_image_tag }}
+          cache-from: type=gha,scope=backup
+          cache-to: type=gha,mode=max,scope=backup
+
+      - name: Trivy — backup image vuln scan (HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: projekt-manager-backup:ci
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          trivyignores: .trivyignore
+
+      - name: Push backup image
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .

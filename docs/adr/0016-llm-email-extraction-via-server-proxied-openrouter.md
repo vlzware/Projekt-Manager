@@ -55,6 +55,13 @@ Ruled out: with a per-installation key, the env var already holds the secret sec
 - Rotating the key means updating `secrets.env.age` and restarting — no UI path
 - Customer email text transits through the server en route to OpenRouter — already handled, but an additional processing path to audit
 
+## Dep lifecycle health (as of 2026-05-15)
+
+| Dep                                  | Status                                                        | Notes                                                                                                                                                                                                                                                        |
+| ------------------------------------ | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| OpenRouter (SaaS)                    | Active commercial provider, founded 2023, well-funded         | Multi-model gateway with OpenAI-API-compatible surface. Exit ramp is structural: the proxy route is provider-agnostic, so switching to any OpenAI-compatible provider (or direct provider integrations — Anthropic, Google AI, OpenAI) is an env-var change. |
+| Model `google/gemini-2.5-flash-lite` | Google-managed, subject to Google's model retirement schedule | Pinned as hardcoded constant with `OPENROUTER_MODEL` env override; rollover when the model retires is a no-code change. OpenRouter's model catalog is the authoritative "alive" check.                                                                       |
+
 ## References
 
 - [ADR-0005](0005-session-management-httponly-cookies.md) — Session management, HttpOnly cookies

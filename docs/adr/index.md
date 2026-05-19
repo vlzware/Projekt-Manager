@@ -28,3 +28,4 @@
 | [0024](0024-binary-attachment-e2e-encryption.md)                            | End-to-end encryption of binary attachments                           | Accepted           | 2026-04-30 |
 | [0025](0025-realtime-ui-invalidation-via-sse.md)                            | Realtime UI invalidation via Server-Sent Events                       | Accepted           | 2026-05-06 |
 | [0026](0026-invoices-immutability-and-zugferd.md)                           | Invoices — immutable snapshot, gapless sequence, ZUGFeRD EN 16931     | Accepted           | 2026-05-12 |
+| [0027](0027-continuous-dependency-updates-with-supply-chain-scanning.md)    | Continuous dependency updates with supply-chain scanning              | Accepted           | 2026-05-15 |

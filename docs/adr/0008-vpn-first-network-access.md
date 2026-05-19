@@ -71,6 +71,18 @@ Tailscale's clients are also not independently audited, so "audited clients" is 
 - **Apple platforms unsupported.** Re-evaluated only if scope includes Apple and the upstream `wireguard-apple` situation changes.
 - **Manual peer management until admin web app ships.** Offboarding manual; audit trail is `wg0.conf` git history.
 
+## Dep lifecycle health (as of 2026-05-15)
+
+The "Trust framing" section above is the primary lifecycle source. Summarized:
+
+| Dep                     | Status                                                                                                                 | License                 | Notes                                                                                                                                                                                                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| WireGuard protocol      | Audited; mainlined in Linux kernel since 5.6                                                                           | GPL-2.0 (kernel module) | Multiple formal verifications cover the core construction                                                                                                                                                                                              |
+| `wireguard-linux-tools` | Active                                                                                                                 | GPL-2.0                 | Distro security pipeline tracks it (Ubuntu `unattended-upgrades`)                                                                                                                                                                                      |
+| `wireguard-android`     | Active (pilot client)                                                                                                  | Apache-2.0              | Play Store + F-Droid; current release recent. Source: [github.com/WireGuard/wireguard-android](https://github.com/WireGuard/wireguard-android)                                                                                                         |
+| `wireguard-apple`       | **Feature-frozen** — last commit 2023-02-15 (verified 2026-05-18 via `gh api repos/WireGuard/wireguard-apple/commits`) | MIT                     | Out of scope; no patch path for future CVEs (the rationale in Decision above). Source: [github.com/WireGuard/wireguard-apple](https://github.com/WireGuard/wireguard-apple) (GitHub repo is a mirror of the canonical `git.zx2c4.com/wireguard-apple`) |
+| `wireguard-windows`     | Maintained but out of scope                                                                                            | MIT                     | Same out-of-scope rationale as Apple. Source: [github.com/WireGuard/wireguard-windows](https://github.com/WireGuard/wireguard-windows)                                                                                                                 |
+
 ## References
 
 - [ADR-0003: Deployment infrastructure — VPS, Docker Compose, GitHub Actions](0003-deployment-infrastructure-vps-docker-compose-github-actions.md)
