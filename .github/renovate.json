@@ -103,6 +103,18 @@
       "matchPackageNames": ["caddy", "caddyserver/caddy"]
     },
     {
+      "description": "Suppress abandonment-heuristic false positives — release-date heuristic misfires on stable / maintenance-mode libs (verified upstream activity 2026-05-19; per-dep rationale in docs/ops/dep-management.md § Abandonment-flag verdicts). 3 years keeps real abandonment within range while filtering current noise.",
+      "matchPackageNames": [
+        "@fastify/cookie",
+        "@fastify/rate-limit",
+        "@testing-library/user-event",
+        "client-zip",
+        "husky",
+        "web-push"
+      ],
+      "abandonmentThreshold": "3 years"
+    },
+    {
       "description": "Auto-merge ungrouped patch + minor on green CI (requires repo Settings → General → Pull Requests → Allow auto-merge)",
       "matchUpdateTypes": ["patch", "minor", "digest", "pin", "lockFileMaintenance"],
       "automerge": true,

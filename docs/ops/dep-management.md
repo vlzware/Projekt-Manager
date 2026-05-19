@@ -55,11 +55,12 @@ The dry-run is most useful after editing `customManagers` regex patterns — Ren
 ## Weekly wrangler
 
 1. Open the Renovate dashboard issue — queue state at a glance.
-2. **Auto-merged PRs** (patch/minor + green CI) need no action; spot-check for surprises.
-3. **Grouped PRs** (AWS SDK / ESLint cluster / Vitest pair / React pair / Fastify family / Drizzle pair): read combined changelog, merge.
-4. **Major PRs**: read upstream migration guide, run `npm test` + `npm run test:e2e` locally on the bump branch, merge.
-5. **Lockfile maintenance** PR: merge if green.
-6. Red CI: triage the failure, patch or revert.
+2. **Abandonment flags**: scan the dashboard's "Abandoned Dependencies" list for new entries. Verify each per [§ Abandonment-flag verdicts](#abandonment-flag-verdicts); record a verdict + (for false positives) add the package to `.github/renovate.json` `packageRules` in the same commit.
+3. **Auto-merged PRs** (patch/minor + green CI) need no action; spot-check for surprises.
+4. **Grouped PRs** (AWS SDK / ESLint cluster / Vitest pair / React pair / Fastify family / Drizzle pair): read combined changelog, merge.
+5. **Major PRs**: read upstream migration guide, run `npm test` + `npm run test:e2e` locally on the bump branch, merge.
+6. **Lockfile maintenance** PR: merge if green.
+7. Red CI: triage the failure, patch or revert.
 
 ## CVE handling
 
@@ -107,6 +108,32 @@ CVE-2026-12345 exp:2026-08-16
 
 Run `bash scripts/check-allowlist-schema.sh` locally to validate before pushing — the same script gates the CI `check` job.
 
+## Abandonment-flag verdicts
+
+Renovate's `abandonmentThreshold` heuristic uses **last-release date**, which produces false positives for libraries in stable / maintenance mode (release cadence reflects upstream maturity, not abandonment). The dashboard's "Abandoned Dependencies" list mixes real cases with these false positives. Every flag needs ≤5 min of upstream verification (last commit, issue triage, archive flag, deps.dev signal); never trust the heuristic alone.
+
+For confirmed false positives, `.github/renovate.json` overrides `abandonmentThreshold` per-package to **3 years** — high enough that genuine abandonment still trips, low enough that we don't suppress the signal forever. New flags are evaluated as they appear (during the weekly wrangler pass); verdicts land here and the matching `matchPackageNames` entry lands in the Renovate config in the same commit.
+
+Per [CLAUDE.md "refuse to serve" principle](../../CLAUDE.md#principles), confirmed-abandoned deps are **swapped, not suppressed**. The override is for the false-positive class only.
+
+**Active verdicts (last walked 2026-05-19, after first Renovate scan):**
+
+| Package                       | Last release | Last commit | Verdict        | Rationale                                                                                         |
+| ----------------------------- | ------------ | ----------- | -------------- | ------------------------------------------------------------------------------------------------- |
+| `@fastify/cookie`             | 2025-01-05   | 2026-05-12  | maintenance    | Fastify family; refactor commit one week ago; 297 stars                                           |
+| `@fastify/rate-limit`         | 2025-05-18   | 2026-04-29  | maintenance    | Fastify family; active commits 3 weeks ago; 593 stars                                             |
+| `@testing-library/user-event` | 2025-01-21   | 2025-08-25  | mature, stable | 2.3k stars; 119 open issues actively triaged; user-event API has been stable for years            |
+| `client-zip`                  | 2025-03-14   | 2025-03-14  | done           | Single-purpose lib (client-side zip streaming); 7 open issues; nothing to add                     |
+| `husky`                       | 2024-11-18   | 2026-03-19  | active         | 35k stars; commit 2 months ago; the heuristic just missed the npm publish cadence                 |
+| `web-push`                    | 2024-01-16   | 2024-12-16  | maintenance    | Wraps fixed RFCs 8291/8292; 3.5k stars; recent dep bumps in master; the protocol itself is frozen |
+
+**Resolved (kept for audit trail; remove after one quarterly cycle if no regression):**
+
+| Package                     | Verdict   | Resolution                                         |
+| --------------------------- | --------- | -------------------------------------------------- |
+| `spark-md5`                 | abandoned | Swapped → `@noble/hashes/legacy.js` `md5`          |
+| `ludeeus/action-shellcheck` | abandoned | Swapped → direct `shellcheck` binary on the runner |
+
 ## Quarterly lifecycle review
 
 **Last performed:** _not yet_ — first review due **2026-08-17** (Monday; 2026-08-15 falls on a Saturday, aligned with the weekly wrangler cadence).
@@ -121,6 +148,11 @@ After the per-dep walk, do the **allowlist sweep** — same review, distinct sur
 
 - Open `osv-scanner.toml` and `.trivyignore`. For every active entry: is the original justification still true? Has the upstream landed a fix that makes the suppression obsolete? Is the owner still the right person? Drop entries that no longer hold.
 - The script's `ignoreUntil` ≤90d window means stale entries auto-expire and fail CI — the sweep is the in-band check that catches entries that were merely renewed without re-justification.
+
+Then the **abandonment-verdict sweep** — same review, distinct surface:
+
+- Walk the [§ Abandonment-flag verdicts](#abandonment-flag-verdicts) "active" table. For each entry, re-check upstream activity (last commit, archive flag, issue triage). If the verdict still holds, leave it. If the upstream actually did go quiet since the last walk, drop the package from `.github/renovate.json` `packageRules` so Renovate flags it again on the next scan — then decide swap-or-defer per the same procedure that produced the original verdict.
+- For "resolved" entries: drop the row after one quarter without regression. The audit trail lives in git history.
 
 When something changes (archive, relicense, bus-factor drop), update the relevant ADR's lifecycle table and open an issue. Do not panic-migrate — same week is fine, same month usually is too.
 
