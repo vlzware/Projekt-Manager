@@ -5,6 +5,14 @@ on:
     branches: [main, 'iteration/**']
   pull_request:
     branches: [main, 'iteration/**']
+  # GitHub merge queue fires `merge_group` events on a synthetic train
+  # branch built from `main` + queued PRs. The `main` Ruleset requires
+  # `check` and `docker` to pass on these events — without listening
+  # for `merge_group` here, the queue creates the train, no workflow
+  # fires, required checks never report, and the queue silently waits
+  # until `check_response_timeout_minutes` (60 by default) then rejects
+  # the PR. Mandatory companion to the merge-queue rule in the Ruleset.
+  merge_group:
   # Manual escape hatch for building/publishing images on a feature
   # branch so it can be deployed to the VPS via scripts/deploy.sh
   # without first merging to main. CLI-only by design — the GH UI
@@ -368,7 +376,13 @@ jobs:
   # ---------------------------------------------------------------
   docker:
     needs: changes
-    if: needs.changes.outputs.docker == 'true' && github.event_name == 'pull_request'
+    # On `merge_group` (queue) events the `docker` context must REPORT
+    # success rather than be skipped — merge queue treats a skipped
+    # required check as "not yet met" and waits until the response
+    # timeout expires (60 min default), then rejects the PR with no
+    # actionable signal. So run the job unconditionally on `merge_group`;
+    # the path filter only applies on `pull_request`.
+    if: (needs.changes.outputs.docker == 'true' && github.event_name == 'pull_request') || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
