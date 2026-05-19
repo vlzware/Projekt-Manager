@@ -31,4 +31,14 @@ describe('computeMd5Base64 — RFC 1864 base64 MD5', () => {
     const bytes = new Uint8Array(3 * 1024 * 1024);
     expect(await computeMd5Base64(new Blob([bytes]))).toBe('0d0hDWsTEss0K1bQK9XmUQ==');
   });
+
+  it('3 MiB of cycling bytes — chunk boundary with translation-sensitive data', async () => {
+    // All-zero data would hide an off-by-one in `slice(offset, ...)` because
+    // every byte hashes the same; cycling `i & 0xff` makes byte position
+    // matter — a one-byte drift on either side of the 2 MiB boundary changes
+    // the digest. md5sum reference computed against the same byte pattern.
+    const bytes = new Uint8Array(3 * 1024 * 1024);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = i & 0xff;
+    expect(await computeMd5Base64(new Blob([bytes]))).toBe('4gFanFCQbHYEauYm+58WuQ==');
+  });
 });
