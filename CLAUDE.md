@@ -10,7 +10,7 @@ The methodology is therefore to arrive at confidence in sequential steps. Each a
 
 ## References, trust categories
 
-- **Repo**: vlzware/Projekt-Manager (private)
+- **Repo**: Projekt-Manager-Org/Projekt-Manager (private)
 
 **Human-made** - ultimate source of truth, can still be questioned and discussed:
 

@@ -575,7 +575,9 @@ jobs:
           # lowercase, replace '/' with '-', strip anything not in
           # [a-z0-9._-].
           branch_slug=$(echo "${GITHUB_REF_NAME}" | tr '[:upper:]/' '[:lower:]-' | sed 's/[^a-z0-9._-]/-/g')
-          owner="${GITHUB_REPOSITORY_OWNER}"
+          # GHCR rejects uppercase in the repository path, so lowercase
+          # the owner (the org name `Projekt-Manager-Org` is mixed-case).
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
           {
             # App image tags.
             echo "app_tags<<APP_TAGS_EOF"

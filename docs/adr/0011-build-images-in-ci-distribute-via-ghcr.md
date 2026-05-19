@@ -35,7 +35,7 @@ Key forces:
 
 ## Decision
 
-Build the production `app` image in GitHub Actions, push to GitHub Container Registry (`ghcr.io/vlzware/projekt-manager`), pull on the VPS during deploy.
+Build the production `app` image in GitHub Actions, push to GitHub Container Registry (`ghcr.io/projekt-manager-org/projekt-manager`), pull on the VPS during deploy.
 
 **CI pipeline:**
 
@@ -46,12 +46,12 @@ Build the production `app` image in GitHub Actions, push to GitHub Container Reg
 
 **Tagging:**
 
-- **Immutable**: `ghcr.io/vlzware/projekt-manager:sha-<commit>` — one per commit, the rollback target.
-- **Moving**: `ghcr.io/vlzware/projekt-manager:<branch-slug>` — latest on each branch, human-friendly fallback.
+- **Immutable**: `ghcr.io/projekt-manager-org/projekt-manager:sha-<commit>` — one per commit, the rollback target.
+- **Moving**: `ghcr.io/projekt-manager-org/projekt-manager:<branch-slug>` — latest on each branch, human-friendly fallback.
 
 **Compose topology:**
 
-- `docker-compose.yml` (prod): `app` uses `image: ghcr.io/vlzware/projekt-manager:<tag>`, no `build:` — pure runtime descriptor.
+- `docker-compose.yml` (prod): `app` uses `image: ghcr.io/projekt-manager-org/projekt-manager:<tag>`, no `build:` — pure runtime descriptor.
 - `docker-compose.dev.yml` (dev overlay): reintroduces `build: .` so local dev builds from source.
 - Deploy: `scripts/deploy.sh` runs `docker compose pull app && docker compose up -d` (see [ADR-0012](0012-manual-pull-based-deploy-over-wireguard.md)).
 
@@ -88,10 +88,10 @@ Build the production `app` image in GitHub Actions, push to GitHub Container Reg
 
 ## Dep lifecycle health (as of 2026-05-15)
 
-| Dep                              | Status                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| -------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| GitHub Actions                   | Active GitHub-managed platform | Action SHA pins live in `.github/workflows/`; Renovate maintains them under [ADR-0027](0027-continuous-dependency-updates-with-supply-chain-scanning.md). Pinned actions per [#187](https://github.com/vlzware/Projekt-Manager/issues/187): `actions/checkout`, `actions/setup-node`, `docker/build-push-action`, `docker/login-action`, `docker/setup-buildx-action`, `dorny/paths-filter`, `ludeeus/action-shellcheck` (all on current latest, no published advisories). |
-| GitHub Container Registry (GHCR) | Active GitHub-managed service  | Free for public repos and OSS; private retention controlled via repo settings. No published deprecation path; exit ramp would be Docker Hub or self-hosted Distribution (alternatives in this ADR).                                                                                                                                                                                                                                                                        |
+| Dep                              | Status                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GitHub Actions                   | Active GitHub-managed platform | Action SHA pins live in `.github/workflows/`; Renovate maintains them under [ADR-0027](0027-continuous-dependency-updates-with-supply-chain-scanning.md). Pinned actions per [#187](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/187): `actions/checkout`, `actions/setup-node`, `docker/build-push-action`, `docker/login-action`, `docker/setup-buildx-action`, `dorny/paths-filter`, `ludeeus/action-shellcheck` (all on current latest, no published advisories). |
+| GitHub Container Registry (GHCR) | Active GitHub-managed service  | Free for public repos and OSS; private retention controlled via repo settings. No published deprecation path; exit ramp would be Docker Hub or self-hosted Distribution (alternatives in this ADR).                                                                                                                                                                                                                                                                                    |
 
 ## References
 

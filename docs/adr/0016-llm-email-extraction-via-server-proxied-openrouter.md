@@ -67,5 +67,5 @@ Ruled out: with a per-installation key, the env var already holds the secret sec
 - [ADR-0005](0005-session-management-httponly-cookies.md) — Session management, HttpOnly cookies
 - [ADR-0008](0008-vpn-first-network-access.md) — VPN-first network access
 - [ADR-0015](0015-copy-paste-textarea-email-data-intake.md) — Copy/paste textarea for email data intake
-- [Issue #87](https://github.com/vlzware/Projekt-Manager/issues/87) — Decision: LLM extraction of data from emails
+- [Issue #87](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/87) — Decision: LLM extraction of data from emails
 - [OpenRouter API quickstart](https://openrouter.ai/docs/quickstart.md)

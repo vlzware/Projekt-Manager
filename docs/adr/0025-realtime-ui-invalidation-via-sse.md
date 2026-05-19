@@ -81,7 +81,7 @@ Cleaner per-route auth at the cost of N TCP connections per tab and per-domain s
 - [ADR-0004](0004-backend-stack-fastify-drizzle-node-postgres.md) — Fastify host for the SSE route
 - [ADR-0019](0019-worker-data-scoping-repository-layer-predicate.md) — role scoping at the consumer endpoint
 - [ADR-0021](0021-audit-log-and-notifications-single-write-path.md) — in-process post-commit publisher, reused architectural shape
-- [Issue #171](https://github.com/vlzware/Projekt-Manager/issues/171) — first consumer (storage usage UI)
+- [Issue #171](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/171) — first consumer (storage usage UI)
 - [WHATWG HTML §Server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html) — protocol reference
 - [Caddy v2 `reverse_proxy` — `flush_interval`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#flush_interval) — buffering directive
 - [CONTRIBUTING.md §Security audit](../../CONTRIBUTING.md#security-audit) — trigger satisfied

@@ -74,7 +74,7 @@ Add an opt-in HTTP-only evaluation mode that runs the full production stack (app
 
 ## References
 
-- [#47 — Enforce HTTPS everywhere](https://github.com/vlzware/Projekt-Manager/issues/47) — established the HTTPS-everywhere principle; this ADR introduces a guarded exception for evaluation
+- [#47 — Enforce HTTPS everywhere](https://github.com/Projekt-Manager-Org/Projekt-Manager/issues/47) — established the HTTPS-everywhere principle; this ADR introduces a guarded exception for evaluation
 - [ADR-0008: VPN-first network access](0008-vpn-first-network-access.md) — production TLS and VPN posture, unchanged
 - [ADR-0005: Session management — HttpOnly cookies](0005-session-management-httponly-cookies.md) — `Secure` flag behavior relaxed only under `ALLOW_INSECURE_HTTP`
 - [docs/ops/http-only-evaluation.md](../ops/http-only-evaluation.md) — operational guide for the HTTP-only mode

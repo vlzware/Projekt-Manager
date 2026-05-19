@@ -19,7 +19,7 @@ services:
     # exports APP_IMAGE_TAG before every compose invocation; the dev
     # overlay (docker-compose.dev.yml) reintroduces `build: .` so
     # local development still builds from source.
-    image: ghcr.io/vlzware/projekt-manager:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
+    image: ghcr.io/projekt-manager-org/projekt-manager:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
     read_only: true
     tmpfs:
       - /tmp
@@ -236,7 +236,7 @@ services:
     # slug) previously risked silently pulling stale code on a manual
     # `docker compose up`; the only safe way to run is with an
     # operator-supplied SHA.
-    image: ghcr.io/vlzware/projekt-manager-backup:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
+    image: ghcr.io/projekt-manager-org/projekt-manager-backup:${APP_IMAGE_TAG:?APP_IMAGE_TAG must be set}
     # No `init: true` — the historical reason was dcron's fork()+
     # setpgid() per cron entry tripping Docker's PID-1 protection.
     # croner does not fork; Node-as-PID-1 reaps its own children via
